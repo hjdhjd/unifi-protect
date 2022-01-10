@@ -257,7 +257,7 @@ export class ProtectApi {
     this.bootstrap = data;
 
     if(firstRun && !this.isLoginRefresh) {
-      this.log.info("%s: Connected to the Protect controller API (address: %s mac: %s).", this.getNvrName(), data.nvr.host, data.nvr.mac);
+      this.log.info("%s: Connected to the UniFi Protect controller API (address: %s mac: %s).", this.getNvrName(), data.nvr.host, data.nvr.mac);
     }
 
     // Capture the bootstrap if we're debugging.
@@ -327,7 +327,9 @@ export class ProtectApi {
 
       });
 
-      this.log.info("%s: Connected to the UniFi realtime update events API.", this.getNvrName());
+      if(!this.isLoginRefresh) {
+        this.log.info("%s: Connected to the UniFi Protect realtime update events API.", this.getNvrName());
+      }
     } catch(error) {
       this.log.error("%s: Error connecting to the realtime update events API: %s", this.getNvrName(), error);
     }
