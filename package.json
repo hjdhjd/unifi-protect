@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "commonjs",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {

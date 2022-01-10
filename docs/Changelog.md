@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 2.1.1 (2020-01-10)
+  * Housekeeping.
+
 ## 2.1.0 (2022-01-09)
   * Full support for all known UniFi Protect device types (cameras, lights, sensors, viewers)
   * Code cleanup.
