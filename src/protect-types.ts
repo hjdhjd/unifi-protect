@@ -4,6 +4,7 @@
  */
 // An semi-complete description of the UniFi Protect NVR bootstrap JSON.
 export interface ProtectNvrBootstrapInterface {
+
   accessKey: string,
   authUserId: string,
   bridges: unknown[],
@@ -11,20 +12,25 @@ export interface ProtectNvrBootstrapInterface {
   cloudPortalUrl: string,
   groups: unknown[],
   lastUpdateId: string,
-  lights: unknown[],
+  lights: ProtectLightConfig[],
   liveviews: ProtectNvrLiveviewConfig[],
   nvr: ProtectNvrConfig,
-  sensors: unknown[],
+  sensors: ProtectSensorConfig[],
   users: ProtectNvrUserConfig[],
-  viewers: unknown[]
+  viewers: ProtectViewerConfig[]
 }
 
 // A semi-complete description of the UniFi Protect NVR configuration JSON.
 export interface ProtectNvrConfigInterface {
+
+  analyticsData: string,
+  anonymouseDeviceId: string,
   availableUpdate: string,
+  avgMotions: number[],
+  cameraUtilization: number,
   canAutoUpdate: boolean,
-  cloudConnectionError: string,
   disableAudio: boolean,
+  disableAutoLink: boolean,
   doorbellSettings: {
     defaultMessageText: string,
     defaultMessageResetTimeoutMs: number,
@@ -35,32 +41,37 @@ export interface ProtectNvrConfigInterface {
     }[]
   },
   enableAutomaticBackups: boolean,
+  enableBridgeAutoAdoption: boolean,
   enableCrashReporting: boolean,
   enableStatsReporting: boolean,
-  errorCode: string,
+  errorCode: string | null,
   featureFlags: {
     beta: boolean,
-    dev: boolean
+    dev: boolean,
+    notificationsV2: boolean
   },
   firmwareVersion: string,
   hardwareId: string,
   hardwarePlatform: string,
   hardwareRevision: string,
   host: string,
+  hostShortname: string,
   hostType: string,
   hosts: string[],
   id: string,
-  isAdopted: boolean,
   isAway: boolean,
-  isConnectedToCloud: boolean,
   isHardware: boolean,
+  isRecordingDisabled: boolean,
+  isRecordingMotionOnly: boolean,
+  isRecycling: boolean,
   isSetup: boolean,
   isSshEnabled: boolean,
   isStation: boolean,
   isStatsGatheringEnabled: boolean,
   isUpdating: boolean,
+  isWirelessUplinkEnabled: boolean,
   lastSeen: number,
-  lastUpdateAt: string,
+  lastUpdateAt: number | null,
   locationSettings: {
     isAway: boolean,
     isGeofencingEnabled: boolean,
@@ -69,6 +80,7 @@ export interface ProtectNvrConfigInterface {
     radius: number
   },
   mac: string,
+  maxCameraCapacity: Record<string, number>,
   modelKey: string,
   name: string,
   network: string,
@@ -76,36 +88,84 @@ export interface ProtectNvrConfigInterface {
     cameraEvents: number,
     cameraHttps: number,
     cameraTcp: number,
+    devicesWss: number,
     discoveryClient: number,
-    elementsWss: number,
     emsCLI: number,
     emsLiveFLV: number,
     http: number,
     https: number,
     liveWs: number,
     liveWss: number,
+    playback: number,
     rtmp: number,
     rtsp: number,
+    rtsps: number,
+    tcpBridge: number,
     tcpStreams: number,
     ucore: number,
     ump: number
   },
   recordingRetentionDurationMs: string,
   releaseChannel: string,
-  setupCode: string,
-  storageInfo: unknown,
+  skipFirmwareUpdate: boolean,
+  smartDetectAgreement: {
+    lastUpdateAt: number | null,
+    status: string
+  }
+  ssoChannel: string | null,
+  storageStats: unknown,
+  systemInfo: ProtectNvrSystemInfoInterface,
+  temperatureUnit: string,
   timeFormat: string,
   timezone: string,
   type: string,
+  ucoreVersion: string,
   uiVersion: string,
   upSince: number,
   uptime: number,
   version: string,
-  wifiSettings: unknown
+  wifiSettings: {
+    password: string | null,
+    ssid: string | null,
+    useThirdPartyWifi: boolean
+  }
+}
+
+// A semi-complete description of the UniFi Protect NVR system information configuration JSON.
+export interface ProtectNvrSystemInfoInterface {
+
+  cpu: {
+    averageLoad: number,
+    temperature: number
+  },
+  memory: {
+    available: number,
+    free: number,
+    total: number
+  },
+  storage: {
+    available: number,
+    devices: {
+      healthy: boolean,
+      model: string,
+      size: number
+    }[],
+    isRecycling: boolean,
+    size: number,
+    type: string,
+    used: number
+  },
+  tmpfs: {
+    available: number,
+    path: string,
+    total: number,
+    used: number
+  }
 }
 
 // A semi-complete description of the UniFi Protect camera JSON.
 export interface ProtectCameraConfigInterface {
+
   apMac: string,
   apRssi: string,
   audioBitrate: number,
@@ -312,11 +372,11 @@ export interface ProtectCameraConfigInterface {
   type: string,
   upSince: number,
   wifiConnectionState: {
-    channel: number | null,
-    frequency: number | null,
-    phyRate: number | null,
-    signalQuality: number | null,
-    signalStrength: number | null
+    channel: number,
+    frequency: number,
+    phyRate: number,
+    signalQuality: number,
+    signalStrength: number
   },
   wiredConnectionState: {
     phyRate: number
@@ -325,6 +385,7 @@ export interface ProtectCameraConfigInterface {
 
 // A semi-complete description of the UniFi Protect camera channel JSON.
 export interface ProtectCameraChannelConfigInterface {
+
   bitrate: number,
   enabled: boolean,
   fps: number,
@@ -351,8 +412,64 @@ export interface ProtectCameraLcdMessageConfigInterface {
   type: string
 }
 
+// A semi-complete description of the UniFi Protect light JSON.
+export interface ProtectLightConfigInterface {
+
+  camera: string,
+  canAdopt: boolean,
+  connectedSince: number,
+  connectionHost: string,
+  firmwareBuild: string,
+  firmwareVersion: string,
+  hardwareRevision: string,
+  host: string,
+  id: string,
+  isAdopted: boolean,
+  isAdoptedByOther: boolean,
+  isAdopting: boolean,
+  isAttemptingToConnect: boolean,
+  isCameraPaired: boolean,
+  isConnected: boolean,
+  isDark: boolean,
+  isLightOn: boolean,
+  isLocating: boolean,
+  isPirMotionDetected: boolean,
+  isProvisioned: boolean,
+  isRebooting: boolean,
+  isSshEnabled: boolean,
+  isUpdating: boolean,
+  lastMotion: number,
+  lastSeen: number,
+  latestFirmwareVersion: string,
+  lightDeviceSettings: {
+    isIndicatorEnabled: boolean,
+    ledLevel: number,
+    luxSensitivity: string,
+    pirDuration: number,
+    pirSensitivity: number
+  },
+  lightModeSettings: {
+    enableAt: string,
+    mode: string
+  },
+  lightOnSettings: {
+    isLedForceOn: boolean
+  },
+  mac: string,
+  modelKey: string,
+  name: string,
+  state: string,
+  type: string,
+  upSince: number,
+  uptime: number,
+  wiredConnectionState: {
+    phyRate: number
+  }
+}
+
 // A semi-complete description of the UniFi Protect NVR liveview JSON.
 export interface ProtectNvrLiveviewConfigInterface {
+
   id: string,
   isDefault: boolean,
   isGlobal: boolean,
@@ -365,6 +482,7 @@ export interface ProtectNvrLiveviewConfigInterface {
 
 // A semi-complete description of the UniFi Protect NVR user JSON.
 export interface ProtectNvrUserConfigInterface {
+
   alertRules: unknown[],
   allPermissions: string[],
   cloudAccount: string,
@@ -395,6 +513,7 @@ export interface ProtectNvrUserConfigInterface {
 
 // A semi-complete description of the UniFi Protect system events JSON.
 export interface ProtectNvrSystemEventInterface {
+
   apps: {
     apps: unknown[],
     controllers: ProtectNvrSystemEventController[]
@@ -405,6 +524,7 @@ export interface ProtectNvrSystemEventInterface {
 
 // A semi-complete description of the UniFi Protect system events controller JSON.
 export interface ProtectNvrSystemEventControllerInterface {
+
   harddriveRequired: boolean,
   info: {
     events: number[],
@@ -457,6 +577,134 @@ export interface ProtectNvrSystemEventControllerInterface {
   version: string
 }
 
+// A semi-complete description of the UniFi Protect sensor JSON.
+export interface ProtectSensorConfigInterface {
+
+  alarmSettings: {
+    isEnabled: boolean
+  },
+  alarmTriggeredAt: number | null,
+  batteryStatus: {
+    isLow: boolean,
+    percentage: number
+  },
+  bluetoothConnectionState: {
+    signalQuality: number,
+    signalStrength: number
+  },
+  bridge: string,
+  bridgeCandidates: [],
+  camera: string,
+  canAdopt: boolean,
+  connectedSince: number,
+  connectionHost: string,
+  firmwareBuild: string,
+  firmwareVersion: string,
+  hardwareRevision: string,
+  humiditySettings: {
+    highThreshold: number,
+    isEnabled: boolean,
+    lowThreshold: number,
+    margin: number
+  },
+  id: string,
+  isAdopted: boolean,
+  isAdoptedByOther: boolean,
+  isAdopting: boolean,
+  isAttemptingToConnect: boolean,
+  isConnected: boolean,
+  isMotionDetected: boolean,
+  isOpened: boolean,
+  isProvisioned: boolean,
+  isRebooting: boolean,
+  isSshEnabled: boolean,
+  isUpdating: boolean,
+  lastSeen: number,
+  latestFirmwareVersion: string,
+  leakDetectedAt: number,
+  ledSettings: {
+    isEnabled: boolean
+  },
+  lightSettings: {
+    highThreshold: number,
+    isEnabled: boolean,
+    lowThreshold: number,
+    margin: number
+  },
+  mac: string,
+  modelKey: string,
+  motionDetectedAt: number,
+  motionSettings: {
+    isEnabled: boolean,
+    sensitivity: number
+  },
+  mountType: string,
+  name: string,
+  openStatusChangedAt: number,
+  state: string,
+  stats: {
+    humidity: {
+      status: string, value: number | null
+    },
+    light: {
+      status: string, value: number | null
+    },
+    temperature: {
+      status: string, value: number | null
+    }
+  },
+  tamperingDetectedAt: number | null,
+  temperatureSettings: {
+    highThreshold: number,
+    isEnabled: boolean,
+    lowThreshold: number,
+    margin: number
+  },
+  type: string,
+  upSince: number,
+  uptime: number,
+  wiredConnectionState: {
+    phyRate: number
+  }
+}
+
+// A semi-complete description of the UniFi Protect viewer JSON.
+export interface ProtectViewerConfigInterface {
+
+  canAdopt: boolean,
+  connectedSince: number,
+  connectionHost: string,
+  firmwareBuild: string,
+  firmwareVersion: string,
+  hardwareRevision: string,
+  host: string,
+  id: string,
+  isAdopted: boolean,
+  isAdoptedByOther: boolean,
+  isAdopting: boolean,
+  isAttemptingToConnect: boolean,
+  isConnected: boolean,
+  isProvisioned: boolean,
+  isRebooting: boolean,
+  isSshEnabled: boolean,
+  isUpdating: boolean,
+  lastSeen: number,
+  latestFirmwareVersion: string,
+  liveview: string | null,
+  mac: string,
+  modelKey: string,
+  name: string,
+  softwareVersion: string,
+  state: string,
+  streamLimit: number,
+  type: string,
+  upSince: number,
+  uptime: number,
+  wiredConnectionState: {
+    phyRate: number
+  }
+}
+
 // This type declaration make all properties optional recursively including nested objects. This should
 // only be used on JSON objects only. Otherwise...you're going to end up with class methods marked as
 // optional as well. Credit for this belongs to: https://github.com/joonhocho/tsdef. #Grateful
@@ -469,12 +717,19 @@ export type DeepPartial<T> = {
 // every property as readonly along the way.
 export type ProtectNvrBootstrap = Readonly<ProtectNvrBootstrapInterface>;
 export type ProtectNvrConfig = Readonly<ProtectNvrConfigInterface>;
+export type ProtectNvrSystemInfoConfig = Readonly<ProtectNvrSystemInfoInterface>;
 export type ProtectCameraConfig = Readonly<ProtectCameraConfigInterface>;
 export type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterface>;
 export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInterface>;
 export type ProtectCameraLcdMessageConfig = Readonly<ProtectCameraLcdMessageConfigInterface>;
 export type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
+export type ProtectLightConfig = Readonly<ProtectLightConfigInterface>;
+export type ProtectLightConfigPayload = DeepPartial<ProtectLightConfigInterface>;
 export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;
 export type ProtectNvrSystemEvent = Readonly<ProtectNvrSystemEventInterface>;
 export type ProtectNvrSystemEventController = Readonly<ProtectNvrSystemEventControllerInterface>;
 export type ProtectNvrUserConfig = Readonly<ProtectNvrUserConfigInterface>;
+export type ProtectSensorConfig = Readonly<ProtectSensorConfigInterface>;
+export type ProtectSensorConfigPayload = DeepPartial<ProtectSensorConfigInterface>;
+export type ProtectViewerConfig = Readonly<ProtectViewerConfigInterface>;
+export type ProtectViewerConfigPayload = DeepPartial<ProtectViewerConfigInterface>;

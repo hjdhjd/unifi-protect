@@ -14,8 +14,13 @@ import {
   ProtectCameraConfig,
   ProtectCameraConfigInterface,
   ProtectCameraConfigPayload,
+  ProtectLightConfig,
+  ProtectLightConfigPayload,
   ProtectNvrBootstrap,
-  ProtectNvrUserConfig
+  ProtectNvrUserConfig,
+  ProtectSensorConfig,
+  ProtectViewerConfig,
+  ProtectViewerConfigPayload
 } from "./protect-types";
 import fetch, { AbortError, FetchError, Headers, RequestInfo, RequestInit, Response } from "node-fetch-cjs";
 import https, { Agent } from "https";
@@ -23,6 +28,8 @@ import { AbortController } from "abort-controller";
 import WebSocket from "ws";
 import { protectLogging } from "./protect-logging";
 import util from "util";
+
+type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
 
 /*
  * The UniFi Protect API is largely undocumented and has been reverse engineered mostly through
@@ -39,22 +46,28 @@ import util from "util";
  * Those are the basics that gets us up and running.
  */
 export class ProtectApi {
+
   private apiErrorCount: number;
   private apiLastSuccess: number;
   public bootstrap!: ProtectNvrBootstrap | null;
-  public Cameras!: ProtectCameraConfig[] | undefined;
+  public cameras!: ProtectCameraConfig[] | undefined;
   private eventHeartbeatTimer!: NodeJS.Timeout;
   public eventListener!: WebSocket | null;
   public eventListenerConfigured!: boolean;
   private headers!: Headers;
   private httpsAgent!: Agent;
   public isAdminUser!: boolean;
+  private isLoginRefresh!: boolean;
+  public lights!: ProtectLightConfig[] | undefined;
   private log: protectLogging;
   private loggedIn!: boolean;
   private loginAge!: number;
+  private loginAttempt!: Promise<boolean> | null;
   private nvrAddress: string;
   private password: string;
+  public sensors!: ProtectSensorConfig[] | undefined;
   private username: string;
+  public viewers!: ProtectViewerConfig[] | undefined;
 
   // Initialize this instance with our login information.
   constructor(nvrAddress: string, username: string, password: string, log?: protectLogging) {
@@ -97,14 +110,19 @@ export class ProtectApi {
     const response = await this.fetch("https://" + this.nvrAddress, { method: "GET" }, false);
 
     if(response?.ok) {
+
       const csrfToken = response.headers.get("X-CSRF-Token");
 
       // We found a token.
       if(csrfToken) {
+
         this.headers.set("X-CSRF-Token", csrfToken);
 
         // UniFi OS has support for keepalive. Let's take advantage of that and reduce the workload on controllers.
-        this.httpsAgent = new https.Agent({ keepAlive: true, maxFreeSockets: 5, maxSockets: 10, rejectUnauthorized: false, timeout: 60 * 1000 });
+        // 2022.01: Unfortunately, there's a bug currently in node-fetch v3 that creates a memory leak when used with keepalives...so let's not for now.
+        // this.httpsAgent = new https.Agent({ keepAlive: true, maxFreeSockets: 5, maxSockets: 10, rejectUnauthorized: false, timeout: 60 * 1000 });
+        this.httpsAgent = new https.Agent({ maxFreeSockets: 5, maxSockets: 10, rejectUnauthorized: false, timeout: 60 * 1000 });
+
         return true;
       }
     }
@@ -113,40 +131,51 @@ export class ProtectApi {
     return false;
   }
 
-  // Log into UniFi Protect.
-  private async login(): Promise<boolean> {
+  // Login to the UniFi Protect API.
+  private async loginNvr(): Promise<boolean> {
+
     const now = Date.now();
 
     // Is it time to renew our credentials?
     if(now > (this.loginAge + (PROTECT_LOGIN_REFRESH_INTERVAL * 1000))) {
-      this.loggedIn = false;
-      this.headers = new Headers();
-      this.headers.set("Content-Type", "application/json");
+
+      if(this.loginAge) {
+        this.isLoginRefresh = true;
+      }
+
+      this.clearLoginCredentials();
     }
 
     // If we're already logged in, and it's not time to renew our credentials, we're done.
     if(this.loggedIn) {
+
+      this.isLoginRefresh = false;
       return true;
     }
 
     // Make sure we have a token, or get one if needed.
     if(!(await this.acquireToken())) {
+
+      this.clearLoginCredentials();
       return false;
     }
 
     // Log us in.
     const response = await this.fetch(this.authUrl(), {
+
       body: JSON.stringify({ password: this.password, username: this.username }),
       method: "POST"
     });
 
     if(!response?.ok) {
+
+      this.clearLoginCredentials();
       return false;
     }
 
     // We're logged in.
-    this.loggedIn = true;
     this.loginAge = now;
+    this.loggedIn = true;
 
     // Configure headers.
     const csrfToken = response.headers.get("X-CSRF-Token");
@@ -156,6 +185,7 @@ export class ProtectApi {
 
       this.headers.set("Cookie", cookie);
       this.headers.set("X-CSRF-Token", csrfToken);
+
       return true;
     }
 
@@ -163,6 +193,19 @@ export class ProtectApi {
     this.clearLoginCredentials();
 
     return false;
+  }
+
+  // Create a new UniFi Protect login attempt if one isn't already inflight.
+  private login(): Promise<boolean> {
+
+    // We want to ensure we aren't trying simultaneous login attempts and creating a potential DoS, so we wait
+    // for one attempt to complete before beginning another.
+    if(!this.loginAttempt) {
+      this.loginAttempt = this.loginNvr();
+      this.loginAttempt.finally(() => this.loginAttempt = null);
+    }
+
+    return this.loginAttempt;
   }
 
   // Get our UniFi Protect NVR configuration.
@@ -176,6 +219,7 @@ export class ProtectApi {
     const response = await this.fetch(this.bootstrapUrl(), { method: "GET" });
 
     if(!response?.ok) {
+
       this.log.error("%s: Unable to retrieve NVR configuration information from UniFi Protect. Will retry again later.",
         this.getNvrName());
 
@@ -188,14 +232,19 @@ export class ProtectApi {
     let data: ProtectNvrBootstrap | null = null;
 
     try {
+
       data = await response.json() as ProtectNvrBootstrap;
+
     } catch(error) {
+
       data = null;
       this.log.error("%s: Unable to parse response from UniFi Protect. Will retry again later.", this.getNvrName());
+
     }
 
     // No camera information returned.
     if(!data?.cameras) {
+
       this.log.error("%s: Unable to retrieve camera information from UniFi Protect. Will retry again later.", this.getNvrName());
 
       // Clear out our login credentials and reset for another try.
@@ -207,7 +256,7 @@ export class ProtectApi {
     const firstRun = this.bootstrap ? false : true;
     this.bootstrap = data;
 
-    if(firstRun) {
+    if(firstRun && !this.isLoginRefresh) {
       this.log.info("%s: Connected to the Protect controller API (address: %s mac: %s).", this.getNvrName(), data.nvr.host, data.nvr.mac);
     }
 
@@ -286,29 +335,22 @@ export class ProtectApi {
     return true;
   }
 
-  // Get the list of UniFi Protect devices associated with a NVR.
-  public async refreshDevices(): Promise<boolean> {
-
-    // Refresh the configuration from the NVR.
-    if(!(await this.bootstrapProtect())) {
-      return false;
-    }
-
-    this.log.debug(util.inspect(this.bootstrap, { colors: true, depth: null, sorted: true }));
-
-    const newDeviceList: ProtectCameraConfig[] | undefined = this.bootstrap?.cameras;
+  // Generic to refresh the device list of a specific Protect device class.
+  private refreshDeviceClass(currentDeviceList: ProtectKnownDeviceTypes[] | undefined, newDeviceList: ProtectKnownDeviceTypes[] | undefined):
+  ProtectKnownDeviceTypes[] | undefined {
 
     // Notify the user about any new devices that we've discovered.
     if(newDeviceList) {
 
       for(const newDevice of newDeviceList) {
+
         // We already know about this device.
-        if(this.Cameras?.some((x: ProtectCameraConfig) => x.mac === newDevice.mac)) {
+        if(currentDeviceList?.some((x: ProtectKnownDeviceTypes) => x.mac === newDevice.mac)) {
           continue;
         }
 
-        // We only want to discover managed devices.
-        if(!newDevice.isManaged) {
+        // We only want to discover adopted devices.
+        if(!newDevice.isAdopted) {
           continue;
         }
 
@@ -321,12 +363,12 @@ export class ProtectApi {
     }
 
     // Notify the user about any devices that have disappeared.
-    if(this.Cameras) {
+    if(currentDeviceList) {
 
-      for(const existingDevice of this.Cameras) {
+      for(const existingDevice of currentDeviceList) {
 
         // This device still is visible.
-        if(newDeviceList?.some((x: ProtectCameraConfig) => x.mac === existingDevice.mac)) {
+        if(newDeviceList?.some((x: ProtectKnownDeviceTypes) => x.mac === existingDevice.mac)) {
           continue;
         }
 
@@ -337,8 +379,30 @@ export class ProtectApi {
       }
     }
 
-    // Save the updated list of devices.
-    this.Cameras = newDeviceList;
+    // Return the updated list of devices.
+    return newDeviceList;
+  }
+
+  // Get the list of UniFi Protect devices associated with a NVR.
+  public async refreshDevices(): Promise<boolean> {
+
+    // Refresh the configuration from the NVR.
+    if(!(await this.bootstrapProtect())) {
+      return false;
+    }
+
+    this.log.debug(util.inspect(this.bootstrap, { colors: true, depth: null, sorted: true }));
+
+    // We currently know about the following device classes:
+    //   - cameras (including doorbells)
+    //   - lights
+    //   - sensors
+    //   - viewers
+    this.cameras = this.refreshDeviceClass(this.cameras, this.bootstrap?.cameras) as ProtectCameraConfig[];
+    this.lights = this.refreshDeviceClass(this.lights, this.bootstrap?.lights) as ProtectLightConfig[];
+    this.sensors = this.refreshDeviceClass(this.sensors, this.bootstrap?.sensors) as ProtectSensorConfig[];
+    this.viewers = this.refreshDeviceClass(this.viewers, this.bootstrap?.viewers) as ProtectViewerConfig[];
+
     return true;
   }
 
@@ -400,64 +464,6 @@ export class ProtectApi {
     return true;
   }
 
-  // Enable RTSP stream support on an attached Protect device.
-  public async enableRtsp(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
-    // Log us in if needed.
-    if(!(await this.login())) {
-      return null;
-    }
-
-    // Only admin users can activate RTSP streams.
-    if(!this.isAdminUser) {
-      return null;
-    }
-
-    // At the moment, we only know about camera devices.
-    if(device.modelKey !== "camera") {
-      return null;
-    }
-
-    // Do we have any non-RTSP enabled channels? If not, we're done.
-    if(!device.channels?.some(channel => !channel.isRtspEnabled)) {
-      return device;
-    }
-
-    // Enable RTSP on all available channels.
-    device.channels = device.channels.map((channel: ProtectCameraChannelConfigInterface) => {
-      channel.isRtspEnabled = true;
-      return channel;
-    });
-
-    // Update Protect with the new configuration.
-    const response = await this.fetch(this.camerasUrl() + "/" + device.id, {
-      body: JSON.stringify({ channels: device.channels }),
-      method: "PATCH"
-    }, true, false);
-
-    // Since we took responsibility for interpreting the outcome of the fetch, we need to check for
-    // errors for ourself.
-    if(!response || !response?.ok) {
-      this.apiErrorCount++;
-
-      if(response?.status === 403) {
-        this.log.error("%s: Insufficient privileges to enable RTSP on all channels. Please ensure this username has the Administrator role assigned in UniFi Protect.",
-          this.getFullName(device));
-      } else {
-        this.log.error("%s: Unable to enable RTSP on all channels: %s.", this.getFullName(device), response?.status);
-      }
-
-      // We still return our camera object if there is at least one RTSP channel enabled.
-      return device;
-    }
-
-    // Since we have taken responsibility for decoding response types, we need to reset our API backoff count.
-    this.apiErrorCount = 0;
-    this.apiLastSuccess = Date.now();
-
-    // Everything worked, save the new channel array.
-    return await response.json() as ProtectCameraConfig;
-  }
-
   // Update a camera object.
   public async updateCamera(device: ProtectCameraConfig, payload: ProtectCameraConfigPayload): Promise<ProtectCameraConfig | null> {
 
@@ -471,7 +477,7 @@ export class ProtectApi {
       return null;
     }
 
-    // Only admin users can show messages on doorbells.
+    // Only admin users can update JSON objects.
     if(!this.isAdminUser) {
       return null;
     }
@@ -493,6 +499,136 @@ export class ProtectApi {
     return await response.json() as ProtectCameraConfig;
   }
 
+  // Update camera channels on a supported Protect device.
+  public async updateCameraChannels(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
+
+    // Make sure we have the permissions to modify the camera JSON.
+    if(!(await this.canModifyCamera(device))) {
+      return null;
+    }
+
+    // Update Protect with the new configuration.
+    const response = await this.fetch(this.camerasUrl() + "/" + device.id, {
+      body: JSON.stringify({ channels: device.channels }),
+      method: "PATCH"
+    }, true, false);
+
+    // Since we took responsibility for interpreting the outcome of the fetch, we need to check for any errors.
+    if (!response || !response?.ok) {
+      this.apiErrorCount++;
+
+      if (response?.status === 403) {
+        this.log.error("%s: Insufficient privileges to enable RTSP on all channels. Please ensure this username has the Administrator role assigned in UniFi Protect.",
+          this.getFullName(device));
+      } else {
+        this.log.error("%s: Unable to enable RTSP on all channels: %s.", this.getFullName(device), response?.status);
+      }
+
+      // We still return our camera object if there is at least one RTSP channel enabled.
+      return device;
+    }
+
+    // Since we have taken responsibility for decoding response types, we need to reset our API backoff count.
+    this.apiErrorCount = 0;
+    this.apiLastSuccess = Date.now();
+
+    // Everything worked, save the new channel array.
+    return await response.json() as ProtectCameraConfig;
+  }
+
+  // Update a light object.
+  public async updateLight(device: ProtectLightConfig, payload: ProtectLightConfigPayload): Promise<ProtectLightConfig | null> {
+
+    // No device object, we're done.
+    if(!device) {
+      return null;
+    }
+
+    // Log us in if needed.
+    if(!(await this.login())) {
+      return null;
+    }
+
+    // Only admin users can update JSON objects.
+    if(!this.isAdminUser) {
+      return null;
+    }
+
+    this.log.error("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, depth: null, sorted: true }));
+
+    // Update Protect with the new configuration.
+    const response = await this.fetch(this.lightsUrl() + "/" + device.id, {
+      body: JSON.stringify(payload),
+      method: "PATCH"
+    });
+
+    if(!response?.ok) {
+      this.log.debug("%s: Unable to configure the light: %s.", this.getFullName(device), response?.status);
+      return null;
+    }
+
+    // We successfully set the message, return the updated device object.
+    return await response.json() as ProtectLightConfig;
+  }
+
+  // Update a viewer object.
+  public async updateViewer(device: ProtectViewerConfig, payload: ProtectViewerConfigPayload): Promise<ProtectViewerConfig | null> {
+
+    // No device object, we're done.
+    if(!device) {
+      return null;
+    }
+
+    // Log us in if needed.
+    if(!(await this.login())) {
+      return null;
+    }
+
+    // Only admin users can update JSON objects.
+    if(!this.isAdminUser) {
+      return null;
+    }
+
+    this.log.debug("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, depth: null, sorted: true }));
+
+    // Update Protect with the new configuration.
+    const response = await this.fetch(this.viewersUrl() + "/" + device.id, {
+      body: JSON.stringify(payload),
+      method: "PATCH"
+    });
+
+    if(!response?.ok) {
+      this.log.error("%s: Unable to configure the viewer: %s.", this.getFullName(device), response?.status);
+      return null;
+    }
+
+    // We successfully set the message, return the updated device object.
+    return await response.json() as ProtectViewerConfig;
+  }
+
+  // Enable RTSP stream support on an attached Protect device.
+  public async enableRtsp(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
+
+    // Make sure we have the permissions to modify the camera JSON.
+    if(!(await this.canModifyCamera(device))) {
+      return null;
+    }
+
+    // Do we have any non-RTSP enabled channels? If not, we're done.
+    if(!device.channels?.some(channel => !channel.isRtspEnabled)) {
+      return device;
+    }
+
+    // Enable RTSP on all available channels.
+    device.channels = device.channels.map((channel: ProtectCameraChannelConfigInterface) => {
+      channel.isRtspEnabled = true;
+      return channel;
+    });
+
+    // Update the camera channel JSON with our edits.
+    return this.updateCameraChannels(device);
+  }
+
   // Utility to generate a nicely formatted NVR string.
   public getNvrName(): string {
 
@@ -507,42 +643,68 @@ export class ProtectApi {
   }
 
   // Utility to generate a nicely formatted device string.
-  public getDeviceName(camera: ProtectCameraConfig, name = camera?.name, cameraInfo = false): string {
+  public getDeviceName(device: ProtectKnownDeviceTypes, name = device?.name, deviceInfo = false): string {
 
     // Validate our inputs.
-    if(!camera) {
+    if(!device) {
       return "";
     }
 
+    // Include the host address information, if we have it.
+    const host = (("host" in device) && device.host) ? "address: " + device.host + " " : "";
+
     // A completely enumerated device will appear as:
-    // Camera [Camera Type] (address: IP address, mac: MAC address).
-    return name + " [" + camera.type + "]" +
-      (cameraInfo ? " (address: " + camera.host + " mac: " + camera.mac + ")" : "");
+    // Device Name [Device Type] (address: IP address, mac: MAC address).
+    return name + " [" + device.type + "]" +
+
+      (deviceInfo ? " (" + host + "mac: " + device.mac + ")" : "");
   }
 
   // Utility to generate a nicely formatted NVR and device string.
-  public getFullName(camera: ProtectCameraConfig): string {
-    const cameraName = this.getDeviceName(camera);
+  public getFullName(device: ProtectKnownDeviceTypes): string {
 
-    // Returns: NVR [NVR Type] Camera [Camera Type]
-    return this.getNvrName() + (cameraName.length > 0 ? " " + cameraName : "");
+    const deviceName = this.getDeviceName(device);
+
+    // Returns: NVR [NVR Type] Device Name [Device Type]
+    return this.getNvrName() + (deviceName.length > 0 ? " " + deviceName : "");
   }
 
-  // Return the URL to directly access cameras, adjusting for Protect NVR variants.
+  // Return the URL to directly access cameras.
   public camerasUrl(): string {
 
     // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/cameras/CAMERAID.
     return "https://" + this.nvrAddress + "/proxy/protect/api/cameras";
   }
 
-  // Return the right authentication URL, depending on which Protect NVR platform we are using.
+  // Return the URL to directly access lights.
+  public lightsUrl(): string {
+
+    // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/lights/LIGHTID.
+    return "https://" + this.nvrAddress + "/proxy/protect/api/lights";
+  }
+
+  // Return the URL to directly access viewers.
+  public viewersUrl(): string {
+
+    // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/viewers/VIEWERID.
+    return "https://" + this.nvrAddress + "/proxy/protect/api/viewers";
+  }
+
+  // Return the URL to request access to a websocket.
+  public wsUrl(): string {
+
+    // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/ws/WEBSOCKET.
+    return "https://" + this.nvrAddress + "/proxy/protect/api/ws";
+  }
+
+  // Return the right Protect NVR authentication URL.
   private authUrl(): string {
 
     // Authenticating a UniFi OS device is done through: https://protect-nvr-ip/api/auth/login.
     return "https://" + this.nvrAddress + "/api/auth/login";
   }
 
-  // Return the right bootstrap URL, depending on which Protect NVR platform we are using.
+  // Return the right Protect NVR bootstrap URL.
   private bootstrapUrl(): string {
 
     // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/bootstrap.
@@ -577,9 +739,11 @@ export class ProtectApi {
 
   // Utility to clear out old login credentials or attempts.
   public clearLoginCredentials(): void {
+
     this.isAdminUser = false;
     this.loggedIn = false;
     this.loginAge = 0;
+    this.loginAttempt = null;
     this.bootstrap = null;
 
     // Shutdown any event listeners, if we have them.
@@ -598,8 +762,30 @@ export class ProtectApi {
     this.httpsAgent = new https.Agent({ rejectUnauthorized: false });
   }
 
+  // Utility to validate that we have the privileges we need to modify the camera JSON.
+  private async canModifyCamera(device: ProtectCameraConfigInterface): Promise<boolean> {
+
+    // Log us in if needed.
+    if (!(await this.login())) {
+      return false;
+    }
+
+    // Only admin users can activate RTSP streams.
+    if (!this.isAdminUser) {
+      return false;
+    }
+
+    // At the moment, we only know about camera devices.
+    if (device.modelKey !== "camera") {
+      return false;
+    }
+
+    return true;
+  }
+
   // Utility to let us streamline error handling and return checking from the Protect API.
   public async fetch(url: RequestInfo, options: RequestInit = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
+
     let response: Response;
 
     const controller = new AbortController();

@@ -59,11 +59,25 @@ This is where the magic happens. This function:
 
 Returns: `true` if successful, `false` otherwise.
 
-### protectApi.Cameras[]
-The `Cameras` property maintains the list of all known Protect devices. It is an array of `ProtectCameraConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectCameraConfig` object.
+### protectApi.cameras[]
+The `cameras` property maintains the list of all known Protect camera devices. It is an array of `ProtectCameraConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectCameraConfig` object.
 
 This property is refreshed each time `refreshDevices()` is called.
 
+### protectApi.lights[]
+The `lights` property maintains the list of all known Protect light devices. It is an array of `ProtectLightConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectLightConfig` object.
+
+This property is refreshed each time `refreshDevices()` is called.
+
+### protectApi.sensors[]
+The `sensors` property maintains the list of all known Protect sensor devices. It is an array of `ProtectSensorConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectSensorConfig` object.
+
+This property is refreshed each time `refreshDevices()` is called.
+
+### protectApi.viewers[]
+The `viewers` property maintains the list of all known Protect viewer devices. It is an array of `ProtectViewerConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectViewerConfig` object.
+
+This property is refreshed each time `refreshDevices()` is called.
 
 ### More to come...
 
@@ -154,7 +168,7 @@ The final part of the update packet is the data frame. The data frame can be thr
 ## Library Development Dashboard
 This is mostly of interest to the true developer nerds amongst us.
 
-[![License](https://img.shields.io/npm/l/@hjdhjd/unifi-protect?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-protect/blob/main/LICENSE.md)
+[![License](https://img.shields.io/npm/l/unifi-protect?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-protect/blob/main/LICENSE.md)
 [![Build Status](https://img.shields.io/github/workflow/status/hjdhjd/unifi-protect/Continuous%20Integration?color=%230559C9&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-protect/actions?query=workflow%3A%22Continuous+Integration%22)
-[![Dependencies](https://img.shields.io/librariesio/release/npm/@hjdhjd/unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/@hjdhjd/uniti-protect)
+[![Dependencies](https://img.shields.io/librariesio/release/npm/unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/uniti-protect)
 [![GitHub commits since latest release (by SemVer)](https://img.shields.io/github/commits-since/hjdhjd/unifi-protect/latest?color=%230559C9&logo=github&sort=semver&style=for-the-badge)](https://github.com/hjdhjd/unifi-protect/commits/main)
