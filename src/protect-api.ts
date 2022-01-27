@@ -17,6 +17,7 @@ import {
   ProtectLightConfigPayload,
   ProtectNvrBootstrap,
   ProtectNvrUserConfig,
+  ProtectDoorLockConfig,
   ProtectSensorConfig,
   ProtectViewerConfig,
   ProtectViewerConfigPayload
@@ -28,8 +29,7 @@ import { ProtectLogging } from "./protect-logging";
 import WebSocket from "ws";
 import util from "util";
 
-// Define our known Protect types.
-type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
+type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig | ProtectDoorLockConfig;
 
 /*
  * The UniFi Protect API is largely undocumented and has been reverse engineered mostly through
@@ -54,6 +54,7 @@ export class ProtectApi {
   private _log: ProtectLogging;
   private _sensors: ProtectSensorConfig[] | null;
   private _viewers: ProtectViewerConfig[] | null;
+  public _doorlocks!: ProtectDoorLockConfig[] | null;
 
   private apiErrorCount: number;
   private apiLastSuccess: number;
@@ -404,6 +405,7 @@ export class ProtectApi {
     this._lights = this.refreshDeviceClass(this.lights, this.bootstrap?.lights) as ProtectLightConfig[];
     this._sensors = this.refreshDeviceClass(this.sensors, this.bootstrap?.sensors) as ProtectSensorConfig[];
     this._viewers = this.refreshDeviceClass(this.viewers, this.bootstrap?.viewers) as ProtectViewerConfig[];
+    this._doorlocks = this.refreshDeviceClass(this.doorlocks, this.bootstrap?.doorlocks) as ProtectDoorLockConfig[];
 
     return true;
   }
@@ -674,6 +676,12 @@ export class ProtectApi {
     return this._viewers;
   }
 
+  // Return all the doorlocks on this controller.
+  public get doorlocks(): ProtectDoorLockConfig[] | null {
+
+    return this._doorlocks;
+  }
+
   // Utility to generate a nicely formatted NVR string.
   public getNvrName(): string {
 
@@ -726,6 +734,13 @@ export class ProtectApi {
 
     // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/lights/LIGHTID.
     return "https://" + this.nvrAddress + "/proxy/protect/api/lights";
+  }
+
+  // Return the URL to directly access lights.
+  public doorlocksUrl(): string {
+
+    // Boostrapping a UniFi OS device is done through: https://protect-nvr-ip/proxy/protect/api/doorlocks/DOORLOCKID.
+    return "https://" + this.nvrAddress + "/proxy/protect/api/doorlocks";
   }
 
   // Return the URL to directly access viewers.

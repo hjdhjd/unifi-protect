@@ -17,7 +17,8 @@ export interface ProtectNvrBootstrapInterface {
   nvr: ProtectNvrConfig,
   sensors: ProtectSensorConfig[],
   users: ProtectNvrUserConfig[],
-  viewers: ProtectViewerConfig[]
+  viewers: ProtectViewerConfig[],
+  doorlocks: ProtectDoorLockConfig[],
 }
 
 // A semi-complete description of the UniFi Protect NVR configuration JSON.
@@ -467,6 +468,59 @@ export interface ProtectLightConfigInterface {
   }
 }
 
+export interface ProtectDoorLockConfigInterface {
+  mac: string;
+  host: null;
+  connectionHost: string;
+  type: string;
+  name: string;
+  upSince: number;
+  uptime: null;
+  lastSeen: number;
+  connectedSince: number;
+  state: string;
+  hardwareRevision: number;
+  firmwareVersion: string;
+  latestFirmwareVersion: string;
+  firmwareBuild: null;
+  isUpdating: boolean;
+  isAdopting: boolean;
+  isAdopted: boolean;
+  isAdoptedByOther: boolean;
+  isProvisioned: boolean;
+  isRebooting: boolean;
+  isSshEnabled: boolean;
+  canAdopt: boolean;
+  isAttemptingToConnect: boolean;
+  credentials: string;
+  lockStatus: string;
+  enableHomekit: boolean;
+  autoCloseTimeMs: number;
+  wiredConnectionState: {
+    phyRate: null;
+  };
+  ledSettings: {
+    isEnabled: boolean;
+
+  };
+  bluetoothConnectionState: {
+    signalQuality: number;
+    signalStrength: number;
+  };
+  batteryStatus: {
+    percentage: number;
+    isLow: boolean;
+  };
+  bridge: string;
+  camera: string;
+  bridgeCandidates: any[];
+  id: string;
+  isConnected: boolean;
+  hasHomekit: boolean;
+  marketName: string;
+  modelKey: string;
+}
+
 // A semi-complete description of the UniFi Protect NVR liveview JSON.
 export interface ProtectNvrLiveviewConfigInterface {
 
@@ -477,7 +531,7 @@ export interface ProtectNvrLiveviewConfigInterface {
   modelKey: string,
   name: string,
   owner: string,
-  slots: { cameras: string[], cycleInterval: number, cycleMode: string } []
+  slots: { cameras: string[], cycleInterval: number, cycleMode: string }[]
 }
 
 // A semi-complete description of the UniFi Protect NVR user JSON.
@@ -500,7 +554,8 @@ export interface ProtectNvrUserConfigInterface {
   location: {
     isAway: boolean,
     latitude: string,
-    longitude: string },
+    longitude: string
+  },
   modelKey: string,
   name: string,
   permissions: string[],
@@ -733,3 +788,4 @@ export type ProtectSensorConfig = Readonly<ProtectSensorConfigInterface>;
 export type ProtectSensorConfigPayload = DeepPartial<ProtectSensorConfigInterface>;
 export type ProtectViewerConfig = Readonly<ProtectViewerConfigInterface>;
 export type ProtectViewerConfigPayload = DeepPartial<ProtectViewerConfigInterface>;
+export type ProtectDoorLockConfig = Readonly<ProtectDoorLockConfigInterface>;
