@@ -391,7 +391,7 @@ export interface ProtectCameraChannelConfigInterface {
   fps: number,
   fpsValues: number[],
   height: number,
-  id: string,
+  id: number,
   idrInterval: number,
   isRtspEnabled: boolean,
   maxBitrate: number,
