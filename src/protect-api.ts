@@ -31,6 +31,8 @@ import util from "util";
 
 type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectLightConfig | ProtectSensorConfig | ProtectViewerConfig;
 
+const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+
 /*
  * The UniFi Protect API is largely undocumented and has been reverse engineered mostly through
  * the web interface, and trial and error.
@@ -55,7 +57,6 @@ export class ProtectApi {
   public eventListener!: WebSocket | null;
   public eventListenerConfigured!: boolean;
   private headers!: Headers;
-  private httpsAgent!: Agent;
   public isAdminUser!: boolean;
   private isLoginRefresh!: boolean;
   public lights!: ProtectLightConfig[] | undefined;
@@ -117,11 +118,6 @@ export class ProtectApi {
       if(csrfToken) {
 
         this.headers.set("X-CSRF-Token", csrfToken);
-
-        // UniFi OS has support for keepalive. Let's take advantage of that and reduce the workload on controllers.
-        // 2022.01: Unfortunately, there's a bug currently in node-fetch v3 that creates a memory leak when used with keepalives...so let's not for now.
-        // this.httpsAgent = new https.Agent({ keepAlive: true, maxFreeSockets: 5, maxSockets: 10, rejectUnauthorized: false, timeout: 60 * 1000 });
-        this.httpsAgent = new https.Agent({ maxFreeSockets: 5, maxSockets: 10, rejectUnauthorized: false, timeout: 60 * 1000 });
 
         return true;
       }
@@ -756,12 +752,6 @@ export class ProtectApi {
     // Initialize the headers we need.
     this.headers = new Headers();
     this.headers.set("Content-Type", "application/json");
-
-    // We want the initial agent to be connection-agnostic, except for certificate validate since Protect uses self-signed certificates.
-    // and we want to disable TLS validation, at a minimum. We want to take advantage of the fact that it supports keepalives to reduce
-    // workloads, but we deal with that elsewhere in acquireToken.
-    this.httpsAgent?.destroy();
-    this.httpsAgent = new https.Agent({ rejectUnauthorized: false });
   }
 
   // Utility to validate that we have the privileges we need to modify the camera JSON.
@@ -797,7 +787,7 @@ export class ProtectApi {
       controller.abort();
     }, 1000 * PROTECT_API_TIMEOUT);
 
-    options.agent = this.httpsAgent;
+    options.agent = httpsAgent;
     options.headers = this.headers;
     options.signal = controller.signal;
 
