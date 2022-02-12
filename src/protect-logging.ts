@@ -4,7 +4,7 @@
  */
 
 // Logging support, borrowed from Homebridge.
-export interface protectLogging {
+export interface ProtectLogging {
 
     debug(message: string, ...parameters: unknown[]): void;
     error(message: string, ...parameters: unknown[]): void;
