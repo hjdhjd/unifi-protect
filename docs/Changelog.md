@@ -2,7 +2,18 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
-## 2.1.1 (2020-01-10)
+## 3.0.1 (2022-02-12)
+  * Housekeeping update.
+
+## 3.0.0 (2022-02-12)
+  * New feature: Websockets API endpoint support.
+  * New feature: Websockets livestreaming API support.
+  * Breaking change: Make `protectLogging` camel case to `ProtectLogging` for consistency.
+  * Breaking change: Rename `eventsListener` to `eventsWs` for consistency.
+  * Improvements: Don't arbitrarily close the connection to the realtime updates API - only reconnect if we lose the connection somehow.
+  * Improvements: Further encapsulate the library to avoid spurious access of properties that shouldn't be modified by consumers of the library.
+
+## 2.1.1 (2022-01-10)
   * Housekeeping.
 
 ## 2.1.0 (2022-01-09)

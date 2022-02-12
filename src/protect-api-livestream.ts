@@ -10,8 +10,8 @@ import WebSocket from "ws";
 /*
  * The UniFi Protect livestream API is largely undocumented and has been reverse engineered mostly through
  * trial and error, as well as observing the Protect controller in action. It builds on the works of others in the
- * community - particularly Xcid - who have experimented and successfully gotten parts of this API decoded. As always,
- * this work stands on the contributions of others and the work that's come before it, and I want to acknowledge those
+ * community - particularly https://github.com/XciD - who have experimented and successfully gotten parts of this API decoded.
+ * As always, this work stands on the contributions of others and the work that's come before it, and I want to acknowledge those
  * that paved the way.
  *
  * Let's start by defining some terms. In the MP4 world, an MP4 file (or stream) is composed of multiple atoms or segments.
