@@ -25,9 +25,10 @@ import WebSocket from "ws";
  * MOOF - Movie fragment box. This defines the metadata for a specific segment of audio and video.
  *        It is always paired with an MDAT box, which contains the actual data.
  * MOOV - Movie metadata box. This contains all the metadata information about the stream that follows.
- *        It must be at the beginning of any stream, and preceded by the FTYP box.
+ *        It must be at the beginning of any stream, and preceded by the FTYP box. The Protect livestream API actually combines the
+ *        FTYP and MOOV boxes, conveniently giving us a complete initialization segment.
  *
- * Every fMP4 stream begins with the FTYP and MOOV boxes for the entire stream. It defines the file type,
+ * Every fMP4 stream begins with an initialization segment comprised of the FTYP and MOOV boxes. It defines the file type,
  * what the movie metadata is, and other characteristics. Think of it as the header for the entire stream.
  *
  * After the header, every fMP4 stream has a series of segments (sometimes called fragments, hence the term fMP4),
@@ -45,9 +46,9 @@ import WebSocket from "ws";
 enum ProtectLiveFrame {
 
   KEYFRAME = 247,
-  FTYP = 248,
+  CODECINFORMATION = 248,
   BEGINSEGMENT = 249,
-  MOOV = 250,
+  INITSEGMENT = 250,
   MOOF = 251,
   VIDEO = 252,
   AUDIO = 253,
@@ -58,8 +59,7 @@ enum ProtectLiveFrame {
 // UniFi Protect livestream API implementation.
 export class ProtectLivestream extends EventEmitter {
 
-  private _ftyp: Buffer | null;
-  private _moov: Buffer | null;
+  private _initSegment: Buffer | null;
   private api: ProtectApi;
   private errorHandler: ((error: Error) => void) | null;
   private log: ProtectLogging;
@@ -73,8 +73,7 @@ export class ProtectLivestream extends EventEmitter {
     // Initialize the event emitter.
     super();
 
-    this._ftyp = null;
-    this._moov = null;
+    this._initSegment = null;
     this.api = api;
     this.errorHandler = null;
     this.log = log;
@@ -89,9 +88,8 @@ export class ProtectLivestream extends EventEmitter {
     // Stop any existing stream.
     this.stop();
 
-    // Clear out the movie metadata atom.
-    this._ftyp = null;
-    this._moov = null;
+    // Clear out the initialization segment.
+    this._initSegment = null;
 
     // Launch the livestream.
     return await this.launchLivestream(cameraId, channel, segmentLength, requestId);
@@ -108,11 +106,13 @@ export class ProtectLivestream extends EventEmitter {
 
     // Clean up our segment processing handler.
     if(this.errorHandler) {
+
       this.ws?.removeListener("error", this.errorHandler);
       this.errorHandler = null;
     }
 
     if(this.segmentHandler) {
+
       this.ws?.removeListener("message", this.segmentHandler);
       this.segmentHandler = null;
     }
@@ -127,6 +127,7 @@ export class ProtectLivestream extends EventEmitter {
     // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for
     // segment length. Protect happens to default to a 100ms segment length as well, so we do too.
     if(segmentLength < 100) {
+
       segmentLength = 100;
     }
 
@@ -143,6 +144,7 @@ export class ProtectLivestream extends EventEmitter {
     // requestId:                Name for this particular request. It's optional in practice, and can be any string.
     // type:                     Container format type. The valid values are fmp4 and UBV (UniFi Video proprietary format).
     const params = new URLSearchParams({
+
       allowPartialGOP: "",
       camera: cameraId,
       channel: channel.toString(),
@@ -183,7 +185,7 @@ export class ProtectLivestream extends EventEmitter {
       }
 
       // Catch any errors and inform the user, if needed.
-      this.ws?.once("error", this.errorHandler = (error): void => {
+      this.ws?.once("error", this.errorHandler = (error: Error): void => {
 
         // Ignore timeout errors, but notify the user about anything else.
         if((error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
@@ -192,6 +194,29 @@ export class ProtectLivestream extends EventEmitter {
         }
 
         this.stop();
+      });
+
+      this.ws?.once("close", (code: number) => {
+
+        switch(code) {
+
+          // Websocket has been closed normally. We fire off a close event to inform our listeners and we're done.
+          case 1005:
+
+            this.stop();
+            this.emit("close");
+            break;
+
+          // The websocket has been forcibly closed by us. Ignore it.
+          case 1006:
+
+            break;
+
+          default:
+
+            this.log.error("%s: Unknown livestream API websocket error with camera %s. Error code: %s.", this.name(), cameraId, code);
+        }
+
       });
 
       // Process packets coming to our websocket.
@@ -211,6 +236,7 @@ export class ProtectLivestream extends EventEmitter {
 
     // Check to ensure our websocket is live.
     if(!this.ws) {
+
       return;
     }
 
@@ -253,7 +279,7 @@ export class ProtectLivestream extends EventEmitter {
         const header = packet.slice(offset, offsetWithHeader);
 
         // Ensure we have a valid header before we do anything.
-        if(!(header[0] in ProtectLiveFrame)) {
+        if(!Object.values(ProtectLiveFrame).includes(header[0] as ProtectLiveFrame)) {
 
           this.log.error("%s: Invalid header found while decoding the livestream: %s", this.name(), header[0]);
           break;
@@ -295,20 +321,11 @@ export class ProtectLivestream extends EventEmitter {
 
             break;
 
-          // FTYP data. Build the FTYP box and emit our events.
-          case ProtectLiveFrame.FTYP:
+          // Codec information.
+          case ProtectLiveFrame.CODECINFORMATION:
 
-            // Write the ftyp header. The first four bytes represent the length of this atom, the next four designate the atom type.
-            this._ftyp = Buffer.alloc(8);
-            this._ftyp.writeUInt32BE(data.length + 8);
-            this._ftyp.write("ftyp", 4);
-
-            // Create the complete atom.
-            this._ftyp = Buffer.concat([ this._ftyp, data ]);
-
-            this.emit("ftyp", this.ftyp);
-            this.emit("message", this.ftyp);
-
+            // Inform the user about what codec is used in the livestream.
+            this.log.debug("Livestream codec information: %s", data);
             break;
 
           // Beginning of segment. Create an empty segment to get started.
@@ -322,6 +339,14 @@ export class ProtectLivestream extends EventEmitter {
               moof: Buffer.alloc(0),
               video: Buffer.alloc(0)
             };
+            break;
+
+          // Initialization segment. This is always an FTYP and MOOV box pair. Save it and emit our events.
+          case ProtectLiveFrame.INITSEGMENT:
+
+            this._initSegment = data;
+            this.emit("initsegment", this.initSegment);
+            this.emit("message", this.initSegment);
             break;
 
           // We've got a keyframe. Add it to our current segment.
@@ -342,14 +367,6 @@ export class ProtectLivestream extends EventEmitter {
             currentSegment.moof = Buffer.concat([ currentSegment.moof, data ]);
             break;
 
-          // MOOV box. Add it to the MOOV portion of our segment and emit our events.
-          case ProtectLiveFrame.MOOV:
-
-            this._moov = data;
-            this.emit("moov", this.moov);
-            this.emit("message", this.moov);
-            break;
-
           // We've got video data. Add it to our current segment.
           case ProtectLiveFrame.VIDEO:
 
@@ -368,15 +385,26 @@ export class ProtectLivestream extends EventEmitter {
     });
   }
 
-  // Retrieve the FTYP box, if we've seen it.
-  public get ftyp(): Buffer | null {
+  // Asynchronously wait for the initialization segment.
+  public async getInitSegment(): Promise<Buffer> {
 
-    return this._ftyp;
+    for(;;) {
+
+      // Return our segment once we've seen it.
+      if(this.initSegment) {
+
+        return this.initSegment;
+      }
+
+      // Sleep for a short period of time and try again.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
   }
 
-  // Retrieve the MOOV box, if we've seen it.
-  public get moov(): Buffer | null {
+  // Retrieve the initialization segment, if we've seen it.
+  public get initSegment(): Buffer | null {
 
-    return this._moov;
+    return this._initSegment;
   }
 }
