@@ -209,6 +209,7 @@ export class ProtectApi {
     // We want to ensure we aren't trying simultaneous login attempts and creating a potential DoS, so we wait
     // for one attempt to complete before beginning another.
     if(!this.loginAttempt) {
+
       this.loginAttempt = this.loginNvr();
       this.loginAttempt.finally(() => this.loginAttempt = null);
     }
@@ -283,11 +284,13 @@ export class ProtectApi {
 
     // Log us in if needed.
     if(!(await this.login())) {
+
       return false;
     }
 
     // If we already have a listener, we're already all set.
     if(this.eventsWs) {
+
       return true;
     }
 
@@ -316,14 +319,21 @@ export class ProtectApi {
       }
 
       // Handle any websocket errors.
-      ws.once("error", (error) => {
+      ws.once("error", (error: Error): void => {
 
         // If we're closing before fully established it's because we're shutting down the API - ignore it.
         if(error.message !== "WebSocket was closed before the connection was established") {
+
           this.log.error("%s: %s", this.getNvrName(), error);
         }
 
         ws.terminate();
+        this._eventsWs = null;
+      });
+
+      // Cleanup after ourselves if our websocket closes for some resaon.
+      ws.once("close", (): void => {
+
         this._eventsWs = null;
       });
 
@@ -943,6 +953,7 @@ export class ProtectApi {
       if(error instanceof FetchError) {
 
         switch(error.code) {
+
           case "ECONNREFUSED":
 
             this.log.error("%s: Controller API connection refused.", this.getNvrName());
