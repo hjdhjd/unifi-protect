@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 3.0.4 (2022-02-20)
+  * Housekeeping.
+
 ## 3.0.3 (2022-02-19)
   * Adjustments to the livestream API, and improved error handling.
   * Improve error handling in the events API.
