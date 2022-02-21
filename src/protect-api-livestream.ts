@@ -2,7 +2,7 @@
  *
  * protect-api-livestream.ts: Our UniFi Protect livestream API implementation.
  */
-import { EventEmitter } from "events";
+import events, { EventEmitter } from "events";
 import { ProtectApi } from "./protect-api";
 import { ProtectLogging } from "./protect-logging";
 import WebSocket from "ws";
@@ -388,18 +388,15 @@ export class ProtectLivestream extends EventEmitter {
   // Asynchronously wait for the initialization segment.
   public async getInitSegment(): Promise<Buffer> {
 
-    for(;;) {
+    // Return our segment once we've seen it.
+    if(this.initSegment) {
 
-      // Return our segment once we've seen it.
-      if(this.initSegment) {
-
-        return this.initSegment;
-      }
-
-      // Sleep for a short period of time and try again.
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise(resolve => setTimeout(resolve, 50));
+      return this.initSegment;
     }
+
+    // Wait until the initialization segment is seen and then try again.
+    await events.once(this, "initsegment");
+    return this.getInitSegment();
   }
 
   // Retrieve the initialization segment, if we've seen it.
