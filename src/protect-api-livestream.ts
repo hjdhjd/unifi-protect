@@ -1,10 +1,10 @@
-/* Copyright(C) 2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2022-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-api-livestream.ts: Our UniFi Protect livestream API implementation.
  */
-import events, { EventEmitter } from "events";
-import { ProtectApi } from "./protect-api";
-import { ProtectLogging } from "./protect-logging";
+import events, { EventEmitter } from "node:events";
+import { ProtectApi } from "./protect-api.js";
+import { ProtectLogging } from "./protect-logging.js";
 import WebSocket from "ws";
 
 /*
@@ -63,7 +63,6 @@ export class ProtectLivestream extends EventEmitter {
   private api: ProtectApi;
   private errorHandler: ((error: Error) => void) | null;
   private log: ProtectLogging;
-  private name: () => string;
   private segmentHandler: ((packet: Buffer) => void) | null;
   private ws: WebSocket | null;
 
@@ -77,7 +76,6 @@ export class ProtectLivestream extends EventEmitter {
     this.api = api;
     this.errorHandler = null;
     this.log = log;
-    this.name = api.getNvrName.bind(api);
     this.segmentHandler = null;
     this.ws = null;
   }
@@ -140,7 +138,7 @@ export class ProtectLivestream extends EventEmitter {
     // extendedVideoMetadata:    Provide extended metadata in the MOOV box when possible.
     // fragmentDurationMillis:   Length of each fMP4 segment or fragment, in milliseconds.
     // progressive:              Enable progressive livestreaming.
-    // rebaseTimestampsToZero:   Rebase the timestamps of each segment to zero. Otherwise, timestamps will reflect the controller's default.
+    // rebaseTimestampsToZero:   Rebase the timestamps of each livestream session to zero. Otherwise, timestamps will reflect the controller's default.
     // requestId:                Name for this particular request. It's optional in practice, and can be any string.
     // type:                     Container format type. The valid values are fmp4 and UBV (UniFi Video proprietary format).
     const params = new URLSearchParams({
@@ -148,26 +146,21 @@ export class ProtectLivestream extends EventEmitter {
       allowPartialGOP: "",
       camera: cameraId,
       channel: channel.toString(),
-      extendedVideoMetadata: "",
+      extendedVideoMetadata: "", // Try excluding?
       fragmentDurationMillis: segmentLength.toString(),
       progressive: "",
-      rebaseTimestampsToZero: "false",
+      rebaseTimestampsToZero: "false", // Try setting to true?
       requestId: requestId,
       type: "fmp4"
     });
 
-    // Generate our websocket endpoint URL.
-    const url = this.api.wsUrl() + "/livestream?" + params.toString();
-
-    this.log.debug("%s: Opening livestream websocket URL: %s", this.name(), url);
-
-    // Get the websocket.
-    const wsUrl = await this.api.getWsEndpoint(url);
+    // Get the websocket endpoint URL from Protect.
+    const wsUrl = await this.api.getWsEndpoint("livestream", params);
 
     // We ran into a problem getting the websocket URL. We're done.
     if(!wsUrl) {
 
-      this.log.error("%s: Unable to retrieve the livestream websocket API endpoint from the UniFi Protect controller.", this.name());
+      this.log.error("Unable to retrieve the livestream websocket API endpoint from the UniFi Protect controller.");
       return false;
     }
 
@@ -179,7 +172,7 @@ export class ProtectLivestream extends EventEmitter {
       if(!this.ws) {
 
         this.ws = null;
-        this.log.error("%s: Unable to connect to the livestream websocket API endpoint.", this.name());
+        this.log.error("Unable to connect to the livestream websocket API endpoint.");
 
         return false;
       }
@@ -190,7 +183,7 @@ export class ProtectLivestream extends EventEmitter {
         // Ignore timeout errors, but notify the user about anything else.
         if((error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
 
-          this.log.error("%s: Error while communicating with the livestream websocket API: %s", this.name(), error);
+          this.log.error("Error while communicating with the livestream websocket API: %s", error);
         }
 
         this.stop();
@@ -214,7 +207,7 @@ export class ProtectLivestream extends EventEmitter {
 
           default:
 
-            this.log.error("%s: Unknown livestream API websocket error with camera %s. Error code: %s.", this.name(), cameraId, code);
+            this.log.error("Unknown livestream API websocket error with camera %s. Error code: %s.", cameraId, code);
         }
 
       });
@@ -224,7 +217,7 @@ export class ProtectLivestream extends EventEmitter {
 
     } catch(error) {
 
-      this.log.error("%s: Error while connecting to the livestream websocket API: %s", this.name(), error);
+      this.log.error("Error while connecting to the livestream websocket API: %s", error);
       this.stop();
     }
 
@@ -281,7 +274,7 @@ export class ProtectLivestream extends EventEmitter {
         // Ensure we have a valid header before we do anything.
         if(!Object.values(ProtectLiveFrame).includes(header[0] as ProtectLiveFrame)) {
 
-          this.log.error("%s: Invalid header found while decoding the livestream: %s", this.name(), header[0]);
+          this.log.error("Invalid header found while decoding the livestream: %s", header[0]);
           break;
         }
 

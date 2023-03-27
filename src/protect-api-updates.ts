@@ -1,10 +1,10 @@
-/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * protect-api-updates.ts: Our UniFi Protect realtime updates event API implementation.
+ * protect-api-events.ts: Our UniFi Protect realtime event API implementation.
  */
-import { ProtectCameraLcdMessagePayload } from "./protect-types";
-import { ProtectLogging } from "./protect-logging";
-import zlib from "zlib";
+import { ProtectCameraLcdMessagePayload } from "./protect-types.js";
+import { ProtectLogging } from "./protect-logging.js";
+import zlib from "node:zlib";
 
 /*
  * The UniFi Protect realtime updates API is largely undocumented and has been reverse engineered mostly through
@@ -71,17 +71,19 @@ import zlib from "zlib";
  *   of modelKey. So for a modelKey of camera, the data payload is always a subset of ProtectCameraConfigInterface (see protect-types.ts).
  */
 
-// Update realtime API packet header size, in bytes.
-const UPDATE_PACKET_HEADER_SIZE = 8;
+// UniFi Protect events API packet header size, in bytes.
+const EVENT_PACKET_HEADER_SIZE = 8;
 
 // Update realtime API packet types.
-enum UpdatePacketType {
-  ACTION = 1,
+enum ProtectEventPacketType {
+
+  HEADER = 1,
   PAYLOAD = 2
 }
 
 // Update realtime API payload types.
-enum UpdatePayloadType {
+enum EventPayloadType {
+
   JSON = 1,
   STRING = 2,
   BUFFER = 3
@@ -90,13 +92,14 @@ enum UpdatePayloadType {
 /* A packet header is composed of 8 bytes in this order:
  *
  * Byte Offset  Description      Bits  Values
- * 0            Packet Type      8     1 - action frame, 2 - payload frame.
+ * 0            Packet Type      8     1 - header frame, 2 - payload frame.
  * 1            Payload Format   8     1 - JSON object, 2 - UTF8-encoded string, 3 - Node Buffer.
  * 2            Deflated         8     0 - uncompressed, 1 - compressed / deflated (zlib-based compression).
  * 3            Unknown          8     Always 0. Possibly reserved for future use by Ubiquiti?
  * 4-7          Payload Size:    32    Size of payload in network-byte order (big endian).
  */
-enum UpdatePacketHeader {
+enum ProtectEventPacketHeader {
+
   TYPE = 0,
   PAYLOAD_FORMAT = 1,
   DEFLATED = 2,
@@ -104,14 +107,16 @@ enum UpdatePacketHeader {
   PAYLOAD_SIZE = 4
 }
 
-// A complete description of the UniFi Protect realtime update events API packet format.
-type ProtectNvrUpdatePacket = {
-  action: ProtectNvrUpdateEventAction,
-  payload: Record<string, unknown> | string | Buffer
+// A complete description of the UniFi Protect realtime events API packet format.
+export type ProtectEventPacket = {
+
+  header: ProtectEventHeader,
+  payload: unknown
 }
 
-// A complete description of the UniFi Protect realtime update events API action packet JSON.
-type ProtectNvrUpdateEventAction = {
+// A complete description of the UniFi Protect realtime events API action packet JSON.
+export type ProtectEventHeader = {
+
   action: string,
   id: string,
   modelKey: string,
@@ -121,6 +126,7 @@ type ProtectNvrUpdateEventAction = {
 // A complete description of the UniFi Protect realtime update events API payload packet JSONs.
 // Payload JSON for modelKey: event action: add
 export type ProtectNvrUpdatePayloadEventAdd = {
+
   camera: string,
   id: string,
   modelKey: string,
@@ -140,10 +146,10 @@ export type ProtectNvrUpdatePayloadCameraUpdate = {
   lcdMessage: ProtectCameraLcdMessagePayload
 }
 
-export class ProtectApiUpdates {
+export class ProtectApiEvents {
 
   // Process an update data packet and return the action and payload.
-  public static decodeUpdatePacket(log: ProtectLogging, packet: Buffer): ProtectNvrUpdatePacket | null {
+  public static decodePacket(log: ProtectLogging, packet: Buffer): ProtectEventPacket | null {
 
     // What we need to do here is to split this packet into the header and payload, and decode them.
 
@@ -153,10 +159,10 @@ export class ProtectApiUpdates {
 
       // The fourth byte holds our payload size. When you add the payload size to our header frame size, you get the location of the
       // data header frame.
-      dataOffset = packet.readUInt32BE(UpdatePacketHeader.PAYLOAD_SIZE) + UPDATE_PACKET_HEADER_SIZE;
+      dataOffset = packet.readUInt32BE(ProtectEventPacketHeader.PAYLOAD_SIZE) + EVENT_PACKET_HEADER_SIZE;
 
       // Validate our packet size, just in case we have more or less data than we expect. If we do, we're done for now.
-      if(packet.length !== (dataOffset + UPDATE_PACKET_HEADER_SIZE + packet.readUInt32BE(dataOffset + UpdatePacketHeader.PAYLOAD_SIZE))) {
+      if(packet.length !== (dataOffset + EVENT_PACKET_HEADER_SIZE + packet.readUInt32BE(dataOffset + ProtectEventPacketHeader.PAYLOAD_SIZE))) {
         throw new Error("Packet length doesn't match header information.");
       }
 
@@ -168,21 +174,22 @@ export class ProtectApiUpdates {
     }
 
     // Decode the action and payload frames now that we know where everything is.
-    const actionFrame = this.decodeUpdateFrame(log, packet.slice(0, dataOffset), UpdatePacketType.ACTION) as ProtectNvrUpdateEventAction;
-    const payloadFrame = this.decodeUpdateFrame(log, packet.slice(dataOffset), UpdatePacketType.PAYLOAD);
+    const headerFrame = this.decodeFrame(log, packet.slice(0, dataOffset), ProtectEventPacketType.HEADER) as ProtectEventHeader;
+    const payloadFrame = this.decodeFrame(log, packet.slice(dataOffset), ProtectEventPacketType.PAYLOAD);
 
-    if(!actionFrame || !payloadFrame) {
+    if(!headerFrame || !payloadFrame) {
+
       return null;
     }
 
-    return({ action: actionFrame, payload: payloadFrame });
+    return({ header: headerFrame, payload: payloadFrame });
   }
 
   // Decode a frame, composed of a header and payload, received through the update events API.
-  private static decodeUpdateFrame(log: ProtectLogging, packet: Buffer, packetType: number): ProtectNvrUpdateEventAction | Record<string, unknown> | string | Buffer | null {
+  private static decodeFrame(log: ProtectLogging, packet: Buffer, packetType: number): ProtectEventHeader | JSON | string | Buffer | null {
 
     // Read the packet frame type.
-    const frameType = packet.readUInt8(UpdatePacketHeader.TYPE);
+    const frameType = packet.readUInt8(ProtectEventPacketHeader.TYPE);
 
     // This isn't the frame type we were expecting - we're done.
     if(packetType !== frameType) {
@@ -190,33 +197,38 @@ export class ProtectApiUpdates {
     }
 
     // Read the payload format.
-    const payloadFormat = packet.readUInt8(UpdatePacketHeader.PAYLOAD_FORMAT);
+    const payloadFormat = packet.readUInt8(ProtectEventPacketHeader.PAYLOAD_FORMAT);
 
     // Check to see if we're compressed or not, and inflate if needed after skipping past the 8-byte header.
-    const payload = packet.readUInt8(UpdatePacketHeader.DEFLATED) ? zlib.inflateSync(packet.slice(UPDATE_PACKET_HEADER_SIZE)) : packet.slice(UPDATE_PACKET_HEADER_SIZE);
+    const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ? zlib.inflateSync(packet.slice(EVENT_PACKET_HEADER_SIZE)) : packet.slice(EVENT_PACKET_HEADER_SIZE);
 
-    // If it's an action, it can only have one format.
-    if(frameType === UpdatePacketType.ACTION) {
-      return (payloadFormat === UpdatePayloadType.JSON) ? JSON.parse(payload.toString()) as ProtectNvrUpdateEventAction : null;
+    // If it's a header, it can only have one format.
+    if(frameType === ProtectEventPacketType.HEADER) {
+
+      return (payloadFormat === EventPayloadType.JSON) ? JSON.parse(payload.toString()) as ProtectEventHeader : null;
     }
 
     // Process the payload format accordingly.
     switch(payloadFormat) {
 
-      case UpdatePayloadType.JSON:
+      case EventPayloadType.JSON:
+
         // If it's data payload, it can be anything.
-        return JSON.parse(payload.toString()) as Record<string, unknown>;
+        return JSON.parse(payload.toString()) as JSON;
         break;
 
-      case UpdatePayloadType.STRING:
+      case EventPayloadType.STRING:
+
         return payload.toString("utf8");
         break;
 
-      case UpdatePayloadType.BUFFER:
+      case EventPayloadType.BUFFER:
+
         return payload;
         break;
 
       default:
+
         log.error("Unknown payload packet type received in the realtime update events API: %s.", payloadFormat);
         return null;
         break;

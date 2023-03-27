@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
-  "type": "commonjs",
-  "version": "3.0.4",
+  "type": "module",
+  "version": "4.0.0",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {
@@ -48,7 +48,7 @@
     "rtsp"
   ],
   "engines": {
-    "node": ">=12"
+    "node": ">=14"
   },
   "main": "dist/index.js",
   "scripts": {
@@ -61,19 +61,18 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "devDependencies": {
-    "@types/node": "^17.0.18",
-    "@types/ws": "^8.2.3",
-    "@typescript-eslint/eslint-plugin": "^5.12.0",
-    "@typescript-eslint/parser": "^5.12.0",
-    "eslint": "^8.9.0",
-    "rimraf": "^3.0.2",
-    "typescript": "^4.5.5"
+    "@types/node": "^18.15.10",
+    "@types/ws": "^8.5.4",
+    "@typescript-eslint/eslint-plugin": "^5.56.0",
+    "@typescript-eslint/parser": "^5.56.0",
+    "eslint": "^8.36.0",
+    "rimraf": "^4.4.1",
+    "typescript": "^5.0.2"
   },
   "dependencies": {
     "abort-controller": "^3.0.0",
     "domexception": "^4.0.0",
-    "node-fetch-cjs": "=3.2.0",
-    "util": "^0.12.4",
-    "ws": "^8.5.0"
+    "node-fetch": "=3.3.1",
+    "ws": "^8.13.0"
   }
 }

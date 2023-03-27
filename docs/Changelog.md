@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.0.0 (2023-03-26)
+  * Rewrite and refactor of the API library for performance, efficiency, and future-proofing.
+
 ## 3.0.4 (2022-02-20)
   * Housekeeping.
 

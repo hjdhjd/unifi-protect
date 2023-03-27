@@ -1,11 +1,11 @@
-/* Copyright(C) 2019-2022, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * index.ts: UniFi Protect API registration.
  */
 
-export * from "./protect-api";
-export * from "./protect-api-livestream";
-export * from "./protect-api-updates";
-export * from "./protect-logging";
-export * from "./protect-types";
-export { FetchError } from "node-fetch-cjs";
+export * from "./protect-api.js";
+export type { ProtectLivestream } from "./protect-api-livestream.js";
+export { ProtectApiEvents, ProtectEventPacket } from "./protect-api-updates.js";
+export * from "./protect-logging.js";
+export * from "./protect-types.js";
+export { FetchError } from "node-fetch";
