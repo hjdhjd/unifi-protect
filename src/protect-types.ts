@@ -9,6 +9,7 @@ export interface ProtectNvrBootstrapInterface {
   authUserId: string,
   bridges: unknown[],
   cameras: ProtectCameraConfig[],
+  chimes: ProtectChimeConfig[],
   cloudPortalUrl: string,
   groups: unknown[],
   lastUpdateId: string,
@@ -444,6 +445,69 @@ export interface ProtectCameraLcdMessageConfigInterface {
   type: string
 }
 
+// A semi-complete description of the UniFi Protect chime JSON.
+export interface ProtectChimeConfigInterface {
+
+  apMac: string,
+  apMgmtIp: string,
+  apRssi: string,
+  cameraIds: string[],
+  canAdopt: boolean,
+  connectedSince: number,
+  connectionHost: string,
+  elementInfo: string,
+  featureFlags: {
+    hasWifi: boolean
+  },
+  firmwareBuild: string,
+  firmwareVersion: string,
+  fwUpdateState: string,
+  hardwareRevision: string,
+  host: string,
+  id: string,
+  isAdopted: boolean,
+  isAdoptedByOther: boolean,
+  isAdopting: boolean,
+  isAttemptingToConnect: boolean,
+  isConnected: boolean,
+  isDownloadingFW: boolean,
+  isProbingForWifi: boolean,
+  isProvisioned: boolean,
+  isRebooting: boolean,
+  isSshEnabled: boolean,
+  isUpdating: boolean,
+  isWirelessUplinkEnabled: boolean,
+  lastRing: number,
+  lastSeen: number,
+  latestFirmwareVersion: string,
+  mac: string,
+  marketName: string,
+  modelKey: string,
+  name: string,
+  state: string,
+  type: string,
+  upSince: number,
+  uptime: number,
+  volume: number,
+  wifiConnectionState: {
+    apName: string | null,
+    bssid: string | null,
+    channel: string | null,
+    connectivity: string,
+    experience: null,
+    frequency: null,
+    phyRate: number,
+    signalQuality: number,
+    signalStrength: number,
+    ssid: string | null,
+    txRate: null
+  },
+  wiredConnectionState: {
+
+    phyRate: number
+  }
+}
+
 // A semi-complete description of the UniFi Protect light JSON.
 export interface ProtectLightConfigInterface {
 
@@ -810,6 +874,8 @@ export type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterfac
 export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInterface>;
 export type ProtectCameraLcdMessageConfig = Readonly<ProtectCameraLcdMessageConfigInterface>;
 export type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
+export type ProtectChimeConfig = Readonly<ProtectChimeConfigInterface>;
+export type ProtectChimeConfigPayload = DeepPartial<ProtectChimeConfigInterface>;
 export type ProtectLightConfig = Readonly<ProtectLightConfigInterface>;
 export type ProtectLightConfigPayload = DeepPartial<ProtectLightConfigInterface>;
 export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;

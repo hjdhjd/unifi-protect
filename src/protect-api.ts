@@ -8,6 +8,8 @@ import {
   ProtectCameraConfig,
   ProtectCameraConfigInterface,
   ProtectCameraConfigPayload,
+  ProtectChimeConfig,
+  ProtectChimeConfigPayload,
   ProtectLightConfig,
   ProtectLightConfigPayload,
   ProtectNvrBootstrap,
@@ -31,10 +33,10 @@ import WebSocket from "ws";
 import util from "node:util";
 
 // Define our known Protect types.
-type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectLightConfig | ProtectNvrConfig |
+type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectNvrConfig |
   ProtectSensorConfig | ProtectViewerConfig;
 
-type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectLightConfigPayload | ProtectNvrConfigPayload |
+type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChimeConfigPayload | ProtectLightConfigPayload | ProtectNvrConfigPayload |
   ProtectSensorConfigPayload | ProtectViewerConfigPayload;
 
 /*
@@ -855,6 +857,11 @@ export class ProtectApi extends EventEmitter {
       case "camera":
 
         endpointSuffix = "cameras";
+        break;
+
+      case "chime":
+
+        endpointSuffix = "chimes";
         break;
 
       case "light":
