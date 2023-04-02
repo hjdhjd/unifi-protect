@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.1.0 (2023-04-02)
+  * New feature: chime API endpoints.
+  * Housekeeping.
+
 ## 4.0.0 (2023-03-26)
   * Rewrite and refactor of the API library for performance, efficiency, and future-proofing.
 
@@ -20,12 +24,12 @@ All notable changes to this project will be documented in this file. This projec
   * Housekeeping update.
 
 ## 3.0.0 (2022-02-12)
-  * New feature: Websockets API endpoint support.
-  * New feature: Websockets livestreaming API support.
-  * Breaking change: Make `protectLogging` camel case to `ProtectLogging` for consistency.
-  * Breaking change: Rename `eventsListener` to `eventsWs` for consistency.
-  * Improvements: Don't arbitrarily close the connection to the realtime updates API - only reconnect if we lose the connection somehow.
-  * Improvements: Further encapsulate the library to avoid spurious access of properties that shouldn't be modified by consumers of the library.
+  * New feature: websockets API endpoint support.
+  * New feature: websockets livestreaming API support.
+  * Breaking change: make `protectLogging` camel case to `ProtectLogging` for consistency.
+  * Breaking change: rename `eventsListener` to `eventsWs` for consistency.
+  * Improvements: don't arbitrarily close the connection to the realtime updates API - only reconnect if we lose the connection somehow.
+  * Improvements: further encapsulate the library to avoid spurious access of properties that shouldn't be modified by consumers of the library.
 
 ## 2.1.1 (2022-01-10)
   * Housekeeping.
