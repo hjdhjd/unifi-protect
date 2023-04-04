@@ -26,7 +26,7 @@ import fetch, { AbortError, FetchError, Headers, RequestInfo, RequestInit, Respo
 import https, { Agent } from "node:https";
 import { AbortController } from "abort-controller";
 import { EventEmitter } from "node:events";
-import { ProtectApiEvents } from "./protect-api-updates.js";
+import { ProtectApiEvents } from "./protect-api-events.js";
 import { ProtectLivestream } from "./protect-api-livestream.js";
 import { ProtectLogging } from "./protect-logging.js";
 import WebSocket from "ws";
