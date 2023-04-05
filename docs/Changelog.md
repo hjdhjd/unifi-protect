@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.1.1 (2023-04-05)
+  * Housekeeping.
+
 ## 4.1.0 (2023-04-02)
   * New feature: chime API endpoints.
   * Housekeeping.
