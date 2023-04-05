@@ -216,6 +216,8 @@ export class ProtectApi extends EventEmitter {
     // Log us in if needed.
     if(!(await this.loginController())) {
 
+      this.clearLoginCredentials();
+
       return retry ? this.bootstrapController(false) : false;
     }
 
@@ -242,7 +244,6 @@ export class ProtectApi extends EventEmitter {
 
       data = null;
       this.log.error("Unable to parse response from UniFi Protect. Will retry again later.");
-
     }
 
     // Is this the first time we're bootstrapping?
