@@ -127,7 +127,11 @@ export class ProtectApi extends EventEmitter {
     this.username = username;
     this.password = password;
 
-    return this.loginController();
+    const loginSuccess = await this.loginController();
+
+    this.emit("login", loginSuccess);
+
+    return loginSuccess;
   }
 
   // Acquire a CSRF token for our API session if needed.
@@ -199,13 +203,11 @@ export class ProtectApi extends EventEmitter {
       this.headers.set("Cookie", cookie);
       this.headers.set("X-CSRF-Token", csrfToken);
 
-      this.emit("login", true);
       return true;
     }
 
     // Clear out our login credentials and reset for another try.
     this.clearLoginCredentials();
-    this.emit("login", false);
 
     return false;
   }
