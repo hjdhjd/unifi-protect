@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.1.2 (2023-04-06)
+  * Address potential login race condition.
+
 ## 4.1.1 (2023-04-05)
   * Housekeeping.
 
