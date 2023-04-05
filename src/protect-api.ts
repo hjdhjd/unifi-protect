@@ -127,10 +127,13 @@ export class ProtectApi extends EventEmitter {
     this.username = username;
     this.password = password;
 
+    // Let's attempt to login.
     const loginSuccess = await this.loginController();
 
+    // Publish the result to our listeners
     this.emit("login", loginSuccess);
 
+    // Return the status of our login attempt.
     return loginSuccess;
   }
 
