@@ -213,11 +213,12 @@ export interface ProtectCameraConfigInterface {
     hasPackageCamera: boolean,
     hasPrivacyMask: boolean,
     hasRtc: boolean,
-    hasSquareEventThumbnail: boolean,
     hasSdCard: boolean,
     hasSmartDetect: boolean,
+    hasSquareEventThumbnail: boolean,
     hasSpeaker: boolean,
     hasWifi: boolean,
+    isDoorbell: boolean,
     motionAlgorithms: string[],
     privacyMaskCapability: {
       maxMasks: number,
