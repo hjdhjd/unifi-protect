@@ -6,15 +6,15 @@
     "forceConsistentCasingInFileNames": true,
     "lib": [
       "DOM",
-      "ES2020"
+      "ES2021"
     ],
-    "module": "ES2020",
+    "module": "ES2022",
     "moduleResolution":"node",
     "outDir": "dist",
     "rootDir": "src",
     "sourceMap": true,
     "strict": true,
-    "target": "ES2020"
+    "target": "ES2021"
   },
   "include": [
     "src"
