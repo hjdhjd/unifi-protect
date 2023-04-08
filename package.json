@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "module",
-  "version": "4.1.2",
+  "version": "4.1.3",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {
@@ -48,7 +48,7 @@
     "rtsp"
   ],
   "engines": {
-    "node": ">=14"
+    "node": ">=16"
   },
   "main": "dist/index.js",
   "scripts": {
@@ -65,9 +65,9 @@
     "@types/ws": "^8.5.4",
     "@typescript-eslint/eslint-plugin": "^5.57.1",
     "@typescript-eslint/parser": "^5.57.1",
-    "eslint": "^8.37.0",
+    "eslint": "^8.38.0",
     "rimraf": "^4.4.1",
-    "typescript": "^5.0.3"
+    "typescript": "^5.0.4"
   },
   "dependencies": {
     "abort-controller": "^3.0.0",
