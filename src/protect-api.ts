@@ -66,8 +66,6 @@ export class ProtectApi extends EventEmitter {
   private httpsAgent: Agent;
   private isAdminUser: boolean;
   private loginAge: number;
-  private loginAttempt: Promise<boolean> | null;
-  private loginRefreshTimer: NodeJS.Timeout | null;
   private nvrAddress: string;
   private password: string;
   private username: string;
@@ -109,8 +107,6 @@ export class ProtectApi extends EventEmitter {
     this.httpsAgent = new https.Agent({ rejectUnauthorized: false });
     this.isAdminUser = false;
     this.loginAge = 0;
-    this.loginAttempt = null;
-    this.loginRefreshTimer = null;
     this.nvrAddress = "";
     this.username = "";
     this.password = "";
@@ -138,7 +134,7 @@ export class ProtectApi extends EventEmitter {
   }
 
   // Acquire a CSRF token for our API session if needed.
-  private async acquireCsrfToken(): Promise<boolean> {
+  private async _acquireCsrfToken(): Promise<boolean> {
 
     // We only need to acquire a token if we aren't already logged in, or we don't already have a token.
     if(this.headers.has("X-CSRF-Token")) {
@@ -176,7 +172,7 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Make sure we have a CSRF token, or get one if needed.
-    if(!(await this.acquireCsrfToken())) {
+    if(!(await this._acquireCsrfToken())) {
 
       this.clearLoginCredentials();
       return false;
@@ -228,10 +224,8 @@ export class ProtectApi extends EventEmitter {
 
     const response = await this.fetch(this.getApiEndpoint("bootstrap"));
 
-    // Something went wrong. Preemptively clear our login credentials and inform the user.
+    // Something went wrong. Retry the bootstrap attempt once, and then we're done.
     if(!response?.ok) {
-
-      this.clearLoginCredentials();
 
       this.log.error("Unable to retrieve the UniFi Protect controller configuration.%s", retry ? " Retrying." : "");
 
@@ -252,7 +246,7 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Is this the first time we're bootstrapping?
-    const isFirstRun = this.bootstrap ? false : true;
+    const isFirstRun = this._bootstrap ? false : true;
 
     // Set the new bootstrap.
     this._bootstrap = data;
@@ -260,11 +254,17 @@ export class ProtectApi extends EventEmitter {
     // Check for admin user privileges or role changes.
     this.checkAdminUserStatus(isFirstRun);
 
-    // Notify our users.
-    this.emit("bootstrap", this.bootstrap);
-
     // We're good. Now connect to the event listener API.
-    return this.launchEventsWs();
+    if(!(await this.launchEventsWs())) {
+
+      return retry ? this.bootstrapController(false) : false;
+    }
+
+    // Notify our users.
+    this.emit("bootstrap", this._bootstrap);
+
+    // We're bootstrapped and connected to the events API.
+    return true;
   }
 
   // Connect to the realtime update events API.
@@ -284,7 +284,7 @@ export class ProtectApi extends EventEmitter {
 
     // Launch the realtime events WebSocket. We need to hand it the last update ID we know about in order
     // to ensure we don't miss any actual updates since we last pulled the bootstrap configuration.
-    const params = new URLSearchParams({ lastUpdateId: this.bootstrap?.lastUpdateId ?? "" });
+    const params = new URLSearchParams({ lastUpdateId: this._bootstrap?.lastUpdateId ?? "" });
 
     try {
 
@@ -369,13 +369,13 @@ export class ProtectApi extends EventEmitter {
   public isAllRtspConfigured(): boolean {
 
     // Look for any cameras with any non-RTSP enabled channels.
-    return this.bootstrap?.cameras?.some(camera => camera.channels?.some(channel => !channel.isRtspEnabled)) ? true : false;
+    return this._bootstrap?.cameras?.some(camera => camera.channels?.some(channel => !channel.isRtspEnabled)) ? true : false;
   }
 
   // Check admin privileges.
   private checkAdminUserStatus(isFirstRun = false): boolean {
 
-    if(!this.bootstrap?.users) {
+    if(!this._bootstrap?.users) {
 
       return false;
     }
@@ -384,7 +384,7 @@ export class ProtectApi extends EventEmitter {
     const oldAdminStatus = this.isAdminUser;
 
     // Find this user.
-    const user = this.bootstrap?.users.find((x: ProtectNvrUserConfig) => x.id === this.bootstrap?.authUserId);
+    const user = this._bootstrap?.users.find((x: ProtectNvrUserConfig) => x.id === this._bootstrap?.authUserId);
 
     if(!user?.allPermissions) {
 
@@ -571,15 +571,10 @@ export class ProtectApi extends EventEmitter {
 
     this.isAdminUser = false;
     this.loginAge = 0;
-    this.loginAttempt = null;
     this._bootstrap = null;
 
-    if(this.loginRefreshTimer) {
-
-      clearTimeout(this.loginRefreshTimer);
-    }
-
-    this.loginRefreshTimer = null;
+    this._eventsWs?.terminate();
+    this._eventsWs = null;
 
     // Save our CSRF token, if we have one.
     const csrfToken = this.headers?.get("X-CSRF-Token");
@@ -651,8 +646,7 @@ export class ProtectApi extends EventEmitter {
         this.log.error("API endpoint access error: %s - %s.%s", response.status.toString(), response.statusText, retry ? " Retrying." : "");
       }
 
-      // We failed, but controllers are sometimes rebooted, we can lose our access token or something else may have occurred. Retry one time, after
-      // logging back in.
+      // We failed, but controllers are sometimes rebooted, we can lose our access token or something else may have occurred. Retry one time, after logging back in.
       if(retry) {
 
         this.clearLoginCredentials();
@@ -935,9 +929,9 @@ export class ProtectApi extends EventEmitter {
   public get name(): string {
 
     // Our NVR string, if it exists, appears as `NVR [NVR Type]`. Otherwise, we appear as `NVRaddress`.
-    if(this.bootstrap?.nvr) {
+    if(this._bootstrap?.nvr) {
 
-      return this.bootstrap.nvr.name + " [" + this.bootstrap.nvr.type + "]";
+      return this._bootstrap.nvr.name + " [" + this._bootstrap.nvr.type + "]";
     } else {
 
       return this.nvrAddress;
