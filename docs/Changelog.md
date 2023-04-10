@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.2.0 (2023-04-10)
+  * Only communicate to the Protect controller using HTTP 2 to further improve performance.
+
 ## 4.1.3 (2023-04-08)
   * Improve resiliency of the events API when controller connectivity issues occur.
 
@@ -17,6 +20,7 @@ All notable changes to this project will be documented in this file. This projec
 
 ## 4.0.0 (2023-03-26)
   * Rewrite and refactor of the API library for performance, efficiency, and future-proofing.
+  * Shifted to ESM-only. If you need common Javascript (CJS) version, stick to 3.x.
 
 ## 3.0.4 (2022-02-20)
   * Housekeeping.
