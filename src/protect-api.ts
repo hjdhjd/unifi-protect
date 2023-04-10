@@ -2,6 +2,7 @@
  *
  * protect-api.ts: Our UniFi Protect API implementation.
  */
+import { ALPNProtocol, AbortError, FetchError, Headers, Request, RequestOptions, Response, context, timeoutSignal } from "@adobe/fetch";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "./settings.js";
 import {
   ProtectCameraChannelConfigInterface,
@@ -22,9 +23,6 @@ import {
   ProtectViewerConfigPayload
 } from "./protect-types.js";
 
-import fetch, { AbortError, FetchError, Headers, RequestInfo, RequestInit, Response } from "node-fetch";
-import https, { Agent } from "node:https";
-import { AbortController } from "abort-controller";
 import { EventEmitter } from "node:events";
 import { ProtectApiEvents } from "./protect-api-events.js";
 import { ProtectLivestream } from "./protect-api-livestream.js";
@@ -62,8 +60,8 @@ export class ProtectApi extends EventEmitter {
 
   private apiErrorCount: number;
   private apiLastSuccess: number;
-  private headers!: Headers;
-  private httpsAgent: Agent;
+  private ufpRetrieve: (url: string|Request, options?: RequestOptions) => Promise<Response>;
+  private headers: Headers;
   private isAdminUser: boolean;
   private loginAge: number;
   private nvrAddress: string;
@@ -104,7 +102,9 @@ export class ProtectApi extends EventEmitter {
 
     this.apiErrorCount = 0;
     this.apiLastSuccess = 0;
-    this.httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    const { fetch } = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], rejectUnauthorized: false, userAgent: "unifi-protect" });
+    this.ufpRetrieve = fetch;
+    this.headers = new Headers();
     this.isAdminUser = false;
     this.loginAge = 0;
     this.nvrAddress = "";
@@ -144,7 +144,7 @@ export class ProtectApi extends EventEmitter {
 
     // UniFi OS has cross-site request forgery protection built into it's web management UI. We use this fact to fingerprint it
     // by connecting directly to the supplied Protect controller address and see if there's a CSRF token waiting for us.
-    const response = await this.fetch("https://" + this.nvrAddress, { method: "GET" }, false);
+    const response = await this.retrieve("https://" + this.nvrAddress, { method: "GET" }, false);
 
     if(response?.ok) {
 
@@ -179,7 +179,7 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Log us in.
-    const response = await this.fetch(this.getApiEndpoint("login"), {
+    const response = await this.retrieve(this.getApiEndpoint("login"), {
 
       body: JSON.stringify({ password: this.password, rememberMe: "true", username: this.username }),
       method: "POST"
@@ -222,7 +222,7 @@ export class ProtectApi extends EventEmitter {
       return retry ? this.bootstrapController(false) : false;
     }
 
-    const response = await this.fetch(this.getApiEndpoint("bootstrap"));
+    const response = await this.retrieve(this.getApiEndpoint("bootstrap"));
 
     // Something went wrong. Retry the bootstrap attempt once, and then we're done.
     if(!response?.ok) {
@@ -454,7 +454,7 @@ export class ProtectApi extends EventEmitter {
     this.log.debug("%s: %s", this.getFullName(device), util.inspect(payload, { colors: true, depth: null, sorted: true }));
 
     // Update Protect with the new configuration.
-    const response = await this.fetch(this.getApiEndpoint(device.modelKey) + (device.modelKey === "nvr" ? "" :  "/" + device.id), {
+    const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + (device.modelKey === "nvr" ? "" :  "/" + device.id), {
 
       body: JSON.stringify(payload),
       method: "PATCH"
@@ -480,7 +480,7 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Update Protect with the new configuration.
-    const response = await this.fetch(this.getApiEndpoint(device.modelKey) + "/" + device.id, {
+    const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id, {
 
       body: JSON.stringify({ channels: device.channels }),
       method: "PATCH"
@@ -635,7 +635,7 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Ask Protect to give us a URL for this websocket.
-    const response = await this.fetch(this.getApiEndpoint("websocket") + "/" + endpoint + ((params && params.toString().length) ? "?" + params.toString() : ""));
+    const response = await this.retrieve(this.getApiEndpoint("websocket") + "/" + endpoint + ((params && params.toString().length) ? "?" + params.toString() : ""));
 
     // Something went wrong, we're done here.
     if(!response?.ok) {
@@ -690,23 +690,17 @@ export class ProtectApi extends EventEmitter {
   }
 
   // Utility to let us streamline error handling and return checking from the Protect API.
-  public async fetch(url: RequestInfo, options: RequestInit = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
+  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
 
     const logError = (message: string, ...parameters: unknown[]): void => this.log.error(message, ...parameters);
 
     let response: Response;
 
-    const controller = new AbortController();
+    // Create a signal handler to deliver the abort operation.
+    const signal = timeoutSignal(PROTECT_API_TIMEOUT * 1000);
 
-    // Ensure API responsiveness and guard against hung connections.
-    const timeout = setTimeout(() => {
-
-      controller.abort();
-    }, 1000 * PROTECT_API_TIMEOUT);
-
-    options.agent = this.httpsAgent;
     options.headers = this.headers;
-    options.signal = controller.signal;
+    options.signal = signal;
 
     try {
 
@@ -743,7 +737,7 @@ export class ProtectApi extends EventEmitter {
         }
       }
 
-      response = await fetch(url, options);
+      response = await this.ufpRetrieve(url, options);
 
       // The caller will sort through responses instead of us.
       if(!decodeResponse) {
@@ -792,7 +786,7 @@ export class ProtectApi extends EventEmitter {
 
       if(error instanceof FetchError) {
 
-        switch(error.code) {
+        switch(error.code as unknown as string) {
 
           case "ECONNREFUSED":
 
@@ -804,7 +798,7 @@ export class ProtectApi extends EventEmitter {
             // Retry on connection reset, but no more than once.
             if(!isRetry) {
 
-              return this.fetch(url, options, logErrors, decodeResponse, true);
+              return this.retrieve(url, options, logErrors, decodeResponse, true);
             }
 
             logError("Network connection to Protect controller has been reset.");
@@ -831,7 +825,7 @@ export class ProtectApi extends EventEmitter {
     } finally {
 
       // Clear out our response timeout if needed.
-      clearTimeout(timeout);
+      signal.clear();
     }
   }
 
