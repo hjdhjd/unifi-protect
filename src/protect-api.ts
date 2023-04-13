@@ -786,7 +786,7 @@ export class ProtectApi extends EventEmitter {
 
       if(error instanceof FetchError) {
 
-        switch(error.code as unknown as string) {
+        switch(error.code) {
 
           case "ECONNREFUSED":
 
