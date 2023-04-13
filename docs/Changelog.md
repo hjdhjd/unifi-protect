@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.2.1 (2023-04-13)
+  * Housekeeping.
+
 ## 4.2.0 (2023-04-10)
   * Only communicate to the Protect controller using HTTP 2 to further improve performance.
 
