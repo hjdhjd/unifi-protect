@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.2.2 (2023-04-30)
+  * Housekeeping.
+
 ## 4.2.1 (2023-04-13)
   * Housekeeping.
 
