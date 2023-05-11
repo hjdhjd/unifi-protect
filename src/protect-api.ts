@@ -60,7 +60,7 @@ export class ProtectApi extends EventEmitter {
 
   private apiErrorCount: number;
   private apiLastSuccess: number;
-  private ufpRetrieve: (url: string|Request, options?: RequestOptions) => Promise<Response>;
+  private fetch: (url: string|Request, options?: RequestOptions) => Promise<Response>;
   private headers: Headers;
   private isAdminUser: boolean;
   private loginAge: number;
@@ -103,7 +103,7 @@ export class ProtectApi extends EventEmitter {
     this.apiErrorCount = 0;
     this.apiLastSuccess = 0;
     const { fetch } = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], rejectUnauthorized: false, userAgent: "unifi-protect" });
-    this.ufpRetrieve = fetch;
+    this.fetch = fetch;
     this.headers = new Headers();
     this.isAdminUser = false;
     this.loginAge = 0;
@@ -737,7 +737,7 @@ export class ProtectApi extends EventEmitter {
         }
       }
 
-      response = await this.ufpRetrieve(url, options);
+      response = await this.fetch(url, options);
 
       // The caller will sort through responses instead of us.
       if(!decodeResponse) {
