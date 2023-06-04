@@ -62,7 +62,7 @@ export class ProtectApi extends EventEmitter {
   private apiLastSuccess: number;
   private fetch: (url: string|Request, options?: RequestOptions) => Promise<Response>;
   private headers: Headers;
-  private isAdminUser: boolean;
+  private _isAdminUser: boolean;
   private loginAge: number;
   private nvrAddress: string;
   private password: string;
@@ -105,7 +105,7 @@ export class ProtectApi extends EventEmitter {
     const { fetch } = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], rejectUnauthorized: false, userAgent: "unifi-protect" });
     this.fetch = fetch;
     this.headers = new Headers();
-    this.isAdminUser = false;
+    this._isAdminUser = false;
     this.loginAge = 0;
     this.nvrAddress = "";
     this.username = "";
@@ -416,7 +416,7 @@ export class ProtectApi extends EventEmitter {
       }
     }
 
-    this.isAdminUser = newAdminStatus;
+    this._isAdminUser = newAdminStatus;
 
     // Only admin users can activate RTSP streams. Inform the user on startup, or if we detect a role change.
     if(isFirstRun && !this.isAdminUser) {
@@ -569,7 +569,7 @@ export class ProtectApi extends EventEmitter {
   // Utility to clear out old login credentials or attempts.
   public clearLoginCredentials(): void {
 
-    this.isAdminUser = false;
+    this._isAdminUser = false;
     this.loginAge = 0;
     this._bootstrap = null;
 
@@ -911,6 +911,12 @@ export class ProtectApi extends EventEmitter {
   public get bootstrap(): ProtectNvrBootstrap | null {
 
     return this._bootstrap;
+  }
+
+  // Return whether the logged in credentials are an admin user or not.
+  public get isAdminUser(): boolean {
+
+    return this._isAdminUser;
   }
 
   // Utility to access the logging functions, used by other classes in this library.
