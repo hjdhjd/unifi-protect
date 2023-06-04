@@ -554,7 +554,7 @@ export class ProtectApi extends EventEmitter {
 
     // A completely enumerated device will appear as:
     // Device Name [Device Type] (address: IP address, mac: MAC address).
-    return name + " [" + type + "]" + (deviceInfo ? " (" + host + "mac: " + device.mac + ")" : "");
+    return (name ?? type) + " [" + type + "]" + (deviceInfo ? " (" + host + "mac: " + device.mac + ")" : "");
   }
 
   // Utility to generate a nicely formatted NVR and device string.
