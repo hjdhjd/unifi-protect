@@ -84,6 +84,7 @@ export interface ProtectNvrConfigInterface {
     radius: number
   },
   mac: string,
+  marketName: string,
   maxCameraCapacity: Record<string, number>,
   modelKey: string,
   name: string,
@@ -295,6 +296,20 @@ export interface ProtectCameraConfigInterface {
     blinkRate: number,
     isEnabled: boolean
   },
+  lenses: {
+
+    id: number,
+    video: {
+      recordingEnd: number | null,
+      recordingEndLQ: number | null,
+      recordingStart: number | null,
+      recordingStartLQ: number | null,
+      timelapseEnd: number | null,
+      timelapseEndLQ: number | null,
+      timelapseStart: number | null,
+      timelapseStartLQ: number | null
+    }
+  }[],
   mac: string,
   marketName: string,
   micVolume: number,

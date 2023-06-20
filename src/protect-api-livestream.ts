@@ -81,7 +81,7 @@ export class ProtectLivestream extends EventEmitter {
   }
 
   // Start the UniFi Protect livestream.
-  public async start(cameraId: string, channel: number, segmentLength = 100, requestId = cameraId + "-" + channel.toString()): Promise<boolean> {
+  public async start(cameraId: string, channel: number, lens = 0, segmentLength = 100, requestId = cameraId + "-" + channel.toString()): Promise<boolean> {
 
     // Stop any existing stream.
     this.stop();
@@ -90,7 +90,7 @@ export class ProtectLivestream extends EventEmitter {
     this._initSegment = null;
 
     // Launch the livestream.
-    return await this.launchLivestream(cameraId, channel, segmentLength, requestId);
+    return await this.launchLivestream(cameraId, channel, lens, segmentLength, requestId);
   }
 
   // Stop the UniFi Protect livestream.
@@ -120,7 +120,7 @@ export class ProtectLivestream extends EventEmitter {
   }
 
   // Configure the websocket to populate the prebuffer.
-  private async launchLivestream(cameraId: string, channel: number, segmentLength: number, requestId: string): Promise<boolean> {
+  private async launchLivestream(cameraId: string, channel: number, lens: number, segmentLength: number, requestId: string): Promise<boolean> {
 
     // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for
     // segment length. Protect happens to default to a 100ms segment length as well, so we do too.
@@ -148,6 +148,7 @@ export class ProtectLivestream extends EventEmitter {
       channel: channel.toString(),
       extendedVideoMetadata: "", // Try excluding?
       fragmentDurationMillis: segmentLength.toString(),
+      lens: lens.toString(),
       progressive: "",
       rebaseTimestampsToZero: "false", // Try setting to true?
       requestId: requestId,
