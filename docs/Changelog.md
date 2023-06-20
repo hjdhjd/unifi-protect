@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.4.0 (2023-06-19)
+  * New feature: support for livestreams from secondary cameras on Protect devices.
+
 ## 4.3.0 (2023-06-04)
   * New feature: added the `isAdminUser` as a publicly accessible readonly property that returns whether the currently logged in user is an administrator or not.
 
