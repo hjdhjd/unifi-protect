@@ -26,6 +26,7 @@
     "excludePrivate": true,
     "excludeProtected": true,
     "hideGenerator": true,
+    "plugin": ["typedoc-plugin-markdown"],
     "out": "docs"
   }
 }

@@ -53,10 +53,11 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "rimraf ./dist && tsc",
+    "build-docs": " rimraf ./docs/classes ./docs/interfaces ./docs/README.md ./docs/modules.md && npx typedoc",
     "clean": "rimraf ./dist",
     "lint": "eslint src/**.ts",
     "postpublish": "npm run clean",
-    "prepublishOnly": "npm run lint && npm run build",
+    "prepublishOnly": "npm run lint && npm run build && npm run build-docs",
     "test": "eslint src/**.ts",
     "watch": "npm run build && npm link && nodemon"
   },
@@ -68,6 +69,7 @@
     "eslint": "^8.45.0",
     "rimraf": "^5.0.1",
     "typedoc": "^0.24.8",
+    "typedoc-plugin-markdown": "^3.15.3",
     "typescript": "^5.1.6"
   },
   "dependencies": {

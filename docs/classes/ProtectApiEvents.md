@@ -1,0 +1,50 @@
+[unifi-protect](../README.md) / [Exports](../modules.md) / ProtectApiEvents
+
+# Class: ProtectApiEvents
+
+UniFi Protect event utility class that provides functions for decoding realtime event API packet frames.
+
+## Table of contents
+
+### Constructors
+
+- [constructor](ProtectApiEvents.md#constructor)
+
+### Methods
+
+- [decodePacket](ProtectApiEvents.md#decodepacket)
+
+## Constructors
+
+### constructor
+
+• **new ProtectApiEvents**()
+
+## Methods
+
+### decodePacket
+
+▸ `Static` **decodePacket**(`log`, `packet`): ``null`` \| [`ProtectEventPacket`](../modules.md#protecteventpacket)
+
+Decode a UniFi Protect event packet.
+
+**`Remarks`**
+
+A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
+  encoded packet as an input, and decodes it into an event header and payload that can be acted upon. Events are generated automatically once a successful
+  login has been made to a Protect controller and can be accessed by listening to `message` events emitted by an instance of [ProtectApi](ProtectApi.md).
+
+#### Parameters
+
+| Name | Type | Description |
+| :------ | :------ | :------ |
+| `log` | [`ProtectLogging`](../interfaces/ProtectLogging.md) | Logging functions to use. |
+| `packet` | `Buffer` | Input packet to decode. |
+
+#### Returns
+
+``null`` \| [`ProtectEventPacket`](../modules.md#protecteventpacket)
+
+#### Defined in
+
+[src/protect-api-events.ts:187](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api-events.ts#L187)
