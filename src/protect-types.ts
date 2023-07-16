@@ -872,6 +872,7 @@ export interface ProtectEventAddInterface {
 // This type declaration make all properties optional recursively including nested objects. This should
 // only be used on JSON objects only. Otherwise...you're going to end up with class methods marked as
 // optional as well. Credit for this belongs to: https://github.com/joonhocho/tsdef. #Grateful
+/** @ignore */
 export type DeepPartial<T> = {
 
   [P in keyof T]?: T[P] extends Array<infer I> ? Array<DeepPartial<I>> : DeepPartial<T[P]>
@@ -880,25 +881,47 @@ export type DeepPartial<T> = {
 // We use types instead of interfaces here because we can more easily set the entire thing as readonly.
 // Unfortunately, interfaces can't be quickly set as readonly in Typescript without marking each and
 // every property as readonly along the way.
+/** @interface */
 export type ProtectEventAdd = Readonly<ProtectEventAddInterface>;
+/** @interface */
 export type ProtectNvrBootstrap = Readonly<ProtectNvrBootstrapInterface>;
+/** @interface */
 export type ProtectNvrConfig = Readonly<ProtectNvrConfigInterface>;
+/** @interface */
 export type ProtectNvrConfigPayload = DeepPartial<ProtectNvrConfigInterface>;
+/** @interface */
 export type ProtectNvrSystemInfoConfig = Readonly<ProtectNvrSystemInfoInterface>;
+/** @interface */
 export type ProtectCameraConfig = Readonly<ProtectCameraConfigInterface>;
+/** @interface */
 export type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterface>;
+/** @interface */
 export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInterface>;
+/** @interface */
 export type ProtectCameraLcdMessageConfig = Readonly<ProtectCameraLcdMessageConfigInterface>;
+/** @interface */
 export type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
+/** @interface */
 export type ProtectChimeConfig = Readonly<ProtectChimeConfigInterface>;
+/** @interface */
 export type ProtectChimeConfigPayload = DeepPartial<ProtectChimeConfigInterface>;
+/** @interface */
 export type ProtectLightConfig = Readonly<ProtectLightConfigInterface>;
+/** @interface */
 export type ProtectLightConfigPayload = DeepPartial<ProtectLightConfigInterface>;
+/** @interface */
 export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;
+/** @interface */
 export type ProtectNvrSystemEvent = Readonly<ProtectNvrSystemEventInterface>;
+/** @interface */
 export type ProtectNvrSystemEventController = Readonly<ProtectNvrSystemEventControllerInterface>;
+/** @interface */
 export type ProtectNvrUserConfig = Readonly<ProtectNvrUserConfigInterface>;
+/** @interface */
 export type ProtectSensorConfig = Readonly<ProtectSensorConfigInterface>;
+/** @interface */
 export type ProtectSensorConfigPayload = DeepPartial<ProtectSensorConfigInterface>;
+/** @interface */
 export type ProtectViewerConfig = Readonly<ProtectViewerConfigInterface>;
+/** @interface */
 export type ProtectViewerConfigPayload = DeepPartial<ProtectViewerConfigInterface>;

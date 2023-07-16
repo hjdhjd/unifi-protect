@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.5.0 (2023-07-16)
+  * Snapshot convenience function added.
+  * Documentation updates.
+  * Housekeeping.
+
 ## 4.4.0 (2023-06-19)
   * New feature: support for livestreams from secondary cameras on Protect devices.
 

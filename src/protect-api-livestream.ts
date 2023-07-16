@@ -67,7 +67,7 @@ export class ProtectLivestream extends EventEmitter {
   private ws: WebSocket | null;
 
   // Create a new instance.
-  constructor(api: ProtectApi, log = api.log) {
+  constructor(api: ProtectApi, log: ProtectLogging) {
 
     // Initialize the event emitter.
     super();

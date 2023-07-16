@@ -22,7 +22,6 @@ import {
   ProtectViewerConfig,
   ProtectViewerConfigPayload
 } from "./protect-types.js";
-
 import { EventEmitter } from "node:events";
 import { ProtectApiEvents } from "./protect-api-events.js";
 import { ProtectLivestream } from "./protect-api-livestream.js";
@@ -31,24 +30,25 @@ import WebSocket from "ws";
 import util from "node:util";
 
 // Define our known Protect types.
-type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectNvrConfig |
+export type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectNvrConfig |
   ProtectSensorConfig | ProtectViewerConfig;
 
-type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChimeConfigPayload | ProtectLightConfigPayload | ProtectNvrConfigPayload |
+export type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChimeConfigPayload | ProtectLightConfigPayload | ProtectNvrConfigPayload |
   ProtectSensorConfigPayload | ProtectViewerConfigPayload;
 
-/*
+/**
  * The UniFi Protect API is largely undocumented and has been reverse engineered mostly through
  * the web interface, and trial and error.
  *
  * Here's how the UniFi Protect API works:
  *
- * 1. Login to the UniFi Protect NVR device and acquire security credentials for further calls to the API.
+ * 1. {@link login | Login} to the UniFi Protect controller and acquire security credentials for further calls to the API.
  *
- * 2. Enumerate the list of UniFi Protect devices by calling the bootstrap URL. This
- *    contains almost everything you would want to know about this particular UniFi Protect controller.
+ * 2. Enumerate the list of UniFi Protect devices by calling the {@link bootstrap} endpoint. This contains everything you would want to know about this particular
+ *    UniFi Protect controller, including enumerating all the devices it knows about.
  *
- * 3. Use the events API to track updates to the devices detected by the Protect controller.
+ * 3. Listen for `message` events emitted by {@link ProtectApi} containing all Protect controller events, in realtime. They are delivered as {@link ProtectEventPacket}
+ *    packets, containing the event-specific details.
  *
  * Those are the basics that gets us up and running.
  */
@@ -56,18 +56,25 @@ export class ProtectApi extends EventEmitter {
 
   private _bootstrap: ProtectNvrBootstrap | null;
   private _eventsWs: WebSocket | null;
-  private _log: ProtectLogging;
 
   private apiErrorCount: number;
   private apiLastSuccess: number;
   private fetch: (url: string|Request, options?: RequestOptions) => Promise<Response>;
   private headers: Headers;
   private _isAdminUser: boolean;
+  private log: ProtectLogging;
   private loginAge: number;
   private nvrAddress: string;
   private password: string;
   private username: string;
 
+  /**
+   * Create an instance of the UniFi Protect API.
+   *
+   * @param log - Logging functions to use.
+   *
+   * @defaultValue `none` - Logging will be done to stdout and stderr.
+   */
   // Initialize this instance with our login information.
   constructor(log?: ProtectLogging) {
 
@@ -92,7 +99,7 @@ export class ProtectApi extends EventEmitter {
     this._bootstrap = null;
     this._eventsWs = null;
 
-    this._log = {
+    this.log = {
 
       debug: (message: string, ...parameters: unknown[]): void => log?.debug(this.name + ": " + message, ...parameters),
       error: (message: string, ...parameters: unknown[]): void => log?.error(this.name + ": API error: " + message, ...parameters),
@@ -114,6 +121,45 @@ export class ProtectApi extends EventEmitter {
     this.clearLoginCredentials();
   }
 
+  /**
+   * Execute a login attempt to the UniFi Protect API.
+   *
+   * @param nvrAddress - Address of the UniFi Protect controller, expressed as an FQDN or IP address.
+   * @param username   - Username to use when logging into the controller.
+   * @param password   - Password to use when logging into the controller.
+   *
+   * @returns Returns a promise that will resolve to `true` if successful and `false` otherwise.
+   *
+   * @remarks A `login` event will be emitted each time this method is called, with the result of the attempt as an argument.
+   *
+   * @example
+   * Login to the Protect controller. You can selectively choose to either `await` the promise that is returned by `login`, or subscribe to the `login` event.
+   *
+   * ```ts
+   * import { ProtectApi } from "unifi-protect";
+   *
+   * // Create a new Protect API instance.
+   * const ufp = new ProtectApi();
+   *
+   * // Set a listener to wait for the login event to occur.
+   * ufp.once("login", (successfulLogin: boolean) => {
+   *
+   *   // Indicate if we are successful.
+   *   if(successfulLogin) {
+   *
+   *     console.log("Logged in successfully.");
+   *     process.exit(0);
+   *   }
+   * });
+   *
+   * // Login to the Protect controller.
+   * if(!(await ufp.login("protect-controller.local", "username", "password"))) {
+   *
+   *   console.log("Invalid login credentials.");
+   *   process.exit(0);
+   * };
+   * ```
+   */
   // Login to the Protect controller and terminate any existing login we might have.
   public async login(nvrAddress: string, username: string, password: string): Promise<boolean> {
 
@@ -358,18 +404,78 @@ export class ProtectApi extends EventEmitter {
     return true;
   }
 
+  /**
+   * Retrieve the bootstrap JSON from a UniFi Protect controller.
+   *
+   * @returns Returns a promise that will resolve to `true` if successful and `false` otherwise.
+   *
+   * @remarks A `bootstrap` event will be emitted each time this method is successfully called, with the {@link ProtectNvrBootstrap} JSON as an argument.
+   *
+   * @example
+   * Retrieve the bootstrap JSON. You can selectively choose to either `await` the promise that is returned by `getBootstrap`, or subscribe to the `bootstrap` event.
+   *
+   * ```ts
+   * import { ProtectApi, ProtectNvrBootstrap } from "unifi-protect";
+   * import util from "node:util";
+   *
+   * // Create a new Protect API instance.
+   * const ufp = new ProtectApi();
+   *
+   * // Set a listener to wait for the bootstrap event to occur.
+   * ufp.once("bootstrap", (bootstrapJSON: ProtectNvrBootstrap) => {
+   *
+   *   // Once we've bootstrapped the Protect controller, output the bootstrap JSON and we're done.
+   *   process.stdout.write(util.inspect(bootstrapJSON, { colors: true, depth: null, sorted: true }) + "\n", () => process.exit(0));
+   * });
+   *
+   * // Login to the Protect controller.
+   * if(!(await ufp.login("protect-controller.local", "username", "password"))) {
+   *
+   *   console.log("Invalid login credentials.");
+   *   process.exit(0);
+   * };
+   *
+   * // Bootstrap the controller. It will emit a message once it's received the bootstrap JSON, or you can alternatively wait for the promise to resolve.
+   * if(!(await ufp.getBootstrap())) {
+   *
+   *   console.log("Unable to bootstrap the Protect controller.");
+   *   process.exit(0);
+   * }
+   * ```
+   *
+   * Alternatively, you can access the bootstrap JSON directly through the {@link bootstrap} accessor:
+   *
+   * ```ts
+   * import { ProtectApi } from "unifi-protect";
+   * import util from "node:util";
+   *
+   * // Create a new Protect API instance.
+   * const ufp = new ProtectApi();
+   *
+   * // Login to the Protect controller.
+   * if(!(await ufp.login("protect-controller.local", "username", "password"))) {
+   *
+   *   console.log("Invalid login credentials.");
+   *   process.exit(0);
+   * };
+   *
+   * // Bootstrap the controller.
+   * if(!(await ufp.getBootstrap())) {
+   *
+   *   console.log("Unable to bootstrap the Protect controller.");
+   *   process.exit(0);
+   * }
+   *
+   * // Once we've bootstrapped the Protect controller, access the bootstrap JSON through the bootstrap accessor and we're done.
+   * process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, sorted: true }) + "\n", () => process.exit(0));
+   * ```
+   *
+   */
   // Get our UniFi Protect NVR configuration.
   public async getBootstrap(): Promise<boolean> {
 
     // Bootstrap the controller, and attempt to retry the bootstrap if it fails.
     return this.bootstrapController(true);
-  }
-
-  // Validate if all RTSP channels enabled on all cameras.
-  public isAllRtspConfigured(): boolean {
-
-    // Look for any cameras with any non-RTSP enabled channels.
-    return this._bootstrap?.cameras?.some(camera => camera.channels?.some(channel => !channel.isRtspEnabled)) ? true : false;
   }
 
   // Check admin privileges.
@@ -430,6 +536,76 @@ export class ProtectApi extends EventEmitter {
     return true;
   }
 
+  /**
+   * Retrieve a snapshot image from a Protect camera.
+   *
+   * @param device           - Protect device.
+   * @param width            - Optionally specify the image width to request. Defaults selected by the Protect controller, based on the camera resolution.
+   * @param height           - Optionally specify the image height to request. Defaults selected by the Protect controller, based on the camera resolution.
+   * @param timestamp        - Optionally specify the timestamp index to retrieve. Defaults to the current time.
+   * @param usePackageCamera - Optionally specify retrieving a snapshot fron the package camera, rather than the primary camera lens. Defaults to `false`.
+   *
+   * @returns Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
+   */
+  public async getSnapshot(device: ProtectCameraConfig, width?: number, height?: number, timestamp = Date.now(), usePackageCamera = false): Promise<Buffer | null> {
+
+    // No device object, or it's not a camera, or we're requesting a package camera snapshot on a camera without one - we're done.
+    if(!device || (device.modelKey !== "camera") || (usePackageCamera && !device.featureFlags.hasPackageCamera)) {
+
+      return null;
+    }
+
+    // Create the parameters needed for the snapshot request.
+    const params = new URLSearchParams({ ts: timestamp.toString() });
+
+    // If we have details of the snapshot request, use it to request the right size.
+    if(height !== undefined) {
+
+      params.append("h", height.toString());
+    }
+
+    if(width !== undefined) {
+
+      params.append("w", width.toString());
+    }
+
+    // Request the image from the controller.
+    const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id + "/" + (usePackageCamera ? "package-" : "") +
+      "snapshot?" + params.toString(), { method: "GET" });
+
+    if(!response?.ok) {
+
+      this.log.error("%s: Unable to retrieve the snapshot.", this.getFullName(device));
+      return null;
+    }
+
+    let snapshot;
+
+    try {
+
+      snapshot = Buffer.from(await response.arrayBuffer());
+    } catch(error) {
+
+      this.log.error("%s: Error retrieving the snapshot image: %s", this.getFullName(device), error);
+      return null;
+    }
+
+    return snapshot;
+  }
+
+  /**
+   * Update a Protect device's configuration on the UniFi Protect controller.
+   *
+   * @typeParam DeviceType - Generic for any known Protect device type.
+   *
+   * @param device  - Protect device.
+   * @param payload - Device configuration payload to upload, usually a subset of the device-specific configuration JSON.
+   *
+   * @returns Returns a promise that will resolve to the updated device-specific configuration JSON if successful, and `null` otherwise.
+   *
+   * @remarks Use this method to change the configuration of a given Protect device or controller. It requires the credentials used to login to the Protect API
+   *   to have administrative privileges for most settings.
+   */
   // Update a Protect device object.
   public async updateDevice<DeviceType extends ProtectKnownDeviceTypes>(device: DeviceType, payload: ProtectKnownDevicePayloads): Promise<DeviceType | null> {
 
@@ -471,7 +647,7 @@ export class ProtectApi extends EventEmitter {
   }
 
   // Update camera channels on a supported Protect device.
-  public async updateCameraChannels(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
+  private async updateCameraChannels(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
 
     // Make sure we have the permissions to modify the camera JSON.
     if(!(await this.canModifyCamera(device))) {
@@ -480,7 +656,7 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Update Protect with the new configuration.
-    const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id, {
+    const response = await this._retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id, {
 
       body: JSON.stringify({ channels: device.channels }),
       method: "PATCH"
@@ -512,6 +688,13 @@ export class ProtectApi extends EventEmitter {
     return await response.json() as ProtectCameraConfig;
   }
 
+  /**
+   * Utility method that enables all RTSP channels on a given Protect camera.
+   *
+   * @param device - Protect camera to modify.
+   *
+   * @returns Returns a promise that will resolve to the updated {@link ProtectCameraConfig} if successful, and `null` otherwise.
+   */
   // Enable RTSP stream support on an attached Protect device.
   public async enableRtsp(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
 
@@ -538,6 +721,17 @@ export class ProtectApi extends EventEmitter {
     return this.updateCameraChannels(device);
   }
 
+  /**
+   * Utility method that generates a nicely formatted device information string.
+   *
+   * @param device     - Protect device.
+   * @param name       - Optional name for the device. Defaults to the device type (e.g. `G4 Pro`).
+   * @param deviceInfo - Optionally specify whether or not to include the IP address and MAC address in the returned string. Defaults to `false`.
+   *
+   * @returns Returns the Protect device name in the following format: <code>*Protect device name* [*Protect device type*] (address: *IP address* mac: *MAC address*)</code>.
+   *
+   * @remarks The example above assumed the `deviceInfo` parameter is set to `true`.
+   */
   // Utility to generate a nicely formatted device string.
   public getDeviceName(device: ProtectKnownDeviceTypes, name = device?.name, deviceInfo = false): string {
 
@@ -557,6 +751,14 @@ export class ProtectApi extends EventEmitter {
     return (name ?? type) + " [" + type + "]" + (deviceInfo ? " (" + host + "mac: " + device.mac + ")" : "");
   }
 
+  /**
+   * Utility method that generates a combined, nicely formatted device and NVR string.
+   *
+   * @param device - Protect device.
+   *
+   * @returns Returns the Protect device name in the following format:
+   *   <code>*Protect controller name* [*Protect controller type*] *Protect device name* [*Protect device type*]</code>.
+   */
   // Utility to generate a nicely formatted NVR and device string.
   public getFullName(device: ProtectKnownDeviceTypes): string {
 
@@ -566,6 +768,9 @@ export class ProtectApi extends EventEmitter {
     return this.name + (deviceName.length ? " " + deviceName : "");
   }
 
+  /**
+   * Clear the login credentials and terminate any open connection to the UniFi Protect events API.
+   */
   // Utility to clear out old login credentials or attempts.
   public clearLoginCredentials(): void {
 
@@ -614,6 +819,22 @@ export class ProtectApi extends EventEmitter {
     return true;
   }
 
+  /**
+   * Return a websocket API endpoint for the requested endpoint type.
+   *
+   * @param endpoint - Requested endpoint type. Valid types are `livestream` and `talkback`.
+   * @param params   - Parameters to pass on for the endpoint request.
+   *
+   * @returns Returns a promise that will resolve to a URL to the requested endpoint if successful, and `null` otherwise.
+   *
+   * @remarks Valid API endpoints are `livestream` and `talkback`.
+   *
+   * * The `livestream` endpoint will return a URL to a websocket that provides an encoded livestream from a given camera. **Do not access this endpoint directly, use
+   *   {@link createLivestream} instead.** Accessing the livestream endpoint directly is not directly useful without additional manipulation, which, unless you have
+   *   a need for, you should avoid dealing with and use the {@link ProtectLivestream} API instead that provides you direct access to the livestream as an H.264 fMP4.
+   * * The `talkback` endpoint creates a talkback connection to a Protect camera that contains a speaker (e.g. Protect doorbells).
+   *   The returned websocket accepts an AAC-encoded ADTS stream. The only valid parameter is `camera`, containing the ID of the Protect camera you want to connect to.
+   */
   // Return a WebSocket URL endpoint from the Protect controller for Protect API services (e.g. livestream, talkback).
   public async getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams): Promise<string | null> {
 
@@ -689,8 +910,26 @@ export class ProtectApi extends EventEmitter {
     }
   }
 
-  // Utility to let us streamline error handling and return checking from the Protect API.
-  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
+  /**
+   * Execute an HTTP fetch request to the Protect controller.
+   *
+   * @param url       - Requested endpoint type. Valid types are `livestream` and `talkback`.
+   * @param options   - Parameters to pass on for the endpoint request.
+   * @param logErrors - Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`.
+   *
+   * @returns Returns a promise that will resolve to a Response object successful, and `null` otherwise.
+   *
+   * @remarks This method should be used when direct access to the Protect controller is needed, or when this library doesn't have a needed method to access
+   *   controller capabilities.
+   */
+  // Communicate HTTP requests with a Protect controller.
+  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true): Promise<Response | null> {
+
+    return this._retrieve(url, options, logErrors);
+  }
+
+  // Internal interface to communicating HTTP requests with a Protect controller, with error handling.
+  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
 
     const logError = (message: string, ...parameters: unknown[]): void => this.log.error(message, ...parameters);
 
@@ -798,7 +1037,7 @@ export class ProtectApi extends EventEmitter {
             // Retry on connection reset, but no more than once.
             if(!isRetry) {
 
-              return this.retrieve(url, options, logErrors, decodeResponse, true);
+              return this._retrieve(url, options, logErrors, decodeResponse, true);
             }
 
             logError("Network connection to Protect controller has been reset.");
@@ -829,19 +1068,36 @@ export class ProtectApi extends EventEmitter {
     }
   }
 
+  /**
+   * Return a new instance of the Protect livestream API.
+   *
+   * @returns Returns a new livestream API object.
+   *
+   * @remarks This method should be used to create a new livestream API object. It allows you to create access livestreams of individual cameras and interact
+   *   directly with the H.264 fMP4 streams for a given camera.
+   */
   // Create a new livestream API instance.
   public createLivestream(): ProtectLivestream {
 
-    return new ProtectLivestream(this);
+    return new ProtectLivestream(this, this.log);
   }
 
+  /**
+   * Return an API endpoint for the requested endpoint type.
+   *
+   * @param endpoint - Requested endpoint type.
+   *
+   * @returns Returns a URL to the requested endpoint if successful, and an empty string otherwise.
+   *
+   * @remarks Valid API endpoints are `bootstrap`, `camera`, `chime`, `light`, `login`, `nvr`, `self`, `sensor`, `websocket` and `viewer`.
+   */
   // Return the appropriate URL to access various Protect API endpoints.
-  public getApiEndpoint(deviceType: string): string {
+  public getApiEndpoint(endpoint: string): string {
 
     let endpointSuffix;
     let endpointPrefix = "/proxy/protect/api/";
 
-    switch(deviceType) {
+    switch(endpoint) {
 
       case "bootstrap":
 
@@ -907,24 +1163,34 @@ export class ProtectApi extends EventEmitter {
     return "https://" + this.nvrAddress + endpointPrefix + endpointSuffix;
   }
 
+  /**
+   * Access the Protect controller bootstrap JSON.
+   *
+   * @returns Returns the bootstrap JSON if the Protect controller has been bootstrapped, `null` otherwise.
+   */
   // Get the bootstrap JSON.
   public get bootstrap(): ProtectNvrBootstrap | null {
 
     return this._bootstrap;
   }
 
+  /**
+   * Utility method that returns whether the credentials that were used to login to the Protect controller have administrative privileges or not.
+   *
+   * @returns Returns `true` if the logged in user has administrative privileges, `false` otherwise.
+   */
   // Return whether the logged in credentials are an admin user or not.
   public get isAdminUser(): boolean {
 
     return this._isAdminUser;
   }
 
-  // Utility to access the logging functions, used by other classes in this library.
-  public get log(): ProtectLogging {
-
-    return this._log;
-  }
-
+  /**
+   * Utility method that returns a nicely formatted version of the Protect controller name.
+   *
+   * @returns Returns the Protect controller name in the following format:
+   *   <code>*Protect controller name* [*Protect controller type*]</code>.
+   */
   // Utility to generate a nicely formatted NVR string.
   public get name(): string {
 

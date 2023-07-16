@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "module",
-  "version": "4.4.0",
+  "version": "4.5.0",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {
@@ -61,13 +61,14 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "devDependencies": {
-    "@types/node": "^20.3.1",
+    "@types/node": "^20.4.2",
     "@types/ws": "^8.5.5",
-    "@typescript-eslint/eslint-plugin": "^5.60.0",
-    "@typescript-eslint/parser": "^5.60.0",
-    "eslint": "^8.43.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.45.0",
     "rimraf": "^5.0.1",
-    "typescript": "^5.1.3"
+    "typedoc": "^0.24.8",
+    "typescript": "^5.1.6"
   },
   "dependencies": {
     "@adobe/fetch": "^4.0.13",

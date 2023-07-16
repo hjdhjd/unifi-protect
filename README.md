@@ -17,7 +17,7 @@
 ## Why use this library for UniFi Protect support?
 In short - because I use it every day to support a very popular [Homebridge](https://homebridge.io) plugin named [homebridge-unifi-protect](https://www.npmjs.com/package/homebridge-unifi-protect) that I maintain. I have been occasionally asked if I would consider packaging the core API library separately from the plugin so that other open source projects can take advantage of the work that's been done here to understand and decode the UniFi Protect API.
 
-In addition, this implementation is unique: it's the first complete open source implementation of the realtime UniFi Protect update API, enabling instantaneous updates to Protect-related events.
+In addition, this implementation is unique: it's the first complete open source implementation of the realtime UniFi Protect update API, enabling instantaneous updates to Protect-related events. It's also the first implementation of the livestream API provided by UniFi Protect. Note: this is **not** the RTSP URLs that are provided by UniFi Protect controllers, but rather, true access to the H.264 datastream for any camera connected to the Protect controller.
 
 Finally - the most significant reason that you should use this library: it's very well-tested, it is modern, and most importantly, *it just works*. It's quite easy to add support for UniFi Protect in your project using this library, and you can rely on the fact that the code is used by a significant population of users out there who ensure its continued robustness.
 
@@ -30,6 +30,7 @@ The UniFi Protect API is undocumented and implementing a library like this one i
 - Full access to the UniFi Protect NVR JSON.
 - The ability to retrieve the JSON details, including status, of any supported UniFi Protect device.
 - The ability to modify the Protect NVR JSON or Protect devices.
+- The ability to programmatically access the H.264 livestream for any camera. This is useful when you want lightweight access to the full camera feed without resorting to RTSP. For example, this is how [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) implements HomeKit Secure Video capabilities, resulting in a lighter weight solution than trying to read the RTSP streams for each camera from the Protect controller.
 
 ## Changelog
 * [Changelog](https://github.com/hjdhjd/unifi-protect/blob/main/docs/Changelog.md): changes and release history of this library.
@@ -43,44 +44,7 @@ npm install unifi-protect
 
 ## Documentation
 
-If you'd like to see all this in action in a well-documented, real-world example, please take a good look at my [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) project. It relies heavily on this library for the core functionality it provides.
-
-### ProtectApi(nvrAddress: string, username: string, password: string [, log: protectLogging])
-Initialize the UniFi Protect API using the UniFi Protect account information contained in `username` and `password`. `log` is an optional parameter that enables you to customize the type of logging that can be generated, including debug logging. If `log` isn't specified, the Protect API will default to logging to the console.
-
-### refreshDevices()
-This is where the magic happens. This function:
-
-* Logs into the Protect API, if we don't already have an access token.
-* If we do have an access token and it's nearly time to refresh it, it will do so.
-* It then requests a refresh of the UniFi Protect NVR state which includes device information for all the Protect devices associated with that NVR. There are failsafes in place to ensure the Protect NVR doesn't get slammed with API requests causing potential performance issues with the NVR.
-
-**Note: `refreshDevices()` must be called at least once after instantiating the API in order to populate the list of UniFi Protect devices associated with an account.**
-
-Returns: `true` if successful, `false` otherwise.
-
-### protectApi.cameras[]
-The `cameras` property maintains the list of all known Protect camera devices. It is an array of `ProtectCameraConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectCameraConfig` object.
-
-This property is refreshed each time `refreshDevices()` is called.
-
-### protectApi.lights[]
-The `lights` property maintains the list of all known Protect light devices. It is an array of `ProtectLightConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectLightConfig` object.
-
-This property is refreshed each time `refreshDevices()` is called.
-
-### protectApi.sensors[]
-The `sensors` property maintains the list of all known Protect sensor devices. It is an array of `ProtectSensorConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectSensorConfig` object.
-
-This property is refreshed each time `refreshDevices()` is called.
-
-### protectApi.viewers[]
-The `viewers` property maintains the list of all known Protect viewer devices. It is an array of `ProtectViewerConfig` objects, and you can look through [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/main/src/protect-types.ts) for a sense of what's contained in a `ProtectViewerConfig` object.
-
-This property is refreshed each time `refreshDevices()` is called.
-
-### More to come...
-
+Documentation and examples for using this library to access UniFi Protect controllers is [available here](https://github.com/hjdhjd/unifi-protect/blob/main/docs/). Additionally, if you'd like to see all this in action in a well-documented, real-world example, please take a good look at my [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) project. It relies heavily on this library for the core functionality it provides.
 
 ## UniFi Protect Realtime Updates API
 So...how does UniFi Protect provide realtime updates? On UniFi OS-based controllers, it uses a websocket called `updates`. This connection provides a realtime stream of health, status, and events that the cameras encounter - including motion events and doorbell ring events.
@@ -89,7 +53,7 @@ Reverse engineering the realtime updates API is a bit more difficult than the sy
 
 The Protect realtime updates API, however, is a binary protocol published over the `updates` websocket, and until now has been undocumented. I spent time analyzing what's happening in the Protect browser webUI as well as observing the controller and various Protect versions themselves to reverse engineer what's going on. Pouring through obfuscated code is like solving a puzzle with all the pieces in front of you - you know it's all there, you're just not always sure how it fits together.
 
-For the impatient, you can take a look at the code for how to decode and read the binary protocol here in [protect-updates-api.ts](https://github.com/hjdhjd/unifi-protect/blob/master/src/protect-api-updates.ts) and the interface information located in [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/master/src/protect-types.ts) as well.
+For the impatient, you can take a look at the code for how to decode and read the binary protocol here in [protect-updates-api.ts](https://github.com/hjdhjd/unifi-protect/blob/master/src/protect-api-events.ts) and the interface information located in [protect-types.ts](https://github.com/hjdhjd/unifi-protect/blob/master/src/protect-types.ts) as well.
 
 I welcome any additions or corrections to the protocol for the benefit of the community. I hope this helps others launch their own exploration and create new and interesting Protect-enabled capabilities.
 

@@ -18,5 +18,14 @@
   },
   "include": [
     "src"
-  ]
+  ],
+  "typedocOptions": {
+    "cleanOutputDir": false,
+    "entryPoints": ["src/index.ts"],
+    "excludeInternal": true,
+    "excludePrivate": true,
+    "excludeProtected": true,
+    "hideGenerator": true,
+    "out": "docs"
+  }
 }

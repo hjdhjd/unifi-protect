@@ -2,7 +2,6 @@
  *
  * protect-api-events.ts: Our UniFi Protect realtime event API implementation.
  */
-import { ProtectCameraLcdMessagePayload } from "./protect-types.js";
 import { ProtectLogging } from "./protect-logging.js";
 import zlib from "node:zlib";
 
@@ -107,6 +106,16 @@ enum ProtectEventPacketHeader {
   PAYLOAD_SIZE = 4
 }
 
+/**
+ * UniFi Protect event packet.
+ *
+ * @param header   - Protect event header.
+ * @param payload  - Protect event payload.
+ *
+ * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
+ *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
+ *   related to the device and action specified in the header.
+ */
 // A complete description of the UniFi Protect realtime events API packet format.
 export type ProtectEventPacket = {
 
@@ -114,6 +123,16 @@ export type ProtectEventPacket = {
   payload: unknown
 }
 
+/**
+ * UniFi Protect event header.
+ *
+ * @param header   - Protect event header.
+ * @param payload  - Protect event payload.
+ *
+ * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
+ *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
+ *   related to the device and action specified in the header.
+ */
 // A complete description of the UniFi Protect realtime events API action packet JSON.
 export type ProtectEventHeader = {
 
@@ -123,9 +142,10 @@ export type ProtectEventHeader = {
   newUpdateId: string
 }
 
+/*
 // A complete description of the UniFi Protect realtime update events API payload packet JSONs.
 // Payload JSON for modelKey: event action: add
-export type ProtectNvrUpdatePayloadEventAdd = {
+type ProtectNvrUpdatePayloadEventAdd = {
 
   camera: string,
   id: string,
@@ -139,15 +159,30 @@ export type ProtectNvrUpdatePayloadEventAdd = {
 }
 
 // Payload JSON for modelKey: camera action: update
-export type ProtectNvrUpdatePayloadCameraUpdate = {
+type ProtectNvrUpdatePayloadCameraUpdate = {
   isMotionDetected: boolean,
   lastMotion: number,
   lastRing: number,
   lcdMessage: ProtectCameraLcdMessagePayload
 }
+*/
 
+/**
+ * UniFi Protect event utility class that provides functions for decoding realtime event API packet frames.
+ */
+// A utility class for decoding UniFi Protect events.
 export class ProtectApiEvents {
 
+  /**
+   * Decode a UniFi Protect event packet.
+   *
+   * @param log     - Logging functions to use.
+   * @param packet  - Input packet to decode.
+   *
+   * @remarks A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
+   *   encoded packet as an input, and decodes it into an event header and payload that can be acted upon. Events are generated automatically once a successful
+   *   login has been made to a Protect controller and can be accessed by listening to `message` events emitted by an instance of {@link ProtectApi}.
+   */
   // Process an update data packet and return the action and payload.
   public static decodePacket(log: ProtectLogging, packet: Buffer): ProtectEventPacket | null {
 
@@ -168,9 +203,8 @@ export class ProtectApiEvents {
 
     } catch(error) {
 
-      log.error("Realtime update API: error decoding update packet: %s.", error);
+      log.error("Realtime events API: error decoding update packet: %s.", error);
       return null;
-
     }
 
     // Decode the action and payload frames now that we know where everything is.
@@ -229,7 +263,7 @@ export class ProtectApiEvents {
 
       default:
 
-        log.error("Unknown payload packet type received in the realtime update events API: %s.", payloadFormat);
+        log.error("Unknown payload packet type received in the realtime events API: %s.", payloadFormat);
         return null;
         break;
     }
