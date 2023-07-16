@@ -70,7 +70,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-[src/protect-api-livestream.ts:70](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api-livestream.ts#L70)
+[src/protect-api-livestream.ts:70](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api-livestream.ts#L70)
 
 ## Properties
 
@@ -203,7 +203,7 @@ node_modules/@types/node/events.d.ts:319
 
 #### Defined in
 
-[src/protect-api-livestream.ts:397](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api-livestream.ts#L397)
+[src/protect-api-livestream.ts:397](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api-livestream.ts#L397)
 
 ## Methods
 
@@ -354,7 +354,7 @@ ___
 
 #### Defined in
 
-[src/protect-api-livestream.ts:383](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api-livestream.ts#L383)
+[src/protect-api-livestream.ts:383](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api-livestream.ts#L383)
 
 ___
 
@@ -933,7 +933,7 @@ ___
 
 #### Defined in
 
-[src/protect-api-livestream.ts:84](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api-livestream.ts#L84)
+[src/protect-api-livestream.ts:84](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api-livestream.ts#L84)
 
 ___
 
@@ -947,7 +947,7 @@ ___
 
 #### Defined in
 
-[src/protect-api-livestream.ts:97](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api-livestream.ts#L97)
+[src/protect-api-livestream.ts:97](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api-livestream.ts#L97)
 
 ___
 

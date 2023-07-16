@@ -30,7 +30,7 @@
 
 #### Defined in
 
-[src/protect-logging.ts:9](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-logging.ts#L9)
+[src/protect-logging.ts:9](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-logging.ts#L9)
 
 ___
 
@@ -51,7 +51,7 @@ ___
 
 #### Defined in
 
-[src/protect-logging.ts:10](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-logging.ts#L10)
+[src/protect-logging.ts:10](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-logging.ts#L10)
 
 ___
 
@@ -72,7 +72,7 @@ ___
 
 #### Defined in
 
-[src/protect-logging.ts:11](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-logging.ts#L11)
+[src/protect-logging.ts:11](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-logging.ts#L11)
 
 ___
 
@@ -93,4 +93,4 @@ ___
 
 #### Defined in
 
-[src/protect-logging.ts:12](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-logging.ts#L12)
+[src/protect-logging.ts:12](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-logging.ts#L12)

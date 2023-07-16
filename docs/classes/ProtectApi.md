@@ -101,7 +101,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-[src/protect-api.ts:79](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L79)
+[src/protect-api.ts:79](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L79)
 
 ## Properties
 
@@ -238,7 +238,7 @@ Returns the bootstrap JSON if the Protect controller has been bootstrapped, `nul
 
 #### Defined in
 
-[src/protect-api.ts:1172](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L1172)
+[src/protect-api.ts:1172](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1172)
 
 ___
 
@@ -256,7 +256,7 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 #### Defined in
 
-[src/protect-api.ts:1183](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L1183)
+[src/protect-api.ts:1183](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1183)
 
 ___
 
@@ -275,7 +275,7 @@ Returns the Protect controller name in the following format:
 
 #### Defined in
 
-[src/protect-api.ts:1195](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L1195)
+[src/protect-api.ts:1195](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1195)
 
 ## Methods
 
@@ -322,7 +322,7 @@ Clear the login credentials and terminate any open connection to the UniFi Prote
 
 #### Defined in
 
-[src/protect-api.ts:775](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L775)
+[src/protect-api.ts:775](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L775)
 
 ___
 
@@ -345,7 +345,7 @@ Returns a new livestream API object.
 
 #### Defined in
 
-[src/protect-api.ts:1080](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L1080)
+[src/protect-api.ts:1080](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1080)
 
 ___
 
@@ -436,7 +436,7 @@ Returns a promise that will resolve to the updated [ProtectCameraConfig](../inte
 
 #### Defined in
 
-[src/protect-api.ts:699](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L699)
+[src/protect-api.ts:699](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L699)
 
 ___
 
@@ -503,7 +503,7 @@ Returns a URL to the requested endpoint if successful, and an empty string other
 
 #### Defined in
 
-[src/protect-api.ts:1095](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L1095)
+[src/protect-api.ts:1095](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1095)
 
 ___
 
@@ -585,7 +585,7 @@ Returns a promise that will resolve to `true` if successful and `false` otherwis
 
 #### Defined in
 
-[src/protect-api.ts:475](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L475)
+[src/protect-api.ts:475](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L475)
 
 ___
 
@@ -615,7 +615,7 @@ Returns the Protect device name in the following format: <code>*Protect device n
 
 #### Defined in
 
-[src/protect-api.ts:736](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L736)
+[src/protect-api.ts:736](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L736)
 
 ___
 
@@ -640,7 +640,7 @@ Returns the Protect device name in the following format:
 
 #### Defined in
 
-[src/protect-api.ts:763](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L763)
+[src/protect-api.ts:763](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L763)
 
 ___
 
@@ -693,7 +693,7 @@ Returns a promise that will resolve to a Buffer containing the JPEG image snapsh
 
 #### Defined in
 
-[src/protect-api.ts:550](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L550)
+[src/protect-api.ts:550](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L550)
 
 ___
 
@@ -728,7 +728,7 @@ Returns a promise that will resolve to a URL to the requested endpoint if succes
 
 #### Defined in
 
-[src/protect-api.ts:839](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L839)
+[src/protect-api.ts:839](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L839)
 
 ___
 
@@ -858,7 +858,7 @@ Returns a promise that will resolve to `true` if successful and `false` otherwis
 
 #### Defined in
 
-[src/protect-api.ts:164](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L164)
+[src/protect-api.ts:164](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L164)
 
 ___
 
@@ -1313,7 +1313,7 @@ Returns a promise that will resolve to a Response object successful, and `null` 
 
 #### Defined in
 
-[src/protect-api.ts:926](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L926)
+[src/protect-api.ts:926](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L926)
 
 ___
 
@@ -1384,7 +1384,7 @@ Returns a promise that will resolve to the updated device-specific configuration
 
 #### Defined in
 
-[src/protect-api.ts:610](https://github.com/hjdhjd/unifi-protect/blob/12eaf9c/src/protect-api.ts#L610)
+[src/protect-api.ts:610](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L610)
 
 ___
 
