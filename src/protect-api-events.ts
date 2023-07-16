@@ -186,10 +186,10 @@ export class ProtectApiEvents {
   }
 
   // Decode a frame, composed of a header and payload, received through the update events API.
-  private static decodeFrame(log: ProtectLogging, packet: Buffer, packetType: number): ProtectEventHeader | JSON | string | Buffer | null {
+  private static decodeFrame(log: ProtectLogging, packet: Buffer, packetType: ProtectEventPacketType): ProtectEventHeader | JSON | string | Buffer | null {
 
     // Read the packet frame type.
-    const frameType = packet.readUInt8(ProtectEventPacketHeader.TYPE);
+    const frameType = packet.readUInt8(ProtectEventPacketHeader.TYPE) as ProtectEventPacketType;
 
     // This isn't the frame type we were expecting - we're done.
     if(packetType !== frameType) {
@@ -197,7 +197,7 @@ export class ProtectApiEvents {
     }
 
     // Read the payload format.
-    const payloadFormat = packet.readUInt8(ProtectEventPacketHeader.PAYLOAD_FORMAT);
+    const payloadFormat = packet.readUInt8(ProtectEventPacketHeader.PAYLOAD_FORMAT) as EventPayloadType;
 
     // Check to see if we're compressed or not, and inflate if needed after skipping past the 8-byte header.
     const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ? zlib.inflateSync(packet.slice(EVENT_PACKET_HEADER_SIZE)) : packet.slice(EVENT_PACKET_HEADER_SIZE);
