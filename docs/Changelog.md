@@ -2,6 +2,7 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.6.1 (2023-08-19)
 ## 4.6.0 (2023-08-19)
   * Housekeeping and minor enhancements to error handling.
 
