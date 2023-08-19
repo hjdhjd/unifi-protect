@@ -273,7 +273,7 @@ export class ProtectApi extends EventEmitter {
     // Something went wrong. Retry the bootstrap attempt once, and then we're done.
     if(!response?.ok) {
 
-      this.log.error("Unable to retrieve the UniFi Protect controller configuration.%s", retry ? " Retrying." : "");
+      this.logRetry("Unable to retrieve the UniFi Protect controller configuration.", retry);
 
       return retry ? this.bootstrapController(false) : false;
     }
@@ -864,7 +864,7 @@ export class ProtectApi extends EventEmitter {
       // Only inform users if we have a response if we have something to say.
       if(response) {
 
-        this.log.error("API endpoint access error: %s - %s.%s", response.status.toString(), response.statusText, retry ? " Retrying." : "");
+        this.logRetry("API endpoint access error: " + response.status.toString() + " - " + response.statusText + ".", retry);
       }
 
       // We failed, but controllers are sometimes rebooted, we can lose our access token or something else may have occurred. Retry one time, after logging back in.
@@ -931,7 +931,14 @@ export class ProtectApi extends EventEmitter {
   // Internal interface to communicating HTTP requests with a Protect controller, with error handling.
   private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
 
-    const logError = (message: string, ...parameters: unknown[]): void => this.log.error(message, ...parameters);
+    // Catch Protect controller server-side issues:
+    //
+    // 400: Bad request.
+    // 404: Not found.
+    // 500: Internal server error.
+    // 502: Bad gateway.
+    // 503: Service temporarily unavailable.
+    const isServerSideIssue = (code: number): boolean => [400, 404, 500, 502, 503].some(x => x === code);
 
     let response: Response;
 
@@ -951,7 +958,7 @@ export class ProtectApi extends EventEmitter {
         // Let the user know we've got an API problem.
         if(this.apiErrorCount === PROTECT_API_ERROR_LIMIT) {
 
-          logError("Throttling API calls due to errors with the %s previous attempts. Pausing communication with the Protect controller for %s minutes.",
+          this.log.error("Throttling API calls due to errors with the %s previous attempts. Pausing communication with the Protect controller for %s minutes.",
             this.apiErrorCount, PROTECT_API_RETRY_INTERVAL / 60);
           this.apiErrorCount++;
           this.apiLastSuccess = now;
@@ -965,7 +972,7 @@ export class ProtectApi extends EventEmitter {
         }
 
         // Inform the user that we're out of the penalty box and try again.
-        logError("Resuming connectivity to the UniFi Protect API after pausing for %s minutes.", PROTECT_API_RETRY_INTERVAL / 60);
+        this.log.error("Resuming connectivity to the UniFi Protect API after pausing for %s minutes.", PROTECT_API_RETRY_INTERVAL / 60);
 
         this.apiErrorCount = 0;
         this.clearLoginCredentials();
@@ -984,28 +991,34 @@ export class ProtectApi extends EventEmitter {
         return response;
       }
 
+      // Preemptively increase the error count.
+      this.apiErrorCount++;
+
       // Bad username and password.
       if(response.status === 401) {
 
         this.clearLoginCredentials();
-        this.apiErrorCount++;
-        logError("Invalid login credentials given. Please check your login and password.");
+        this.log.error("Invalid login credentials given. Please check your login and password.");
         return null;
       }
 
       // Insufficient privileges.
       if(response.status === 403) {
 
-        this.apiErrorCount++;
-        logError("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
+        this.log.error("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
+        return null;
+      }
+
+      if(!response.ok && isServerSideIssue(response.status)) {
+
+        this.log.error("Unable to connect to the Protect controller. This is usually temporary and will occur during Protect controller reboots and firmware updates.");
         return null;
       }
 
       // Some other unknown error occurred.
       if(!response.ok) {
 
-        this.apiErrorCount++;
-        logError("%s - %s", response.status, response.statusText);
+        this.log.error("%s - %s", response.status, response.statusText);
         return null;
       }
 
@@ -1018,8 +1031,8 @@ export class ProtectApi extends EventEmitter {
 
       if(error instanceof AbortError) {
 
-        logError("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
-        logError("Original request was: %s", url);
+        this.log.error("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
+        this.log.debug("Original request was: %s", url);
         return null;
       }
 
@@ -1028,8 +1041,9 @@ export class ProtectApi extends EventEmitter {
         switch(error.code) {
 
           case "ECONNREFUSED":
+          case "ERR_HTTP2_STREAM_CANCEL":
 
-            logError("Connection refused.");
+            this.log.error("Connection refused.");
             break;
 
           case "ECONNRESET":
@@ -1040,12 +1054,12 @@ export class ProtectApi extends EventEmitter {
               return this._retrieve(url, options, logErrors, decodeResponse, true);
             }
 
-            logError("Network connection to Protect controller has been reset.");
+            this.log.error("Network connection to Protect controller has been reset.");
             break;
 
           case "ENOTFOUND":
 
-            logError("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.",
+            this.log.error("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.",
               this.nvrAddress);
             break;
 
@@ -1054,7 +1068,7 @@ export class ProtectApi extends EventEmitter {
             // If we're logging when we have an error, do so.
             if(logErrors) {
 
-              logError(error.message);
+              this.log.error("Error: %s %s.", error.code, error.message);
             }
             break;
         }
@@ -1065,6 +1079,25 @@ export class ProtectApi extends EventEmitter {
 
       // Clear out our response timeout if needed.
       signal.clear();
+    }
+  }
+
+  // Utility function for logging connection retries.
+  private logRetry(logMessage: string, isRetry: boolean): void {
+
+    // If we're over the API limit, no need to continue indicating errors since we already inform users we're throttling API calls.
+    if(this.apiErrorCount >= PROTECT_API_ERROR_LIMIT) {
+
+      return;
+    }
+
+    // If we're retrying, only log when debugging.
+    if(isRetry) {
+
+      this.log.debug("%s Retrying.", logMessage);
+    } else {
+
+      this.log.error(logMessage);
     }
   }
 
