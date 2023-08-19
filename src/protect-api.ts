@@ -935,10 +935,11 @@ export class ProtectApi extends EventEmitter {
     //
     // 400: Bad request.
     // 404: Not found.
+    // 429: Too many requests.
     // 500: Internal server error.
     // 502: Bad gateway.
     // 503: Service temporarily unavailable.
-    const isServerSideIssue = (code: number): boolean => [400, 404, 500, 502, 503].some(x => x === code);
+    const isServerSideIssue = (code: number): boolean => [400, 404, 429, 500, 502, 503].some(x => x === code);
 
     let response: Response;
 
