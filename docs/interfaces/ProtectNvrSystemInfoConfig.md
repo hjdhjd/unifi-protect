@@ -26,7 +26,7 @@
 
 #### Defined in
 
-[src/protect-types.ts:145](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-types.ts#L145)
+[src/protect-types.ts:145](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-types.ts#L145)
 
 ___
 
@@ -44,7 +44,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:150](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-types.ts#L150)
+[src/protect-types.ts:150](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-types.ts#L150)
 
 ___
 
@@ -65,7 +65,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:156](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-types.ts#L156)
+[src/protect-types.ts:156](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-types.ts#L156)
 
 ___
 
@@ -84,4 +84,4 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:170](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-types.ts#L170)
+[src/protect-types.ts:170](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-types.ts#L170)

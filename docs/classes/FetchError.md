@@ -16,6 +16,7 @@
 
 ### Properties
 
+- [cause](FetchError.md#cause)
 - [code](FetchError.md#code)
 - [errno](FetchError.md#errno)
 - [erroredSysCall](FetchError.md#erroredsyscall)
@@ -50,7 +51,38 @@ FetchBaseError.constructor
 
 node_modules/typescript/lib/lib.es5.d.ts:1073
 
+• **new FetchError**(`message?`, `options?`)
+
+#### Parameters
+
+| Name | Type |
+| :------ | :------ |
+| `message?` | `string` |
+| `options?` | `ErrorOptions` |
+
+#### Inherited from
+
+FetchBaseError.constructor
+
+#### Defined in
+
+node_modules/typescript/lib/lib.es2022.error.d.ts:28
+
 ## Properties
+
+### cause
+
+• `Optional` **cause**: `unknown`
+
+#### Inherited from
+
+FetchBaseError.cause
+
+#### Defined in
+
+node_modules/typescript/lib/lib.es2022.error.d.ts:24
+
+___
 
 ### code
 
@@ -148,10 +180,6 @@ ___
 
 Optional override for formatting stack traces
 
-**`See`**
-
-https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-
 ##### Parameters
 
 | Name | Type |
@@ -162,6 +190,10 @@ https://v8.dev/docs/stack-trace-api#customizing-stack-traces
 ##### Returns
 
 `any`
+
+**`See`**
+
+https://v8.dev/docs/stack-trace-api#customizing-stack-traces
 
 #### Inherited from
 

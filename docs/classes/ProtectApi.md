@@ -71,7 +71,9 @@ Those are the basics that gets us up and running.
 - [retrieve](ProtectApi.md#retrieve)
 - [setMaxListeners](ProtectApi.md#setmaxlisteners)
 - [updateDevice](ProtectApi.md#updatedevice)
+- [addAbortListener](ProtectApi.md#addabortlistener)
 - [getEventListeners](ProtectApi.md#geteventlisteners)
+- [getMaxListeners](ProtectApi.md#getmaxlisteners-1)
 - [listenerCount](ProtectApi.md#listenercount-1)
 - [on](ProtectApi.md#on-1)
 - [once](ProtectApi.md#once-1)
@@ -85,15 +87,15 @@ Those are the basics that gets us up and running.
 
 Create an instance of the UniFi Protect API.
 
-**`Default Value`**
-
-`none` - Logging will be done to stdout and stderr.
-
 #### Parameters
 
 | Name | Type | Description |
 | :------ | :------ | :------ |
 | `log?` | [`ProtectLogging`](../interfaces/ProtectLogging.md) | Logging functions to use. |
+
+**`Default Value`**
+
+`none` - Logging will be done to stdout and stderr.
 
 #### Overrides
 
@@ -101,7 +103,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-[src/protect-api.ts:79](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L79)
+[src/protect-api.ts:79](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L79)
 
 ## Properties
 
@@ -123,7 +125,7 @@ EventEmitter.captureRejectionSymbol
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:326
+node_modules/@types/node/events.d.ts:390
 
 ___
 
@@ -145,7 +147,7 @@ EventEmitter.captureRejections
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:333
+node_modules/@types/node/events.d.ts:397
 
 ___
 
@@ -197,7 +199,7 @@ EventEmitter.defaultMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:370
+node_modules/@types/node/events.d.ts:434
 
 ___
 
@@ -220,7 +222,7 @@ EventEmitter.errorMonitor
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:319
+node_modules/@types/node/events.d.ts:383
 
 ## Accessors
 
@@ -238,7 +240,7 @@ Returns the bootstrap JSON if the Protect controller has been bootstrapped, `nul
 
 #### Defined in
 
-[src/protect-api.ts:1172](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1172)
+[src/protect-api.ts:1206](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L1206)
 
 ___
 
@@ -256,7 +258,7 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 #### Defined in
 
-[src/protect-api.ts:1183](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1183)
+[src/protect-api.ts:1217](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L1217)
 
 ___
 
@@ -275,7 +277,7 @@ Returns the Protect controller name in the following format:
 
 #### Defined in
 
-[src/protect-api.ts:1195](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1195)
+[src/protect-api.ts:1229](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L1229)
 
 ## Methods
 
@@ -284,10 +286,6 @@ Returns the Protect controller name in the following format:
 ▸ **addListener**(`eventName`, `listener`): [`ProtectApi`](ProtectApi.md)
 
 Alias for `emitter.on(eventName, listener)`.
-
-**`Since`**
-
-v0.1.26
 
 #### Parameters
 
@@ -300,13 +298,17 @@ v0.1.26
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v0.1.26
+
 #### Inherited from
 
 EventEmitter.addListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:390
+node_modules/@types/node/events.d.ts:454
 
 ___
 
@@ -322,7 +324,7 @@ Clear the login credentials and terminate any open connection to the UniFi Prote
 
 #### Defined in
 
-[src/protect-api.ts:775](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L775)
+[src/protect-api.ts:775](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L775)
 
 ___
 
@@ -332,20 +334,20 @@ ___
 
 Return a new instance of the Protect livestream API.
 
-**`Remarks`**
-
-This method should be used to create a new livestream API object. It allows you to create access livestreams of individual cameras and interact
-  directly with the H.264 fMP4 streams for a given camera.
-
 #### Returns
 
 [`ProtectLivestream`](ProtectLivestream.md)
 
 Returns a new livestream API object.
 
+**`Remarks`**
+
+This method should be used to create a new livestream API object. It allows you to create access livestreams of individual cameras and interact
+  directly with the H.264 fMP4 streams for a given camera.
+
 #### Defined in
 
-[src/protect-api.ts:1080](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1080)
+[src/protect-api.ts:1114](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L1114)
 
 ___
 
@@ -391,10 +393,6 @@ myEmitter.emit('event', 1, 2, 3, 4, 5);
 // event with parameters 1, 2, 3, 4, 5 in third listener
 ```
 
-**`Since`**
-
-v0.1.26
-
 #### Parameters
 
 | Name | Type |
@@ -406,13 +404,17 @@ v0.1.26
 
 `boolean`
 
+**`Since`**
+
+v0.1.26
+
 #### Inherited from
 
 EventEmitter.emit
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:652
+node_modules/@types/node/events.d.ts:716
 
 ___
 
@@ -436,7 +438,7 @@ Returns a promise that will resolve to the updated [ProtectCameraConfig](../inte
 
 #### Defined in
 
-[src/protect-api.ts:699](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L699)
+[src/protect-api.ts:699](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L699)
 
 ___
 
@@ -461,13 +463,13 @@ console.log(myEE.eventNames());
 // Prints: [ 'foo', 'bar', Symbol(symbol) ]
 ```
 
-**`Since`**
-
-v6.0.0
-
 #### Returns
 
 (`string` \| `symbol`)[]
+
+**`Since`**
+
+v6.0.0
 
 #### Inherited from
 
@@ -475,7 +477,7 @@ EventEmitter.eventNames
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:715
+node_modules/@types/node/events.d.ts:779
 
 ___
 
@@ -484,10 +486,6 @@ ___
 ▸ **getApiEndpoint**(`endpoint`): `string`
 
 Return an API endpoint for the requested endpoint type.
-
-**`Remarks`**
-
-Valid API endpoints are `bootstrap`, `camera`, `chime`, `light`, `login`, `nvr`, `self`, `sensor`, `websocket` and `viewer`.
 
 #### Parameters
 
@@ -501,9 +499,13 @@ Valid API endpoints are `bootstrap`, `camera`, `chime`, `light`, `login`, `nvr`,
 
 Returns a URL to the requested endpoint if successful, and an empty string otherwise.
 
+**`Remarks`**
+
+Valid API endpoints are `bootstrap`, `camera`, `chime`, `light`, `login`, `nvr`, `self`, `sensor`, `websocket` and `viewer`.
+
 #### Defined in
 
-[src/protect-api.ts:1095](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L1095)
+[src/protect-api.ts:1129](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L1129)
 
 ___
 
@@ -512,6 +514,12 @@ ___
 ▸ **getBootstrap**(): `Promise`<`boolean`\>
 
 Retrieve the bootstrap JSON from a UniFi Protect controller.
+
+#### Returns
+
+`Promise`<`boolean`\>
+
+Returns a promise that will resolve to `true` if successful and `false` otherwise.
 
 **`Remarks`**
 
@@ -577,15 +585,9 @@ if(!(await ufp.getBootstrap())) {
 process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, sorted: true }) + "\n", () => process.exit(0));
 ```
 
-#### Returns
-
-`Promise`<`boolean`\>
-
-Returns a promise that will resolve to `true` if successful and `false` otherwise.
-
 #### Defined in
 
-[src/protect-api.ts:475](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L475)
+[src/protect-api.ts:475](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L475)
 
 ___
 
@@ -594,10 +596,6 @@ ___
 ▸ **getDeviceName**(`device`, `name?`, `deviceInfo?`): `string`
 
 Utility method that generates a nicely formatted device information string.
-
-**`Remarks`**
-
-The example above assumed the `deviceInfo` parameter is set to `true`.
 
 #### Parameters
 
@@ -613,9 +611,13 @@ The example above assumed the `deviceInfo` parameter is set to `true`.
 
 Returns the Protect device name in the following format: <code>*Protect device name* [*Protect device type*] (address: *IP address* mac: *MAC address*)</code>.
 
+**`Remarks`**
+
+The example above assumed the `deviceInfo` parameter is set to `true`.
+
 #### Defined in
 
-[src/protect-api.ts:736](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L736)
+[src/protect-api.ts:736](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L736)
 
 ___
 
@@ -640,7 +642,7 @@ Returns the Protect device name in the following format:
 
 #### Defined in
 
-[src/protect-api.ts:763](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L763)
+[src/protect-api.ts:763](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L763)
 
 ___
 
@@ -651,13 +653,13 @@ ___
 Returns the current max listener value for the `EventEmitter` which is either
 set by `emitter.setMaxListeners(n)` or defaults to [defaultMaxListeners](ProtectApi.md#defaultmaxlisteners).
 
-**`Since`**
-
-v1.0.0
-
 #### Returns
 
 `number`
+
+**`Since`**
+
+v1.0.0
 
 #### Inherited from
 
@@ -665,7 +667,7 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:567
+node_modules/@types/node/events.d.ts:631
 
 ___
 
@@ -693,7 +695,7 @@ Returns a promise that will resolve to a Buffer containing the JPEG image snapsh
 
 #### Defined in
 
-[src/protect-api.ts:550](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L550)
+[src/protect-api.ts:550](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L550)
 
 ___
 
@@ -702,16 +704,6 @@ ___
 ▸ **getWsEndpoint**(`endpoint`, `params?`): `Promise`<``null`` \| `string`\>
 
 Return a websocket API endpoint for the requested endpoint type.
-
-**`Remarks`**
-
-Valid API endpoints are `livestream` and `talkback`.
-
-* The `livestream` endpoint will return a URL to a websocket that provides an encoded livestream from a given camera. **Do not access this endpoint directly, use
-  [createLivestream](ProtectApi.md#createlivestream) instead.** Accessing the livestream endpoint directly is not directly useful without additional manipulation, which, unless you have
-  a need for, you should avoid dealing with and use the [ProtectLivestream](ProtectLivestream.md) API instead that provides you direct access to the livestream as an H.264 fMP4.
-* The `talkback` endpoint creates a talkback connection to a Protect camera that contains a speaker (e.g. Protect doorbells).
-  The returned websocket accepts an AAC-encoded ADTS stream. The only valid parameter is `camera`, containing the ID of the Protect camera you want to connect to.
 
 #### Parameters
 
@@ -726,9 +718,19 @@ Valid API endpoints are `livestream` and `talkback`.
 
 Returns a promise that will resolve to a URL to the requested endpoint if successful, and `null` otherwise.
 
+**`Remarks`**
+
+Valid API endpoints are `livestream` and `talkback`.
+
+* The `livestream` endpoint will return a URL to a websocket that provides an encoded livestream from a given camera. **Do not access this endpoint directly, use
+  [createLivestream](ProtectApi.md#createlivestream) instead.** Accessing the livestream endpoint directly is not directly useful without additional manipulation, which, unless you have
+  a need for, you should avoid dealing with and use the [ProtectLivestream](ProtectLivestream.md) API instead that provides you direct access to the livestream as an H.264 fMP4.
+* The `talkback` endpoint creates a talkback connection to a Protect camera that contains a speaker (e.g. Protect doorbells).
+  The returned websocket accepts an AAC-encoded ADTS stream. The only valid parameter is `camera`, containing the ID of the Protect camera you want to connect to.
+
 #### Defined in
 
-[src/protect-api.ts:839](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L839)
+[src/protect-api.ts:839](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L839)
 
 ___
 
@@ -739,10 +741,6 @@ ___
 Returns the number of listeners listening for the event named `eventName`.
 If `listener` is provided, it will return how many times the listener is found
 in the list of the listeners of the event.
-
-**`Since`**
-
-v3.2.0
 
 #### Parameters
 
@@ -755,13 +753,17 @@ v3.2.0
 
 `number`
 
+**`Since`**
+
+v3.2.0
+
 #### Inherited from
 
 EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:661
+node_modules/@types/node/events.d.ts:725
 
 ___
 
@@ -779,10 +781,6 @@ console.log(util.inspect(server.listeners('connection')));
 // Prints: [ [Function] ]
 ```
 
-**`Since`**
-
-v0.1.26
-
 #### Parameters
 
 | Name | Type |
@@ -793,13 +791,17 @@ v0.1.26
 
 `Function`[]
 
+**`Since`**
+
+v0.1.26
+
 #### Inherited from
 
 EventEmitter.listeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:580
+node_modules/@types/node/events.d.ts:644
 
 ___
 
@@ -808,6 +810,20 @@ ___
 ▸ **login**(`nvrAddress`, `username`, `password`): `Promise`<`boolean`\>
 
 Execute a login attempt to the UniFi Protect API.
+
+#### Parameters
+
+| Name | Type | Description |
+| :------ | :------ | :------ |
+| `nvrAddress` | `string` | Address of the UniFi Protect controller, expressed as an FQDN or IP address. |
+| `username` | `string` | Username to use when logging into the controller. |
+| `password` | `string` | Password to use when logging into the controller. |
+
+#### Returns
+
+`Promise`<`boolean`\>
+
+Returns a promise that will resolve to `true` if successful and `false` otherwise.
 
 **`Remarks`**
 
@@ -842,23 +858,9 @@ if(!(await ufp.login("protect-controller.local", "username", "password"))) {
 };
 ```
 
-#### Parameters
-
-| Name | Type | Description |
-| :------ | :------ | :------ |
-| `nvrAddress` | `string` | Address of the UniFi Protect controller, expressed as an FQDN or IP address. |
-| `username` | `string` | Username to use when logging into the controller. |
-| `password` | `string` | Password to use when logging into the controller. |
-
-#### Returns
-
-`Promise`<`boolean`\>
-
-Returns a promise that will resolve to `true` if successful and `false` otherwise.
-
 #### Defined in
 
-[src/protect-api.ts:164](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L164)
+[src/protect-api.ts:164](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L164)
 
 ___
 
@@ -867,10 +869,6 @@ ___
 ▸ **off**(`eventName`, `listener`): [`ProtectApi`](ProtectApi.md)
 
 Alias for `emitter.removeListener()`.
-
-**`Since`**
-
-v10.0.0
 
 #### Parameters
 
@@ -883,13 +881,17 @@ v10.0.0
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v10.0.0
+
 #### Inherited from
 
 EventEmitter.off
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:540
+node_modules/@types/node/events.d.ts:604
 
 ___
 
@@ -924,10 +926,6 @@ myEE.emit('foo');
 //   a
 ```
 
-**`Since`**
-
-v0.1.101
-
 #### Parameters
 
 | Name | Type | Description |
@@ -939,13 +937,17 @@ v0.1.101
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v0.1.101
+
 #### Inherited from
 
 EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:422
+node_modules/@types/node/events.d.ts:486
 
 ___
 
@@ -978,10 +980,6 @@ myEE.emit('foo');
 //   a
 ```
 
-**`Since`**
-
-v0.3.0
-
 #### Parameters
 
 | Name | Type | Description |
@@ -993,13 +991,17 @@ v0.3.0
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v0.3.0
+
 #### Inherited from
 
 EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:452
+node_modules/@types/node/events.d.ts:516
 
 ___
 
@@ -1020,10 +1022,6 @@ server.prependListener('connection', (stream) => {
 
 Returns a reference to the `EventEmitter`, so that calls can be chained.
 
-**`Since`**
-
-v6.0.0
-
 #### Parameters
 
 | Name | Type | Description |
@@ -1035,13 +1033,17 @@ v6.0.0
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v6.0.0
+
 #### Inherited from
 
 EventEmitter.prependListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:679
+node_modules/@types/node/events.d.ts:743
 
 ___
 
@@ -1060,10 +1062,6 @@ server.prependOnceListener('connection', (stream) => {
 
 Returns a reference to the `EventEmitter`, so that calls can be chained.
 
-**`Since`**
-
-v6.0.0
-
 #### Parameters
 
 | Name | Type | Description |
@@ -1075,13 +1073,17 @@ v6.0.0
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v6.0.0
+
 #### Inherited from
 
 EventEmitter.prependOnceListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:695
+node_modules/@types/node/events.d.ts:759
 
 ___
 
@@ -1117,10 +1119,6 @@ newListeners[0]();
 emitter.emit('log');
 ```
 
-**`Since`**
-
-v9.4.0
-
 #### Parameters
 
 | Name | Type |
@@ -1131,13 +1129,17 @@ v9.4.0
 
 `Function`[]
 
+**`Since`**
+
+v9.4.0
+
 #### Inherited from
 
 EventEmitter.rawListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:611
+node_modules/@types/node/events.d.ts:675
 
 ___
 
@@ -1153,10 +1155,6 @@ component or module (e.g. sockets or file streams).
 
 Returns a reference to the `EventEmitter`, so that calls can be chained.
 
-**`Since`**
-
-v0.1.26
-
 #### Parameters
 
 | Name | Type |
@@ -1167,13 +1165,17 @@ v0.1.26
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v0.1.26
+
 #### Inherited from
 
 EventEmitter.removeAllListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:551
+node_modules/@types/node/events.d.ts:615
 
 ___
 
@@ -1261,10 +1263,6 @@ ee.emit('ping');
 
 Returns a reference to the `EventEmitter`, so that calls can be chained.
 
-**`Since`**
-
-v0.1.26
-
 #### Parameters
 
 | Name | Type |
@@ -1276,13 +1274,17 @@ v0.1.26
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v0.1.26
+
 #### Inherited from
 
 EventEmitter.removeListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:535
+node_modules/@types/node/events.d.ts:599
 
 ___
 
@@ -1291,11 +1293,6 @@ ___
 ▸ **retrieve**(`url`, `options?`, `logErrors?`): `Promise`<``null`` \| `Response`\>
 
 Execute an HTTP fetch request to the Protect controller.
-
-**`Remarks`**
-
-This method should be used when direct access to the Protect controller is needed, or when this library doesn't have a needed method to access
-  controller capabilities.
 
 #### Parameters
 
@@ -1311,9 +1308,14 @@ This method should be used when direct access to the Protect controller is neede
 
 Returns a promise that will resolve to a Response object successful, and `null` otherwise.
 
+**`Remarks`**
+
+This method should be used when direct access to the Protect controller is needed, or when this library doesn't have a needed method to access
+  controller capabilities.
+
 #### Defined in
 
-[src/protect-api.ts:926](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L926)
+[src/protect-api.ts:926](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L926)
 
 ___
 
@@ -1328,10 +1330,6 @@ modified for this specific `EventEmitter` instance. The value can be set to`Infi
 
 Returns a reference to the `EventEmitter`, so that calls can be chained.
 
-**`Since`**
-
-v0.3.5
-
 #### Parameters
 
 | Name | Type |
@@ -1342,13 +1340,17 @@ v0.3.5
 
 [`ProtectApi`](ProtectApi.md)
 
+**`Since`**
+
+v0.3.5
+
 #### Inherited from
 
 EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:561
+node_modules/@types/node/events.d.ts:625
 
 ___
 
@@ -1357,11 +1359,6 @@ ___
 ▸ **updateDevice**<`DeviceType`\>(`device`, `payload`): `Promise`<``null`` \| `DeviceType`\>
 
 Update a Protect device's configuration on the UniFi Protect controller.
-
-**`Remarks`**
-
-Use this method to change the configuration of a given Protect device or controller. It requires the credentials used to login to the Protect API
-  to have administrative privileges for most settings.
 
 #### Type parameters
 
@@ -1382,9 +1379,75 @@ Use this method to change the configuration of a given Protect device or control
 
 Returns a promise that will resolve to the updated device-specific configuration JSON if successful, and `null` otherwise.
 
+**`Remarks`**
+
+Use this method to change the configuration of a given Protect device or controller. It requires the credentials used to login to the Protect API
+  to have administrative privileges for most settings.
+
 #### Defined in
 
-[src/protect-api.ts:610](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api.ts#L610)
+[src/protect-api.ts:610](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api.ts#L610)
+
+___
+
+### addAbortListener
+
+▸ `Static` **addAbortListener**(`signal`, `resource`): `Disposable`
+
+Listens once to the `abort` event on the provided `signal`.
+
+Listening to the `abort` event on abort signals is unsafe and may
+lead to resource leaks since another third party with the signal can
+call `e.stopImmediatePropagation()`. Unfortunately Node.js cannot change
+this since it would violate the web standard. Additionally, the original
+API makes it easy to forget to remove listeners.
+
+This API allows safely using `AbortSignal`s in Node.js APIs by solving these
+two issues by listening to the event such that `stopImmediatePropagation` does
+not prevent the listener from running.
+
+Returns a disposable so that it may be unsubscribed from more easily.
+
+```js
+import { addAbortListener } from 'node:events';
+
+function example(signal) {
+  let disposable;
+  try {
+    signal.addEventListener('abort', (e) => e.stopImmediatePropagation());
+    disposable = addAbortListener(signal, (e) => {
+      // Do something when signal is aborted.
+    });
+  } finally {
+    disposable?.[Symbol.dispose]();
+  }
+}
+```
+
+#### Parameters
+
+| Name | Type |
+| :------ | :------ |
+| `signal` | `AbortSignal` |
+| `resource` | (`event`: `Event`) => `void` |
+
+#### Returns
+
+`Disposable`
+
+that removes the `abort` listener.
+
+**`Since`**
+
+v20.5.0
+
+#### Inherited from
+
+EventEmitter.addAbortListener
+
+#### Defined in
+
+node_modules/@types/node/events.d.ts:375
 
 ___
 
@@ -1417,10 +1480,6 @@ import { getEventListeners, EventEmitter } from 'node:events';
 }
 ```
 
-**`Since`**
-
-v15.2.0, v14.17.0
-
 #### Parameters
 
 | Name | Type |
@@ -1432,6 +1491,10 @@ v15.2.0, v14.17.0
 
 `Function`[]
 
+**`Since`**
+
+v15.2.0, v14.17.0
+
 #### Inherited from
 
 EventEmitter.getEventListeners
@@ -1439,6 +1502,60 @@ EventEmitter.getEventListeners
 #### Defined in
 
 node_modules/@types/node/events.d.ts:296
+
+___
+
+### getMaxListeners
+
+▸ `Static` **getMaxListeners**(`emitter`): `number`
+
+Returns the currently set max amount of listeners.
+
+For `EventEmitter`s this behaves exactly the same as calling `.getMaxListeners` on
+the emitter.
+
+For `EventTarget`s this is the only way to get the max event listeners for the
+event target. If the number of event handlers on a single EventTarget exceeds
+the max set, the EventTarget will print a warning.
+
+```js
+import { getMaxListeners, setMaxListeners, EventEmitter } from 'node:events';
+
+{
+  const ee = new EventEmitter();
+  console.log(getMaxListeners(ee)); // 10
+  setMaxListeners(11, ee);
+  console.log(getMaxListeners(ee)); // 11
+}
+{
+  const et = new EventTarget();
+  console.log(getMaxListeners(et)); // 10
+  setMaxListeners(11, et);
+  console.log(getMaxListeners(et)); // 11
+}
+```
+
+#### Parameters
+
+| Name | Type |
+| :------ | :------ |
+| `emitter` | `EventEmitter` \| `_DOMEventTarget` |
+
+#### Returns
+
+`number`
+
+**`Since`**
+
+v19.9.0
+
+#### Inherited from
+
+EventEmitter.getMaxListeners
+
+#### Defined in
+
+node_modules/@types/node/events.d.ts:325
 
 ___
 
@@ -1458,14 +1575,6 @@ console.log(listenerCount(myEmitter, 'event'));
 // Prints: 2
 ```
 
-**`Since`**
-
-v0.9.12
-
-**`Deprecated`**
-
-Since v3.2.0 - Use `listenerCount` instead.
-
 #### Parameters
 
 | Name | Type | Description |
@@ -1476,6 +1585,14 @@ Since v3.2.0 - Use `listenerCount` instead.
 #### Returns
 
 `number`
+
+**`Since`**
+
+v0.9.12
+
+**`Deprecated`**
+
+Since v3.2.0 - Use `listenerCount` instead.
 
 #### Inherited from
 
@@ -1546,10 +1663,6 @@ const ac = new AbortController();
 process.nextTick(() => ac.abort());
 ```
 
-**`Since`**
-
-v13.6.0, v12.16.0
-
 #### Parameters
 
 | Name | Type | Description |
@@ -1563,6 +1676,10 @@ v13.6.0, v12.16.0
 `AsyncIterableIterator`<`any`\>
 
 that iterates `eventName` events emitted by the `emitter`
+
+**`Since`**
+
+v13.6.0, v12.16.0
 
 #### Inherited from
 
@@ -1655,10 +1772,6 @@ ac.abort(); // Abort waiting for the event
 ee.emit('foo'); // Prints: Waiting for the event was canceled!
 ```
 
-**`Since`**
-
-v11.13.0, v10.16.0
-
 #### Parameters
 
 | Name | Type |
@@ -1670,6 +1783,10 @@ v11.13.0, v10.16.0
 #### Returns
 
 `Promise`<`any`[]\>
+
+**`Since`**
+
+v11.13.0, v10.16.0
 
 #### Inherited from
 
@@ -1716,10 +1833,6 @@ const emitter = new EventEmitter();
 setMaxListeners(5, target, emitter);
 ```
 
-**`Since`**
-
-v15.4.0
-
 #### Parameters
 
 | Name | Type | Description |
@@ -1731,10 +1844,14 @@ v15.4.0
 
 `void`
 
+**`Since`**
+
+v15.4.0
+
 #### Inherited from
 
 EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:311
+node_modules/@types/node/events.d.ts:340

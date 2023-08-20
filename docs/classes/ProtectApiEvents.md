@@ -28,12 +28,6 @@ UniFi Protect event utility class that provides functions for decoding realtime 
 
 Decode a UniFi Protect event packet.
 
-**`Remarks`**
-
-A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
-  encoded packet as an input, and decodes it into an event header and payload that can be acted upon. Events are generated automatically once a successful
-  login has been made to a Protect controller and can be accessed by listening to `message` events emitted by an instance of [ProtectApi](ProtectApi.md).
-
 #### Parameters
 
 | Name | Type | Description |
@@ -45,6 +39,12 @@ A UniFi Protect event packet is an encoded representation of state updates that 
 
 ``null`` \| [`ProtectEventPacket`](../modules.md#protecteventpacket)
 
+**`Remarks`**
+
+A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
+  encoded packet as an input, and decodes it into an event header and payload that can be acted upon. Events are generated automatically once a successful
+  login has been made to a Protect controller and can be accessed by listening to `message` events emitted by an instance of [ProtectApi](ProtectApi.md).
+
 #### Defined in
 
-[src/protect-api-events.ts:187](https://github.com/hjdhjd/unifi-protect/blob/28b6712/src/protect-api-events.ts#L187)
+[src/protect-api-events.ts:187](https://github.com/hjdhjd/unifi-protect/blob/a66ec94/src/protect-api-events.ts#L187)
