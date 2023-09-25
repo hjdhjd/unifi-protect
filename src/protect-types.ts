@@ -858,7 +858,7 @@ export interface ProtectEventAddInterface {
   camera: string,
   end: number,
   id: string,
-  metadata: Record<string, unknown>,
+  metadata: ProtectEventMetadata,
   modelKey: string,
   partition: string,
   score: number,
@@ -867,6 +867,16 @@ export interface ProtectEventAddInterface {
   start: number,
   type: string,
   user: string
+}
+
+// A description of metadata in UniFi Protect smart motion detect events.
+export interface ProtectEventMetadataInterface {
+
+  licensePlate: {
+
+    confidenceLevel: number,
+    name: string
+  }
 }
 
 // This type declaration make all properties optional recursively including nested objects. This should
@@ -883,6 +893,8 @@ export type DeepPartial<T> = {
 // every property as readonly along the way.
 /** @interface */
 export type ProtectEventAdd = Readonly<ProtectEventAddInterface>;
+/** @interface */
+export type ProtectEventMetadata = Readonly<ProtectEventMetadataInterface>;
 /** @interface */
 export type ProtectNvrBootstrap = Readonly<ProtectNvrBootstrapInterface>;
 /** @interface */
