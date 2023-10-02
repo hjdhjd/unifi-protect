@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.7.0 (2023-10-02)
+  * Housekeeping and add additional event telemetry for new Protect event types.
+
 ## 4.6.1 (2023-08-19)
 ## 4.6.0 (2023-08-19)
   * Housekeeping and minor enhancements to error handling.
