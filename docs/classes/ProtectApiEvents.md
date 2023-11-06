@@ -18,13 +18,17 @@ UniFi Protect event utility class that provides functions for decoding realtime 
 
 ### constructor
 
-• **new ProtectApiEvents**()
+• **new ProtectApiEvents**(): [`ProtectApiEvents`](ProtectApiEvents.md)
+
+#### Returns
+
+[`ProtectApiEvents`](ProtectApiEvents.md)
 
 ## Methods
 
 ### decodePacket
 
-▸ `Static` **decodePacket**(`log`, `packet`): ``null`` \| [`ProtectEventPacket`](../modules.md#protecteventpacket)
+▸ **decodePacket**(`log`, `packet`): ``null`` \| [`ProtectEventPacket`](../modules.md#protecteventpacket)
 
 Decode a UniFi Protect event packet.
 
@@ -47,4 +51,4 @@ A UniFi Protect event packet is an encoded representation of state updates that 
 
 #### Defined in
 
-[src/protect-api-events.ts:187](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api-events.ts#L187)
+[src/protect-api-events.ts:187](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api-events.ts#L187)

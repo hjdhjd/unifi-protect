@@ -35,13 +35,17 @@
 
 ### constructor
 
-• **new FetchError**(`message?`)
+• **new FetchError**(`message?`): [`FetchError`](FetchError.md)
 
 #### Parameters
 
 | Name | Type |
 | :------ | :------ |
 | `message?` | `string` |
+
+#### Returns
+
+[`FetchError`](FetchError.md)
 
 #### Inherited from
 
@@ -51,7 +55,7 @@ FetchBaseError.constructor
 
 node_modules/typescript/lib/lib.es5.d.ts:1073
 
-• **new FetchError**(`message?`, `options?`)
+• **new FetchError**(`message?`, `options?`): [`FetchError`](FetchError.md)
 
 #### Parameters
 
@@ -59,6 +63,10 @@ node_modules/typescript/lib/lib.es5.d.ts:1073
 | :------ | :------ |
 | `message?` | `string` |
 | `options?` | `ErrorOptions` |
+
+#### Returns
+
+[`FetchError`](FetchError.md)
 
 #### Inherited from
 
@@ -221,7 +229,7 @@ node_modules/@types/node/globals.d.ts:13
 
 ### captureStackTrace
 
-▸ `Static` **captureStackTrace**(`targetObject`, `constructorOpt?`): `void`
+▸ **captureStackTrace**(`targetObject`, `constructorOpt?`): `void`
 
 Create .stack property on a target object
 

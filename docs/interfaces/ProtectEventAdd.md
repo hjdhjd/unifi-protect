@@ -27,7 +27,7 @@
 
 #### Defined in
 
-[src/protect-types.ts:858](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L858)
+[src/protect-types.ts:858](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L858)
 
 ___
 
@@ -37,7 +37,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:859](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L859)
+[src/protect-types.ts:859](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L859)
 
 ___
 
@@ -47,17 +47,17 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:860](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L860)
+[src/protect-types.ts:860](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L860)
 
 ___
 
 ### metadata
 
-• `Readonly` **metadata**: `Readonly`<[`ProtectEventMetadataInterface`](ProtectEventMetadataInterface.md)\>
+• `Readonly` **metadata**: `Readonly`\<[`ProtectEventMetadataInterface`](ProtectEventMetadataInterface.md)\>
 
 #### Defined in
 
-[src/protect-types.ts:861](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L861)
+[src/protect-types.ts:861](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L861)
 
 ___
 
@@ -67,7 +67,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:862](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L862)
+[src/protect-types.ts:862](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L862)
 
 ___
 
@@ -77,7 +77,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:863](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L863)
+[src/protect-types.ts:863](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L863)
 
 ___
 
@@ -87,7 +87,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:864](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L864)
+[src/protect-types.ts:864](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L864)
 
 ___
 
@@ -97,7 +97,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:865](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L865)
+[src/protect-types.ts:865](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L865)
 
 ___
 
@@ -107,7 +107,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:866](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L866)
+[src/protect-types.ts:866](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L866)
 
 ___
 
@@ -117,7 +117,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:867](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L867)
+[src/protect-types.ts:867](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L867)
 
 ___
 
@@ -127,7 +127,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:868](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L868)
+[src/protect-types.ts:868](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L868)
 
 ___
 
@@ -137,4 +137,4 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:869](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L869)
+[src/protect-types.ts:869](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L869)

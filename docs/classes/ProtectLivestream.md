@@ -27,6 +27,7 @@
 
 ### Methods
 
+- [[captureRejectionSymbol]](ProtectLivestream.md#[capturerejectionsymbol])
 - [addListener](ProtectLivestream.md#addlistener)
 - [emit](ProtectLivestream.md#emit)
 - [eventNames](ProtectLivestream.md#eventnames)
@@ -57,7 +58,7 @@
 
 ### constructor
 
-• **new ProtectLivestream**(`api`, `log`)
+• **new ProtectLivestream**(`api`, `log`): [`ProtectLivestream`](ProtectLivestream.md)
 
 #### Parameters
 
@@ -66,13 +67,17 @@
 | `api` | [`ProtectApi`](ProtectApi.md) |
 | `log` | [`ProtectLogging`](../interfaces/ProtectLogging.md) |
 
+#### Returns
+
+[`ProtectLivestream`](ProtectLivestream.md)
+
 #### Overrides
 
 EventEmitter.constructor
 
 #### Defined in
 
-[src/protect-api-livestream.ts:70](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api-livestream.ts#L70)
+[src/protect-api-livestream.ts:70](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api-livestream.ts#L70)
 
 ## Properties
 
@@ -94,7 +99,7 @@ EventEmitter.captureRejectionSymbol
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:398
+node_modules/@types/node/events.d.ts:402
 
 ___
 
@@ -116,7 +121,7 @@ EventEmitter.captureRejections
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:405
+node_modules/@types/node/events.d.ts:409
 
 ___
 
@@ -168,7 +173,7 @@ EventEmitter.defaultMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:442
+node_modules/@types/node/events.d.ts:446
 
 ___
 
@@ -191,7 +196,7 @@ EventEmitter.errorMonitor
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:391
+node_modules/@types/node/events.d.ts:395
 
 ## Accessors
 
@@ -205,9 +210,35 @@ node_modules/@types/node/events.d.ts:391
 
 #### Defined in
 
-[src/protect-api-livestream.ts:397](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api-livestream.ts#L397)
+[src/protect-api-livestream.ts:397](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api-livestream.ts#L397)
 
 ## Methods
+
+### [captureRejectionSymbol]
+
+▸ **[captureRejectionSymbol]**(`error`, `event`, `...args`): `void`
+
+#### Parameters
+
+| Name | Type |
+| :------ | :------ |
+| `error` | `Error` |
+| `event` | `string` |
+| `...args` | `any`[] |
+
+#### Returns
+
+`void`
+
+#### Inherited from
+
+EventEmitter.[captureRejectionSymbol]
+
+#### Defined in
+
+node_modules/@types/node/events.d.ts:112
+
+___
 
 ### addListener
 
@@ -236,7 +267,7 @@ EventEmitter.addListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:462
+node_modules/@types/node/events.d.ts:510
 
 ___
 
@@ -303,7 +334,7 @@ EventEmitter.emit
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:724
+node_modules/@types/node/events.d.ts:772
 
 ___
 
@@ -342,21 +373,21 @@ EventEmitter.eventNames
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:787
+node_modules/@types/node/events.d.ts:835
 
 ___
 
 ### getInitSegment
 
-▸ **getInitSegment**(): `Promise`<`Buffer`\>
+▸ **getInitSegment**(): `Promise`\<`Buffer`\>
 
 #### Returns
 
-`Promise`<`Buffer`\>
+`Promise`\<`Buffer`\>
 
 #### Defined in
 
-[src/protect-api-livestream.ts:383](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api-livestream.ts#L383)
+[src/protect-api-livestream.ts:383](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api-livestream.ts#L383)
 
 ___
 
@@ -381,7 +412,7 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:639
+node_modules/@types/node/events.d.ts:687
 
 ___
 
@@ -414,7 +445,7 @@ EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:733
+node_modules/@types/node/events.d.ts:781
 
 ___
 
@@ -452,7 +483,7 @@ EventEmitter.listeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:652
+node_modules/@types/node/events.d.ts:700
 
 ___
 
@@ -483,7 +514,7 @@ EventEmitter.off
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:612
+node_modules/@types/node/events.d.ts:660
 
 ___
 
@@ -539,7 +570,7 @@ EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:494
+node_modules/@types/node/events.d.ts:542
 
 ___
 
@@ -593,7 +624,7 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:524
+node_modules/@types/node/events.d.ts:572
 
 ___
 
@@ -635,7 +666,7 @@ EventEmitter.prependListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:751
+node_modules/@types/node/events.d.ts:799
 
 ___
 
@@ -675,7 +706,7 @@ EventEmitter.prependOnceListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:767
+node_modules/@types/node/events.d.ts:815
 
 ___
 
@@ -731,7 +762,7 @@ EventEmitter.rawListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:683
+node_modules/@types/node/events.d.ts:731
 
 ___
 
@@ -767,7 +798,7 @@ EventEmitter.removeAllListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:623
+node_modules/@types/node/events.d.ts:671
 
 ___
 
@@ -876,7 +907,7 @@ EventEmitter.removeListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:607
+node_modules/@types/node/events.d.ts:655
 
 ___
 
@@ -911,13 +942,13 @@ EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:633
+node_modules/@types/node/events.d.ts:681
 
 ___
 
 ### start
 
-▸ **start**(`cameraId`, `channel`, `lens?`, `segmentLength?`, `requestId?`): `Promise`<`boolean`\>
+▸ **start**(`cameraId`, `channel`, `lens?`, `segmentLength?`, `requestId?`): `Promise`\<`boolean`\>
 
 #### Parameters
 
@@ -931,11 +962,11 @@ ___
 
 #### Returns
 
-`Promise`<`boolean`\>
+`Promise`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-api-livestream.ts:84](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api-livestream.ts#L84)
+[src/protect-api-livestream.ts:84](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api-livestream.ts#L84)
 
 ___
 
@@ -949,13 +980,13 @@ ___
 
 #### Defined in
 
-[src/protect-api-livestream.ts:97](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api-livestream.ts#L97)
+[src/protect-api-livestream.ts:97](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api-livestream.ts#L97)
 
 ___
 
 ### addAbortListener
 
-▸ `Static` **addAbortListener**(`signal`, `resource`): `Disposable`
+▸ **addAbortListener**(`signal`, `resource`): `Disposable`
 
 Listens once to the `abort` event on the provided `signal`.
 
@@ -1010,13 +1041,13 @@ EventEmitter.addAbortListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:383
+node_modules/@types/node/events.d.ts:387
 
 ___
 
 ### getEventListeners
 
-▸ `Static` **getEventListeners**(`emitter`, `name`): `Function`[]
+▸ **getEventListeners**(`emitter`, `name`): `Function`[]
 
 Returns a copy of the array of listeners for the event named `eventName`.
 
@@ -1064,13 +1095,13 @@ EventEmitter.getEventListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:304
+node_modules/@types/node/events.d.ts:308
 
 ___
 
 ### getMaxListeners
 
-▸ `Static` **getMaxListeners**(`emitter`): `number`
+▸ **getMaxListeners**(`emitter`): `number`
 
 Returns the currently set max amount of listeners.
 
@@ -1118,13 +1149,13 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:333
+node_modules/@types/node/events.d.ts:337
 
 ___
 
 ### listenerCount
 
-▸ `Static` **listenerCount**(`emitter`, `eventName`): `number`
+▸ **listenerCount**(`emitter`, `eventName`): `number`
 
 A class method that returns the number of listeners for the given `eventName`registered on the given `emitter`.
 
@@ -1163,13 +1194,13 @@ EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:276
+node_modules/@types/node/events.d.ts:280
 
 ___
 
 ### on
 
-▸ `Static` **on**(`emitter`, `eventName`, `options?`): `AsyncIterableIterator`<`any`\>
+▸ **on**(`emitter`, `eventName`, `options?`): `AsyncIterableIterator`\<`any`\>
 
 ```js
 import { on, EventEmitter } from 'node:events';
@@ -1236,7 +1267,7 @@ process.nextTick(() => ac.abort());
 
 #### Returns
 
-`AsyncIterableIterator`<`any`\>
+`AsyncIterableIterator`\<`any`\>
 
 that iterates `eventName` events emitted by the `emitter`
 
@@ -1250,13 +1281,13 @@ EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:254
+node_modules/@types/node/events.d.ts:258
 
 ___
 
 ### once
 
-▸ `Static` **once**(`emitter`, `eventName`, `options?`): `Promise`<`any`[]\>
+▸ **once**(`emitter`, `eventName`, `options?`): `Promise`\<`any`[]\>
 
 Creates a `Promise` that is fulfilled when the `EventEmitter` emits the given
 event or that is rejected if the `EventEmitter` emits `'error'` while waiting.
@@ -1345,7 +1376,7 @@ ee.emit('foo'); // Prints: Waiting for the event was canceled!
 
 #### Returns
 
-`Promise`<`any`[]\>
+`Promise`\<`any`[]\>
 
 **`Since`**
 
@@ -1357,9 +1388,9 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:189
+node_modules/@types/node/events.d.ts:193
 
-▸ `Static` **once**(`emitter`, `eventName`, `options?`): `Promise`<`any`[]\>
+▸ **once**(`emitter`, `eventName`, `options?`): `Promise`\<`any`[]\>
 
 #### Parameters
 
@@ -1371,7 +1402,7 @@ node_modules/@types/node/events.d.ts:189
 
 #### Returns
 
-`Promise`<`any`[]\>
+`Promise`\<`any`[]\>
 
 #### Inherited from
 
@@ -1379,13 +1410,13 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:194
+node_modules/@types/node/events.d.ts:198
 
 ___
 
 ### setMaxListeners
 
-▸ `Static` **setMaxListeners**(`n?`, `...eventTargets`): `void`
+▸ **setMaxListeners**(`n?`, `...eventTargets`): `void`
 
 ```js
 import { setMaxListeners, EventEmitter } from 'node:events';
@@ -1417,4 +1448,4 @@ EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:348
+node_modules/@types/node/events.d.ts:352

@@ -53,17 +53,17 @@
 
 #### Defined in
 
-[src/protect-types.ts:530](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L530)
+[src/protect-types.ts:530](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L530)
 
 ___
 
 ### canAdopt
 
-• `Optional` **canAdopt**: `DeepPartial`<`boolean`\>
+• `Optional` **canAdopt**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:531](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L531)
+[src/protect-types.ts:531](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L531)
 
 ___
 
@@ -73,7 +73,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:532](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L532)
+[src/protect-types.ts:532](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L532)
 
 ___
 
@@ -83,7 +83,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:533](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L533)
+[src/protect-types.ts:533](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L533)
 
 ___
 
@@ -93,7 +93,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:534](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L534)
+[src/protect-types.ts:534](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L534)
 
 ___
 
@@ -103,7 +103,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:535](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L535)
+[src/protect-types.ts:535](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L535)
 
 ___
 
@@ -113,7 +113,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:536](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L536)
+[src/protect-types.ts:536](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L536)
 
 ___
 
@@ -123,7 +123,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:537](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L537)
+[src/protect-types.ts:537](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L537)
 
 ___
 
@@ -133,147 +133,147 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:538](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L538)
+[src/protect-types.ts:538](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L538)
 
 ___
 
 ### isAdopted
 
-• `Optional` **isAdopted**: `DeepPartial`<`boolean`\>
+• `Optional` **isAdopted**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:539](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L539)
+[src/protect-types.ts:539](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L539)
 
 ___
 
 ### isAdoptedByOther
 
-• `Optional` **isAdoptedByOther**: `DeepPartial`<`boolean`\>
+• `Optional` **isAdoptedByOther**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:540](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L540)
+[src/protect-types.ts:540](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L540)
 
 ___
 
 ### isAdopting
 
-• `Optional` **isAdopting**: `DeepPartial`<`boolean`\>
+• `Optional` **isAdopting**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:541](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L541)
+[src/protect-types.ts:541](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L541)
 
 ___
 
 ### isAttemptingToConnect
 
-• `Optional` **isAttemptingToConnect**: `DeepPartial`<`boolean`\>
+• `Optional` **isAttemptingToConnect**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:542](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L542)
+[src/protect-types.ts:542](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L542)
 
 ___
 
 ### isCameraPaired
 
-• `Optional` **isCameraPaired**: `DeepPartial`<`boolean`\>
+• `Optional` **isCameraPaired**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:543](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L543)
+[src/protect-types.ts:543](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L543)
 
 ___
 
 ### isConnected
 
-• `Optional` **isConnected**: `DeepPartial`<`boolean`\>
+• `Optional` **isConnected**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:544](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L544)
+[src/protect-types.ts:544](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L544)
 
 ___
 
 ### isDark
 
-• `Optional` **isDark**: `DeepPartial`<`boolean`\>
+• `Optional` **isDark**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:545](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L545)
+[src/protect-types.ts:545](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L545)
 
 ___
 
 ### isLightOn
 
-• `Optional` **isLightOn**: `DeepPartial`<`boolean`\>
+• `Optional` **isLightOn**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:546](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L546)
+[src/protect-types.ts:546](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L546)
 
 ___
 
 ### isLocating
 
-• `Optional` **isLocating**: `DeepPartial`<`boolean`\>
+• `Optional` **isLocating**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:547](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L547)
+[src/protect-types.ts:547](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L547)
 
 ___
 
 ### isPirMotionDetected
 
-• `Optional` **isPirMotionDetected**: `DeepPartial`<`boolean`\>
+• `Optional` **isPirMotionDetected**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:548](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L548)
+[src/protect-types.ts:548](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L548)
 
 ___
 
 ### isProvisioned
 
-• `Optional` **isProvisioned**: `DeepPartial`<`boolean`\>
+• `Optional` **isProvisioned**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:549](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L549)
+[src/protect-types.ts:549](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L549)
 
 ___
 
 ### isRebooting
 
-• `Optional` **isRebooting**: `DeepPartial`<`boolean`\>
+• `Optional` **isRebooting**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:550](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L550)
+[src/protect-types.ts:550](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L550)
 
 ___
 
 ### isSshEnabled
 
-• `Optional` **isSshEnabled**: `DeepPartial`<`boolean`\>
+• `Optional` **isSshEnabled**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:551](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L551)
+[src/protect-types.ts:551](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L551)
 
 ___
 
 ### isUpdating
 
-• `Optional` **isUpdating**: `DeepPartial`<`boolean`\>
+• `Optional` **isUpdating**: `DeepPartial`\<`boolean`\>
 
 #### Defined in
 
-[src/protect-types.ts:552](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L552)
+[src/protect-types.ts:552](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L552)
 
 ___
 
@@ -283,7 +283,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:553](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L553)
+[src/protect-types.ts:553](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L553)
 
 ___
 
@@ -293,7 +293,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:554](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L554)
+[src/protect-types.ts:554](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L554)
 
 ___
 
@@ -303,37 +303,37 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:555](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L555)
+[src/protect-types.ts:555](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L555)
 
 ___
 
 ### lightDeviceSettings
 
-• `Optional` **lightDeviceSettings**: `DeepPartial`<{ `isIndicatorEnabled`: `boolean` ; `ledLevel`: `number` ; `luxSensitivity`: `string` ; `pirDuration`: `number` ; `pirSensitivity`: `number`  }\>
+• `Optional` **lightDeviceSettings**: `DeepPartial`\<\{ `isIndicatorEnabled`: `boolean` ; `ledLevel`: `number` ; `luxSensitivity`: `string` ; `pirDuration`: `number` ; `pirSensitivity`: `number`  }\>
 
 #### Defined in
 
-[src/protect-types.ts:556](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L556)
+[src/protect-types.ts:556](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L556)
 
 ___
 
 ### lightModeSettings
 
-• `Optional` **lightModeSettings**: `DeepPartial`<{ `enableAt`: `string` ; `mode`: `string`  }\>
+• `Optional` **lightModeSettings**: `DeepPartial`\<\{ `enableAt`: `string` ; `mode`: `string`  }\>
 
 #### Defined in
 
-[src/protect-types.ts:564](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L564)
+[src/protect-types.ts:564](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L564)
 
 ___
 
 ### lightOnSettings
 
-• `Optional` **lightOnSettings**: `DeepPartial`<{ `isLedForceOn`: `boolean`  }\>
+• `Optional` **lightOnSettings**: `DeepPartial`\<\{ `isLedForceOn`: `boolean`  }\>
 
 #### Defined in
 
-[src/protect-types.ts:569](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L569)
+[src/protect-types.ts:569](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L569)
 
 ___
 
@@ -343,7 +343,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:573](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L573)
+[src/protect-types.ts:573](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L573)
 
 ___
 
@@ -353,7 +353,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:574](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L574)
+[src/protect-types.ts:574](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L574)
 
 ___
 
@@ -363,7 +363,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:575](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L575)
+[src/protect-types.ts:575](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L575)
 
 ___
 
@@ -373,7 +373,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:576](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L576)
+[src/protect-types.ts:576](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L576)
 
 ___
 
@@ -383,7 +383,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:577](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L577)
+[src/protect-types.ts:577](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L577)
 
 ___
 
@@ -393,7 +393,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:578](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L578)
+[src/protect-types.ts:578](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L578)
 
 ___
 
@@ -403,7 +403,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:579](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L579)
+[src/protect-types.ts:579](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L579)
 
 ___
 
@@ -413,14 +413,14 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:580](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L580)
+[src/protect-types.ts:580](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L580)
 
 ___
 
 ### wiredConnectionState
 
-• `Optional` **wiredConnectionState**: `DeepPartial`<{ `phyRate`: `number`  }\>
+• `Optional` **wiredConnectionState**: `DeepPartial`\<\{ `phyRate`: `number`  }\>
 
 #### Defined in
 
-[src/protect-types.ts:581](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L581)
+[src/protect-types.ts:581](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L581)

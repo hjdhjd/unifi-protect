@@ -44,8 +44,8 @@ Those are the basics that gets us up and running.
 
 ### Methods
 
+- [[captureRejectionSymbol]](ProtectApi.md#[capturerejectionsymbol])
 - [addListener](ProtectApi.md#addlistener)
-- [clearLoginCredentials](ProtectApi.md#clearlogincredentials)
 - [createLivestream](ProtectApi.md#createlivestream)
 - [emit](ProtectApi.md#emit)
 - [enableRtsp](ProtectApi.md#enablertsp)
@@ -60,6 +60,7 @@ Those are the basics that gets us up and running.
 - [listenerCount](ProtectApi.md#listenercount)
 - [listeners](ProtectApi.md#listeners)
 - [login](ProtectApi.md#login)
+- [logout](ProtectApi.md#logout)
 - [off](ProtectApi.md#off)
 - [on](ProtectApi.md#on)
 - [once](ProtectApi.md#once)
@@ -68,6 +69,7 @@ Those are the basics that gets us up and running.
 - [rawListeners](ProtectApi.md#rawlisteners)
 - [removeAllListeners](ProtectApi.md#removealllisteners)
 - [removeListener](ProtectApi.md#removelistener)
+- [reset](ProtectApi.md#reset)
 - [retrieve](ProtectApi.md#retrieve)
 - [setMaxListeners](ProtectApi.md#setmaxlisteners)
 - [updateDevice](ProtectApi.md#updatedevice)
@@ -83,7 +85,7 @@ Those are the basics that gets us up and running.
 
 ### constructor
 
-• **new ProtectApi**(`log?`)
+• **new ProtectApi**(`log?`): [`ProtectApi`](ProtectApi.md)
 
 Create an instance of the UniFi Protect API.
 
@@ -92,6 +94,10 @@ Create an instance of the UniFi Protect API.
 | Name | Type | Description |
 | :------ | :------ | :------ |
 | `log?` | [`ProtectLogging`](../interfaces/ProtectLogging.md) | Logging functions to use. |
+
+#### Returns
+
+[`ProtectApi`](ProtectApi.md)
 
 **`Default Value`**
 
@@ -103,7 +109,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-[src/protect-api.ts:79](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L79)
+[src/protect-api.ts:78](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L78)
 
 ## Properties
 
@@ -125,7 +131,7 @@ EventEmitter.captureRejectionSymbol
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:398
+node_modules/@types/node/events.d.ts:402
 
 ___
 
@@ -147,7 +153,7 @@ EventEmitter.captureRejections
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:405
+node_modules/@types/node/events.d.ts:409
 
 ___
 
@@ -199,7 +205,7 @@ EventEmitter.defaultMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:442
+node_modules/@types/node/events.d.ts:446
 
 ___
 
@@ -222,25 +228,25 @@ EventEmitter.errorMonitor
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:391
+node_modules/@types/node/events.d.ts:395
 
 ## Accessors
 
 ### bootstrap
 
-• `get` **bootstrap**(): ``null`` \| `Readonly`<[`ProtectNvrBootstrapInterface`](../interfaces/ProtectNvrBootstrapInterface.md)\>
+• `get` **bootstrap**(): ``null`` \| `Readonly`\<[`ProtectNvrBootstrapInterface`](../interfaces/ProtectNvrBootstrapInterface.md)\>
 
 Access the Protect controller bootstrap JSON.
 
 #### Returns
 
-``null`` \| `Readonly`<[`ProtectNvrBootstrapInterface`](../interfaces/ProtectNvrBootstrapInterface.md)\>
+``null`` \| `Readonly`\<[`ProtectNvrBootstrapInterface`](../interfaces/ProtectNvrBootstrapInterface.md)\>
 
 Returns the bootstrap JSON if the Protect controller has been bootstrapped, `null` otherwise.
 
 #### Defined in
 
-[src/protect-api.ts:1206](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L1206)
+[src/protect-api.ts:1197](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L1197)
 
 ___
 
@@ -258,7 +264,7 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 #### Defined in
 
-[src/protect-api.ts:1217](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L1217)
+[src/protect-api.ts:1208](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L1208)
 
 ___
 
@@ -277,9 +283,35 @@ Returns the Protect controller name in the following format:
 
 #### Defined in
 
-[src/protect-api.ts:1229](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L1229)
+[src/protect-api.ts:1220](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L1220)
 
 ## Methods
+
+### [captureRejectionSymbol]
+
+▸ **[captureRejectionSymbol]**(`error`, `event`, `...args`): `void`
+
+#### Parameters
+
+| Name | Type |
+| :------ | :------ |
+| `error` | `Error` |
+| `event` | `string` |
+| `...args` | `any`[] |
+
+#### Returns
+
+`void`
+
+#### Inherited from
+
+EventEmitter.[captureRejectionSymbol]
+
+#### Defined in
+
+node_modules/@types/node/events.d.ts:112
+
+___
 
 ### addListener
 
@@ -308,23 +340,7 @@ EventEmitter.addListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:462
-
-___
-
-### clearLoginCredentials
-
-▸ **clearLoginCredentials**(): `void`
-
-Clear the login credentials and terminate any open connection to the UniFi Protect events API.
-
-#### Returns
-
-`void`
-
-#### Defined in
-
-[src/protect-api.ts:775](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L775)
+node_modules/@types/node/events.d.ts:510
 
 ___
 
@@ -347,7 +363,7 @@ This method should be used to create a new livestream API object. It allows you 
 
 #### Defined in
 
-[src/protect-api.ts:1114](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L1114)
+[src/protect-api.ts:1105](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L1105)
 
 ___
 
@@ -414,13 +430,13 @@ EventEmitter.emit
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:724
+node_modules/@types/node/events.d.ts:772
 
 ___
 
 ### enableRtsp
 
-▸ **enableRtsp**(`device`): `Promise`<``null`` \| `Readonly`<[`ProtectCameraConfigInterface`](../interfaces/ProtectCameraConfigInterface.md)\>\>
+▸ **enableRtsp**(`device`): `Promise`\<``null`` \| `Readonly`\<[`ProtectCameraConfigInterface`](../interfaces/ProtectCameraConfigInterface.md)\>\>
 
 Utility method that enables all RTSP channels on a given Protect camera.
 
@@ -432,13 +448,13 @@ Utility method that enables all RTSP channels on a given Protect camera.
 
 #### Returns
 
-`Promise`<``null`` \| `Readonly`<[`ProtectCameraConfigInterface`](../interfaces/ProtectCameraConfigInterface.md)\>\>
+`Promise`\<``null`` \| `Readonly`\<[`ProtectCameraConfigInterface`](../interfaces/ProtectCameraConfigInterface.md)\>\>
 
 Returns a promise that will resolve to the updated [ProtectCameraConfig](../interfaces/ProtectCameraConfig.md) if successful, and `null` otherwise.
 
 #### Defined in
 
-[src/protect-api.ts:699](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L699)
+[src/protect-api.ts:678](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L678)
 
 ___
 
@@ -477,7 +493,7 @@ EventEmitter.eventNames
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:787
+node_modules/@types/node/events.d.ts:835
 
 ___
 
@@ -505,19 +521,19 @@ Valid API endpoints are `bootstrap`, `camera`, `chime`, `light`, `login`, `nvr`,
 
 #### Defined in
 
-[src/protect-api.ts:1129](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L1129)
+[src/protect-api.ts:1120](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L1120)
 
 ___
 
 ### getBootstrap
 
-▸ **getBootstrap**(): `Promise`<`boolean`\>
+▸ **getBootstrap**(): `Promise`\<`boolean`\>
 
 Retrieve the bootstrap JSON from a UniFi Protect controller.
 
 #### Returns
 
-`Promise`<`boolean`\>
+`Promise`\<`boolean`\>
 
 Returns a promise that will resolve to `true` if successful and `false` otherwise.
 
@@ -587,7 +603,7 @@ process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, so
 
 #### Defined in
 
-[src/protect-api.ts:475](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L475)
+[src/protect-api.ts:454](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L454)
 
 ___
 
@@ -617,7 +633,7 @@ The example above assumed the `deviceInfo` parameter is set to `true`.
 
 #### Defined in
 
-[src/protect-api.ts:736](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L736)
+[src/protect-api.ts:715](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L715)
 
 ___
 
@@ -642,7 +658,7 @@ Returns the Protect device name in the following format:
 
 #### Defined in
 
-[src/protect-api.ts:763](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L763)
+[src/protect-api.ts:742](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L742)
 
 ___
 
@@ -667,13 +683,13 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:639
+node_modules/@types/node/events.d.ts:687
 
 ___
 
 ### getSnapshot
 
-▸ **getSnapshot**(`device`, `width?`, `height?`, `timestamp?`, `usePackageCamera?`): `Promise`<``null`` \| `Buffer`\>
+▸ **getSnapshot**(`device`, `width?`, `height?`, `timestamp?`, `usePackageCamera?`): `Promise`\<``null`` \| `Buffer`\>
 
 Retrieve a snapshot image from a Protect camera.
 
@@ -681,7 +697,7 @@ Retrieve a snapshot image from a Protect camera.
 
 | Name | Type | Default value | Description |
 | :------ | :------ | :------ | :------ |
-| `device` | `Readonly`<[`ProtectCameraConfigInterface`](../interfaces/ProtectCameraConfigInterface.md)\> | `undefined` | Protect device. |
+| `device` | `Readonly`\<[`ProtectCameraConfigInterface`](../interfaces/ProtectCameraConfigInterface.md)\> | `undefined` | Protect device. |
 | `width?` | `number` | `undefined` | Optionally specify the image width to request. Defaults selected by the Protect controller, based on the camera resolution. |
 | `height?` | `number` | `undefined` | Optionally specify the image height to request. Defaults selected by the Protect controller, based on the camera resolution. |
 | `timestamp` | `number` | `undefined` | Optionally specify the timestamp index to retrieve. Defaults to the current time. |
@@ -689,19 +705,19 @@ Retrieve a snapshot image from a Protect camera.
 
 #### Returns
 
-`Promise`<``null`` \| `Buffer`\>
+`Promise`\<``null`` \| `Buffer`\>
 
 Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
 
 #### Defined in
 
-[src/protect-api.ts:550](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L550)
+[src/protect-api.ts:529](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L529)
 
 ___
 
 ### getWsEndpoint
 
-▸ **getWsEndpoint**(`endpoint`, `params?`): `Promise`<``null`` \| `string`\>
+▸ **getWsEndpoint**(`endpoint`, `params?`): `Promise`\<``null`` \| `string`\>
 
 Return a websocket API endpoint for the requested endpoint type.
 
@@ -714,7 +730,7 @@ Return a websocket API endpoint for the requested endpoint type.
 
 #### Returns
 
-`Promise`<``null`` \| `string`\>
+`Promise`\<``null`` \| `string`\>
 
 Returns a promise that will resolve to a URL to the requested endpoint if successful, and `null` otherwise.
 
@@ -730,7 +746,7 @@ Valid API endpoints are `livestream` and `talkback`.
 
 #### Defined in
 
-[src/protect-api.ts:839](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L839)
+[src/protect-api.ts:829](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L829)
 
 ___
 
@@ -763,7 +779,7 @@ EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:733
+node_modules/@types/node/events.d.ts:781
 
 ___
 
@@ -801,13 +817,13 @@ EventEmitter.listeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:652
+node_modules/@types/node/events.d.ts:700
 
 ___
 
 ### login
 
-▸ **login**(`nvrAddress`, `username`, `password`): `Promise`<`boolean`\>
+▸ **login**(`nvrAddress`, `username`, `password`): `Promise`\<`boolean`\>
 
 Execute a login attempt to the UniFi Protect API.
 
@@ -821,7 +837,7 @@ Execute a login attempt to the UniFi Protect API.
 
 #### Returns
 
-`Promise`<`boolean`\>
+`Promise`\<`boolean`\>
 
 Returns a promise that will resolve to `true` if successful and `false` otherwise.
 
@@ -860,7 +876,23 @@ if(!(await ufp.login("protect-controller.local", "username", "password"))) {
 
 #### Defined in
 
-[src/protect-api.ts:164](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L164)
+[src/protect-api.ts:160](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L160)
+
+___
+
+### logout
+
+▸ **logout**(): `void`
+
+Clear the login credentials and terminate any open connection to the UniFi Protect API.
+
+#### Returns
+
+`void`
+
+#### Defined in
+
+[src/protect-api.ts:766](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L766)
 
 ___
 
@@ -891,7 +923,7 @@ EventEmitter.off
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:612
+node_modules/@types/node/events.d.ts:660
 
 ___
 
@@ -947,7 +979,7 @@ EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:494
+node_modules/@types/node/events.d.ts:542
 
 ___
 
@@ -1001,7 +1033,7 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:524
+node_modules/@types/node/events.d.ts:572
 
 ___
 
@@ -1043,7 +1075,7 @@ EventEmitter.prependListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:751
+node_modules/@types/node/events.d.ts:799
 
 ___
 
@@ -1083,7 +1115,7 @@ EventEmitter.prependOnceListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:767
+node_modules/@types/node/events.d.ts:815
 
 ___
 
@@ -1139,7 +1171,7 @@ EventEmitter.rawListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:683
+node_modules/@types/node/events.d.ts:731
 
 ___
 
@@ -1175,7 +1207,7 @@ EventEmitter.removeAllListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:623
+node_modules/@types/node/events.d.ts:671
 
 ___
 
@@ -1284,13 +1316,29 @@ EventEmitter.removeListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:607
+node_modules/@types/node/events.d.ts:655
+
+___
+
+### reset
+
+▸ **reset**(): `void`
+
+Terminate any open connection to the UniFi Protect API.
+
+#### Returns
+
+`void`
+
+#### Defined in
+
+[src/protect-api.ts:754](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L754)
 
 ___
 
 ### retrieve
 
-▸ **retrieve**(`url`, `options?`, `logErrors?`): `Promise`<``null`` \| `Response`\>
+▸ **retrieve**(`url`, `options?`, `logErrors?`): `Promise`\<``null`` \| `Response`\>
 
 Execute an HTTP fetch request to the Protect controller.
 
@@ -1304,7 +1352,7 @@ Execute an HTTP fetch request to the Protect controller.
 
 #### Returns
 
-`Promise`<``null`` \| `Response`\>
+`Promise`\<``null`` \| `Response`\>
 
 Returns a promise that will resolve to a Response object successful, and `null` otherwise.
 
@@ -1315,7 +1363,7 @@ This method should be used when direct access to the Protect controller is neede
 
 #### Defined in
 
-[src/protect-api.ts:926](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L926)
+[src/protect-api.ts:917](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L917)
 
 ___
 
@@ -1350,13 +1398,13 @@ EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:633
+node_modules/@types/node/events.d.ts:681
 
 ___
 
 ### updateDevice
 
-▸ **updateDevice**<`DeviceType`\>(`device`, `payload`): `Promise`<``null`` \| `DeviceType`\>
+▸ **updateDevice**\<`DeviceType`\>(`device`, `payload`): `Promise`\<``null`` \| `DeviceType`\>
 
 Update a Protect device's configuration on the UniFi Protect controller.
 
@@ -1375,7 +1423,7 @@ Update a Protect device's configuration on the UniFi Protect controller.
 
 #### Returns
 
-`Promise`<``null`` \| `DeviceType`\>
+`Promise`\<``null`` \| `DeviceType`\>
 
 Returns a promise that will resolve to the updated device-specific configuration JSON if successful, and `null` otherwise.
 
@@ -1386,13 +1434,13 @@ Use this method to change the configuration of a given Protect device or control
 
 #### Defined in
 
-[src/protect-api.ts:610](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-api.ts#L610)
+[src/protect-api.ts:589](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-api.ts#L589)
 
 ___
 
 ### addAbortListener
 
-▸ `Static` **addAbortListener**(`signal`, `resource`): `Disposable`
+▸ **addAbortListener**(`signal`, `resource`): `Disposable`
 
 Listens once to the `abort` event on the provided `signal`.
 
@@ -1447,13 +1495,13 @@ EventEmitter.addAbortListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:383
+node_modules/@types/node/events.d.ts:387
 
 ___
 
 ### getEventListeners
 
-▸ `Static` **getEventListeners**(`emitter`, `name`): `Function`[]
+▸ **getEventListeners**(`emitter`, `name`): `Function`[]
 
 Returns a copy of the array of listeners for the event named `eventName`.
 
@@ -1501,13 +1549,13 @@ EventEmitter.getEventListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:304
+node_modules/@types/node/events.d.ts:308
 
 ___
 
 ### getMaxListeners
 
-▸ `Static` **getMaxListeners**(`emitter`): `number`
+▸ **getMaxListeners**(`emitter`): `number`
 
 Returns the currently set max amount of listeners.
 
@@ -1555,13 +1603,13 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:333
+node_modules/@types/node/events.d.ts:337
 
 ___
 
 ### listenerCount
 
-▸ `Static` **listenerCount**(`emitter`, `eventName`): `number`
+▸ **listenerCount**(`emitter`, `eventName`): `number`
 
 A class method that returns the number of listeners for the given `eventName`registered on the given `emitter`.
 
@@ -1600,13 +1648,13 @@ EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:276
+node_modules/@types/node/events.d.ts:280
 
 ___
 
 ### on
 
-▸ `Static` **on**(`emitter`, `eventName`, `options?`): `AsyncIterableIterator`<`any`\>
+▸ **on**(`emitter`, `eventName`, `options?`): `AsyncIterableIterator`\<`any`\>
 
 ```js
 import { on, EventEmitter } from 'node:events';
@@ -1673,7 +1721,7 @@ process.nextTick(() => ac.abort());
 
 #### Returns
 
-`AsyncIterableIterator`<`any`\>
+`AsyncIterableIterator`\<`any`\>
 
 that iterates `eventName` events emitted by the `emitter`
 
@@ -1687,13 +1735,13 @@ EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:254
+node_modules/@types/node/events.d.ts:258
 
 ___
 
 ### once
 
-▸ `Static` **once**(`emitter`, `eventName`, `options?`): `Promise`<`any`[]\>
+▸ **once**(`emitter`, `eventName`, `options?`): `Promise`\<`any`[]\>
 
 Creates a `Promise` that is fulfilled when the `EventEmitter` emits the given
 event or that is rejected if the `EventEmitter` emits `'error'` while waiting.
@@ -1782,7 +1830,7 @@ ee.emit('foo'); // Prints: Waiting for the event was canceled!
 
 #### Returns
 
-`Promise`<`any`[]\>
+`Promise`\<`any`[]\>
 
 **`Since`**
 
@@ -1794,9 +1842,9 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:189
+node_modules/@types/node/events.d.ts:193
 
-▸ `Static` **once**(`emitter`, `eventName`, `options?`): `Promise`<`any`[]\>
+▸ **once**(`emitter`, `eventName`, `options?`): `Promise`\<`any`[]\>
 
 #### Parameters
 
@@ -1808,7 +1856,7 @@ node_modules/@types/node/events.d.ts:189
 
 #### Returns
 
-`Promise`<`any`[]\>
+`Promise`\<`any`[]\>
 
 #### Inherited from
 
@@ -1816,13 +1864,13 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:194
+node_modules/@types/node/events.d.ts:198
 
 ___
 
 ### setMaxListeners
 
-▸ `Static` **setMaxListeners**(`n?`, `...eventTargets`): `void`
+▸ **setMaxListeners**(`n?`, `...eventTargets`): `void`
 
 ```js
 import { setMaxListeners, EventEmitter } from 'node:events';
@@ -1854,4 +1902,4 @@ EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:348
+node_modules/@types/node/events.d.ts:352

@@ -23,7 +23,7 @@
 
 #### Defined in
 
-[src/protect-types.ts:590](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L590)
+[src/protect-types.ts:590](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L590)
 
 ___
 
@@ -33,7 +33,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:591](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L591)
+[src/protect-types.ts:591](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L591)
 
 ___
 
@@ -43,7 +43,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:592](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L592)
+[src/protect-types.ts:592](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L592)
 
 ___
 
@@ -53,7 +53,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:593](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L593)
+[src/protect-types.ts:593](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L593)
 
 ___
 
@@ -63,7 +63,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:594](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L594)
+[src/protect-types.ts:594](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L594)
 
 ___
 
@@ -73,7 +73,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:595](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L595)
+[src/protect-types.ts:595](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L595)
 
 ___
 
@@ -83,14 +83,14 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:596](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L596)
+[src/protect-types.ts:596](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L596)
 
 ___
 
 ### slots
 
-• `Readonly` **slots**: { `cameras`: `string`[] ; `cycleInterval`: `number` ; `cycleMode`: `string`  }[]
+• `Readonly` **slots**: \{ `cameras`: `string`[] ; `cycleInterval`: `number` ; `cycleMode`: `string`  }[]
 
 #### Defined in
 
-[src/protect-types.ts:597](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L597)
+[src/protect-types.ts:597](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L597)

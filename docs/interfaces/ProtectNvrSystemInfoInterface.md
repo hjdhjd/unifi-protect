@@ -26,7 +26,7 @@
 
 #### Defined in
 
-[src/protect-types.ts:145](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L145)
+[src/protect-types.ts:145](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L145)
 
 ___
 
@@ -44,7 +44,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:150](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L150)
+[src/protect-types.ts:150](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L150)
 
 ___
 
@@ -57,7 +57,7 @@ ___
 | Name | Type |
 | :------ | :------ |
 | `available` | `number` |
-| `devices` | { `healthy`: `boolean` ; `model`: `string` ; `size`: `number`  }[] |
+| `devices` | \{ `healthy`: `boolean` ; `model`: `string` ; `size`: `number`  }[] |
 | `isRecycling` | `boolean` |
 | `size` | `number` |
 | `type` | `string` |
@@ -65,7 +65,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:156](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L156)
+[src/protect-types.ts:156](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L156)
 
 ___
 
@@ -84,4 +84,4 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:170](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L170)
+[src/protect-types.ts:170](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L170)

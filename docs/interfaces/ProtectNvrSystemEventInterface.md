@@ -21,11 +21,11 @@
 | Name | Type |
 | :------ | :------ |
 | `apps` | `unknown`[] |
-| `controllers` | `Readonly`<[`ProtectNvrSystemEventControllerInterface`](ProtectNvrSystemEventControllerInterface.md)\>[] |
+| `controllers` | `Readonly`\<[`ProtectNvrSystemEventControllerInterface`](ProtectNvrSystemEventControllerInterface.md)\>[] |
 
 #### Defined in
 
-[src/protect-types.ts:642](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L642)
+[src/protect-types.ts:642](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L642)
 
 ___
 
@@ -35,7 +35,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:647](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L647)
+[src/protect-types.ts:647](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L647)
 
 ___
 
@@ -45,4 +45,4 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:648](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L648)
+[src/protect-types.ts:648](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L648)

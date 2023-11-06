@@ -29,7 +29,7 @@
 
 #### Defined in
 
-[src/protect-types.ts:8](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L8)
+[src/protect-types.ts:8](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L8)
 
 ___
 
@@ -39,7 +39,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:9](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L9)
+[src/protect-types.ts:9](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L9)
 
 ___
 
@@ -49,27 +49,27 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:10](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L10)
+[src/protect-types.ts:10](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L10)
 
 ___
 
 ### cameras
 
-• `Readonly` **cameras**: `Readonly`<[`ProtectCameraConfigInterface`](ProtectCameraConfigInterface.md)\>[]
+• `Readonly` **cameras**: `Readonly`\<[`ProtectCameraConfigInterface`](ProtectCameraConfigInterface.md)\>[]
 
 #### Defined in
 
-[src/protect-types.ts:11](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L11)
+[src/protect-types.ts:11](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L11)
 
 ___
 
 ### chimes
 
-• `Readonly` **chimes**: `Readonly`<[`ProtectChimeConfigInterface`](ProtectChimeConfigInterface.md)\>[]
+• `Readonly` **chimes**: `Readonly`\<[`ProtectChimeConfigInterface`](ProtectChimeConfigInterface.md)\>[]
 
 #### Defined in
 
-[src/protect-types.ts:12](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L12)
+[src/protect-types.ts:12](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L12)
 
 ___
 
@@ -79,7 +79,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:13](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L13)
+[src/protect-types.ts:13](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L13)
 
 ___
 
@@ -89,7 +89,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:14](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L14)
+[src/protect-types.ts:14](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L14)
 
 ___
 
@@ -99,64 +99,64 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:15](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L15)
+[src/protect-types.ts:15](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L15)
 
 ___
 
 ### lights
 
-• `Readonly` **lights**: `Readonly`<[`ProtectLightConfigInterface`](ProtectLightConfigInterface.md)\>[]
+• `Readonly` **lights**: `Readonly`\<[`ProtectLightConfigInterface`](ProtectLightConfigInterface.md)\>[]
 
 #### Defined in
 
-[src/protect-types.ts:16](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L16)
+[src/protect-types.ts:16](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L16)
 
 ___
 
 ### liveviews
 
-• `Readonly` **liveviews**: `Readonly`<[`ProtectNvrLiveviewConfigInterface`](ProtectNvrLiveviewConfigInterface.md)\>[]
+• `Readonly` **liveviews**: `Readonly`\<[`ProtectNvrLiveviewConfigInterface`](ProtectNvrLiveviewConfigInterface.md)\>[]
 
 #### Defined in
 
-[src/protect-types.ts:17](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L17)
+[src/protect-types.ts:17](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L17)
 
 ___
 
 ### nvr
 
-• `Readonly` **nvr**: `Readonly`<[`ProtectNvrConfigInterface`](ProtectNvrConfigInterface.md)\>
+• `Readonly` **nvr**: `Readonly`\<[`ProtectNvrConfigInterface`](ProtectNvrConfigInterface.md)\>
 
 #### Defined in
 
-[src/protect-types.ts:18](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L18)
+[src/protect-types.ts:18](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L18)
 
 ___
 
 ### sensors
 
-• `Readonly` **sensors**: `Readonly`<[`ProtectSensorConfigInterface`](ProtectSensorConfigInterface.md)\>[]
+• `Readonly` **sensors**: `Readonly`\<[`ProtectSensorConfigInterface`](ProtectSensorConfigInterface.md)\>[]
 
 #### Defined in
 
-[src/protect-types.ts:19](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L19)
+[src/protect-types.ts:19](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L19)
 
 ___
 
 ### users
 
-• `Readonly` **users**: `Readonly`<[`ProtectNvrUserConfigInterface`](ProtectNvrUserConfigInterface.md)\>[]
+• `Readonly` **users**: `Readonly`\<[`ProtectNvrUserConfigInterface`](ProtectNvrUserConfigInterface.md)\>[]
 
 #### Defined in
 
-[src/protect-types.ts:20](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L20)
+[src/protect-types.ts:20](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L20)
 
 ___
 
 ### viewers
 
-• `Readonly` **viewers**: `Readonly`<[`ProtectViewerConfigInterface`](ProtectViewerConfigInterface.md)\>[]
+• `Readonly` **viewers**: `Readonly`\<[`ProtectViewerConfigInterface`](ProtectViewerConfigInterface.md)\>[]
 
 #### Defined in
 
-[src/protect-types.ts:21](https://github.com/hjdhjd/unifi-protect/blob/a8068b4/src/protect-types.ts#L21)
+[src/protect-types.ts:21](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L21)
