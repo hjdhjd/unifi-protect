@@ -63,7 +63,6 @@ export class ProtectApi extends EventEmitter {
   private headers: Headers;
   private _isAdminUser: boolean;
   private log: ProtectLogging;
-  private loginAge: number;
   private nvrAddress: string;
   private password: string;
   private username: string;
@@ -113,12 +112,9 @@ export class ProtectApi extends EventEmitter {
     this.fetch = fetch;
     this.headers = new Headers();
     this._isAdminUser = false;
-    this.loginAge = 0;
     this.nvrAddress = "";
     this.username = "";
     this.password = "";
-
-    this.clearLoginCredentials();
   }
 
   /**
@@ -163,7 +159,7 @@ export class ProtectApi extends EventEmitter {
   // Login to the Protect controller and terminate any existing login we might have.
   public async login(nvrAddress: string, username: string, password: string): Promise<boolean> {
 
-    this.clearLoginCredentials();
+    this.logout();
 
     this.nvrAddress = nvrAddress;
     this.username = username;
@@ -179,35 +175,6 @@ export class ProtectApi extends EventEmitter {
     return loginSuccess;
   }
 
-  // Acquire a CSRF token for our API session if needed.
-  private async _acquireCsrfToken(): Promise<boolean> {
-
-    // We only need to acquire a token if we aren't already logged in, or we don't already have a token.
-    if(this.headers.has("X-CSRF-Token")) {
-
-      return true;
-    }
-
-    // UniFi OS has cross-site request forgery protection built into it's web management UI. We use this fact to fingerprint it
-    // by connecting directly to the supplied Protect controller address and see if there's a CSRF token waiting for us.
-    const response = await this.retrieve("https://" + this.nvrAddress, { method: "GET" }, false);
-
-    if(response?.ok) {
-
-      const csrfToken = response.headers.get("X-CSRF-Token");
-
-      // We found a token.
-      if(csrfToken) {
-
-        this.headers.set("X-CSRF-Token", csrfToken);
-        return true;
-      }
-    }
-
-    // Something went wrong.
-    return false;
-  }
-
   // Login to the UniFi Protect API.
   private async loginController(): Promise<boolean> {
 
@@ -217,43 +184,57 @@ export class ProtectApi extends EventEmitter {
       return true;
     }
 
-    // Make sure we have a CSRF token, or get one if needed.
-    if(!(await this._acquireCsrfToken())) {
+    // Acquire a CSRF token, if needed. We only need to do this if we aren't already logged in, or we don't already have a token.
+    if(!this.headers.has("X-CSRF-Token")) {
 
-      this.clearLoginCredentials();
-      return false;
+      // UniFi OS has cross-site request forgery protection built into it's web management UI. We retrieve the CSRF token, if available, by connecting to the Protect
+      // controller and checking the headers for it.
+      const response = await this.retrieve("https://" + this.nvrAddress, { method: "GET" }, false);
+
+      if(response?.ok) {
+
+        const csrfToken = response.headers.get("X-CSRF-Token");
+
+        // Preserve the CSRF token, if found, for future API calls.
+        if(csrfToken) {
+
+          this.headers.set("X-CSRF-Token", csrfToken);
+        }
+      }
     }
 
     // Log us in.
     const response = await this.retrieve(this.getApiEndpoint("login"), {
 
-      body: JSON.stringify({ password: this.password, rememberMe: "true", username: this.username }),
+      body: JSON.stringify({ password: this.password, rememberMe: true, token: "", username: this.username }),
       method: "POST"
     });
 
     // Something went wrong with the login call, possibly a controller reboot or failure.
     if(!response?.ok) {
 
-      this.clearLoginCredentials();
+      this.logout();
       return false;
     }
 
     // We're logged in. Let's configure our headers.
-    const csrfToken = response.headers.get("X-CSRF-Token");
+    const csrfToken = response.headers.get("X-Updated-CSRF-Token") ?? response.headers.get("X-CSRF-Token");
     const cookie = response.headers.get("Set-Cookie");
 
     // Save the refreshed cookie and CSRF token for future API calls and we're done.
-    if(csrfToken && cookie && this.headers.has("X-CSRF-Token")) {
+    if(csrfToken && cookie) {
 
-      this.headers.set("Cookie", cookie);
+      // Only preserve the token element of the cookie and not the superfluous information that's been added to it.
+      this.headers.set("Cookie", cookie.split(";")[0]);
+
+      // Save the CSRF token.
       this.headers.set("X-CSRF-Token", csrfToken);
 
       return true;
     }
 
-    // Clear out our login credentials and reset for another try.
-    this.clearLoginCredentials();
-
+    // Clear out our login credentials.
+    this.logout();
     return false;
   }
 
@@ -262,8 +243,6 @@ export class ProtectApi extends EventEmitter {
 
     // Log us in if needed.
     if(!(await this.loginController())) {
-
-      this.clearLoginCredentials();
 
       return retry ? this.bootstrapController(false) : false;
     }
@@ -769,17 +748,28 @@ export class ProtectApi extends EventEmitter {
   }
 
   /**
-   * Clear the login credentials and terminate any open connection to the UniFi Protect events API.
+   * Terminate any open connection to the UniFi Protect API.
    */
-  // Utility to clear out old login credentials or attempts.
-  public clearLoginCredentials(): void {
+  // Utility to disconnect from the Protect controller and reset the connection.
+  public reset(): void {
 
-    this._isAdminUser = false;
-    this.loginAge = 0;
     this._bootstrap = null;
 
     this._eventsWs?.terminate();
     this._eventsWs = null;
+  }
+
+  /**
+   * Clear the login credentials and terminate any open connection to the UniFi Protect API.
+   */
+  // Utility to clear out old login credentials or attempts.
+  public logout(): void {
+
+    // Close any connection to the Protect API.
+    this.reset();
+
+    // Reset our parameters.
+    this._isAdminUser = false;
 
     // Save our CSRF token, if we have one.
     const csrfToken = this.headers?.get("X-CSRF-Token");
@@ -867,10 +857,11 @@ export class ProtectApi extends EventEmitter {
         this.logRetry("API endpoint access error: " + response.status.toString() + " - " + response.statusText + ".", retry);
       }
 
-      // We failed, but controllers are sometimes rebooted, we can lose our access token or something else may have occurred. Retry one time, after logging back in.
+      // We failed, but controllers are sometimes rebooted, we can lose our access token or something else may have occurred. Retry one time, after resetting the
+      // connection.
       if(retry) {
 
-        this.clearLoginCredentials();
+        this.reset();
 
         return this._getWsEndpoint(endpoint, params, false);
       }
@@ -976,7 +967,7 @@ export class ProtectApi extends EventEmitter {
         this.log.error("Resuming connectivity to the UniFi Protect API after pausing for %s minutes.", PROTECT_API_RETRY_INTERVAL / 60);
 
         this.apiErrorCount = 0;
-        this.clearLoginCredentials();
+        this.reset();
 
         if(!(await this.loginController())) {
 
@@ -998,7 +989,7 @@ export class ProtectApi extends EventEmitter {
       // Bad username and password.
       if(response.status === 401) {
 
-        this.clearLoginCredentials();
+        this.logout();
         this.log.error("Invalid login credentials given. Please check your login and password.");
         return null;
       }
