@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-api.ts: Our UniFi Protect API implementation.
  */
@@ -615,7 +615,13 @@ export class ProtectApi extends EventEmitter {
       method: "PATCH"
     });
 
-    if(!response?.ok) {
+    // Something happened - the retrieve call will log the error for us.
+    if(!response) {
+
+      return null;
+    }
+
+    if(!response.ok) {
 
       this.log.error("%s: Unable to configure the %s: %s.", this.getFullName(device), device.modelKey, response?.status);
       return null;
