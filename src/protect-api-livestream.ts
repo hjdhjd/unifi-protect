@@ -1,4 +1,4 @@
-/* Copyright(C) 2022-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2022-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-api-livestream.ts: Our UniFi Protect livestream API implementation.
  */
@@ -297,7 +297,7 @@ export class ProtectLivestream extends EventEmitter {
         let completeSegment = null;
 
         // Figure out which data type we've got based on our header, and process it.
-        switch(header[0]) {
+        switch(header[0] as ProtectLiveFrame) {
 
           // We've got audio data. Add it to our current segment.
           case ProtectLiveFrame.AUDIO:

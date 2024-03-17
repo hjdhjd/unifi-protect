@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.8.1 (2024-03-17)
+  * Housekeeping.
+
 ## 4.8.0 (2023-11-05)
   * New feature: added the `logout()` and `reset()` functions. These replace the `clearLoginCredentials()` function and provide more granular control for when you truly want to logout of the API versus just close all open connections and start over.
 

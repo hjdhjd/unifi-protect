@@ -2,6 +2,10 @@
 
 # Interface: ProtectNvrBootstrapInterface
 
+## Indexable
+
+▪ [key: `string`]: [`ProtectCameraConfig`](ProtectCameraConfig.md)[] \| [`ProtectChimeConfig`](ProtectChimeConfig.md)[] \| [`ProtectLightConfig`](ProtectLightConfig.md)[] \| [`ProtectNvrConfig`](ProtectNvrConfig.md) \| [`ProtectNvrLiveviewConfig`](ProtectNvrLiveviewConfig.md)[] \| [`ProtectNvrUserConfig`](ProtectNvrUserConfig.md)[] \| [`ProtectSensorConfig`](ProtectSensorConfig.md)[] \| [`ProtectViewerConfig`](ProtectViewerConfig.md)[] \| `string` \| `unknown`[]
+
 ## Table of contents
 
 ### Properties
@@ -29,7 +33,7 @@
 
 #### Defined in
 
-[src/protect-types.ts:8](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L8)
+[src/protect-types.ts:8](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L8)
 
 ___
 
@@ -39,7 +43,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:9](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L9)
+[src/protect-types.ts:9](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L9)
 
 ___
 
@@ -49,7 +53,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:10](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L10)
+[src/protect-types.ts:10](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L10)
 
 ___
 
@@ -59,7 +63,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:11](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L11)
+[src/protect-types.ts:11](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L11)
 
 ___
 
@@ -69,7 +73,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:12](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L12)
+[src/protect-types.ts:12](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L12)
 
 ___
 
@@ -79,7 +83,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:13](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L13)
+[src/protect-types.ts:13](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L13)
 
 ___
 
@@ -89,7 +93,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:14](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L14)
+[src/protect-types.ts:14](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L14)
 
 ___
 
@@ -99,7 +103,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:15](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L15)
+[src/protect-types.ts:15](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L15)
 
 ___
 
@@ -109,7 +113,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:16](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L16)
+[src/protect-types.ts:16](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L16)
 
 ___
 
@@ -119,7 +123,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:17](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L17)
+[src/protect-types.ts:17](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L17)
 
 ___
 
@@ -129,7 +133,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:18](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L18)
+[src/protect-types.ts:18](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L18)
 
 ___
 
@@ -139,7 +143,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:19](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L19)
+[src/protect-types.ts:19](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L19)
 
 ___
 
@@ -149,7 +153,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:20](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L20)
+[src/protect-types.ts:20](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L20)
 
 ___
 
@@ -159,4 +163,4 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:21](https://github.com/hjdhjd/unifi-protect/blob/f89bcca/src/protect-types.ts#L21)
+[src/protect-types.ts:21](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-types.ts#L21)

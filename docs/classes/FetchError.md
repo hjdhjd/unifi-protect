@@ -53,7 +53,7 @@ FetchBaseError.constructor
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1073
+node_modules/typescript/lib/lib.es5.d.ts:1082
 
 • **new FetchError**(`message?`, `options?`): [`FetchError`](FetchError.md)
 
@@ -74,7 +74,7 @@ FetchBaseError.constructor
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es2022.error.d.ts:28
+node_modules/typescript/lib/lib.es5.d.ts:1082
 
 ## Properties
 
@@ -132,7 +132,7 @@ FetchBaseError.message
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1068
+node_modules/typescript/lib/lib.es5.d.ts:1077
 
 ___
 
@@ -146,7 +146,7 @@ FetchBaseError.name
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1067
+node_modules/typescript/lib/lib.es5.d.ts:1076
 
 ___
 
@@ -160,7 +160,7 @@ FetchBaseError.stack
 
 #### Defined in
 
-node_modules/typescript/lib/lib.es5.d.ts:1069
+node_modules/typescript/lib/lib.es5.d.ts:1078
 
 ___
 
@@ -182,11 +182,15 @@ ___
 
 ▪ `Static` `Optional` **prepareStackTrace**: (`err`: `Error`, `stackTraces`: `CallSite`[]) => `any`
 
+Optional override for formatting stack traces
+
+**`See`**
+
+https://v8.dev/docs/stack-trace-api#customizing-stack-traces
+
 #### Type declaration
 
 ▸ (`err`, `stackTraces`): `any`
-
-Optional override for formatting stack traces
 
 ##### Parameters
 
@@ -199,17 +203,13 @@ Optional override for formatting stack traces
 
 `any`
 
-**`See`**
-
-https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-
 #### Inherited from
 
 FetchBaseError.prepareStackTrace
 
 #### Defined in
 
-node_modules/@types/node/globals.d.ts:11
+node_modules/@types/node/globals.d.ts:28
 
 ___
 
@@ -223,7 +223,7 @@ FetchBaseError.stackTraceLimit
 
 #### Defined in
 
-node_modules/@types/node/globals.d.ts:13
+node_modules/@types/node/globals.d.ts:30
 
 ## Methods
 
@@ -250,4 +250,4 @@ FetchBaseError.captureStackTrace
 
 #### Defined in
 
-node_modules/@types/node/globals.d.ts:4
+node_modules/@types/node/globals.d.ts:21
