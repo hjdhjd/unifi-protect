@@ -109,7 +109,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-[src/protect-api.ts:78](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L78)
+[src/protect-api.ts:78](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L78)
 
 ## Properties
 
@@ -246,7 +246,7 @@ Returns the bootstrap JSON if the Protect controller has been bootstrapped, `nul
 
 #### Defined in
 
-[src/protect-api.ts:1203](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L1203)
+[src/protect-api.ts:1204](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L1204)
 
 ___
 
@@ -264,7 +264,7 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 #### Defined in
 
-[src/protect-api.ts:1214](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L1214)
+[src/protect-api.ts:1215](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L1215)
 
 ___
 
@@ -283,7 +283,7 @@ Returns the Protect controller name in the following format:
 
 #### Defined in
 
-[src/protect-api.ts:1226](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L1226)
+[src/protect-api.ts:1227](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L1227)
 
 ## Methods
 
@@ -375,7 +375,7 @@ This method should be used to create a new livestream API object. It allows you 
 
 #### Defined in
 
-[src/protect-api.ts:1111](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L1111)
+[src/protect-api.ts:1112](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L1112)
 
 ___
 
@@ -472,7 +472,7 @@ Returns a promise that will resolve to the updated [ProtectCameraConfig](../inte
 
 #### Defined in
 
-[src/protect-api.ts:684](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L684)
+[src/protect-api.ts:684](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L684)
 
 ___
 
@@ -539,7 +539,7 @@ Valid API endpoints are `bootstrap`, `camera`, `chime`, `light`, `login`, `nvr`,
 
 #### Defined in
 
-[src/protect-api.ts:1126](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L1126)
+[src/protect-api.ts:1127](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L1127)
 
 ___
 
@@ -621,7 +621,7 @@ process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, so
 
 #### Defined in
 
-[src/protect-api.ts:454](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L454)
+[src/protect-api.ts:454](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L454)
 
 ___
 
@@ -643,7 +643,8 @@ Utility method that generates a nicely formatted device information string.
 
 `string`
 
-Returns the Protect device name in the following format: <code>*Protect device name* [*Protect device type*] (address: *IP address* mac: *MAC address*)</code>.
+Returns the Protect device name in the following format: <code>*Protect device name* [*Protect device type*] (address: *IP address*
+         mac: *MAC address*)</code>.
 
 **`Remarks`**
 
@@ -651,7 +652,7 @@ The example above assumed the `deviceInfo` parameter is set to `true`.
 
 #### Defined in
 
-[src/protect-api.ts:721](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L721)
+[src/protect-api.ts:722](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L722)
 
 ___
 
@@ -676,7 +677,7 @@ Returns the Protect device name in the following format:
 
 #### Defined in
 
-[src/protect-api.ts:748](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L748)
+[src/protect-api.ts:749](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L749)
 
 ___
 
@@ -729,7 +730,7 @@ Returns a promise that will resolve to a Buffer containing the JPEG image snapsh
 
 #### Defined in
 
-[src/protect-api.ts:529](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L529)
+[src/protect-api.ts:529](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L529)
 
 ___
 
@@ -764,7 +765,7 @@ Valid API endpoints are `livestream` and `talkback`.
 
 #### Defined in
 
-[src/protect-api.ts:835](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L835)
+[src/protect-api.ts:836](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L836)
 
 ___
 
@@ -906,7 +907,7 @@ if(!(await ufp.login("protect-controller.local", "username", "password"))) {
 
 #### Defined in
 
-[src/protect-api.ts:160](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L160)
+[src/protect-api.ts:160](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L160)
 
 ___
 
@@ -922,7 +923,7 @@ Clear the login credentials and terminate any open connection to the UniFi Prote
 
 #### Defined in
 
-[src/protect-api.ts:772](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L772)
+[src/protect-api.ts:773](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L773)
 
 ___
 
@@ -1404,7 +1405,7 @@ Terminate any open connection to the UniFi Protect API.
 
 #### Defined in
 
-[src/protect-api.ts:760](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L760)
+[src/protect-api.ts:761](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L761)
 
 ___
 
@@ -1435,7 +1436,7 @@ This method should be used when direct access to the Protect controller is neede
 
 #### Defined in
 
-[src/protect-api.ts:923](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L923)
+[src/protect-api.ts:924](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L924)
 
 ___
 
@@ -1506,7 +1507,7 @@ Use this method to change the configuration of a given Protect device or control
 
 #### Defined in
 
-[src/protect-api.ts:589](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api.ts#L589)
+[src/protect-api.ts:589](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L589)
 
 ___
 

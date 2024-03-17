@@ -713,7 +713,8 @@ export class ProtectApi extends EventEmitter {
    * @param name       - Optional name for the device. Defaults to the device type (e.g. `G4 Pro`).
    * @param deviceInfo - Optionally specify whether or not to include the IP address and MAC address in the returned string. Defaults to `false`.
    *
-   * @returns Returns the Protect device name in the following format: <code>*Protect device name* [*Protect device type*] (address: *IP address* mac: *MAC address*)</code>.
+   * @returns Returns the Protect device name in the following format: <code>*Protect device name* [*Protect device type*] (address: *IP address*
+   *          mac: *MAC address*)</code>.
    *
    * @remarks The example above assumed the `deviceInfo` parameter is set to `true`.
    */

@@ -121,7 +121,7 @@ export type ProtectEventPacket = {
 
   header: ProtectEventHeader,
   payload: unknown
-}
+};
 
 /**
  * UniFi Protect event header.
@@ -140,32 +140,7 @@ export type ProtectEventHeader = {
   id: string,
   modelKey: string,
   newUpdateId: string
-}
-
-/*
-// A complete description of the UniFi Protect realtime update events API payload packet JSONs.
-// Payload JSON for modelKey: event action: add
-type ProtectNvrUpdatePayloadEventAdd = {
-
-  camera: string,
-  id: string,
-  modelKey: string,
-  partition: null,
-  score: number,
-  smartDetectEvents: string[],
-  smartDetectTypes: string[],
-  start: number,
-  type: string
-}
-
-// Payload JSON for modelKey: camera action: update
-type ProtectNvrUpdatePayloadCameraUpdate = {
-  isMotionDetected: boolean,
-  lastMotion: number,
-  lastRing: number,
-  lcdMessage: ProtectCameraLcdMessagePayload
-}
-*/
+};
 
 /**
  * UniFi Protect event utility class that provides functions for decoding realtime event API packet frames.
@@ -234,7 +209,8 @@ export class ProtectApiEvents {
     const payloadFormat = packet.readUInt8(ProtectEventPacketHeader.PAYLOAD_FORMAT) as EventPayloadType;
 
     // Check to see if we're compressed or not, and inflate if needed after skipping past the 8-byte header.
-    const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ? zlib.inflateSync(packet.slice(EVENT_PACKET_HEADER_SIZE)) : packet.slice(EVENT_PACKET_HEADER_SIZE);
+    const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ?
+      zlib.inflateSync(packet.slice(EVENT_PACKET_HEADER_SIZE)) : packet.slice(EVENT_PACKET_HEADER_SIZE);
 
     // If it's a header, it can only have one format.
     if(frameType === ProtectEventPacketType.HEADER) {

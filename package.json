@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "module",
-  "version": "4.8.1",
+  "version": "4.8.2",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {
@@ -62,6 +62,7 @@
     "watch": "npm run build && npm link && nodemon"
   },
   "devDependencies": {
+    "@stylistic/eslint-plugin": "^1.7.0",
     "@types/node": "20.11.28",
     "@types/ws": "8.5.10",
     "@typescript-eslint/eslint-plugin": "7.2.0",

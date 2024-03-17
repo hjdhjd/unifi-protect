@@ -51,4 +51,4 @@ A UniFi Protect event packet is an encoded representation of state updates that 
 
 #### Defined in
 
-[src/protect-api-events.ts:187](https://github.com/hjdhjd/unifi-protect/blob/12bffbb/src/protect-api-events.ts#L187)
+[src/protect-api-events.ts:162](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api-events.ts#L162)
