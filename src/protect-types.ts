@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2023, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-types.ts: Type definitions for UniFi Protect.
  */
@@ -18,7 +18,9 @@ export interface ProtectNvrBootstrapInterface {
   nvr: ProtectNvrConfig,
   sensors: ProtectSensorConfig[],
   users: ProtectNvrUserConfig[],
-  viewers: ProtectViewerConfig[]
+  viewers: ProtectViewerConfig[],
+  [key: string]: ProtectCameraConfig[] | ProtectChimeConfig[] | ProtectLightConfig[] | ProtectNvrConfig | ProtectNvrLiveviewConfig[] | ProtectNvrUserConfig[] |
+    ProtectSensorConfig[] | ProtectViewerConfig[] | string | unknown[]
 }
 
 // A semi-complete description of the UniFi Protect NVR configuration JSON.
