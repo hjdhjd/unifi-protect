@@ -91,7 +91,7 @@ A UniFi Protect event packet represents a realtime event update from a UniFi Pro
 
 #### Defined in
 
-[src/protect-api-events.ts:120](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api-events.ts#L120)
+[src/protect-api-events.ts:120](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-api-events.ts#L120)
 
 ___
 
@@ -101,7 +101,7 @@ ___
 
 #### Defined in
 
-[src/protect-api.ts:36](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L36)
+[src/protect-api.ts:36](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-api.ts#L36)
 
 ___
 
@@ -111,4 +111,4 @@ ___
 
 #### Defined in
 
-[src/protect-api.ts:33](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api.ts#L33)
+[src/protect-api.ts:33](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-api.ts#L33)

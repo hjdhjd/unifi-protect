@@ -77,7 +77,7 @@ EventEmitter.constructor
 
 #### Defined in
 
-[src/protect-api-livestream.ts:70](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api-livestream.ts#L70)
+[src/protect-api-livestream.ts:70](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-api-livestream.ts#L70)
 
 ## Properties
 
@@ -99,7 +99,7 @@ EventEmitter.captureRejectionSymbol
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:419
+node_modules/@types/node/events.d.ts:415
 
 ___
 
@@ -121,7 +121,7 @@ EventEmitter.captureRejections
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:426
+node_modules/@types/node/events.d.ts:422
 
 ___
 
@@ -173,7 +173,7 @@ EventEmitter.defaultMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:463
+node_modules/@types/node/events.d.ts:459
 
 ___
 
@@ -196,7 +196,7 @@ EventEmitter.errorMonitor
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:412
+node_modules/@types/node/events.d.ts:408
 
 ## Accessors
 
@@ -210,7 +210,7 @@ node_modules/@types/node/events.d.ts:412
 
 #### Defined in
 
-[src/protect-api-livestream.ts:397](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api-livestream.ts#L397)
+[src/protect-api-livestream.ts:397](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-api-livestream.ts#L397)
 
 ## Methods
 
@@ -242,7 +242,7 @@ EventEmitter.[captureRejectionSymbol]
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:129
+node_modules/@types/node/events.d.ts:125
 
 ___
 
@@ -279,7 +279,7 @@ EventEmitter.addListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:562
+node_modules/@types/node/events.d.ts:558
 
 ___
 
@@ -352,7 +352,7 @@ EventEmitter.emit
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:824
+node_modules/@types/node/events.d.ts:820
 
 ___
 
@@ -391,7 +391,7 @@ EventEmitter.eventNames
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:887
+node_modules/@types/node/events.d.ts:883
 
 ___
 
@@ -405,7 +405,7 @@ ___
 
 #### Defined in
 
-[src/protect-api-livestream.ts:383](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api-livestream.ts#L383)
+[src/protect-api-livestream.ts:383](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-api-livestream.ts#L383)
 
 ___
 
@@ -430,7 +430,7 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:739
+node_modules/@types/node/events.d.ts:735
 
 ___
 
@@ -469,7 +469,7 @@ EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:833
+node_modules/@types/node/events.d.ts:829
 
 ___
 
@@ -513,7 +513,7 @@ EventEmitter.listeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:752
+node_modules/@types/node/events.d.ts:748
 
 ___
 
@@ -550,7 +550,7 @@ EventEmitter.off
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:712
+node_modules/@types/node/events.d.ts:708
 
 ___
 
@@ -612,7 +612,7 @@ EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:594
+node_modules/@types/node/events.d.ts:590
 
 ___
 
@@ -672,7 +672,7 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:624
+node_modules/@types/node/events.d.ts:620
 
 ___
 
@@ -720,7 +720,7 @@ EventEmitter.prependListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:851
+node_modules/@types/node/events.d.ts:847
 
 ___
 
@@ -766,7 +766,7 @@ EventEmitter.prependOnceListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:867
+node_modules/@types/node/events.d.ts:863
 
 ___
 
@@ -828,13 +828,13 @@ EventEmitter.rawListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:783
+node_modules/@types/node/events.d.ts:779
 
 ___
 
 ### removeAllListeners
 
-▸ **removeAllListeners**(`event?`): `this`
+▸ **removeAllListeners**(`eventName?`): `this`
 
 Removes all listeners, or those of the specified `eventName`.
 
@@ -848,7 +848,7 @@ Returns a reference to the `EventEmitter`, so that calls can be chained.
 
 | Name | Type |
 | :------ | :------ |
-| `event?` | `string` \| `symbol` |
+| `eventName?` | `string` \| `symbol` |
 
 #### Returns
 
@@ -864,7 +864,7 @@ EventEmitter.removeAllListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:723
+node_modules/@types/node/events.d.ts:719
 
 ___
 
@@ -979,7 +979,7 @@ EventEmitter.removeListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:707
+node_modules/@types/node/events.d.ts:703
 
 ___
 
@@ -1014,7 +1014,7 @@ EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:733
+node_modules/@types/node/events.d.ts:729
 
 ___
 
@@ -1038,7 +1038,7 @@ ___
 
 #### Defined in
 
-[src/protect-api-livestream.ts:84](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api-livestream.ts#L84)
+[src/protect-api-livestream.ts:84](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-api-livestream.ts#L84)
 
 ___
 
@@ -1052,7 +1052,7 @@ ___
 
 #### Defined in
 
-[src/protect-api-livestream.ts:97](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-api-livestream.ts#L97)
+[src/protect-api-livestream.ts:97](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-api-livestream.ts#L97)
 
 ___
 
@@ -1113,7 +1113,7 @@ EventEmitter.addAbortListener
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:404
+node_modules/@types/node/events.d.ts:400
 
 ___
 
@@ -1167,7 +1167,7 @@ EventEmitter.getEventListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:325
+node_modules/@types/node/events.d.ts:321
 
 ___
 
@@ -1221,7 +1221,7 @@ EventEmitter.getMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:354
+node_modules/@types/node/events.d.ts:350
 
 ___
 
@@ -1266,7 +1266,7 @@ EventEmitter.listenerCount
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:297
+node_modules/@types/node/events.d.ts:293
 
 ___
 
@@ -1353,7 +1353,7 @@ EventEmitter.on
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:275
+node_modules/@types/node/events.d.ts:271
 
 ___
 
@@ -1442,7 +1442,7 @@ ee.emit('foo'); // Prints: Waiting for the event was canceled!
 
 | Name | Type |
 | :------ | :------ |
-| `emitter` | `_NodeEventTarget` |
+| `emitter` | `EventEmitter`\<`DefaultEventMap`\> |
 | `eventName` | `string` \| `symbol` |
 | `options?` | `StaticEventEmitterOptions` |
 
@@ -1460,7 +1460,7 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:210
+node_modules/@types/node/events.d.ts:206
 
 ▸ **once**(`emitter`, `eventName`, `options?`): `Promise`\<`any`[]\>
 
@@ -1482,7 +1482,7 @@ EventEmitter.once
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:215
+node_modules/@types/node/events.d.ts:211
 
 ___
 
@@ -1520,4 +1520,4 @@ EventEmitter.setMaxListeners
 
 #### Defined in
 
-node_modules/@types/node/events.d.ts:369
+node_modules/@types/node/events.d.ts:365

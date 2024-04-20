@@ -23,7 +23,7 @@
 
 #### Defined in
 
-[src/protect-types.ts:592](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-types.ts#L592)
+[src/protect-types.ts:592](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-types.ts#L592)
 
 ___
 
@@ -33,7 +33,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:593](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-types.ts#L593)
+[src/protect-types.ts:593](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-types.ts#L593)
 
 ___
 
@@ -43,7 +43,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:594](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-types.ts#L594)
+[src/protect-types.ts:594](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-types.ts#L594)
 
 ___
 
@@ -53,7 +53,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:595](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-types.ts#L595)
+[src/protect-types.ts:595](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-types.ts#L595)
 
 ___
 
@@ -63,7 +63,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:596](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-types.ts#L596)
+[src/protect-types.ts:596](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-types.ts#L596)
 
 ___
 
@@ -73,7 +73,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:597](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-types.ts#L597)
+[src/protect-types.ts:597](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-types.ts#L597)
 
 ___
 
@@ -83,7 +83,7 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:598](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-types.ts#L598)
+[src/protect-types.ts:598](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-types.ts#L598)
 
 ___
 
@@ -93,4 +93,4 @@ ___
 
 #### Defined in
 
-[src/protect-types.ts:599](https://github.com/hjdhjd/unifi-protect/blob/a536a5f/src/protect-types.ts#L599)
+[src/protect-types.ts:599](https://github.com/hjdhjd/unifi-protect/blob/393789fc061eae4a69212a8c6e68b2ee3c4f0dc2/src/protect-types.ts#L599)
