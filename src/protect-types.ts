@@ -874,11 +874,22 @@ export interface ProtectEventAddInterface {
 // A description of metadata in UniFi Protect smart motion detect events.
 export interface ProtectEventMetadataInterface {
 
+  deviceId: {
+
+    text: string
+  },
+  isLowBattery: boolean,
+  isWireless: boolean,
   licensePlate: {
 
     confidenceLevel: number,
     name: string
-  }
+  },
+  name: {
+
+    text: string
+  },
+  reason: string
 }
 
 // This type declaration make all properties optional recursively including nested objects. This should
