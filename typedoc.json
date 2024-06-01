@@ -1,0 +1,32 @@
+{
+
+  "$schema": "https://typedoc-plugin-markdown.org/schema.json",
+  "categoryOrder": ["Constructor", "API Access" , "Utilities"],
+  "cleanOutputDir": false,
+  "disableSources": true,
+  "entryPoints": ["src/*.ts"],
+  "enumMembersFormat": "table",
+  "exclude": [ "src/index.ts", "src/settings.ts"],
+  "excludeExternals": true,
+  "excludeInternal": true,
+  "excludeNotDocumented": false,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "expandObjects": true,
+  "gitRevision": "main",
+  "hideGenerator": true,
+  "indexFormat": "table",
+  "mergeReadme": true,
+  "out": "docs",
+  "outputFileStrategy": "modules",
+  "parametersFormat": "table",
+  "plugin": ["typedoc-plugin-markdown"],
+  "propertiesFormat": "table",
+  "readme": "docs/Overview.md",
+  "textContentMappings": {
+
+    "breadcrumbs.home": "Home"
+  },
+  "typeDeclarationFormat": "table",
+  "useCodeBlocks": true
+}

@@ -2,12 +2,11 @@
  *
  * protect-api-livestream.ts: Our UniFi Protect livestream API implementation.
  */
-import events, { EventEmitter } from "node:events";
-import { ProtectApi } from "./protect-api.js";
-import { ProtectLogging } from "./protect-logging.js";
-import WebSocket from "ws";
 
-/*
+/* eslint-disable @stylistic/max-len */
+/**
+ * Access a direct MP4 livestream for a UniFi Protect camera.
+ *
  * The UniFi Protect livestream API is largely undocumented and has been reverse engineered mostly through
  * trial and error, as well as observing the Protect controller in action. It builds on the works of others in the
  * community - particularly https://github.com/XciD - who have experimented and successfully gotten parts of this API decoded.
@@ -18,15 +17,12 @@ import WebSocket from "ws";
  * Think of these as packet types that contain specific pieces of information that are needed to put together a valid MP4 file.
  * For our purposes, we're primarily interested in four types of MP4 boxes:
  *
- * FTYP - File type box. This contains codec and file information for the stream that follows it.
- *        It must be at the beginning of any stream, and preceded by the FTYP box.
- * MDAT - Media data box. This contains a segment of the actual audio and video data in the MP4 stream.
- *        It is always paired with an MOOF box, which contains the metadata describing this payload in an MDAT box.
- * MOOF - Movie fragment box. This defines the metadata for a specific segment of audio and video.
- *        It is always paired with an MDAT box, which contains the actual data.
- * MOOV - Movie metadata box. This contains all the metadata information about the stream that follows.
- *        It must be at the beginning of any stream, and preceded by the FTYP box. The Protect livestream API actually combines the
- *        FTYP and MOOV boxes, conveniently giving us a complete initialization segment.
+ * | Box   | Description                                                                                                                                   |
+ * |-------|-----------------------------------------------------------------------------------------------------------------------------------------------|
+ * | FTYP  | File type box. This contains codec and file information for the stream that follows it. It must be at the beginning of any stream, and preceded by the FTYP box.      |
+ * | MDAT  | Media data box. This contains a segment of the actual audio and video data in the MP4 stream. It is always paired with an MOOF box, which contains the metadata describing this payload in an MDAT box.        |
+ * | MOOF  | Movie fragment box. This defines the metadata for a specific segment of audio and video. It is always paired with an MDAT box, which contains the actual data.        |
+ * | MOOV  | Movie metadata box. This contains all the metadata information about the stream that follows. It must be at the beginning of any stream, and preceded by the FTYP box. The Protect livestream API actually combines the FTYP and MOOV boxes, conveniently giving us a complete initialization segment.        |
  *
  * Every fMP4 stream begins with an initialization segment comprised of the FTYP and MOOV boxes. It defines the file type,
  * what the movie metadata is, and other characteristics. Think of it as the header for the entire stream.
@@ -35,12 +31,21 @@ import WebSocket from "ws";
  * that consist of a pair of moof / mdat boxes that includes all the audio and video for that segment. You end up with something
  * that looks like:
  *
+ * ```
  *  |ftyp|moov|moof|mdat|moof|mdat...
+ * ```
  *
  * The UniFi Protect livestream API provides a straightforward interface to generate bespoke fMP4 streams that
- * can be tailored depending on your needs. This API allows you to create those streams, and retrieve all the relevant boxes/atoms
- * you need to manipulate them for your application.
+ * can be tailored depending on your needs. This implementation of the API allows you to access those streams, retrieve all the relevant boxes/atoms you need to
+ * manipulate them for your application.
+ *
+ * @module ProtectLivestream
  */
+/* eslint-enable @stylistic/max-len */
+import events, { EventEmitter } from "node:events";
+import { ProtectApi } from "./protect-api.js";
+import { ProtectLogging } from "./protect-logging.js";
+import WebSocket from "ws";
 
 // A complete description of the UniFi Protect livestream API websocket API.
 enum ProtectLiveFrame {
@@ -56,10 +61,25 @@ enum ProtectLiveFrame {
   ENDSEGMENT = 255
 }
 
-// UniFi Protect livestream API implementation.
+/**
+ * This class provides a complete event-driven API to access the UniFi Protect Livestream API endpoint.
+ *
+ * 1. Create an instance of the {@link ProtectApi | UniFi Protect API} to connect to the Protect controller.
+ *
+ * 2. Create an instance of {@link ProtectLivestream | Protect Livestream} using the API instance above either directly, or through calling
+ * {@link ProtectApi.createLivestream | createLivestream} method on an instance of {@link ProtectApi} (preferred).
+ *
+ * 3. Start a livestream using {@link start}, stop it with {@link stop}, and listen for events.
+ *
+ * 3. Listen for `message` events emitted by {@link ProtectLivestream} which provides Buffers containing the raw fMP4 segment data as it's produced by Protect. You can
+ *    alternatively listen individually for the initialization segment or regular fMP4 segments if you'd like to distinguish between the two types of segments.
+ *
+ * Those are the basics that gets us up and running.
+ */
 export class ProtectLivestream extends EventEmitter {
 
   private _initSegment: Buffer | null;
+  private _codec: string | null;
   private api: ProtectApi;
   private errorHandler: ((error: Error) => void) | null;
   private log: ProtectLogging;
@@ -73,6 +93,7 @@ export class ProtectLivestream extends EventEmitter {
     super();
 
     this._initSegment = null;
+    this._codec = null;
     this.api = api;
     this.errorHandler = null;
     this.log = log;
@@ -80,7 +101,27 @@ export class ProtectLivestream extends EventEmitter {
     this.ws = null;
   }
 
-  // Start the UniFi Protect livestream.
+  /**
+   * Start an fMP4 livestream session from the Protect controller.
+   *
+   * @param cameraId         - Protect camera device ID property from the camera's {@link ProtectTypes.ProtectCameraConfigInterface | ProtectCameraConfig}.
+   * @param channel          - Camera channel to use, indexing the channels array in the camera's {@link ProtectTypes.ProtectCameraConfigInterface | ProtectCameraConfig}.
+   * @param lens             - Optionally specify alternate cameras on a Protect device, such as a package camera.
+   * @param segmentLength    - Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms.
+   * @param requestId        - Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes.
+   *
+   * @returns Returns `true` if the livestream has successfully started, `false` otherwise.
+   *
+   * @remarks Once a livestream session has started, the following events can be listened for:
+   *
+   * | Event         | Description                                                                                                                                  |
+   * |---------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+   * | `close`       | Livestream has been closed.                                                                                                                  |
+   * | `codec`       | The codec and container format in use in the livestream. The codec information will be passed as an argument to any listeners.               |
+   * | `initsegment` | An fMP4 initialization segment has been received. The segment will be passed as an argument to any listeners.                                |
+   * | `message`     | An fMP4 segment has been received. No distinction is made between segment types. The segment will be passed as an argument to any listeners. |
+   * | `segment`     | A non-initialization fMP4 segment has been received. The segment will be passed as an argument to any listeners.                             |
+   */
   public async start(cameraId: string, channel: number, lens = 0, segmentLength = 100, requestId = cameraId + "-" + channel.toString()): Promise<boolean> {
 
     // Stop any existing stream.
@@ -93,7 +134,9 @@ export class ProtectLivestream extends EventEmitter {
     return await this.launchLivestream(cameraId, channel, lens, segmentLength, requestId);
   }
 
-  // Stop the UniFi Protect livestream.
+  /**
+   * Stop an fMP4 livestream session from the Protect controller.
+   */
   public stop(): void {
 
     // Close the websocket.
@@ -122,8 +165,8 @@ export class ProtectLivestream extends EventEmitter {
   // Configure the websocket to populate the prebuffer.
   private async launchLivestream(cameraId: string, channel: number, lens: number, segmentLength: number, requestId: string): Promise<boolean> {
 
-    // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for
-    // segment length. Protect happens to default to a 100ms segment length as well, so we do too.
+    // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for segment length. Protect happens to default to a 100ms segment
+    // length as well, so we do too.
     if(segmentLength < 100) {
 
       segmentLength = 100;
@@ -137,6 +180,7 @@ export class ProtectLivestream extends EventEmitter {
     // channel:                  The camera channel to use for this livestream.
     // extendedVideoMetadata:    Provide extended metadata in the MOOV box when possible.
     // fragmentDurationMillis:   Length of each fMP4 segment or fragment, in milliseconds.
+    // lens:                     Which camera lens to use on the camera. Necessary for multi-lens cameras (e.g. package cameras).
     // progressive:              Enable progressive livestreaming.
     // rebaseTimestampsToZero:   Rebase the timestamps of each livestream session to zero. Otherwise, timestamps will reflect the controller's default.
     // requestId:                Name for this particular request. It's optional in practice, and can be any string.
@@ -162,6 +206,7 @@ export class ProtectLivestream extends EventEmitter {
     if(!wsUrl) {
 
       this.log.error("Unable to retrieve the livestream websocket API endpoint from the UniFi Protect controller.");
+
       return false;
     }
 
@@ -199,6 +244,7 @@ export class ProtectLivestream extends EventEmitter {
 
             this.stop();
             this.emit("close");
+
             break;
 
           // The websocket has been forcibly closed by us. Ignore it.
@@ -209,6 +255,8 @@ export class ProtectLivestream extends EventEmitter {
           default:
 
             this.log.error("Unknown livestream API websocket error with camera %s. Error code: %s.", cameraId, code);
+
+            break;
         }
 
       });
@@ -259,12 +307,12 @@ export class ProtectLivestream extends EventEmitter {
 
       for(;;) {
 
-        // If we have less than 4 bytes remaining, it's an incomplete packet and we don't have enough
-        // information to decode it since we need the packet header to decode. We save it to prepend
-        // to the next packet that comes across.
+        // If we have less than 4 bytes remaining, it's an incomplete packet and we don't have enough information to decode it since we need the packet header to decode.
+        // We save it to prepend to the next packet that comes across.
         if((packet.length - offset) < 4) {
 
           packetRemaining = packet.slice(offset);
+
           break;
         }
 
@@ -276,19 +324,19 @@ export class ProtectLivestream extends EventEmitter {
         if(!Object.values(ProtectLiveFrame).includes(header[0] as ProtectLiveFrame)) {
 
           this.log.error("Invalid header found while decoding the livestream: %s", header[0]);
+
           break;
         }
 
-        // Get the length of the actual fMP4 segment we are decoding. Since all this is done over a websocket,
-        // portions of an fMP4 segment can span packets and need to be encoded. Protect encodes the length
-        // of the entire fMP4 segment in the first three bytes of the header like so...
+        // Get the length of the actual fMP4 segment we are decoding. Since all this is done over a websocket, portions of an fMP4 segment can span packets and need to be
+        // encoded. Protect encodes the length of the entire fMP4 segment in the first three bytes of the header like so...
         const segmentLength = (((header[1] << 8) | header[2]) << 8) | header[3];
 
-        // Once we know our length, if we don't have the complete packet, we save it and punt until we see
-        // more data come across.
+        // Once we know our length, if we don't have the complete packet, we save it and punt until we see more data come across.
         if(packet.length < (offset + segmentLength + 4)) {
 
           packetRemaining = packet.slice(offset);
+
           break;
         }
 
@@ -303,6 +351,7 @@ export class ProtectLivestream extends EventEmitter {
           case ProtectLiveFrame.AUDIO:
 
             currentSegment.audio = Buffer.concat([currentSegment.audio, data]);
+
             break;
 
           // End of segment. Build the entire segment, and emit our events.
@@ -318,8 +367,13 @@ export class ProtectLivestream extends EventEmitter {
           // Codec information.
           case ProtectLiveFrame.CODECINFORMATION:
 
+            this._codec = data.toString();
+
+            this.emit("codec", this.codec);
+
             // Inform the user about what codec is used in the livestream.
             this.log.debug("Livestream codec information: %s", data);
+
             break;
 
           // Beginning of segment. Create an empty segment to get started.
@@ -333,6 +387,7 @@ export class ProtectLivestream extends EventEmitter {
               moof: Buffer.alloc(0),
               video: Buffer.alloc(0)
             };
+
             break;
 
           // Initialization segment. This is always an FTYP and MOOV box pair. Save it and emit our events.
@@ -341,30 +396,35 @@ export class ProtectLivestream extends EventEmitter {
             this._initSegment = data;
             this.emit("initsegment", this.initSegment);
             this.emit("message", this.initSegment);
+
             break;
 
           // We've got a keyframe. Add it to our current segment.
           case ProtectLiveFrame.KEYFRAME:
 
             currentSegment.keyframe = data;
+
             break;
 
           // MDAT box. Add it to the MDAT portion of our segment.
           case ProtectLiveFrame.MDAT:
 
             currentSegment.mdat = Buffer.concat([ currentSegment.mdat, data ]);
+
             break;
 
           // MOOF box. Add it to the MOOF portion of our segment.
           case ProtectLiveFrame.MOOF:
 
             currentSegment.moof = Buffer.concat([ currentSegment.moof, data ]);
+
             break;
 
           // We've got video data. Add it to our current segment.
           case ProtectLiveFrame.VIDEO:
 
             currentSegment.video = Buffer.concat([ currentSegment.video, data ]);
+
             break;
 
           // We'll never get here since we check our header information above.
@@ -379,7 +439,11 @@ export class ProtectLivestream extends EventEmitter {
     });
   }
 
-  // Asynchronously wait for the initialization segment.
+  /**
+   * Retrieve the initialization segment that must be at the start of every fMP4 stream.
+   *
+   * @returns Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
+   */
   public async getInitSegment(): Promise<Buffer> {
 
     // Return our segment once we've seen it.
@@ -390,12 +454,31 @@ export class ProtectLivestream extends EventEmitter {
 
     // Wait until the initialization segment is seen and then try again.
     await events.once(this, "initsegment");
+
     return this.getInitSegment();
   }
 
-  // Retrieve the initialization segment, if we've seen it.
+  /**
+   * The initialization segment that must be at the start of every fMP4 stream.
+   *
+   * @returns Returns the initialization segment if it exists, or `null` otherwise.
+   */
   public get initSegment(): Buffer | null {
 
     return this._initSegment;
+  }
+
+  /**
+   * The codecs in use for this livestream session.
+   *
+   * @returns Returns a string containing the codec information,if it exists, or `null` otherwise.
+   *
+   * @remarks Codec information is provided as `codec,container` where codec is either `hev` (H.265) or `avc` (H.264). The container format is always `mp4`.
+   *
+   * @example `hev1.1.6.L150,mp4a.40.2`
+   */
+  public get codec(): string {
+
+    return this._codec ?? "";
   }
 }

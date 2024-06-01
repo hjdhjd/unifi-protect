@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "module",
-  "version": "4.9.0",
+  "version": "4.10.0",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {
@@ -52,29 +52,29 @@
   },
   "main": "dist/index.js",
   "scripts": {
-    "build": "rimraf ./dist && tsc",
-    "build-docs": " rimraf ./docs/classes ./docs/interfaces ./docs/README.md ./docs/modules.md && npx typedoc",
-    "clean": "rimraf ./dist",
+    "build": "shx rm -rf ./dist && tsc",
+    "build-docs": "shx rm -f ./docs/[^CO]*.md && npx typedoc",
+    "clean": "shx rm -rf ./dist",
     "lint": "eslint src/**.ts",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run build && npm run build-docs",
-    "test": "eslint src/**.ts",
-    "watch": "npm run build && npm link && nodemon"
+    "test": "eslint src/**.ts"
   },
   "devDependencies": {
-    "@stylistic/eslint-plugin": "^1.7.2",
-    "@types/node": "20.12.7",
+    "@stylistic/eslint-plugin": "^2.1.0",
+    "@types/node": "20.13.0",
     "@types/ws": "8.5.10",
-    "@typescript-eslint/eslint-plugin": "7.7.0",
-    "@typescript-eslint/parser": "7.7.0",
     "eslint": "8.57.0",
-    "rimraf": "5.0.5",
+    "homebridge-plugin-utils": "^1.2.0",
+    "rimraf": "5.0.7",
+    "shx": "^0.3.4",
     "typedoc": "0.25.13",
-    "typedoc-plugin-markdown": "3.17.1",
-    "typescript": "5.4.5"
+    "typedoc-plugin-markdown": "4.0.3",
+    "typescript": "5.4.5",
+    "typescript-eslint": "^7.11.0"
   },
   "dependencies": {
-    "@adobe/fetch": "^4.1.2",
-    "ws": "8.16.0"
+    "@adobe/fetch": "^4.1.3",
+    "ws": "8.17.0"
   }
 }

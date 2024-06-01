@@ -2,7 +2,7 @@
  *
  * index.ts: UniFi Protect API registration.
  */
-
+/** @internal */
 export * from "./protect-api.js";
 export type { ProtectLivestream } from "./protect-api-livestream.js";
 export { ProtectApiEvents, ProtectEventPacket } from "./protect-api-events.js";

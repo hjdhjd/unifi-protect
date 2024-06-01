@@ -2,7 +2,27 @@
  *
  * protect-types.ts: Type definitions for UniFi Protect.
  */
-// An semi-complete description of the UniFi Protect NVR bootstrap JSON.
+
+/**
+ * A semi-complete description of all the object types used by the UniFi Protect API.
+ *
+ * The UniFi Protect API is largely undocumented - these interfaces and types have been gleaned through a lot of experimentation and observation. Protect is always
+ * evolving and U will attempt to keep up with the changes over time.
+ *
+ * We use types instead of interfaces because we have a need to provide two versions of each interface: one that represents the interface and one that is recursively
+ * partial, for patching the configuration objects and receiving event updates related to them.
+ *
+ * - We append **Config** to the primary version of a device configuration object.
+ * - We append **Payload** to the version of a device configuration object that can have partial components of the object in it, used for patching or updates.
+ *
+ * @module ProtectTypes
+ */
+import { DeepPartial } from "homebridge-plugin-utils";
+
+/**
+ * An semi-complete description of the UniFi Protect NVR bootstrap JSON.
+ *
+ */
 export interface ProtectNvrBootstrapInterface {
 
   accessKey: string,
@@ -23,7 +43,9 @@ export interface ProtectNvrBootstrapInterface {
     ProtectSensorConfig[] | ProtectViewerConfig[] | string | unknown[]
 }
 
-// A semi-complete description of the UniFi Protect NVR configuration JSON.
+/**
+ * A semi-complete description of the UniFi Protect NVR configuration JSON.
+ */
 export interface ProtectNvrConfigInterface {
 
   analyticsData: string,
@@ -32,17 +54,28 @@ export interface ProtectNvrConfigInterface {
   avgMotions: number[],
   cameraUtilization: number,
   canAutoUpdate: boolean,
+  consoleEnv: string,
+  corruptionState: string,
+  countryCode: string,
+  deviceFirmwareSettings: {
+
+    configuredBy: string,
+    isAutoUpdateEnabled: boolean,
+    schedule: { hour: number }
+  },
   disableAudio: boolean,
   disableAutoLink: boolean,
   doorbellSettings: {
 
-    defaultMessageText: string,
-    defaultMessageResetTimeoutMs: number,
-    customMessages: string[],
     allMessages: {
-      type: string,
-      text: string
-    }[]
+
+      text: string,
+      type: string
+    }[],
+    customImages: string[],
+    customMessages: string[],
+    defaultMessageResetTimeoutMs: number,
+    defaultMessageText: string
   },
   enableAutomaticBackups: boolean,
   enableBridgeAutoAdoption: boolean,
@@ -52,13 +85,18 @@ export interface ProtectNvrConfigInterface {
   featureFlags: {
 
     beta: boolean,
+    detectionLabels: boolean,
     dev: boolean,
-    notificationsV2: boolean
+    hasTwoWayAudioMediaStreams: boolean,
+    homekitPaired: boolean,
+    notificationsV2: boolean,
+    ulpRoleManagement: boolean
   },
   firmwareVersion: string,
   hardwareId: string,
   hardwarePlatform: string,
   hardwareRevision: string,
+  hasGateway: boolean,
   host: string,
   hostShortname: string,
   hostType: string,
@@ -66,13 +104,21 @@ export interface ProtectNvrConfigInterface {
   id: string,
   isAway: boolean,
   isHardware: boolean,
+  isInsightsEnabled: boolean,
+  isNetworkInstalled: boolean,
+  isPrimary: boolean,
+  isProtectUpdatable: boolean,
   isRecordingDisabled: boolean,
   isRecordingMotionOnly: boolean,
   isRecycling: boolean,
   isSetup: boolean,
   isSshEnabled: boolean,
+  isStacked: boolean,
   isStation: boolean,
   isStatsGatheringEnabled: boolean,
+  isUCoreSetup: boolean,
+  isUCoreStacked: boolean,
+  isUcoreUpdatable: boolean,
   isUpdating: boolean,
   isWirelessUplinkEnabled: boolean,
   lastSeen: number,
@@ -93,26 +139,31 @@ export interface ProtectNvrConfigInterface {
   network: string,
   ports: {
 
+    aiFeatureConsole: number,
     cameraEvents: number,
     cameraHttps: number,
     cameraTcp: number,
     devicesWss: number,
     discoveryClient: number,
     emsCLI: number,
+    emsJsonCLI: number,
     emsLiveFLV: number,
     http: number,
     https: number,
     liveWs: number,
     liveWss: number,
+    piongw: number,
     playback: number,
     rtmp: number,
     rtsp: number,
     rtsps: number,
+    stacking: number,
     tcpBridge: number,
     tcpStreams: number,
     ucore: number,
     ump: number
   },
+  publicIp: string,
   recordingRetentionDurationMs: string,
   releaseChannel: string,
   skipFirmwareUpdate: boolean,
@@ -120,9 +171,43 @@ export interface ProtectNvrConfigInterface {
 
     lastUpdateAt: number | null,
     status: string
-  }
+  },
+  smartDetection: {
+
+    enable: boolean,
+    faceRecognition: boolean,
+    licensePlateRecognition: boolean
+  },
   ssoChannel: string | null,
-  storageStats: unknown,
+  storageStats: {
+
+    capacity: number,
+    recordingSpace: {
+
+      available: number,
+      total: number,
+      used: number
+    },
+    remainingCapacity: number,
+    storageDistribution: {
+
+      recordingTypeDistributions: {
+
+        percentage: number,
+        recordingType: string,
+        size: number
+      }[],
+
+      resolutionDistributions: {
+
+        percentage: number,
+        recordingType: string,
+        size: number
+      }[]
+    }
+    utilization: number
+  },
+  streamSharingAvailable: boolean,
   systemInfo: ProtectNvrSystemInfoInterface,
   temperatureUnit: string,
   timeFormat: string,
@@ -133,6 +218,7 @@ export interface ProtectNvrConfigInterface {
   upSince: number,
   uptime: number,
   version: string,
+  wanIp: string,
   wifiSettings: {
 
     password: string | null,
@@ -141,7 +227,9 @@ export interface ProtectNvrConfigInterface {
   }
 }
 
-// A semi-complete description of the UniFi Protect NVR system information configuration JSON.
+/**
+ * A semi-complete description of the UniFi Protect NVR system information configuration JSON.
+ */
 export interface ProtectNvrSystemInfoInterface {
 
   cpu: {
@@ -178,7 +266,9 @@ export interface ProtectNvrSystemInfoInterface {
   }
 }
 
-// A semi-complete description of the UniFi Protect camera JSON.
+/**
+ * A semi-complete description of the UniFi Protect camera JSON.
+ */
 export interface ProtectCameraConfigInterface {
 
   apMac: string,
@@ -189,9 +279,14 @@ export interface ProtectCameraConfigInterface {
   chimeDuration: number,
   connectedSince: number,
   connectionHost: string,
+  currentResolution: string,
+  displayName: string,
   elementInfo: null,
   featureFlags: {
 
+    audio: string[],
+    audioCodecs: string[],
+    audioStyle: string[],
     canAdjustIrLedLevel: boolean,
     canMagicZoom: boolean,
     canOpticalZoom: boolean,
@@ -202,14 +297,21 @@ export interface ProtectCameraConfigInterface {
     hasBattery: boolean,
     hasBluetooth: boolean,
     hasChime: boolean,
+    hasColorLcdScreen: boolean,
     hasExternalIr: boolean,
+    hasFlash: boolean,
     hasHdr: boolean,
     hasIcrSensitivity: boolean,
+    hasInfrared: boolean,
     hasLcdScreen: boolean,
     hasLdc: boolean,
     hasLedIr: boolean,
     hasLedStatus: boolean,
+    hasLineCrossing: boolean,
+    hasLineCrossingCounting: boolean,
     hasLineIn: boolean,
+    hasLiveviewTracking: boolean,
+    hasLuxCheck: boolean,
     hasMic: boolean,
     hasMotionZones: boolean,
     hasNewMotionAlgorithm: boolean,
@@ -218,27 +320,43 @@ export interface ProtectCameraConfigInterface {
     hasRtc: boolean,
     hasSdCard: boolean,
     hasSmartDetect: boolean,
-    hasSquareEventThumbnail: boolean,
     hasSpeaker: boolean,
+    hasSquareEventThumbnail: boolean,
+    hasVerticalFlip: boolean,
     hasWifi: boolean,
     isDoorbell: boolean,
+    isPtz: boolean,
     motionAlgorithms: string[],
     privacyMaskCapability: {
       maxMasks: number,
       rectangleOnly: boolean
     },
+    smartDetectAudioTypes: string[],
     smartDetectTypes: string[],
+    supportDoorAccessConfig: boolean,
+    videoCodecs: string[],
     videoModeMaxFps: number[],
     videoModes: string[]
   },
   firmwareBuild: string,
   firmwareVersion: string,
   hardwareRevision: string,
+  hasRecordings: boolean,
   hasSpeaker: boolean,
   hasWifi: boolean,
   hdrMode: boolean,
+  homekitSettings: {
+
+    microphoneMuted: boolean,
+    speakerMuted: boolean,
+    streamInProgress: boolean,
+    talkbackSettingsActive: boolean
+  },
   host: string,
+  hubMac: string,
   id: string,
+  is2K: boolean,
+  is4K: boolean,
   isAdopted: boolean,
   isAdoptedByOther: boolean,
   isAdopting: boolean,
@@ -246,17 +364,24 @@ export interface ProtectCameraConfigInterface {
   isConnected: boolean,
   isDark: boolean,
   isDeleting: boolean,
+  isDownloadingFW: boolean,
+  isExtenderInstalledEver: boolean,
   isHidden: boolean,
   isLiveHeatmapEnabled: boolean,
   isManaged: boolean,
   isMicEnabled: boolean,
   isMotionDetected: boolean,
+  isPoorNetwork: boolean,
   isProbingForWifi: boolean,
   isProvisioned: boolean,
   isRebooting: boolean,
   isRecording: boolean,
+  isRestoring: boolean,
+  isSmartDetected: boolean,
   isSshEnabled: boolean,
   isUpdating: boolean,
+  isWaterproofCaseAttached: boolean,
+  isWirelessUplinkEnabled: boolean,
   ispSettings: {
 
     aeMode: string,
@@ -317,6 +442,7 @@ export interface ProtectCameraConfigInterface {
   micVolume: number,
   modelKey: string
   name: string,
+  nvrMac: string,
   osdSettings: {
 
     isDateEnabled: boolean,
@@ -350,6 +476,9 @@ export interface ProtectCameraConfigInterface {
   smartDetectLines: [],
   smartDetectSettings: {
 
+    audioTypes: string[],
+    autoTrackingObjectTypes: string[],
+    detectionRange: [max: number, min: number],
     objectTypes: string[]
   },
   smartDetectZones: {
@@ -419,6 +548,8 @@ export interface ProtectCameraConfigInterface {
   },
   type: string,
   upSince: number,
+  videoCodec: string,
+  videoMode: string,
   wifiConnectionState: {
 
     channel: number,
@@ -433,7 +564,9 @@ export interface ProtectCameraConfigInterface {
   }
 }
 
-// A semi-complete description of the UniFi Protect camera channel JSON.
+/**
+ * A semi-complete description of the UniFi Protect camera channel JSON.
+ */
 export interface ProtectCameraChannelConfigInterface {
 
   bitrate: number,
@@ -454,7 +587,9 @@ export interface ProtectCameraChannelConfigInterface {
   width: number
 }
 
-// A semi-complete description of the UniFi Protect LCD message JSON.
+/**
+ * A semi-complete description of the UniFi Protect LCD message JSON.
+ */
 export interface ProtectCameraLcdMessageConfigInterface {
 
   duration: number,
@@ -463,7 +598,9 @@ export interface ProtectCameraLcdMessageConfigInterface {
   type: string
 }
 
-// A semi-complete description of the UniFi Protect chime JSON.
+/**
+ * A semi-complete description of the UniFi Protect chime JSON.
+ */
 export interface ProtectChimeConfigInterface {
 
   apMac: string,
@@ -475,6 +612,7 @@ export interface ProtectChimeConfigInterface {
   connectionHost: string,
   elementInfo: string,
   featureFlags: {
+
     hasWifi: boolean
   },
   firmwareBuild: string,
@@ -508,6 +646,7 @@ export interface ProtectChimeConfigInterface {
   uptime: number,
   volume: number,
   wifiConnectionState: {
+
     apName: string | null,
     bssid: string | null,
     channel: string | null,
@@ -526,7 +665,9 @@ export interface ProtectChimeConfigInterface {
   }
 }
 
-// A semi-complete description of the UniFi Protect light JSON.
+/**
+ * A semi-complete description of the UniFi Protect light JSON.
+ */
 export interface ProtectLightConfigInterface {
 
   camera: string,
@@ -586,7 +727,9 @@ export interface ProtectLightConfigInterface {
   }
 }
 
-// A semi-complete description of the UniFi Protect NVR liveview JSON.
+/**
+ * A semi-complete description of the UniFi Protect NVR liveview JSON.
+ */
 export interface ProtectNvrLiveviewConfigInterface {
 
   id: string,
@@ -604,7 +747,9 @@ export interface ProtectNvrLiveviewConfigInterface {
   } []
 }
 
-// A semi-complete description of the UniFi Protect NVR user JSON.
+/**
+ * A semi-complete description of the UniFi Protect NVR user JSON.
+ */
 export interface ProtectNvrUserConfigInterface {
 
   alertRules: unknown[],
@@ -638,7 +783,9 @@ export interface ProtectNvrUserConfigInterface {
   syncSso: boolean
 }
 
-// A semi-complete description of the UniFi Protect system events JSON.
+/**
+ * A semi-complete description of the UniFi Protect system events JSON.
+ */
 export interface ProtectNvrSystemEventInterface {
 
   apps: {
@@ -650,7 +797,9 @@ export interface ProtectNvrSystemEventInterface {
   type: string
 }
 
-// A semi-complete description of the UniFi Protect system events controller JSON.
+/**
+ * A semi-complete description of the UniFi Protect system events controller JSON.
+ */
 export interface ProtectNvrSystemEventControllerInterface {
 
   harddriveRequired: boolean,
@@ -707,7 +856,9 @@ export interface ProtectNvrSystemEventControllerInterface {
   version: string
 }
 
-// A semi-complete description of the UniFi Protect sensor JSON.
+/**
+ * A semi-complete description of the UniFi Protect sensor JSON.
+ */
 export interface ProtectSensorConfigInterface {
 
   alarmSettings: {
@@ -815,7 +966,9 @@ export interface ProtectSensorConfigInterface {
   }
 }
 
-// A semi-complete description of the UniFi Protect viewer JSON.
+/**
+ * A semi-complete description of the UniFi Protect viewer JSON.
+ */
 export interface ProtectViewerConfigInterface {
 
   canAdopt: boolean,
@@ -854,7 +1007,9 @@ export interface ProtectViewerConfigInterface {
   }
 }
 
-// A semi-complete description of the UniFi Protect smart motion detection event JSON.
+/**
+ * A semi-complete description of the UniFi Protect smart motion detection event JSON.
+ */
 export interface ProtectEventAddInterface {
 
   camera: string,
@@ -871,7 +1026,9 @@ export interface ProtectEventAddInterface {
   user: string
 }
 
-// A description of metadata in UniFi Protect smart motion detect events.
+/**
+ * A description of metadata in UniFi Protect smart motion detect events.
+ */
 export interface ProtectEventMetadataInterface {
 
   deviceId: {
@@ -892,61 +1049,71 @@ export interface ProtectEventMetadataInterface {
   reason: string
 }
 
-// This type declaration make all properties optional recursively including nested objects. This should
-// only be used on JSON objects only. Otherwise...you're going to end up with class methods marked as
-// optional as well. Credit for this belongs to: https://github.com/joonhocho/tsdef. #Grateful
-/** @ignore */
-export type DeepPartial<T> = {
+/** @see {@link ProtectEventAddInterface} */
+export type ProtectEventAdd = ProtectEventAddInterface;
 
-  [P in keyof T]?: T[P] extends Array<infer I> ? Array<DeepPartial<I>> : DeepPartial<T[P]>
-};
+/** @see {@link ProtectEventMetadataInterface} */
+export type ProtectEventMetadata = ProtectEventMetadataInterface;
 
-// We use types instead of interfaces here because we can more easily set the entire thing as readonly.
-// Unfortunately, interfaces can't be quickly set as readonly in Typescript without marking each and
-// every property as readonly along the way.
-/** @interface */
-export type ProtectEventAdd = Readonly<ProtectEventAddInterface>;
-/** @interface */
-export type ProtectEventMetadata = Readonly<ProtectEventMetadataInterface>;
-/** @interface */
-export type ProtectNvrBootstrap = Readonly<ProtectNvrBootstrapInterface>;
-/** @interface */
-export type ProtectNvrConfig = Readonly<ProtectNvrConfigInterface>;
-/** @interface */
+/** @see {@link ProtectNvrBootstrapInterface} */
+export type ProtectNvrBootstrap = ProtectNvrBootstrapInterface;
+
+/** @see {@link ProtectNvrConfigInterface} */
+export type ProtectNvrConfig = ProtectNvrConfigInterface;
+
+/** @see {@link ProtectNvrConfigInterface} */
 export type ProtectNvrConfigPayload = DeepPartial<ProtectNvrConfigInterface>;
-/** @interface */
-export type ProtectNvrSystemInfoConfig = Readonly<ProtectNvrSystemInfoInterface>;
-/** @interface */
-export type ProtectCameraConfig = Readonly<ProtectCameraConfigInterface>;
-/** @interface */
+
+/** @see {@link ProtectNvrSystemInfoInterface} */
+export type ProtectNvrSystemInfoConfig = ProtectNvrSystemInfoInterface;
+
+/** @see {@link ProtectCameraConfigInterface} */
+export type ProtectCameraConfig = ProtectCameraConfigInterface;
+
+/** @see {@link ProtectCameraConfigInterface} */
 export type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterface>;
-/** @interface */
-export type ProtectCameraChannelConfig = Readonly<ProtectCameraChannelConfigInterface>;
-/** @interface */
-export type ProtectCameraLcdMessageConfig = Readonly<ProtectCameraLcdMessageConfigInterface>;
-/** @interface */
+
+/** @see {@link ProtectCameraChannelConfigInterface} */
+export type ProtectCameraChannelConfig = ProtectCameraChannelConfigInterface;
+
+/** @see {@link ProtectCameraLcdMessageConfigInterface} */
+export type ProtectCameraLcdMessageConfig = ProtectCameraLcdMessageConfigInterface;
+
+/** @see {@link ProtectCameraLcdMessageConfigInterface} */
 export type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
-/** @interface */
-export type ProtectChimeConfig = Readonly<ProtectChimeConfigInterface>;
-/** @interface */
+
+/** @see {@link ProtectChimeConfigInterface} */
+export type ProtectChimeConfig = ProtectChimeConfigInterface;
+
+/** @see {@link ProtectChimeConfigInterface} */
 export type ProtectChimeConfigPayload = DeepPartial<ProtectChimeConfigInterface>;
-/** @interface */
-export type ProtectLightConfig = Readonly<ProtectLightConfigInterface>;
-/** @interface */
+
+/** @see {@link ProtectLightConfigInterface} */
+export type ProtectLightConfig = ProtectLightConfigInterface;
+
+/** @see {@link ProtectLightConfigInterface} */
 export type ProtectLightConfigPayload = DeepPartial<ProtectLightConfigInterface>;
-/** @interface */
-export type ProtectNvrLiveviewConfig = Readonly<ProtectNvrLiveviewConfigInterface>;
-/** @interface */
-export type ProtectNvrSystemEvent = Readonly<ProtectNvrSystemEventInterface>;
-/** @interface */
-export type ProtectNvrSystemEventController = Readonly<ProtectNvrSystemEventControllerInterface>;
-/** @interface */
-export type ProtectNvrUserConfig = Readonly<ProtectNvrUserConfigInterface>;
-/** @interface */
-export type ProtectSensorConfig = Readonly<ProtectSensorConfigInterface>;
-/** @interface */
+
+/** @see {@link ProtectNvrLiveviewConfigInterface} */
+export type ProtectNvrLiveviewConfig = ProtectNvrLiveviewConfigInterface;
+
+/** @see {@link ProtectNvrSystemEventInterface} */
+export type ProtectNvrSystemEvent = ProtectNvrSystemEventInterface;
+
+/** @see {@link ProtectNvrSystemEventInterface} */
+export type ProtectNvrSystemEventController = ProtectNvrSystemEventControllerInterface;
+
+/** @see {@link ProtectNvrUserConfigInterface} */
+export type ProtectNvrUserConfig = ProtectNvrUserConfigInterface;
+
+/** @see {@link ProtectSensorConfigInterface} */
+export type ProtectSensorConfig = ProtectSensorConfigInterface;
+
+/** @see {@link ProtectSensorConfigInterface} */
 export type ProtectSensorConfigPayload = DeepPartial<ProtectSensorConfigInterface>;
-/** @interface */
-export type ProtectViewerConfig = Readonly<ProtectViewerConfigInterface>;
-/** @interface */
+
+/** @see {@link ProtectViewerConfigInterface} */
+export type ProtectViewerConfig = ProtectViewerConfigInterface;
+
+/** @see {@link ProtectViewerConfigInterface} */
 export type ProtectViewerConfigPayload = DeepPartial<ProtectViewerConfigInterface>;
