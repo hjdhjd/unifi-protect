@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.11.0 (2024-06-03)
+  * Performance improvements and housekeeping.
+
 ## 4.10.0 (2024-06-01)
   * Device JSON updates for Protect 4.0.
   * Improvement: added the codec event to the livestream API so you can retrieve the codec information associated with a particular livestream.
