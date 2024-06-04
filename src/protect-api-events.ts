@@ -137,7 +137,11 @@ export type ProtectEventHeader = {
   action: string,
   id: string,
   modelKey: string,
-  newUpdateId: string
+  newUpdateId: string,
+  mac?: string,
+  nvrMac?: string,
+  recordModel?: string,
+  recordId?: string
 };
 
 /**
