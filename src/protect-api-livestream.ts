@@ -194,7 +194,7 @@ export class ProtectLivestream extends EventEmitter {
       fragmentDurationMillis: segmentLength.toString(),
       lens: lens.toString(),
       progressive: "",
-      rebaseTimestampsToZero: "false", // Try setting to true?
+      rebaseTimestampsToZero: "true",
       requestId: requestId,
       type: "fmp4"
     });
@@ -473,7 +473,7 @@ export class ProtectLivestream extends EventEmitter {
    *
    * @returns Returns a string containing the codec information,if it exists, or `null` otherwise.
    *
-   * @remarks Codec information is provided as `codec,container` where codec is either `hev` (H.265) or `avc` (H.264). The container format is always `mp4`.
+   * @remarks Codec information is provided as `codec,container` where codec is either `avc` (H.264) or `hev` (H.265). The container format is always `mp4`.
    *
    * @example `hev1.1.6.L150,mp4a.40.2`
    */

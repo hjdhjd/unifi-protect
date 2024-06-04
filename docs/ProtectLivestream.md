@@ -97,7 +97,7 @@ The codecs in use for this livestream session.
 
 ###### Remarks
 
-Codec information is provided as `codec,container` where codec is either `hev` (H.265) or `avc` (H.264). The container format is always `mp4`.
+Codec information is provided as `codec,container` where codec is either `avc` (H.264) or `hev` (H.265). The container format is always `mp4`.
 
 ###### Example
 

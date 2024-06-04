@@ -942,14 +942,15 @@ export class ProtectApi extends EventEmitter {
   /**
    * Execute an HTTP fetch request to the Protect controller.
    *
-   * @param url       - Requested endpoint type. Valid types are `livestream` and `talkback`.
+   * @param url       - Complete URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot).
    * @param options   - Parameters to pass on for the endpoint request.
    * @param logErrors - Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`.
    *
    * @returns Returns a promise that will resolve to a Response object successful, and `null` otherwise.
    *
    * @remarks This method should be used when direct access to the Protect controller is needed, or when this library doesn't have a needed method to access
-   *   controller capabilities.
+   *   controller capabilities. `options` must be a
+   *   [Fetch API compatible](https://developer.mozilla.org/en-US/docs/Web/API/Request/Request#options) request options object.
    *
    * @category API Access
    */

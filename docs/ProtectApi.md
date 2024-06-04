@@ -276,7 +276,7 @@ Execute an HTTP fetch request to the Protect controller.
 
 | Parameter | Type | Default value | Description |
 | :------ | :------ | :------ | :------ |
-| `url` | `string` | `undefined` | Requested endpoint type. Valid types are `livestream` and `talkback`. |
+| `url` | `string` | `undefined` | Complete URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot). |
 | `options` | `RequestOptions` | `undefined` | Parameters to pass on for the endpoint request. |
 | `logErrors` | `boolean` | `true` | Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`. |
 
@@ -289,7 +289,8 @@ Returns a promise that will resolve to a Response object successful, and `null` 
 ###### Remarks
 
 This method should be used when direct access to the Protect controller is needed, or when this library doesn't have a needed method to access
-  controller capabilities.
+  controller capabilities. `options` must be a
+  [Fetch API compatible](https://developer.mozilla.org/en-US/docs/Web/API/Request/Request#options) request options object.
 
 ##### updateDevice()
 
