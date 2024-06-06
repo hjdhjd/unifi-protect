@@ -96,7 +96,7 @@ export class ProtectApi extends EventEmitter {
     log ??= {
 
       /* eslint-disable no-console */
-      debug: (message: string, ...parameters: unknown[]): void => { /* No debug logging by default. */ },
+      debug: (): void => { /* No debug logging by default. */ },
       error: (message: string, ...parameters: unknown[]): void => console.error(message, ...parameters),
       info: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters),
       warn: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters)
