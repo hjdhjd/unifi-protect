@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "module",
-  "version": "4.11.0",
+  "version": "4.11.1",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {
@@ -62,10 +62,10 @@
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "^2.1.0",
-    "@types/node": "20.14.0",
+    "@types/node": "20.14.2",
     "@types/ws": "8.5.10",
     "eslint": "8.57.0",
-    "homebridge-plugin-utils": "^1.3.0",
+    "homebridge-plugin-utils": "^1.4.0",
     "rimraf": "5.0.7",
     "shx": "^0.3.4",
     "typedoc": "0.25.13",
@@ -74,7 +74,7 @@
     "typescript-eslint": "^7.12.0"
   },
   "dependencies": {
-    "@adobe/fetch": "^4.1.3",
+    "@adobe/fetch": "^4.1.4",
     "ws": "8.17.0"
   },
   "optionalDependencies": {

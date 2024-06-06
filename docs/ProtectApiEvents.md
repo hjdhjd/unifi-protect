@@ -103,7 +103,7 @@ successfully logged into the Protect controller, events are generated automatica
 
 ```ts
 type ProtectEventHeader: {
-  action: string;
+[key: string]: boolean | number | object | string;   action: string;
   id: string;
   modelKey: string;
   newUpdateId: string;
@@ -123,8 +123,13 @@ Protect event payload.
 #### Remarks
 
 A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
-  a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
-  related to the device and action specified in the header.
+  a `payload`. The `header` contains information about which Protect device and what action category it belongs to and can contain arbitrary information, though has
+  a few properties that are always present (`action`, `id`, `modelKey`, and `newUpdateId`). The `payload` contains the detailed information related to the device and
+  action specified in the header.
+
+#### Index signature
+
+ \[`key`: `string`\]: `boolean` \| `number` \| `object` \| `string`
 
 #### Type declaration
 
