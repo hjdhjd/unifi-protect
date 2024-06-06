@@ -43,6 +43,7 @@
  */
 /* eslint-enable @stylistic/max-len */
 import events, { EventEmitter } from "node:events";
+import { PROTECT_API_TIMEOUT } from "./settings.js";
 import { ProtectApi } from "./protect-api.js";
 import { ProtectLogging } from "./protect-logging.js";
 import WebSocket from "ws";
@@ -82,6 +83,8 @@ export class ProtectLivestream extends EventEmitter {
   private _codec: string | null;
   private api: ProtectApi;
   private errorHandler: ((error: Error) => void) | null;
+  private heartbeat: NodeJS.Timeout | null;
+  private lastMessage: number;
   private log: ProtectLogging;
   private segmentHandler: ((packet: Buffer) => void) | null;
   private ws: WebSocket | null;
@@ -96,8 +99,10 @@ export class ProtectLivestream extends EventEmitter {
     this._codec = null;
     this.api = api;
     this.errorHandler = null;
+    this.lastMessage = 0;
     this.log = log;
     this.segmentHandler = null;
+    this.heartbeat = null;
     this.ws = null;
   }
 
@@ -165,6 +170,8 @@ export class ProtectLivestream extends EventEmitter {
   // Configure the websocket to populate the prebuffer.
   private async launchLivestream(cameraId: string, channel: number, lens: number, segmentLength: number, requestId: string): Promise<boolean> {
 
+    const logError = (message: string, ...parameters: unknown[]): void => this.log.error(requestId + ": " + message, ...parameters);
+
     // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for segment length. Protect happens to default to a 100ms segment
     // length as well, so we do too.
     if(segmentLength < 100) {
@@ -205,7 +212,7 @@ export class ProtectLivestream extends EventEmitter {
     // We ran into a problem getting the websocket URL. We're done.
     if(!wsUrl) {
 
-      this.log.error("Unable to retrieve the livestream websocket API endpoint from the UniFi Protect controller.");
+      logError("unable to retrieve the livestream websocket API endpoint from the UniFi Protect controller.");
 
       return false;
     }
@@ -218,10 +225,34 @@ export class ProtectLivestream extends EventEmitter {
       if(!this.ws) {
 
         this.ws = null;
-        this.log.error("Unable to connect to the livestream websocket API endpoint.");
+        logError("unable to connect to the livestream websocket API endpoint.");
 
         return false;
       }
+
+      // Setup our heartbeat timer.
+      let heartbeat: NodeJS.Timeout | null = null;
+
+      // Start our heartbeat once we've opened the connection.
+      this.ws?.once("open", () => {
+
+        this.lastMessage = Date.now();
+
+        // Heartbeat the controller. We need this because if we don't heartbeat the controller, it can sometimes just decide not to give us a livestream to work with, or
+        // lockup due to regressions in the controller firmware. This ensures we can never hang waiting on data from the API, especially in a livestream scenario.
+        heartbeat = setInterval(() => {
+
+          if((Date.now() - this.lastMessage) > PROTECT_API_TIMEOUT) {
+
+            logError("the livestream API is not responding.");
+
+            if((this.ws?.readyState === WebSocket.CLOSING) || (this.ws?.readyState === WebSocket.OPEN)) {
+
+              this.ws?.close();
+            }
+          }
+        }, PROTECT_API_TIMEOUT);
+      });
 
       // Catch any errors and inform the user, if needed.
       this.ws?.once("error", this.errorHandler = (error: Error): void => {
@@ -229,13 +260,19 @@ export class ProtectLivestream extends EventEmitter {
         // Ignore timeout errors, but notify the user about anything else.
         if((error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
 
-          this.log.error("Error while communicating with the livestream websocket API: %s", error);
+          logError("error while communicating with the livestream websocket API: %s", error);
         }
 
         this.stop();
       });
 
       this.ws?.once("close", (code: number) => {
+
+        // Clear out our heartbeat since we're closing.
+        if(heartbeat) {
+
+          clearInterval(heartbeat);
+        }
 
         switch(code) {
 
@@ -254,7 +291,7 @@ export class ProtectLivestream extends EventEmitter {
 
           default:
 
-            this.log.error("Unknown livestream API websocket error with camera %s. Error code: %s.", cameraId, code);
+            logError("unknown livestream API websocket error. Error code: %s.", code);
 
             break;
         }
@@ -266,7 +303,7 @@ export class ProtectLivestream extends EventEmitter {
 
     } catch(error) {
 
-      this.log.error("Error while connecting to the livestream websocket API: %s", error);
+      logError("error while connecting to the livestream websocket API: %s", error);
       this.stop();
     }
 
@@ -296,6 +333,9 @@ export class ProtectLivestream extends EventEmitter {
     // Process data coming in from the websocket.
     this.ws.on("message", this.segmentHandler = (packet: Buffer): void => {
 
+      // Update our heartbeat.
+      this.lastMessage = Date.now();
+
       // If we have anything left from the last packet we processed, prepend it to this packet.
       if(packetRemaining.length > 0) {
 
@@ -307,8 +347,8 @@ export class ProtectLivestream extends EventEmitter {
 
       for(;;) {
 
-        // If we have less than 4 bytes remaining, it's an incomplete packet and we don't have enough information to decode it since we need the packet header to decode.
-        // We save it to prepend to the next packet that comes across.
+        // If we have less than 4 bytes remaining, it's an incomplete packet and we don't have enough information to decode it without the packet header. We save it to
+        // prepend to the next packet that comes across.
         if((packet.length - offset) < 4) {
 
           packetRemaining = packet.slice(offset);
@@ -403,6 +443,7 @@ export class ProtectLivestream extends EventEmitter {
           case ProtectLiveFrame.KEYFRAME:
 
             currentSegment.keyframe = data;
+            this.emit("keyframe", data);
 
             break;
 
