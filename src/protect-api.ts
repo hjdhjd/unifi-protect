@@ -976,7 +976,7 @@ export class ProtectApi extends EventEmitter {
     let response: Response;
 
     // Create a signal handler to deliver the abort operation.
-    const signal = timeoutSignal(PROTECT_API_TIMEOUT * 1000);
+    const signal = timeoutSignal(PROTECT_API_TIMEOUT);
 
     options.headers = this.headers;
     options.signal = signal;
