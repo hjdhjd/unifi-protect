@@ -82,7 +82,7 @@ Decode a UniFi Protect event packet.
 ###### Parameters
 
 | Parameter | Type | Description |
-| :------ | :------ | :------ |
+| ------ | ------ | ------ |
 | `log` | [`ProtectLogging`](ProtectLogging.md#protectlogging) | Logging functions to use. |
 | `packet` | `Buffer` | Input packet to decode. |
 
@@ -112,6 +112,19 @@ type ProtectEventHeader: {
 
 UniFi Protect event header.
 
+#### Index Signature
+
+ \[`key`: `string`\]: `boolean` \| `number` \| `object` \| `string`
+
+#### Type declaration
+
+| Name | Type |
+| ------ | ------ |
+| `action` | `string` |
+| `id` | `string` |
+| `modelKey` | `string` |
+| `newUpdateId` | `string` |
+
 #### Param
 
 Protect event header.
@@ -127,19 +140,6 @@ A UniFi Protect event packet represents a realtime event update from a UniFi Pro
   a few properties that are always present (`action`, `id`, `modelKey`, and `newUpdateId`). The `payload` contains the detailed information related to the device and
   action specified in the header.
 
-#### Index signature
-
- \[`key`: `string`\]: `boolean` \| `number` \| `object` \| `string`
-
-#### Type declaration
-
-| Member | Type |
-| :------ | :------ |
-| `action` | `string` |
-| `id` | `string` |
-| `modelKey` | `string` |
-| `newUpdateId` | `string` |
-
 ***
 
 ### ProtectEventPacket
@@ -152,6 +152,13 @@ type ProtectEventPacket: {
 ```
 
 UniFi Protect event packet.
+
+#### Type declaration
+
+| Name | Type |
+| ------ | ------ |
+| `header` | [`ProtectEventHeader`](ProtectApiEvents.md#protecteventheader) |
+| `payload` | `unknown` |
 
 #### Param
 
@@ -166,10 +173,3 @@ Protect event payload.
 A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
   a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
   related to the device and action specified in the header.
-
-#### Type declaration
-
-| Member | Type |
-| :------ | :------ |
-| `header` | [`ProtectEventHeader`](ProtectApiEvents.md#protecteventheader) |
-| `payload` | `unknown` |

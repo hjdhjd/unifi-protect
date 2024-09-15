@@ -26,7 +26,7 @@ A semi-complete description of the UniFi Protect camera channel JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `bitrate` | `number` |
 | `enabled` | `boolean` |
 | `fps` | `number` |
@@ -53,7 +53,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `apMac` | `string` |
 | `apRssi` | `string` |
 | `audioBitrate` | `number` |
@@ -152,23 +152,15 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `isPoorNetwork` | `boolean` |
 | `isProbingForWifi` | `boolean` |
 | `isProvisioned` | `boolean` |
-| `isRebooting` | `boolean` |
-| `isRecording` | `boolean` |
-| `isRestoring` | `boolean` |
-| `isSmartDetected` | `boolean` |
-| `isSshEnabled` | `boolean` |
-| `isUpdating` | `boolean` |
-| `isWaterproofCaseAttached` | `boolean` |
-| `isWirelessUplinkEnabled` | `boolean` |
-| `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `denoise`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hue`: `number`; `icrSensitivity`: `number`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `saturation`: `number`; `sharpness`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} |
+| `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `denoise`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hue`: `number`; `icrSensitivity`: `number`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `saturation`: `number`; `sharpness`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} |
 | `ispSettings.aeMode` | `string` |
 | `ispSettings.brightness` | `number` |
 | `ispSettings.contrast` | `number` |
+| `ispSettings.denoise` | `number` |
 | `ispSettings.dZoomCenterX` | `number` |
 | `ispSettings.dZoomCenterY` | `number` |
 | `ispSettings.dZoomScale` | `number` |
 | `ispSettings.dZoomStreamId` | `number` |
-| `ispSettings.denoise` | `number` |
 | `ispSettings.focusMode` | `string` |
 | `ispSettings.focusPosition` | `number` |
 | `ispSettings.hue` | `number` |
@@ -189,6 +181,14 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `ispSettings.touchFocusY` | `number` |
 | `ispSettings.wdr` | `number` |
 | `ispSettings.zoomPosition` | `number` |
+| `isRebooting` | `boolean` |
+| `isRecording` | `boolean` |
+| `isRestoring` | `boolean` |
+| `isSmartDetected` | `boolean` |
+| `isSshEnabled` | `boolean` |
+| `isUpdating` | `boolean` |
+| `isWaterproofCaseAttached` | `boolean` |
+| `isWirelessUplinkEnabled` | `boolean` |
 | `lastMotion` | `number` |
 | `lastRing` | `null` \| `number` |
 | `lastSeen` | `number` |
@@ -300,7 +300,7 @@ A semi-complete description of the UniFi Protect LCD message JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `duration` | `number` |
 | `resetAt` | `null` \| `number` |
 | `text` | `string` |
@@ -315,7 +315,7 @@ A semi-complete description of the UniFi Protect chime JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `apMac` | `string` |
 | `apMgmtIp` | `string` |
 | `apRssi` | `string` |
@@ -380,9 +380,12 @@ A semi-complete description of the UniFi Protect smart motion detection event JS
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `camera` | `string` |
+| `cameraId` | `string` |
+| `detectedAt` | `number` |
 | `end` | `number` |
+| `eventId` | `string` |
 | `id` | `string` |
 | `metadata` | [`ProtectEventMetadataInterface`](ProtectTypes.md#protecteventmetadatainterface) |
 | `modelKey` | `string` |
@@ -391,6 +394,7 @@ A semi-complete description of the UniFi Protect smart motion detection event JS
 | `smartDetectEvents` | `string`[] |
 | `smartDetectTypes` | `string`[] |
 | `start` | `number` |
+| `thumbnailId` | `string` |
 | `type` | `string` |
 | `user` | `string` |
 
@@ -403,7 +407,7 @@ A description of metadata in UniFi Protect smart motion detect events.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `deviceId` | \{ `text`: `string`; \} |
 | `deviceId.text` | `string` |
 | `isLowBattery` | `boolean` |
@@ -424,7 +428,7 @@ A semi-complete description of the UniFi Protect light JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `camera` | `string` |
 | `canAdopt` | `boolean` |
 | `connectedSince` | `number` |
@@ -496,7 +500,7 @@ An semi-complete description of the UniFi Protect NVR bootstrap JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `accessKey` | `string` |
 | `authUserId` | `string` |
 | `bridges` | `unknown`[] |
@@ -521,7 +525,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `analyticsData` | `string` |
 | `anonymouseDeviceId` | `string` |
 | `availableUpdate` | `string` |
@@ -563,9 +567,9 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `hardwareRevision` | `string` |
 | `hasGateway` | `boolean` |
 | `host` | `string` |
+| `hosts` | `string`[] |
 | `hostShortname` | `string` |
 | `hostType` | `string` |
-| `hosts` | `string`[] |
 | `id` | `string` |
 | `isAway` | `boolean` |
 | `isHardware` | `boolean` |
@@ -673,7 +677,7 @@ A semi-complete description of the UniFi Protect NVR liveview JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `id` | `string` |
 | `isDefault` | `boolean` |
 | `isGlobal` | `boolean` |
@@ -692,7 +696,7 @@ A semi-complete description of the UniFi Protect system events controller JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `harddriveRequired` | `boolean` |
 | `info` | \{ `events`: `number`[]; `isAdopted`: `boolean`; `isConnectedToCloud`: `boolean`; `isSetup`: `boolean`; `lastMotion`: `number`; `lastMotionCamera`: `string`; `lastMotionCameraAddress`: `string`; `lastMotionCameraModel`: `string`; `managedCameras`: `number`; `offlineCameras`: `number`; `oldestRecording`: `number`; `onlineCameras`: `number`; `recordingSpaceTotal`: `number`; `recordingSpaceUsed`: `number`; `retentionTime`: `number`; `startedAt`: `number`; `throughput`: `number`; `timeFormat`: `string`; `updateAvailable`: `boolean`; `updateVersion`: `string`; \} |
 | `info.events` | `number`[] |
@@ -751,7 +755,7 @@ A semi-complete description of the UniFi Protect system events JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `apps` | \{ `apps`: `unknown`[]; `controllers`: [`ProtectNvrSystemEventControllerInterface`](ProtectTypes.md#protectnvrsystemeventcontrollerinterface)[]; \} |
 | `apps.apps` | `unknown`[] |
 | `apps.controllers` | [`ProtectNvrSystemEventControllerInterface`](ProtectTypes.md#protectnvrsystemeventcontrollerinterface)[] |
@@ -767,7 +771,7 @@ A semi-complete description of the UniFi Protect NVR system information configur
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `cpu` | \{ `averageLoad`: `number`; `temperature`: `number`; \} |
 | `cpu.averageLoad` | `number` |
 | `cpu.temperature` | `number` |
@@ -797,7 +801,7 @@ A semi-complete description of the UniFi Protect NVR user JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `alertRules` | `unknown`[] |
 | `allPermissions` | `string`[] |
 | `cloudAccount` | `string` |
@@ -833,7 +837,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `alarmSettings` | \{ `isEnabled`: `boolean`; \} |
 | `alarmSettings.isEnabled` | `boolean` |
 | `alarmTriggeredAt` | `null` \| `number` |
@@ -921,7 +925,7 @@ A semi-complete description of the UniFi Protect viewer JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `canAdopt` | `boolean` |
 | `connectedSince` | `number` |
 | `connectionHost` | `string` |

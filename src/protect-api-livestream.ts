@@ -248,7 +248,7 @@ export class ProtectLivestream extends EventEmitter {
 
             if((this.ws?.readyState === WebSocket.CLOSING) || (this.ws?.readyState === WebSocket.OPEN)) {
 
-              this.ws?.close();
+              this.ws?.terminate();
             }
           }
         }, PROTECT_API_TIMEOUT);
@@ -401,6 +401,8 @@ export class ProtectLivestream extends EventEmitter {
 
             this.emit("segment", completeSegment);
             this.emit("message", completeSegment);
+            this.emit("moof", currentSegment.moof);
+            this.emit("mdat", currentSegment.mdat);
 
             break;
 

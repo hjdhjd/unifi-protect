@@ -533,39 +533,44 @@ export class ProtectApi extends EventEmitter {
    * Retrieve a snapshot image from a Protect camera.
    *
    * @param device           - Protect device.
-   * @param width            - Optionally specify the image width to request. Defaults selected by the Protect controller, based on the camera resolution.
-   * @param height           - Optionally specify the image height to request. Defaults selected by the Protect controller, based on the camera resolution.
-   * @param timestamp        - Optionally specify the timestamp index to retrieve. Defaults to the current time.
-   * @param usePackageCamera - Optionally specify retrieving a snapshot fron the package camera, rather than the primary camera lens. Defaults to `false`.
+   * @param options          - Parameters to pass on for the snapshot request.
    *
    * @returns Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
    *
+   * @remarks The `options` object for snapshot parameters accepts the following properties, all of which are optional:
+   *
+   * | Property          | Description                                                                                                |
+   * |-------------------|------------------------------------------------------------------------------------------------------------|
+   * | height            | The image height to request. Defaults selected by the Protect controller, based on the camera resolution.  |
+   * | width             | The image width to request. Defaults selected by the Protect controller, based on the camera resolution.   |
+   * | usePackageCamera  | Retriver a snapshot fron the package camera rather than the primary camera lens. Defaults to `false`.      |
+   *
    * @category API Access
    */
-  public async getSnapshot(device: ProtectCameraConfig, width?: number, height?: number, timestamp = Date.now(), usePackageCamera = false): Promise<Buffer | null> {
+  public async getSnapshot(device: ProtectCameraConfig, options: Partial<{ width: number, height: number, usePackageCamera: boolean }> = {}): Promise<Buffer | null> {
 
     // No device object, or it's not a camera, or we're requesting a package camera snapshot on a camera without one - we're done.
-    if(!device || (device.modelKey !== "camera") || (usePackageCamera && !device.featureFlags.hasPackageCamera)) {
+    if(!device || (device.modelKey !== "camera") || (options.usePackageCamera && !device.featureFlags.hasPackageCamera)) {
 
       return null;
     }
 
     // Create the parameters needed for the snapshot request.
-    const params = new URLSearchParams({ ts: timestamp.toString() });
+    const params = new URLSearchParams();
 
     // If we have details of the snapshot request, use it to request the right size.
-    if(height !== undefined) {
+    if(options.height !== undefined) {
 
-      params.append("h", height.toString());
+      params.append("h", options.height.toString());
     }
 
-    if(width !== undefined) {
+    if(options.width !== undefined) {
 
-      params.append("w", width.toString());
+      params.append("w", options.width.toString());
     }
 
     // Request the image from the controller.
-    const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id + "/" + (usePackageCamera ? "package-" : "") +
+    const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id + "/" + (options.usePackageCamera ? "package-" : "") +
       "snapshot?" + params.toString(), { method: "GET" });
 
     if(!response?.ok) {
@@ -882,7 +887,8 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Ask Protect to give us a URL for this websocket.
-    const response = await this.retrieve(this.getApiEndpoint("websocket") + "/" + endpoint + ((params && params.toString().length) ? "?" + params.toString() : ""));
+    const response = await this.retrieve(this.getApiEndpoint("websocket") + "/" + endpoint +
+      ((params && params.toString().length) ? "?" + params.toString() : ""), undefined, !retry);
 
     // Something went wrong, we're done here.
     if(!response?.ok) {
@@ -963,6 +969,17 @@ export class ProtectApi extends EventEmitter {
   // Internal interface to communicating HTTP requests with a Protect controller, with error handling.
   private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
 
+    // Log errors if that's what the caller requested.
+    const logError = (message: string, ...parameters: unknown[]): void => {
+
+      if(!logErrors) {
+
+        return;
+      }
+
+      this.log.error(message, ...parameters);
+    };
+
     // Catch Protect controller server-side issues:
     //
     // 400: Bad request.
@@ -1032,7 +1049,7 @@ export class ProtectApi extends EventEmitter {
       if(response.status === 401) {
 
         this.logout();
-        this.log.error("Invalid login credentials given. Please check your login and password.");
+        logError("Invalid login credentials given. Please check your login and password.");
 
         return null;
       }
@@ -1040,14 +1057,14 @@ export class ProtectApi extends EventEmitter {
       // Insufficient privileges.
       if(response.status === 403) {
 
-        this.log.error("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
+        logError("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
 
         return null;
       }
 
       if(!response.ok && isServerSideIssue(response.status)) {
 
-        this.log.error("Unable to connect to the Protect controller. This is usually temporary and will occur during Protect controller reboots and firmware updates.");
+        logError("Unable to connect to the Protect controller. This is usually temporary and will occur during device reboots.");
 
         return null;
       }
@@ -1055,7 +1072,7 @@ export class ProtectApi extends EventEmitter {
       // Some other unknown error occurred.
       if(!response.ok) {
 
-        this.log.error("%s - %s", response.status, response.statusText);
+        logError("%s - %s", response.status, response.statusText);
 
         return null;
       }
@@ -1070,7 +1087,7 @@ export class ProtectApi extends EventEmitter {
 
       if(error instanceof AbortError) {
 
-        this.log.error("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
+        logError("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
         this.log.debug("Original request was: %s", url);
 
         return null;
@@ -1081,9 +1098,11 @@ export class ProtectApi extends EventEmitter {
         switch(error.code) {
 
           case "ECONNREFUSED":
+          case "EHOSTDOWN":
           case "ERR_HTTP2_STREAM_CANCEL":
+          case "ERR_HTTP2_STREAM_ERROR":
 
-            this.log.error("Connection refused.");
+            logError("Connection refused.");
 
             break;
 
@@ -1095,13 +1114,13 @@ export class ProtectApi extends EventEmitter {
               return this._retrieve(url, options, logErrors, decodeResponse, true);
             }
 
-            this.log.error("Network connection to Protect controller has been reset.");
+            logError("Network connection to Protect controller has been reset.");
 
             break;
 
           case "ENOTFOUND":
 
-            this.log.error("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.",
+            logError("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.",
               this.nvrAddress);
 
             break;
@@ -1109,10 +1128,7 @@ export class ProtectApi extends EventEmitter {
           default:
 
             // If we're logging when we have an error, do so.
-            if(logErrors) {
-
-              this.log.error("Error: %s %s.", error.code, error.message);
-            }
+            logError("Error: %s | %s.", error.code, error.message);
 
             break;
         }

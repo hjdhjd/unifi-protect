@@ -73,7 +73,7 @@ new ProtectLivestream(api, log): ProtectLivestream
 ###### Parameters
 
 | Parameter | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `api` | [`ProtectApi`](ProtectApi.md#protectapi) |
 | `log` | [`ProtectLogging`](ProtectLogging.md#protectlogging) |
 
@@ -157,12 +157,12 @@ Start an fMP4 livestream session from the Protect controller.
 ###### Parameters
 
 | Parameter | Type | Default value | Description |
-| :------ | :------ | :------ | :------ |
+| ------ | ------ | ------ | ------ |
 | `cameraId` | `string` | `undefined` | Protect camera device ID property from the camera's [ProtectCameraConfig](ProtectTypes.md#protectcameraconfiginterface). |
 | `channel` | `number` | `undefined` | Camera channel to use, indexing the channels array in the camera's [ProtectCameraConfig](ProtectTypes.md#protectcameraconfiginterface). |
 | `lens` | `number` | `0` | Optionally specify alternate cameras on a Protect device, such as a package camera. |
 | `segmentLength` | `number` | `100` | Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms. |
-| `requestId` | `string` | `undefined` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
+| `requestId` | `string` | `...` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
 
 ###### Returns
 

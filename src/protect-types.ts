@@ -1013,7 +1013,10 @@ export interface ProtectViewerConfigInterface {
 export interface ProtectEventAddInterface {
 
   camera: string,
+  cameraId: string,
+  detectedAt: number,
   end: number,
+  eventId: string,
   id: string,
   metadata: ProtectEventMetadata,
   modelKey: string,
@@ -1022,6 +1025,7 @@ export interface ProtectEventAddInterface {
   smartDetectEvents: string[],
   smartDetectTypes: string[],
   start: number,
+  thumbnailId: string,
   type: string,
   user: string
 }
