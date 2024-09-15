@@ -36,6 +36,7 @@ export interface ProtectNvrBootstrapInterface {
   lights: ProtectLightConfig[],
   liveviews: ProtectNvrLiveviewConfig[],
   nvr: ProtectNvrConfig,
+  ringtones: ProtectRingtoneConfigInterface[],
   sensors: ProtectSensorConfig[],
   users: ProtectNvrUserConfig[],
   viewers: ProtectViewerConfig[],
@@ -613,7 +614,9 @@ export interface ProtectChimeConfigInterface {
   elementInfo: string,
   featureFlags: {
 
-    hasWifi: boolean
+    hasHttpsClientOTA: boolean,
+    hasWifi: boolean,
+    supportCustomRingtone: boolean
   },
   firmwareBuild: string,
   firmwareVersion: string,
@@ -640,10 +643,30 @@ export interface ProtectChimeConfigInterface {
   marketName: string,
   modelKey: string,
   name: string,
+  platform: string,
+  repeatTimes: number,
+  ringSettings: {
+
+    cameraId: string,
+    repeatTimes: number,
+    ringtoneId: string,
+    volume: number
+  }[],
+  speakerTrackList: {
+
+    md5: string,
+    name: string,
+    size: number,
+    state: string,
+    track_no: number,
+    volume: number
+  }[],
   state: string,
+  sysId: string,
   type: string,
   upSince: number,
   uptime: number,
+  userConfiguredAp: boolean,
   volume: number,
   wifiConnectionState: {
 
@@ -854,6 +877,19 @@ export interface ProtectNvrSystemEventControllerInterface {
   unadoptedDevices: unknown[],
   updateAvailable: string,
   version: string
+}
+
+/**
+ * A semi-complete description of the UniFi Protect ringtone JSON.
+ */
+export interface ProtectRingtoneConfigInterface {
+
+  id: string,
+  isDefault: boolean,
+  modelKey: string,
+  name: string,
+  nvrMac: string,
+  size: number
 }
 
 /**
@@ -1109,6 +1145,9 @@ export type ProtectNvrSystemEventController = ProtectNvrSystemEventControllerInt
 
 /** @see {@link ProtectNvrUserConfigInterface} */
 export type ProtectNvrUserConfig = ProtectNvrUserConfigInterface;
+
+/** @see {@link ProtectRingtoneConfigInterface} */
+export type ProtectRingtoneConfig = ProtectRingtoneConfigInterface;
 
 /** @see {@link ProtectSensorConfigInterface} */
 export type ProtectSensorConfig = ProtectSensorConfigInterface;

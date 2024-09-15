@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.13.0 (2024-09-15)
+  * Updates to the Protect JSON descriptions.
+  * Housekeeping.
+
 ## 4.12.0 (2024-09-14)
   * Change: API has been updated to reflect the recent changes to the Protect API by Ubiquiti to snapshots. Specifically, you can no longer specify a timestamp.
   * Minor updates to the Protect JSON descriptions.

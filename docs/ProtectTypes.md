@@ -324,8 +324,10 @@ A semi-complete description of the UniFi Protect chime JSON.
 | `connectedSince` | `number` |
 | `connectionHost` | `string` |
 | `elementInfo` | `string` |
-| `featureFlags` | \{ `hasWifi`: `boolean`; \} |
+| `featureFlags` | \{ `hasHttpsClientOTA`: `boolean`; `hasWifi`: `boolean`; `supportCustomRingtone`: `boolean`; \} |
+| `featureFlags.hasHttpsClientOTA` | `boolean` |
 | `featureFlags.hasWifi` | `boolean` |
+| `featureFlags.supportCustomRingtone` | `boolean` |
 | `firmwareBuild` | `string` |
 | `firmwareVersion` | `string` |
 | `fwUpdateState` | `string` |
@@ -351,10 +353,16 @@ A semi-complete description of the UniFi Protect chime JSON.
 | `marketName` | `string` |
 | `modelKey` | `string` |
 | `name` | `string` |
+| `platform` | `string` |
+| `repeatTimes` | `number` |
+| `ringSettings` | \{ `cameraId`: `string`; `repeatTimes`: `number`; `ringtoneId`: `string`; `volume`: `number`; \}[] |
+| `speakerTrackList` | \{ `md5`: `string`; `name`: `string`; `size`: `number`; `state`: `string`; `track_no`: `number`; `volume`: `number`; \}[] |
 | `state` | `string` |
+| `sysId` | `string` |
 | `type` | `string` |
 | `upSince` | `number` |
 | `uptime` | `number` |
+| `userConfiguredAp` | `boolean` |
 | `volume` | `number` |
 | `wifiConnectionState` | \{ `apName`: `null` \| `string`; `bssid`: `null` \| `string`; `channel`: `null` \| `string`; `connectivity`: `string`; `experience`: `null`; `frequency`: `null`; `phyRate`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; `ssid`: `null` \| `string`; `txRate`: `null`; \} |
 | `wifiConnectionState.apName` | `null` \| `string` |
@@ -512,6 +520,7 @@ An semi-complete description of the UniFi Protect NVR bootstrap JSON.
 | `lights` | [`ProtectLightConfigInterface`](ProtectTypes.md#protectlightconfiginterface)[] |
 | `liveviews` | [`ProtectNvrLiveviewConfigInterface`](ProtectTypes.md#protectnvrliveviewconfiginterface)[] |
 | `nvr` | [`ProtectNvrConfigInterface`](ProtectTypes.md#protectnvrconfiginterface) |
+| `ringtones` | [`ProtectRingtoneConfigInterface`](ProtectTypes.md#protectringtoneconfiginterface)[] |
 | `sensors` | [`ProtectSensorConfigInterface`](ProtectTypes.md#protectsensorconfiginterface)[] |
 | `users` | [`ProtectNvrUserConfigInterface`](ProtectTypes.md#protectnvruserconfiginterface)[] |
 | `viewers` | [`ProtectViewerConfigInterface`](ProtectTypes.md#protectviewerconfiginterface)[] |
@@ -827,6 +836,23 @@ A semi-complete description of the UniFi Protect NVR user JSON.
 | `settings` | \{ `flags`: `string`[]; \} |
 | `settings.flags` | `string`[] |
 | `syncSso` | `boolean` |
+
+***
+
+### ProtectRingtoneConfigInterface
+
+A semi-complete description of the UniFi Protect ringtone JSON.
+
+#### Properties
+
+| Property | Type |
+| ------ | ------ |
+| `id` | `string` |
+| `isDefault` | `boolean` |
+| `modelKey` | `string` |
+| `name` | `string` |
+| `nvrMac` | `string` |
+| `size` | `number` |
 
 ***
 
@@ -1186,6 +1212,18 @@ type ProtectNvrUserConfig: ProtectNvrUserConfigInterface;
 #### See
 
 [ProtectNvrUserConfigInterface](ProtectTypes.md#protectnvruserconfiginterface)
+
+***
+
+### ProtectRingtoneConfig
+
+```ts
+type ProtectRingtoneConfig: ProtectRingtoneConfigInterface;
+```
+
+#### See
+
+[ProtectRingtoneConfigInterface](ProtectTypes.md#protectringtoneconfiginterface)
 
 ***
 
