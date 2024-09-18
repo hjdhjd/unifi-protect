@@ -1,0 +1,24 @@
+//Hi team, I found a proxy/api in unifi-protect to archive the recording to the NAS (which I already configured in webUI) and automatically convert to mp4. 
+//I discovered it is working with max 1h intervals to process the files. 
+
+//I would like to ask you to implement such option to your package, as my use case is:
+//motion detection finished (recording of motion is finished) -> send the recording to the NAS archive ... 
+//ideally would be to use AWS-CLI to upload to AWS, but it is not natively supported, so I am using NAS in between
+
+//cheers! and let me know if I can help you with anything more!
+
+POST https://NVR-IP/proxy/protect/api/cloud-provider/video-archive
+
+BODY
+{
+  "start": 1726617600000,
+  "end": 1726621200000,
+  "filename": "CameraName DateFrom, TimeFrom - DateTo, TimeTo.mp4",
+  "lens": 0,
+  "destination": "NAS",
+  "cameraId": "666a66a666666a66a6666666",
+  "type": "rotating",
+  "channel": 0,
+  "sharedDrive": "DestinationFolder",
+  "host": "NAS-IP"
+}
