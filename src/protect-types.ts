@@ -396,6 +396,7 @@ export interface ProtectCameraConfigInterface {
     focusMode: string,
     focusPosition: number,
     hue: number,
+    icrCustomValue: number,
     icrSensitivity: number,
     irLedLevel: number,
     irLedMode: string,
