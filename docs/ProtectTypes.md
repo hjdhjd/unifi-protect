@@ -152,7 +152,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `isPoorNetwork` | `boolean` |
 | `isProbingForWifi` | `boolean` |
 | `isProvisioned` | `boolean` |
-| `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `denoise`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hue`: `number`; `icrSensitivity`: `number`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `saturation`: `number`; `sharpness`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} |
+| `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `denoise`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hue`: `number`; `icrCustomValue`: `number`; `icrSensitivity`: `number`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `saturation`: `number`; `sharpness`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} |
 | `ispSettings.aeMode` | `string` |
 | `ispSettings.brightness` | `number` |
 | `ispSettings.contrast` | `number` |
@@ -164,6 +164,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `ispSettings.focusMode` | `string` |
 | `ispSettings.focusPosition` | `number` |
 | `ispSettings.hue` | `number` |
+| `ispSettings.icrCustomValue` | `number` |
 | `ispSettings.icrSensitivity` | `number` |
 | `ispSettings.irLedLevel` | `number` |
 | `ispSettings.irLedMode` | `string` |

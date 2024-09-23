@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.14.0 (2024-09-22)
+  * Updates to the Protect JSON descriptions.
+  * Housekeeping.
+
 ## 4.13.0 (2024-09-15)
   * Updates to the Protect JSON descriptions.
   * Housekeeping.
