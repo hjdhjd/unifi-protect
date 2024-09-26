@@ -1012,6 +1012,7 @@ export class ProtectApi extends EventEmitter {
             this.apiErrorCount, PROTECT_API_RETRY_INTERVAL / 60);
           this.apiErrorCount++;
           this.apiLastSuccess = now;
+          this.reset();
 
           return null;
         }
@@ -1171,7 +1172,6 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  // Create a new livestream API instance.
   public createLivestream(): ProtectLivestream {
 
     return new ProtectLivestream(this, this.log);
@@ -1188,7 +1188,6 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  // Return the appropriate URL to access various Protect API endpoints.
   public getApiEndpoint(endpoint: string): string {
 
     let endpointSuffix;
@@ -1280,7 +1279,6 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  // Get the bootstrap JSON.
   public get bootstrap(): ProtectNvrBootstrap | null {
 
     return this._bootstrap;
@@ -1293,10 +1291,21 @@ export class ProtectApi extends EventEmitter {
    *
    * @category Utilities
    */
-  // Return whether the logged in credentials are an admin user or not.
   public get isAdminUser(): boolean {
 
     return this._isAdminUser;
+  }
+
+  /**
+   * Utility method that returns whether our connection to the Protect controller is currently throttled or not.
+   *
+   * @returns Returns `true` if the API has returned too many errors and is now throttled for a period of time, `false` otherwise.
+   *
+   * @category Utilities
+   */
+  public get isThrottled(): boolean {
+
+    return this.apiErrorCount >= PROTECT_API_ERROR_LIMIT;
   }
 
   /**
@@ -1307,7 +1316,6 @@ export class ProtectApi extends EventEmitter {
    *
    * @category Utilities
    */
-  // Utility to generate a nicely formatted NVR string.
   public get name(): string {
 
     // Our NVR string, if it exists, appears as `NVR [NVR Type]`. Otherwise, we appear as `NVRaddress`.
