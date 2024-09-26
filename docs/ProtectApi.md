@@ -342,6 +342,20 @@ Utility method that returns whether the credentials that were used to login to t
 
 Returns `true` if the logged in user has administrative privileges, `false` otherwise.
 
+##### isThrottled
+
+```ts
+get isThrottled(): boolean
+```
+
+Utility method that returns whether our connection to the Protect controller is currently throttled or not.
+
+###### Returns
+
+`boolean`
+
+Returns `true` if the API has returned too many errors and is now throttled for a period of time, `false` otherwise.
+
 ##### name
 
 ```ts

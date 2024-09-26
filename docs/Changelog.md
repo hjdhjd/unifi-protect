@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.15.0 (2024-09-26)
+  * New feature: added the `isThrottled` as a publicly accessible readonly property that returns whether the API connection is currently throttled due to connectivity issues.
+  * Housekeeping.
+
 ## 4.14.0 (2024-09-22)
   * Updates to the Protect JSON descriptions.
   * Housekeeping.
