@@ -380,6 +380,7 @@ export interface ProtectCameraConfigInterface {
   isRestoring: boolean,
   isSmartDetected: boolean,
   isSshEnabled: boolean,
+  isThirdPartyCamera: boolean,
   isUpdating: boolean,
   isWaterproofCaseAttached: boolean,
   isWirelessUplinkEnabled: boolean,
@@ -548,10 +549,23 @@ export interface ProtectCameraConfigInterface {
     quality: number,
     samplingRate: number
   },
+  thirdPartyCameraInfo: {
+
+    port: number,
+    rtspUrl: string,
+    rtspUrlLQ: string,
+    snapshotUrl: string
+  },
+  tiltLimitsOfPrivacyZones: {
+
+    limit: number,
+    side: string
+  },
   type: string,
   upSince: number,
   videoCodec: string,
   videoMode: string,
+  voltage: number,
   wifiConnectionState: {
 
     channel: number,
@@ -644,6 +658,7 @@ export interface ProtectChimeConfigInterface {
   marketName: string,
   modelKey: string,
   name: string,
+  nvrMac: string,
   platform: string,
   repeatTimes: number,
   ringSettings: {
@@ -741,6 +756,7 @@ export interface ProtectLightConfigInterface {
   marketName: string,
   modelKey: string,
   name: string,
+  nvrMac: string,
   state: string,
   type: string,
   upSince: number,
@@ -966,6 +982,7 @@ export interface ProtectSensorConfigInterface {
   },
   mountType: string,
   name: string,
+  nvrMac: string,
   openStatusChangedAt: number,
   state: string,
   stats: {
@@ -1032,6 +1049,7 @@ export interface ProtectViewerConfigInterface {
   marketName: string,
   modelKey: string,
   name: string,
+  nvrMac: string,
   softwareVersion: string,
   state: string,
   streamLimit: number,

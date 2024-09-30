@@ -187,6 +187,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `isRestoring` | `boolean` |
 | `isSmartDetected` | `boolean` |
 | `isSshEnabled` | `boolean` |
+| `isThirdPartyCamera` | `boolean` |
 | `isUpdating` | `boolean` |
 | `isWaterproofCaseAttached` | `boolean` |
 | `isWirelessUplinkEnabled` | `boolean` |
@@ -279,10 +280,19 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `talkbackSettings.samplingRate` | `number` |
 | `talkbackSettings.typeFmt` | `string` |
 | `talkbackSettings.typeIn` | `string` |
+| `thirdPartyCameraInfo` | \{ `port`: `number`; `rtspUrl`: `string`; `rtspUrlLQ`: `string`; `snapshotUrl`: `string`; \} |
+| `thirdPartyCameraInfo.port` | `number` |
+| `thirdPartyCameraInfo.rtspUrl` | `string` |
+| `thirdPartyCameraInfo.rtspUrlLQ` | `string` |
+| `thirdPartyCameraInfo.snapshotUrl` | `string` |
+| `tiltLimitsOfPrivacyZones` | \{ `limit`: `number`; `side`: `string`; \} |
+| `tiltLimitsOfPrivacyZones.limit` | `number` |
+| `tiltLimitsOfPrivacyZones.side` | `string` |
 | `type` | `string` |
 | `upSince` | `number` |
 | `videoCodec` | `string` |
 | `videoMode` | `string` |
+| `voltage` | `number` |
 | `wifiConnectionState` | \{ `channel`: `number`; `frequency`: `number`; `phyRate`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; \} |
 | `wifiConnectionState.channel` | `number` |
 | `wifiConnectionState.frequency` | `number` |
@@ -354,6 +364,7 @@ A semi-complete description of the UniFi Protect chime JSON.
 | `marketName` | `string` |
 | `modelKey` | `string` |
 | `name` | `string` |
+| `nvrMac` | `string` |
 | `platform` | `string` |
 | `repeatTimes` | `number` |
 | `ringSettings` | \{ `cameraId`: `string`; `repeatTimes`: `number`; `ringtoneId`: `string`; `volume`: `number`; \}[] |
@@ -479,6 +490,7 @@ A semi-complete description of the UniFi Protect light JSON.
 | `marketName` | `string` |
 | `modelKey` | `string` |
 | `name` | `string` |
+| `nvrMac` | `string` |
 | `state` | `string` |
 | `type` | `string` |
 | `upSince` | `number` |
@@ -919,6 +931,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `motionSettings.sensitivity` | `number` |
 | `mountType` | `string` |
 | `name` | `string` |
+| `nvrMac` | `string` |
 | `openStatusChangedAt` | `number` |
 | `state` | `string` |
 | `stats` | \{ `humidity`: \{ `status`: `string`; `value`: `null` \| `number`; \}; `light`: \{ `status`: `string`; `value`: `null` \| `number`; \}; `temperature`: \{ `status`: `string`; `value`: `null` \| `number`; \}; \} |
@@ -977,6 +990,7 @@ A semi-complete description of the UniFi Protect viewer JSON.
 | `marketName` | `string` |
 | `modelKey` | `string` |
 | `name` | `string` |
+| `nvrMac` | `string` |
 | `softwareVersion` | `string` |
 | `state` | `string` |
 | `streamLimit` | `number` |
