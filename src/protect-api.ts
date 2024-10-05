@@ -473,7 +473,14 @@ export class ProtectApi extends EventEmitter {
   // Check admin privileges.
   private checkAdminUserStatus(isFirstRun = false): boolean {
 
-    if(!this._bootstrap?.users) {
+    // Get the properties we care about from the bootstrap.
+    const { users, authUserId } = this._bootstrap ?? {};
+
+    // Find this user, if it exists.
+    const user = users?.find((x: ProtectNvrUserConfig) => x.id === authUserId);
+
+    // User doesn't exist, we're done.
+    if(!user?.allPermissions) {
 
       return false;
     }
@@ -481,49 +488,16 @@ export class ProtectApi extends EventEmitter {
     // Save our prior state so we can detect role changes without having to restart.
     const oldAdminStatus = this.isAdminUser;
 
-    // Find this user.
-    const user = this._bootstrap?.users.find((x: ProtectNvrUserConfig) => x.id === this._bootstrap?.authUserId);
+    // Determine if the user has administrative camera permissions.
+    this._isAdminUser = user.allPermissions.some(entry => entry.startsWith("camera:") && entry.split(":")[1].split(",").includes("write"));
 
-    if(!user?.allPermissions) {
-
-      return false;
-    }
-
-    // Let's figure out this user's permissions.
-    let newAdminStatus = false;
-
-    for(const entry of user.allPermissions) {
-
-      // Each permission line exists as: permissiontype:permissions:scope.
-      const permType = entry.split(":");
-
-      // We only care about camera permissions.
-      if(permType[0] !== "camera") {
-
-        continue;
-      }
-
-      // Get the individual permissions.
-      const permissions = permType[1].split(",");
-
-      // We found our administrative privileges - we're done.
-      if(permissions.indexOf("write") !== -1) {
-
-        newAdminStatus = true;
-
-        break;
-      }
-    }
-
-    this._isAdminUser = newAdminStatus;
-
-    // Only admin users can activate RTSP streams. Inform the user on startup, or if we detect a role change.
+    // Only admin users can change certain settings. Inform the user on startup, or if we detect a role change.
     if(isFirstRun && !this.isAdminUser) {
 
-      this.log.info("The user '%s' requires the Administrator role in order to automatically configure camera RTSP streams.", this.username);
+      this.log.info("User '%s' requires the Super Admin role in order to change certain settings like camera RTSP stream availability.", this.username);
     } else if(!isFirstRun && (oldAdminStatus !== this.isAdminUser)) {
 
-      this.log.info("Detected a role change for user '%s': the Administrator role has been %s.", this.username, this.isAdminUser ? "enabled" : "disabled");
+      this.log.info("Role change detected for user '%s': the Super Admin role has been %s.", this.username, this.isAdminUser ? "enabled" : "disabled");
     }
 
     return true;

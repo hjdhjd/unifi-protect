@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "module",
-  "version": "4.15.1",
+  "version": "4.16.0",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {
@@ -50,28 +50,31 @@
   "engines": {
     "node": ">=18"
   },
+  "bin": {
+    "ufp": "dist/util/ufp.js"
+  },
   "main": "dist/index.js",
   "scripts": {
-    "build": "shx rm -rf ./dist && tsc",
+    "build": "shx rm -rf ./dist && tsc && shx chmod a+x ./dist/util/**.js",
     "build-docs": "shx rm -f ./docs/[^CO]*.md && npx typedoc",
     "clean": "shx rm -rf ./dist",
-    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src/**.ts",
+    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs src/**.ts src/util/**.ts",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run build && npm run build-docs",
     "test": "eslint src/**.ts"
   },
   "devDependencies": {
-    "@stylistic/eslint-plugin": "2.8.0",
+    "@stylistic/eslint-plugin": "2.9.0",
     "@types/node": "22.7.4",
     "@types/ws": "8.5.12",
-    "eslint": "9.11.1",
+    "eslint": "9.12.0",
     "homebridge": "1.8.4",
-    "homebridge-plugin-utils": "^1.8.2",
+    "homebridge-plugin-utils": "^1.9.0",
     "shx": "0.3.4",
-    "typedoc": "0.26.7",
-    "typedoc-plugin-markdown": "4.2.8",
+    "typedoc": "0.26.8",
+    "typedoc-plugin-markdown": "4.2.9",
     "typescript": "5.6.2",
-    "typescript-eslint": "8.7.0"
+    "typescript-eslint": "8.8.0"
   },
   "dependencies": {
     "@adobe/fetch": "4.1.9",
