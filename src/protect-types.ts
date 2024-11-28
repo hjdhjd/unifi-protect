@@ -1167,7 +1167,13 @@ export type ProtectCameraLcdMessageConfig = ProtectCameraLcdMessageConfigInterfa
 export type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
 
 /** @see {@link ProtectCameraPtzPresetInterface} */
+export type ProtectCameraPtzPresetConfig = DeepPartial<ProtectCameraPtzPresetInterface>;
+
+/** @see {@link ProtectCameraPtzPresetInterface} */
 export type ProtectCameraPtzPresetPayload = DeepPartial<ProtectCameraPtzPresetInterface>;
+
+/** @see {@link ProtectCameraPtzPositionSettingsInterface} */
+export type ProtectCameraPtzPositionSettingsConfig = DeepPartial<ProtectCameraPtzPositionSettingsInterface>;
 
 /** @see {@link ProtectCameraPtzPositionSettingsInterface} */
 export type ProtectCameraPtzPositionSettingsPayload = DeepPartial<ProtectCameraPtzPositionSettingsInterface>;
