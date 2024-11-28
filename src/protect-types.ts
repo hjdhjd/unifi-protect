@@ -615,6 +615,31 @@ export interface ProtectCameraLcdMessageConfigInterface {
 }
 
 /**
+ * A semi-complete description of the UniFi Protect PTZ Preset JSON.
+ */
+export interface ProtectCameraPtzPresetInterface {
+
+  id: string,
+  camera: string,
+  name: string,
+  slot: number,
+  ptz: ProtectCameraPtzPositionSettingsInterface,
+  snapshot: string
+}
+
+/**
+ * A semi-complete description of the UniFi Protect PTZ Position Settings JSON.
+ */
+export interface ProtectCameraPtzPositionSettingsInterface {
+
+  pan: number,
+  tilt: number,
+  zoom: number,
+  focus: number
+}
+
+
+/**
  * A semi-complete description of the UniFi Protect chime JSON.
  */
 export interface ProtectChimeConfigInterface {
@@ -1140,6 +1165,12 @@ export type ProtectCameraLcdMessageConfig = ProtectCameraLcdMessageConfigInterfa
 
 /** @see {@link ProtectCameraLcdMessageConfigInterface} */
 export type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
+
+/** @see {@link ProtectCameraPtzPresetInterface} */
+export type ProtectCameraPtzPresetPayload = DeepPartial<ProtectCameraPtzPresetInterface>;
+
+/** @see {@link ProtectCameraPtzPositionSettingsInterface} */
+export type ProtectCameraPtzPositionSettingsPayload = DeepPartial<ProtectCameraPtzPositionSettingsInterface>;
 
 /** @see {@link ProtectChimeConfigInterface} */
 export type ProtectChimeConfig = ProtectChimeConfigInterface;
