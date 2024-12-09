@@ -283,6 +283,7 @@ export interface ProtectCameraConfigInterface {
   currentResolution: string,
   displayName: string,
   elementInfo: null,
+  enableNfc: boolean,
   featureFlags: {
 
     audio: string[],
@@ -300,6 +301,7 @@ export interface ProtectCameraConfigInterface {
     hasChime: boolean,
     hasColorLcdScreen: boolean,
     hasExternalIr: boolean,
+    hasFingerprintSensor: boolean,
     hasFlash: boolean,
     hasHdr: boolean,
     hasIcrSensitivity: boolean,
@@ -327,6 +329,7 @@ export interface ProtectCameraConfigInterface {
     hasWifi: boolean,
     isDoorbell: boolean,
     isPtz: boolean,
+    maxScaleDownLevel: number,
     motionAlgorithms: string[],
     privacyMaskCapability: {
       maxMasks: number,
@@ -335,12 +338,32 @@ export interface ProtectCameraConfigInterface {
     smartDetectAudioTypes: string[],
     smartDetectTypes: string[],
     supportDoorAccessConfig: boolean,
+    supportLpDetectionWithoutVehicle: boolean,
+    supportNfc: boolean,
     videoCodecs: string[],
     videoModeMaxFps: number[],
     videoModes: string[]
   },
+  fingerprintSettings: {
+
+    enable: boolean,
+    enablePrintLatency: boolean,
+    mode: string,
+    reportCaptureComplete: boolean,
+    reportFingerTouch: boolean
+  },
+  fingerprintState: {
+
+    fingerprintId: string,
+    free: number,
+    progress: string,
+    status: string,
+    total: number
+  },
   firmwareBuild: string,
   firmwareVersion: string,
+  fwUpdateState: string,
+  guid: string,
   hardwareRevision: string,
   hasRecordings: boolean,
   hasSpeaker: boolean,
@@ -371,7 +394,9 @@ export interface ProtectCameraConfigInterface {
   isLiveHeatmapEnabled: boolean,
   isManaged: boolean,
   isMicEnabled: boolean,
+  isMissingRecordingDetected: boolean,
   isMotionDetected: boolean,
+  isPairedWithAiPort: boolean,
   isPoorNetwork: boolean,
   isProbingForWifi: boolean,
   isProvisioned: boolean,
@@ -445,6 +470,18 @@ export interface ProtectCameraConfigInterface {
   micVolume: number,
   modelKey: string
   name: string,
+  nfcSettings: {
+
+    enableNfc: boolean,
+    supportThirdPartyCard: boolean
+  },
+  nfcState: {
+
+    cardId: string,
+    isUACard: boolean,
+    lastSeen: number,
+    mode: string
+  },
   nvrMac: string,
   osdSettings: {
 
@@ -536,6 +573,7 @@ export interface ProtectCameraConfigInterface {
     wifiQuality: number,
     wifiStrength: number
   },
+  supportedScalingResolutions: string[],
   talkbackSettings: {
 
     bindAddr: string,
@@ -563,8 +601,13 @@ export interface ProtectCameraConfigInterface {
   },
   type: string,
   upSince: number,
+  uptime: number,
+  useGlobal: boolean,
   videoCodec: string,
+  videoCodecState: number,
+  videoCodecSwitchingSince: number,
   videoMode: string,
+  videoReconfigurationInProgress: boolean,
   voltage: number,
   wifiConnectionState: {
 
@@ -1094,6 +1137,10 @@ export interface ProtectEventMetadataInterface {
 
     text: string
   },
+  fingerprint: {
+
+    ulpId: string
+  },
   isLowBattery: boolean,
   isWireless: boolean,
   licensePlate: {
@@ -1104,6 +1151,11 @@ export interface ProtectEventMetadataInterface {
   name: {
 
     text: string
+  },
+  nfc: {
+
+    nfcId: string,
+    ulpId: string
   },
   reason: string
 }

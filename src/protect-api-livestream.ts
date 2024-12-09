@@ -276,7 +276,7 @@ export class ProtectLivestream extends EventEmitter {
 
         switch(code) {
 
-          // Websocket has been closed normally. We fire off a close event to inform our listeners and we're done.
+          // The websocket has been closed normally. We fire off a close event to inform our listeners and we're done.
           case 1005:
 
             this.stop();

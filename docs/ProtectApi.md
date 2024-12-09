@@ -1,4 +1,4 @@
-[**unifi-protect**](README.md) • **Docs**
+[**unifi-protect**](README.md)
 
 ***
 
@@ -62,6 +62,8 @@ Create an instance of the UniFi Protect API.
 #### API Access
 
 ##### bootstrap
+
+###### Get Signature
 
 ```ts
 get bootstrap(): null | ProtectNvrBootstrapInterface
@@ -204,7 +206,7 @@ process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, so
 ##### getSnapshot()
 
 ```ts
-getSnapshot(device, options): Promise<null | Buffer>
+getSnapshot(device, options): Promise<null | Buffer<ArrayBufferLike>>
 ```
 
 Retrieve a snapshot image from a Protect camera.
@@ -218,7 +220,7 @@ Retrieve a snapshot image from a Protect camera.
 
 ###### Returns
 
-`Promise`\<`null` \| `Buffer`\>
+`Promise`\<`null` \| `Buffer`\<`ArrayBufferLike`\>\>
 
 Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
 
@@ -330,6 +332,8 @@ Use this method to change the configuration of a given Protect device or control
 
 ##### isAdminUser
 
+###### Get Signature
+
 ```ts
 get isAdminUser(): boolean
 ```
@@ -344,6 +348,8 @@ Returns `true` if the logged in user has administrative privileges, `false` othe
 
 ##### isThrottled
 
+###### Get Signature
+
 ```ts
 get isThrottled(): boolean
 ```
@@ -357,6 +363,8 @@ Utility method that returns whether our connection to the Protect controller is 
 Returns `true` if the API has returned too many errors and is now throttled for a period of time, `false` otherwise.
 
 ##### name
+
+###### Get Signature
 
 ```ts
 get name(): string

@@ -1,4 +1,4 @@
-[**unifi-protect**](README.md) • **Docs**
+[**unifi-protect**](README.md)
 
 ***
 
@@ -89,6 +89,8 @@ new ProtectLivestream(api, log): ProtectLivestream
 
 ##### codec
 
+###### Get Signature
+
 ```ts
 get codec(): string
 ```
@@ -113,15 +115,17 @@ Returns a string containing the codec information,if it exists, or `null` otherw
 
 ##### initSegment
 
+###### Get Signature
+
 ```ts
-get initSegment(): null | Buffer
+get initSegment(): null | Buffer<ArrayBufferLike>
 ```
 
 The initialization segment that must be at the start of every fMP4 stream.
 
 ###### Returns
 
-`null` \| `Buffer`
+`null` \| `Buffer`\<`ArrayBufferLike`\>
 
 Returns the initialization segment if it exists, or `null` otherwise.
 
@@ -130,14 +134,14 @@ Returns the initialization segment if it exists, or `null` otherwise.
 ##### getInitSegment()
 
 ```ts
-getInitSegment(): Promise<Buffer>
+getInitSegment(): Promise<Buffer<ArrayBufferLike>>
 ```
 
 Retrieve the initialization segment that must be at the start of every fMP4 stream.
 
 ###### Returns
 
-`Promise`\<`Buffer`\>
+`Promise`\<`Buffer`\<`ArrayBufferLike`\>\>
 
 Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
 

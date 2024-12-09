@@ -1,4 +1,4 @@
-[**unifi-protect**](README.md) • **Docs**
+[**unifi-protect**](README.md)
 
 ***
 
@@ -84,7 +84,7 @@ Decode a UniFi Protect event packet.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `log` | [`ProtectLogging`](ProtectLogging.md#protectlogging) | Logging functions to use. |
-| `packet` | `Buffer` | Input packet to decode. |
+| `packet` | `Buffer`\<`ArrayBufferLike`\> | Input packet to decode. |
 
 ###### Returns
 
@@ -103,7 +103,7 @@ successfully logged into the Protect controller, events are generated automatica
 
 ```ts
 type ProtectEventHeader: {
-[key: string]: boolean | number | object | string;   action: string;
+[key: string]: string | number | boolean | object;   action: string;
   id: string;
   modelKey: string;
   newUpdateId: string;
@@ -112,11 +112,11 @@ type ProtectEventHeader: {
 
 UniFi Protect event header.
 
+#### Type declaration
+
 #### Index Signature
 
- \[`key`: `string`\]: `boolean` \| `number` \| `object` \| `string`
-
-#### Type declaration
+ \[`key`: `string`\]: `string` \| `number` \| `boolean` \| `object`
 
 | Name | Type |
 | ------ | ------ |

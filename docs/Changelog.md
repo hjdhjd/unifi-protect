@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.17.0 (2024-12-08)
+  * Minor updates to the Protect JSON descriptions.
+  * Housekeeping.
+
 ## 4.16.0 (2024-10-05)
   * New feature: ufp - a command line utility to query and execute some utility commands using the Protect API. You'll need to create either ~/.ufp.json or ufp.json in your current directory with the properties `controller`, `username`, `password` all defined in a valid JSON.
   * Housekeeping.

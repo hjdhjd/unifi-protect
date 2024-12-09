@@ -1,4 +1,4 @@
-**unifi-protect** • **Docs**
+**unifi-protect**
 
 ***
 

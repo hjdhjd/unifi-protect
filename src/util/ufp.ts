@@ -148,7 +148,7 @@ switch(process.argv.length) {
 function usage(): void {
 
   log.error("Usage: %s bootstrap", process.argv[1]);
-  log.error("Usage: %s events <action | id | modelKey | other_event_header_property> (case sensitive) <value>", process.argv[1]);
+  log.error("Usage: %s events [action | id | modelKey | other_event_header_property] [value] (all parameters are case-sensitive)", process.argv[1]);
   log.error("Usage: %s restart cameras", process.argv[1]);
   log.error("");
 
