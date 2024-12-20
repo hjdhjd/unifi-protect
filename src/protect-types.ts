@@ -573,6 +573,15 @@ export interface ProtectCameraConfigInterface {
     wifiQuality: number,
     wifiStrength: number
   },
+  streamSharing: {
+      enabled: boolean
+      token: string | null
+      shareLink: string | null
+      expires: number | null
+      sharedByUserId: string | null
+      sharedByUser: string | null
+      maxStreams: number | null
+  },
   supportedScalingResolutions: string[],
   talkbackSettings: {
 
