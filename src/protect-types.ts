@@ -55,6 +55,16 @@ export interface ProtectNvrConfigInterface {
   avgMotions: number[],
   cameraUtilization: number,
   canAutoUpdate: boolean,
+  cameraCapacity: {
+
+    state: string,
+    qualities: {
+
+      type: string,
+      count: number,
+      fraction: number
+    }[]
+  },
   consoleEnv: string,
   corruptionState: string,
   countryCode: string,
