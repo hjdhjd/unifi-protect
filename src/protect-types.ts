@@ -838,14 +838,15 @@ export interface ProtectNvrUserConfigInterface {
   alertRules: unknown[],
   allPermissions: string[],
   cloudAccount: {
-    firstName: string
-    lastName: string
-    email: string
-    profileImg: string
-    user: string
-    id: string
-    cloudId: string
-    name: string
+
+    firstName: string,
+    lastName: string,
+    email: string,
+    profileImg: string,
+    user: string,
+    id: string,
+    cloudId: string,
+    name: string,
     modelKey: string
   },
   email: string,
