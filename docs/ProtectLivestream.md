@@ -1,4 +1,4 @@
-[**unifi-protect**](README.md) • **Docs**
+[**unifi-protect**](README.md)
 
 ***
 
@@ -73,7 +73,7 @@ new ProtectLivestream(api, log): ProtectLivestream
 ###### Parameters
 
 | Parameter | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `api` | [`ProtectApi`](ProtectApi.md#protectapi) |
 | `log` | [`ProtectLogging`](ProtectLogging.md#protectlogging) |
 
@@ -88,6 +88,8 @@ new ProtectLivestream(api, log): ProtectLivestream
 #### Accessors
 
 ##### codec
+
+###### Get Signature
 
 ```ts
 get codec(): string
@@ -113,15 +115,17 @@ Returns a string containing the codec information,if it exists, or `null` otherw
 
 ##### initSegment
 
+###### Get Signature
+
 ```ts
-get initSegment(): null | Buffer
+get initSegment(): Nullable<Buffer<ArrayBufferLike>>
 ```
 
 The initialization segment that must be at the start of every fMP4 stream.
 
 ###### Returns
 
-`null` \| `Buffer`
+`Nullable`\<`Buffer`\<`ArrayBufferLike`\>\>
 
 Returns the initialization segment if it exists, or `null` otherwise.
 
@@ -130,14 +134,14 @@ Returns the initialization segment if it exists, or `null` otherwise.
 ##### getInitSegment()
 
 ```ts
-getInitSegment(): Promise<Buffer>
+getInitSegment(): Promise<Buffer<ArrayBufferLike>>
 ```
 
 Retrieve the initialization segment that must be at the start of every fMP4 stream.
 
 ###### Returns
 
-`Promise`\<`Buffer`\>
+`Promise`\<`Buffer`\<`ArrayBufferLike`\>\>
 
 Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
 
@@ -157,12 +161,12 @@ Start an fMP4 livestream session from the Protect controller.
 ###### Parameters
 
 | Parameter | Type | Default value | Description |
-| :------ | :------ | :------ | :------ |
+| ------ | ------ | ------ | ------ |
 | `cameraId` | `string` | `undefined` | Protect camera device ID property from the camera's [ProtectCameraConfig](ProtectTypes.md#protectcameraconfiginterface). |
 | `channel` | `number` | `undefined` | Camera channel to use, indexing the channels array in the camera's [ProtectCameraConfig](ProtectTypes.md#protectcameraconfiginterface). |
 | `lens` | `number` | `0` | Optionally specify alternate cameras on a Protect device, such as a package camera. |
 | `segmentLength` | `number` | `100` | Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms. |
-| `requestId` | `string` | `undefined` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
+| `requestId` | `string` | `...` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
 
 ###### Returns
 

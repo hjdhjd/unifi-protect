@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.18.0 (2024-12-22)
+  * Breaking change: the minimum supported node version is now node 20.
+  * Improvement: we've changed strategies to deal with Protect controller quirkiness/bugginess that results in network disconnects from the controller, while ensuring we have reasonable backpressure measures.
+  * Housekeeping.
+
+## 4.17.0 (2024-12-08)
+  * Minor updates to the Protect JSON descriptions.
+  * Housekeeping.
+
+## 4.16.0 (2024-10-05)
+  * New feature: ufp - a command line utility to query and execute some utility commands using the Protect API. You'll need to create either ~/.ufp.json or ufp.json in your current directory with the properties `controller`, `username`, `password` all defined in a valid JSON.
+  * Housekeeping.
+
+## 4.15.1 (2024-09-29)
+  * Minor updates to the Protect JSON descriptions.
+  * Housekeeping.
+
+## 4.15.0 (2024-09-26)
+  * New feature: added the `isThrottled` as a publicly accessible readonly property that returns whether the API connection is currently throttled due to connectivity issues.
+  * Housekeeping.
+
+## 4.14.0 (2024-09-22)
+  * Updates to the Protect JSON descriptions.
+  * Housekeeping.
+
+## 4.13.0 (2024-09-15)
+  * Updates to the Protect JSON descriptions.
+  * Housekeeping.
+
+## 4.12.0 (2024-09-14)
+  * Change: API has been updated to reflect the recent changes to the Protect API by Ubiquiti to snapshots. Specifically, you can no longer specify a timestamp.
+  * Minor updates to the Protect JSON descriptions.
+  * Housekeeping.
+
+## 4.11.1 (2024-06-06)
+  * Housekeeping.
+
 ## 4.11.0 (2024-06-03)
   * Performance improvements and housekeeping.
 

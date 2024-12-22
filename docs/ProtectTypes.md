@@ -1,4 +1,4 @@
-[**unifi-protect**](README.md) • **Docs**
+[**unifi-protect**](README.md)
 
 ***
 
@@ -26,7 +26,7 @@ A semi-complete description of the UniFi Protect camera channel JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `bitrate` | `number` |
 | `enabled` | `boolean` |
 | `fps` | `number` |
@@ -53,7 +53,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `apMac` | `string` |
 | `apRssi` | `string` |
 | `audioBitrate` | `number` |
@@ -65,7 +65,8 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `currentResolution` | `string` |
 | `displayName` | `string` |
 | `elementInfo` | `null` |
-| `featureFlags` | \{ `audio`: `string`[]; `audioCodecs`: `string`[]; `audioStyle`: `string`[]; `canAdjustIrLedLevel`: `boolean`; `canMagicZoom`: `boolean`; `canOpticalZoom`: `boolean`; `canTouchFocus`: `boolean`; `hasAccelerometer`: `boolean`; `hasAec`: `boolean`; `hasAutoICROnly`: `boolean`; `hasBattery`: `boolean`; `hasBluetooth`: `boolean`; `hasChime`: `boolean`; `hasColorLcdScreen`: `boolean`; `hasExternalIr`: `boolean`; `hasFlash`: `boolean`; `hasHdr`: `boolean`; `hasIcrSensitivity`: `boolean`; `hasInfrared`: `boolean`; `hasLcdScreen`: `boolean`; `hasLdc`: `boolean`; `hasLedIr`: `boolean`; `hasLedStatus`: `boolean`; `hasLineCrossing`: `boolean`; `hasLineCrossingCounting`: `boolean`; `hasLineIn`: `boolean`; `hasLiveviewTracking`: `boolean`; `hasLuxCheck`: `boolean`; `hasMic`: `boolean`; `hasMotionZones`: `boolean`; `hasNewMotionAlgorithm`: `boolean`; `hasPackageCamera`: `boolean`; `hasPrivacyMask`: `boolean`; `hasRtc`: `boolean`; `hasSdCard`: `boolean`; `hasSmartDetect`: `boolean`; `hasSpeaker`: `boolean`; `hasSquareEventThumbnail`: `boolean`; `hasVerticalFlip`: `boolean`; `hasWifi`: `boolean`; `isDoorbell`: `boolean`; `isPtz`: `boolean`; `motionAlgorithms`: `string`[]; `privacyMaskCapability`: \{ `maxMasks`: `number`; `rectangleOnly`: `boolean`; \}; `smartDetectAudioTypes`: `string`[]; `smartDetectTypes`: `string`[]; `supportDoorAccessConfig`: `boolean`; `videoCodecs`: `string`[]; `videoModeMaxFps`: `number`[]; `videoModes`: `string`[]; \} |
+| `enableNfc` | `boolean` |
+| `featureFlags` | \{ `audio`: `string`[]; `audioCodecs`: `string`[]; `audioStyle`: `string`[]; `canAdjustIrLedLevel`: `boolean`; `canMagicZoom`: `boolean`; `canOpticalZoom`: `boolean`; `canTouchFocus`: `boolean`; `hasAccelerometer`: `boolean`; `hasAec`: `boolean`; `hasAutoICROnly`: `boolean`; `hasBattery`: `boolean`; `hasBluetooth`: `boolean`; `hasChime`: `boolean`; `hasColorLcdScreen`: `boolean`; `hasExternalIr`: `boolean`; `hasFingerprintSensor`: `boolean`; `hasFlash`: `boolean`; `hasHdr`: `boolean`; `hasIcrSensitivity`: `boolean`; `hasInfrared`: `boolean`; `hasLcdScreen`: `boolean`; `hasLdc`: `boolean`; `hasLedIr`: `boolean`; `hasLedStatus`: `boolean`; `hasLineCrossing`: `boolean`; `hasLineCrossingCounting`: `boolean`; `hasLineIn`: `boolean`; `hasLiveviewTracking`: `boolean`; `hasLuxCheck`: `boolean`; `hasMic`: `boolean`; `hasMotionZones`: `boolean`; `hasNewMotionAlgorithm`: `boolean`; `hasPackageCamera`: `boolean`; `hasPrivacyMask`: `boolean`; `hasRtc`: `boolean`; `hasSdCard`: `boolean`; `hasSmartDetect`: `boolean`; `hasSpeaker`: `boolean`; `hasSquareEventThumbnail`: `boolean`; `hasVerticalFlip`: `boolean`; `hasWifi`: `boolean`; `isDoorbell`: `boolean`; `isPtz`: `boolean`; `maxScaleDownLevel`: `number`; `motionAlgorithms`: `string`[]; `privacyMaskCapability`: \{ `maxMasks`: `number`; `rectangleOnly`: `boolean`; \}; `smartDetectAudioTypes`: `string`[]; `smartDetectTypes`: `string`[]; `supportDoorAccessConfig`: `boolean`; `supportLpDetectionWithoutVehicle`: `boolean`; `supportNfc`: `boolean`; `videoCodecs`: `string`[]; `videoModeMaxFps`: `number`[]; `videoModes`: `string`[]; \} |
 | `featureFlags.audio` | `string`[] |
 | `featureFlags.audioCodecs` | `string`[] |
 | `featureFlags.audioStyle` | `string`[] |
@@ -81,6 +82,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.hasChime` | `boolean` |
 | `featureFlags.hasColorLcdScreen` | `boolean` |
 | `featureFlags.hasExternalIr` | `boolean` |
+| `featureFlags.hasFingerprintSensor` | `boolean` |
 | `featureFlags.hasFlash` | `boolean` |
 | `featureFlags.hasHdr` | `boolean` |
 | `featureFlags.hasIcrSensitivity` | `boolean` |
@@ -108,6 +110,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.hasWifi` | `boolean` |
 | `featureFlags.isDoorbell` | `boolean` |
 | `featureFlags.isPtz` | `boolean` |
+| `featureFlags.maxScaleDownLevel` | `number` |
 | `featureFlags.motionAlgorithms` | `string`[] |
 | `featureFlags.privacyMaskCapability` | \{ `maxMasks`: `number`; `rectangleOnly`: `boolean`; \} |
 | `featureFlags.privacyMaskCapability.maxMasks` | `number` |
@@ -115,11 +118,27 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.smartDetectAudioTypes` | `string`[] |
 | `featureFlags.smartDetectTypes` | `string`[] |
 | `featureFlags.supportDoorAccessConfig` | `boolean` |
+| `featureFlags.supportLpDetectionWithoutVehicle` | `boolean` |
+| `featureFlags.supportNfc` | `boolean` |
 | `featureFlags.videoCodecs` | `string`[] |
 | `featureFlags.videoModeMaxFps` | `number`[] |
 | `featureFlags.videoModes` | `string`[] |
+| `fingerprintSettings` | \{ `enable`: `boolean`; `enablePrintLatency`: `boolean`; `mode`: `string`; `reportCaptureComplete`: `boolean`; `reportFingerTouch`: `boolean`; \} |
+| `fingerprintSettings.enable` | `boolean` |
+| `fingerprintSettings.enablePrintLatency` | `boolean` |
+| `fingerprintSettings.mode` | `string` |
+| `fingerprintSettings.reportCaptureComplete` | `boolean` |
+| `fingerprintSettings.reportFingerTouch` | `boolean` |
+| `fingerprintState` | \{ `fingerprintId`: `string`; `free`: `number`; `progress`: `string`; `status`: `string`; `total`: `number`; \} |
+| `fingerprintState.fingerprintId` | `string` |
+| `fingerprintState.free` | `number` |
+| `fingerprintState.progress` | `string` |
+| `fingerprintState.status` | `string` |
+| `fingerprintState.total` | `number` |
 | `firmwareBuild` | `string` |
 | `firmwareVersion` | `string` |
+| `fwUpdateState` | `string` |
+| `guid` | `string` |
 | `hardwareRevision` | `string` |
 | `hasRecordings` | `boolean` |
 | `hasSpeaker` | `boolean` |
@@ -148,30 +167,25 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `isLiveHeatmapEnabled` | `boolean` |
 | `isManaged` | `boolean` |
 | `isMicEnabled` | `boolean` |
+| `isMissingRecordingDetected` | `boolean` |
 | `isMotionDetected` | `boolean` |
+| `isPairedWithAiPort` | `boolean` |
 | `isPoorNetwork` | `boolean` |
 | `isProbingForWifi` | `boolean` |
 | `isProvisioned` | `boolean` |
-| `isRebooting` | `boolean` |
-| `isRecording` | `boolean` |
-| `isRestoring` | `boolean` |
-| `isSmartDetected` | `boolean` |
-| `isSshEnabled` | `boolean` |
-| `isUpdating` | `boolean` |
-| `isWaterproofCaseAttached` | `boolean` |
-| `isWirelessUplinkEnabled` | `boolean` |
-| `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `denoise`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hue`: `number`; `icrSensitivity`: `number`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `saturation`: `number`; `sharpness`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} |
+| `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `denoise`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hue`: `number`; `icrCustomValue`: `number`; `icrSensitivity`: `number`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `saturation`: `number`; `sharpness`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} |
 | `ispSettings.aeMode` | `string` |
 | `ispSettings.brightness` | `number` |
 | `ispSettings.contrast` | `number` |
+| `ispSettings.denoise` | `number` |
 | `ispSettings.dZoomCenterX` | `number` |
 | `ispSettings.dZoomCenterY` | `number` |
 | `ispSettings.dZoomScale` | `number` |
 | `ispSettings.dZoomStreamId` | `number` |
-| `ispSettings.denoise` | `number` |
 | `ispSettings.focusMode` | `string` |
 | `ispSettings.focusPosition` | `number` |
 | `ispSettings.hue` | `number` |
+| `ispSettings.icrCustomValue` | `number` |
 | `ispSettings.icrSensitivity` | `number` |
 | `ispSettings.irLedLevel` | `number` |
 | `ispSettings.irLedMode` | `string` |
@@ -189,6 +203,15 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `ispSettings.touchFocusY` | `number` |
 | `ispSettings.wdr` | `number` |
 | `ispSettings.zoomPosition` | `number` |
+| `isRebooting` | `boolean` |
+| `isRecording` | `boolean` |
+| `isRestoring` | `boolean` |
+| `isSmartDetected` | `boolean` |
+| `isSshEnabled` | `boolean` |
+| `isThirdPartyCamera` | `boolean` |
+| `isUpdating` | `boolean` |
+| `isWaterproofCaseAttached` | `boolean` |
+| `isWirelessUplinkEnabled` | `boolean` |
 | `lastMotion` | `number` |
 | `lastRing` | `null` \| `number` |
 | `lastSeen` | `number` |
@@ -203,6 +226,14 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `micVolume` | `number` |
 | `modelKey` | `string` |
 | `name` | `string` |
+| `nfcSettings` | \{ `enableNfc`: `boolean`; `supportThirdPartyCard`: `boolean`; \} |
+| `nfcSettings.enableNfc` | `boolean` |
+| `nfcSettings.supportThirdPartyCard` | `boolean` |
+| `nfcState` | \{ `cardId`: `string`; `isUACard`: `boolean`; `lastSeen`: `number`; `mode`: `string`; \} |
+| `nfcState.cardId` | `string` |
+| `nfcState.isUACard` | `boolean` |
+| `nfcState.lastSeen` | `number` |
+| `nfcState.mode` | `string` |
 | `nvrMac` | `string` |
 | `osdSettings` | \{ `isDateEnabled`: `boolean`; `isDebugEnabled`: `boolean`; `isLogoEnabled`: `boolean`; `isNameEnabled`: `boolean`; \} |
 | `osdSettings.isDateEnabled` | `boolean` |
@@ -267,6 +298,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `stats.wifi.signalStrength` | `number` |
 | `stats.wifiQuality` | `number` |
 | `stats.wifiStrength` | `number` |
+| `supportedScalingResolutions` | `string`[] |
 | `talkbackSettings` | \{ `bindAddr`: `string`; `bindPort`: `number`; `bitsPerSample`: `number`; `channels`: `number`; `filterAddr`: `string`; `filterPort`: `number`; `quality`: `number`; `samplingRate`: `number`; `typeFmt`: `string`; `typeIn`: `string`; \} |
 | `talkbackSettings.bindAddr` | `string` |
 | `talkbackSettings.bindPort` | `number` |
@@ -278,10 +310,24 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `talkbackSettings.samplingRate` | `number` |
 | `talkbackSettings.typeFmt` | `string` |
 | `talkbackSettings.typeIn` | `string` |
+| `thirdPartyCameraInfo` | \{ `port`: `number`; `rtspUrl`: `string`; `rtspUrlLQ`: `string`; `snapshotUrl`: `string`; \} |
+| `thirdPartyCameraInfo.port` | `number` |
+| `thirdPartyCameraInfo.rtspUrl` | `string` |
+| `thirdPartyCameraInfo.rtspUrlLQ` | `string` |
+| `thirdPartyCameraInfo.snapshotUrl` | `string` |
+| `tiltLimitsOfPrivacyZones` | \{ `limit`: `number`; `side`: `string`; \} |
+| `tiltLimitsOfPrivacyZones.limit` | `number` |
+| `tiltLimitsOfPrivacyZones.side` | `string` |
 | `type` | `string` |
 | `upSince` | `number` |
+| `uptime` | `number` |
+| `useGlobal` | `boolean` |
 | `videoCodec` | `string` |
+| `videoCodecState` | `number` |
+| `videoCodecSwitchingSince` | `number` |
 | `videoMode` | `string` |
+| `videoReconfigurationInProgress` | `boolean` |
+| `voltage` | `number` |
 | `wifiConnectionState` | \{ `channel`: `number`; `frequency`: `number`; `phyRate`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; \} |
 | `wifiConnectionState.channel` | `number` |
 | `wifiConnectionState.frequency` | `number` |
@@ -300,7 +346,7 @@ A semi-complete description of the UniFi Protect LCD message JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `duration` | `number` |
 | `resetAt` | `null` \| `number` |
 | `text` | `string` |
@@ -315,7 +361,7 @@ A semi-complete description of the UniFi Protect chime JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `apMac` | `string` |
 | `apMgmtIp` | `string` |
 | `apRssi` | `string` |
@@ -324,8 +370,10 @@ A semi-complete description of the UniFi Protect chime JSON.
 | `connectedSince` | `number` |
 | `connectionHost` | `string` |
 | `elementInfo` | `string` |
-| `featureFlags` | \{ `hasWifi`: `boolean`; \} |
+| `featureFlags` | \{ `hasHttpsClientOTA`: `boolean`; `hasWifi`: `boolean`; `supportCustomRingtone`: `boolean`; \} |
+| `featureFlags.hasHttpsClientOTA` | `boolean` |
 | `featureFlags.hasWifi` | `boolean` |
+| `featureFlags.supportCustomRingtone` | `boolean` |
 | `firmwareBuild` | `string` |
 | `firmwareVersion` | `string` |
 | `fwUpdateState` | `string` |
@@ -351,10 +399,17 @@ A semi-complete description of the UniFi Protect chime JSON.
 | `marketName` | `string` |
 | `modelKey` | `string` |
 | `name` | `string` |
+| `nvrMac` | `string` |
+| `platform` | `string` |
+| `repeatTimes` | `number` |
+| `ringSettings` | \{ `cameraId`: `string`; `repeatTimes`: `number`; `ringtoneId`: `string`; `volume`: `number`; \}[] |
+| `speakerTrackList` | \{ `md5`: `string`; `name`: `string`; `size`: `number`; `state`: `string`; `track_no`: `number`; `volume`: `number`; \}[] |
 | `state` | `string` |
+| `sysId` | `string` |
 | `type` | `string` |
 | `upSince` | `number` |
 | `uptime` | `number` |
+| `userConfiguredAp` | `boolean` |
 | `volume` | `number` |
 | `wifiConnectionState` | \{ `apName`: `null` \| `string`; `bssid`: `null` \| `string`; `channel`: `null` \| `string`; `connectivity`: `string`; `experience`: `null`; `frequency`: `null`; `phyRate`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; `ssid`: `null` \| `string`; `txRate`: `null`; \} |
 | `wifiConnectionState.apName` | `null` \| `string` |
@@ -380,9 +435,12 @@ A semi-complete description of the UniFi Protect smart motion detection event JS
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `camera` | `string` |
+| `cameraId` | `string` |
+| `detectedAt` | `number` |
 | `end` | `number` |
+| `eventId` | `string` |
 | `id` | `string` |
 | `metadata` | [`ProtectEventMetadataInterface`](ProtectTypes.md#protecteventmetadatainterface) |
 | `modelKey` | `string` |
@@ -391,6 +449,7 @@ A semi-complete description of the UniFi Protect smart motion detection event JS
 | `smartDetectEvents` | `string`[] |
 | `smartDetectTypes` | `string`[] |
 | `start` | `number` |
+| `thumbnailId` | `string` |
 | `type` | `string` |
 | `user` | `string` |
 
@@ -403,9 +462,11 @@ A description of metadata in UniFi Protect smart motion detect events.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `deviceId` | \{ `text`: `string`; \} |
 | `deviceId.text` | `string` |
+| `fingerprint` | \{ `ulpId`: `string`; \} |
+| `fingerprint.ulpId` | `string` |
 | `isLowBattery` | `boolean` |
 | `isWireless` | `boolean` |
 | `licensePlate` | \{ `confidenceLevel`: `number`; `name`: `string`; \} |
@@ -413,6 +474,9 @@ A description of metadata in UniFi Protect smart motion detect events.
 | `licensePlate.name` | `string` |
 | `name` | \{ `text`: `string`; \} |
 | `name.text` | `string` |
+| `nfc` | \{ `nfcId`: `string`; `ulpId`: `string`; \} |
+| `nfc.nfcId` | `string` |
+| `nfc.ulpId` | `string` |
 | `reason` | `string` |
 
 ***
@@ -424,7 +488,7 @@ A semi-complete description of the UniFi Protect light JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `camera` | `string` |
 | `canAdopt` | `boolean` |
 | `connectedSince` | `number` |
@@ -466,6 +530,7 @@ A semi-complete description of the UniFi Protect light JSON.
 | `marketName` | `string` |
 | `modelKey` | `string` |
 | `name` | `string` |
+| `nvrMac` | `string` |
 | `state` | `string` |
 | `type` | `string` |
 | `upSince` | `number` |
@@ -482,21 +547,21 @@ An semi-complete description of the UniFi Protect NVR bootstrap JSON.
 #### Indexable
 
  \[`key`: `string`\]: 
-  \| [`ProtectCameraConfig`](ProtectTypes.md#protectcameraconfig)[]
-  \| [`ProtectChimeConfig`](ProtectTypes.md#protectchimeconfig)[]
-  \| [`ProtectLightConfig`](ProtectTypes.md#protectlightconfig)[]
-  \| [`ProtectNvrConfig`](ProtectTypes.md#protectnvrconfig)
-  \| [`ProtectNvrLiveviewConfig`](ProtectTypes.md#protectnvrliveviewconfig)[]
-  \| [`ProtectNvrUserConfig`](ProtectTypes.md#protectnvruserconfig)[]
-  \| [`ProtectSensorConfig`](ProtectTypes.md#protectsensorconfig)[]
-  \| [`ProtectViewerConfig`](ProtectTypes.md#protectviewerconfig)[]
   \| `string`
   \| `unknown`[]
+  \| [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)[]
+  \| [`ProtectChimeConfigInterface`](ProtectTypes.md#protectchimeconfiginterface)[]
+  \| [`ProtectLightConfigInterface`](ProtectTypes.md#protectlightconfiginterface)[]
+  \| [`ProtectNvrConfigInterface`](ProtectTypes.md#protectnvrconfiginterface)
+  \| [`ProtectNvrLiveviewConfigInterface`](ProtectTypes.md#protectnvrliveviewconfiginterface)[]
+  \| [`ProtectNvrUserConfigInterface`](ProtectTypes.md#protectnvruserconfiginterface)[]
+  \| [`ProtectSensorConfigInterface`](ProtectTypes.md#protectsensorconfiginterface)[]
+  \| [`ProtectViewerConfigInterface`](ProtectTypes.md#protectviewerconfiginterface)[]
 
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `accessKey` | `string` |
 | `authUserId` | `string` |
 | `bridges` | `unknown`[] |
@@ -508,6 +573,7 @@ An semi-complete description of the UniFi Protect NVR bootstrap JSON.
 | `lights` | [`ProtectLightConfigInterface`](ProtectTypes.md#protectlightconfiginterface)[] |
 | `liveviews` | [`ProtectNvrLiveviewConfigInterface`](ProtectTypes.md#protectnvrliveviewconfiginterface)[] |
 | `nvr` | [`ProtectNvrConfigInterface`](ProtectTypes.md#protectnvrconfiginterface) |
+| `ringtones` | [`ProtectRingtoneConfigInterface`](ProtectTypes.md#protectringtoneconfiginterface)[] |
 | `sensors` | [`ProtectSensorConfigInterface`](ProtectTypes.md#protectsensorconfiginterface)[] |
 | `users` | [`ProtectNvrUserConfigInterface`](ProtectTypes.md#protectnvruserconfiginterface)[] |
 | `viewers` | [`ProtectViewerConfigInterface`](ProtectTypes.md#protectviewerconfiginterface)[] |
@@ -521,7 +587,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `analyticsData` | `string` |
 | `anonymouseDeviceId` | `string` |
 | `availableUpdate` | `string` |
@@ -563,9 +629,9 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `hardwareRevision` | `string` |
 | `hasGateway` | `boolean` |
 | `host` | `string` |
+| `hosts` | `string`[] |
 | `hostShortname` | `string` |
 | `hostType` | `string` |
-| `hosts` | `string`[] |
 | `id` | `string` |
 | `isAway` | `boolean` |
 | `isHardware` | `boolean` |
@@ -673,7 +739,7 @@ A semi-complete description of the UniFi Protect NVR liveview JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `id` | `string` |
 | `isDefault` | `boolean` |
 | `isGlobal` | `boolean` |
@@ -692,7 +758,7 @@ A semi-complete description of the UniFi Protect system events controller JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `harddriveRequired` | `boolean` |
 | `info` | \{ `events`: `number`[]; `isAdopted`: `boolean`; `isConnectedToCloud`: `boolean`; `isSetup`: `boolean`; `lastMotion`: `number`; `lastMotionCamera`: `string`; `lastMotionCameraAddress`: `string`; `lastMotionCameraModel`: `string`; `managedCameras`: `number`; `offlineCameras`: `number`; `oldestRecording`: `number`; `onlineCameras`: `number`; `recordingSpaceTotal`: `number`; `recordingSpaceUsed`: `number`; `retentionTime`: `number`; `startedAt`: `number`; `throughput`: `number`; `timeFormat`: `string`; `updateAvailable`: `boolean`; `updateVersion`: `string`; \} |
 | `info.events` | `number`[] |
@@ -751,7 +817,7 @@ A semi-complete description of the UniFi Protect system events JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `apps` | \{ `apps`: `unknown`[]; `controllers`: [`ProtectNvrSystemEventControllerInterface`](ProtectTypes.md#protectnvrsystemeventcontrollerinterface)[]; \} |
 | `apps.apps` | `unknown`[] |
 | `apps.controllers` | [`ProtectNvrSystemEventControllerInterface`](ProtectTypes.md#protectnvrsystemeventcontrollerinterface)[] |
@@ -767,7 +833,7 @@ A semi-complete description of the UniFi Protect NVR system information configur
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `cpu` | \{ `averageLoad`: `number`; `temperature`: `number`; \} |
 | `cpu.averageLoad` | `number` |
 | `cpu.temperature` | `number` |
@@ -797,7 +863,7 @@ A semi-complete description of the UniFi Protect NVR user JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `alertRules` | `unknown`[] |
 | `allPermissions` | `string`[] |
 | `cloudAccount` | `string` |
@@ -826,6 +892,23 @@ A semi-complete description of the UniFi Protect NVR user JSON.
 
 ***
 
+### ProtectRingtoneConfigInterface
+
+A semi-complete description of the UniFi Protect ringtone JSON.
+
+#### Properties
+
+| Property | Type |
+| ------ | ------ |
+| `id` | `string` |
+| `isDefault` | `boolean` |
+| `modelKey` | `string` |
+| `name` | `string` |
+| `nvrMac` | `string` |
+| `size` | `number` |
+
+***
+
 ### ProtectSensorConfigInterface
 
 A semi-complete description of the UniFi Protect sensor JSON.
@@ -833,7 +916,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `alarmSettings` | \{ `isEnabled`: `boolean`; \} |
 | `alarmSettings.isEnabled` | `boolean` |
 | `alarmTriggeredAt` | `null` \| `number` |
@@ -888,6 +971,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `motionSettings.sensitivity` | `number` |
 | `mountType` | `string` |
 | `name` | `string` |
+| `nvrMac` | `string` |
 | `openStatusChangedAt` | `number` |
 | `state` | `string` |
 | `stats` | \{ `humidity`: \{ `status`: `string`; `value`: `null` \| `number`; \}; `light`: \{ `status`: `string`; `value`: `null` \| `number`; \}; `temperature`: \{ `status`: `string`; `value`: `null` \| `number`; \}; \} |
@@ -921,7 +1005,7 @@ A semi-complete description of the UniFi Protect viewer JSON.
 #### Properties
 
 | Property | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `canAdopt` | `boolean` |
 | `connectedSince` | `number` |
 | `connectionHost` | `string` |
@@ -946,6 +1030,7 @@ A semi-complete description of the UniFi Protect viewer JSON.
 | `marketName` | `string` |
 | `modelKey` | `string` |
 | `name` | `string` |
+| `nvrMac` | `string` |
 | `softwareVersion` | `string` |
 | `state` | `string` |
 | `streamLimit` | `number` |
@@ -960,7 +1045,7 @@ A semi-complete description of the UniFi Protect viewer JSON.
 ### ProtectCameraChannelConfig
 
 ```ts
-type ProtectCameraChannelConfig: ProtectCameraChannelConfigInterface;
+type ProtectCameraChannelConfig = ProtectCameraChannelConfigInterface;
 ```
 
 #### See
@@ -972,7 +1057,7 @@ type ProtectCameraChannelConfig: ProtectCameraChannelConfigInterface;
 ### ProtectCameraConfig
 
 ```ts
-type ProtectCameraConfig: ProtectCameraConfigInterface;
+type ProtectCameraConfig = ProtectCameraConfigInterface;
 ```
 
 #### See
@@ -984,7 +1069,7 @@ type ProtectCameraConfig: ProtectCameraConfigInterface;
 ### ProtectCameraConfigPayload
 
 ```ts
-type ProtectCameraConfigPayload: DeepPartial<ProtectCameraConfigInterface>;
+type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterface>;
 ```
 
 #### See
@@ -996,7 +1081,7 @@ type ProtectCameraConfigPayload: DeepPartial<ProtectCameraConfigInterface>;
 ### ProtectCameraLcdMessageConfig
 
 ```ts
-type ProtectCameraLcdMessageConfig: ProtectCameraLcdMessageConfigInterface;
+type ProtectCameraLcdMessageConfig = ProtectCameraLcdMessageConfigInterface;
 ```
 
 #### See
@@ -1008,7 +1093,7 @@ type ProtectCameraLcdMessageConfig: ProtectCameraLcdMessageConfigInterface;
 ### ProtectCameraLcdMessagePayload
 
 ```ts
-type ProtectCameraLcdMessagePayload: DeepPartial<ProtectCameraLcdMessageConfigInterface>;
+type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
 ```
 
 #### See
@@ -1020,7 +1105,7 @@ type ProtectCameraLcdMessagePayload: DeepPartial<ProtectCameraLcdMessageConfigIn
 ### ProtectChimeConfig
 
 ```ts
-type ProtectChimeConfig: ProtectChimeConfigInterface;
+type ProtectChimeConfig = ProtectChimeConfigInterface;
 ```
 
 #### See
@@ -1032,7 +1117,7 @@ type ProtectChimeConfig: ProtectChimeConfigInterface;
 ### ProtectChimeConfigPayload
 
 ```ts
-type ProtectChimeConfigPayload: DeepPartial<ProtectChimeConfigInterface>;
+type ProtectChimeConfigPayload = DeepPartial<ProtectChimeConfigInterface>;
 ```
 
 #### See
@@ -1044,7 +1129,7 @@ type ProtectChimeConfigPayload: DeepPartial<ProtectChimeConfigInterface>;
 ### ProtectEventAdd
 
 ```ts
-type ProtectEventAdd: ProtectEventAddInterface;
+type ProtectEventAdd = ProtectEventAddInterface;
 ```
 
 #### See
@@ -1056,7 +1141,7 @@ type ProtectEventAdd: ProtectEventAddInterface;
 ### ProtectEventMetadata
 
 ```ts
-type ProtectEventMetadata: ProtectEventMetadataInterface;
+type ProtectEventMetadata = ProtectEventMetadataInterface;
 ```
 
 #### See
@@ -1068,7 +1153,7 @@ type ProtectEventMetadata: ProtectEventMetadataInterface;
 ### ProtectLightConfig
 
 ```ts
-type ProtectLightConfig: ProtectLightConfigInterface;
+type ProtectLightConfig = ProtectLightConfigInterface;
 ```
 
 #### See
@@ -1080,7 +1165,7 @@ type ProtectLightConfig: ProtectLightConfigInterface;
 ### ProtectLightConfigPayload
 
 ```ts
-type ProtectLightConfigPayload: DeepPartial<ProtectLightConfigInterface>;
+type ProtectLightConfigPayload = DeepPartial<ProtectLightConfigInterface>;
 ```
 
 #### See
@@ -1092,7 +1177,7 @@ type ProtectLightConfigPayload: DeepPartial<ProtectLightConfigInterface>;
 ### ProtectNvrBootstrap
 
 ```ts
-type ProtectNvrBootstrap: ProtectNvrBootstrapInterface;
+type ProtectNvrBootstrap = ProtectNvrBootstrapInterface;
 ```
 
 #### See
@@ -1104,7 +1189,7 @@ type ProtectNvrBootstrap: ProtectNvrBootstrapInterface;
 ### ProtectNvrConfig
 
 ```ts
-type ProtectNvrConfig: ProtectNvrConfigInterface;
+type ProtectNvrConfig = ProtectNvrConfigInterface;
 ```
 
 #### See
@@ -1116,7 +1201,7 @@ type ProtectNvrConfig: ProtectNvrConfigInterface;
 ### ProtectNvrConfigPayload
 
 ```ts
-type ProtectNvrConfigPayload: DeepPartial<ProtectNvrConfigInterface>;
+type ProtectNvrConfigPayload = DeepPartial<ProtectNvrConfigInterface>;
 ```
 
 #### See
@@ -1128,7 +1213,7 @@ type ProtectNvrConfigPayload: DeepPartial<ProtectNvrConfigInterface>;
 ### ProtectNvrLiveviewConfig
 
 ```ts
-type ProtectNvrLiveviewConfig: ProtectNvrLiveviewConfigInterface;
+type ProtectNvrLiveviewConfig = ProtectNvrLiveviewConfigInterface;
 ```
 
 #### See
@@ -1140,7 +1225,7 @@ type ProtectNvrLiveviewConfig: ProtectNvrLiveviewConfigInterface;
 ### ProtectNvrSystemEvent
 
 ```ts
-type ProtectNvrSystemEvent: ProtectNvrSystemEventInterface;
+type ProtectNvrSystemEvent = ProtectNvrSystemEventInterface;
 ```
 
 #### See
@@ -1152,7 +1237,7 @@ type ProtectNvrSystemEvent: ProtectNvrSystemEventInterface;
 ### ProtectNvrSystemEventController
 
 ```ts
-type ProtectNvrSystemEventController: ProtectNvrSystemEventControllerInterface;
+type ProtectNvrSystemEventController = ProtectNvrSystemEventControllerInterface;
 ```
 
 #### See
@@ -1164,7 +1249,7 @@ type ProtectNvrSystemEventController: ProtectNvrSystemEventControllerInterface;
 ### ProtectNvrSystemInfoConfig
 
 ```ts
-type ProtectNvrSystemInfoConfig: ProtectNvrSystemInfoInterface;
+type ProtectNvrSystemInfoConfig = ProtectNvrSystemInfoInterface;
 ```
 
 #### See
@@ -1176,7 +1261,7 @@ type ProtectNvrSystemInfoConfig: ProtectNvrSystemInfoInterface;
 ### ProtectNvrUserConfig
 
 ```ts
-type ProtectNvrUserConfig: ProtectNvrUserConfigInterface;
+type ProtectNvrUserConfig = ProtectNvrUserConfigInterface;
 ```
 
 #### See
@@ -1185,10 +1270,22 @@ type ProtectNvrUserConfig: ProtectNvrUserConfigInterface;
 
 ***
 
+### ProtectRingtoneConfig
+
+```ts
+type ProtectRingtoneConfig = ProtectRingtoneConfigInterface;
+```
+
+#### See
+
+[ProtectRingtoneConfigInterface](ProtectTypes.md#protectringtoneconfiginterface)
+
+***
+
 ### ProtectSensorConfig
 
 ```ts
-type ProtectSensorConfig: ProtectSensorConfigInterface;
+type ProtectSensorConfig = ProtectSensorConfigInterface;
 ```
 
 #### See
@@ -1200,7 +1297,7 @@ type ProtectSensorConfig: ProtectSensorConfigInterface;
 ### ProtectSensorConfigPayload
 
 ```ts
-type ProtectSensorConfigPayload: DeepPartial<ProtectSensorConfigInterface>;
+type ProtectSensorConfigPayload = DeepPartial<ProtectSensorConfigInterface>;
 ```
 
 #### See
@@ -1212,7 +1309,7 @@ type ProtectSensorConfigPayload: DeepPartial<ProtectSensorConfigInterface>;
 ### ProtectViewerConfig
 
 ```ts
-type ProtectViewerConfig: ProtectViewerConfigInterface;
+type ProtectViewerConfig = ProtectViewerConfigInterface;
 ```
 
 #### See
@@ -1224,7 +1321,7 @@ type ProtectViewerConfig: ProtectViewerConfigInterface;
 ### ProtectViewerConfigPayload
 
 ```ts
-type ProtectViewerConfigPayload: DeepPartial<ProtectViewerConfigInterface>;
+type ProtectViewerConfigPayload = DeepPartial<ProtectViewerConfigInterface>;
 ```
 
 #### See

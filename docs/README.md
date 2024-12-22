@@ -1,4 +1,4 @@
-**unifi-protect** • **Docs**
+**unifi-protect**
 
 ***
 
@@ -30,12 +30,10 @@ This implementation is largely feature complete. I strive to add support for mea
 
 The UniFi Protect API is undocumented and implementing a library like this one is the result of many hours of trial and error as well as community support.
 
-## API Index
-
-### Modules
+## Modules
 
 | Module | Description |
-| :------ | :------ |
+| ------ | ------ |
 | [ProtectApi](ProtectApi.md) | A complete implementation of the UniFi Protect API, including access to the events, livestream data (not just RTSP), and websockets endpoints. |
 | [ProtectApiEvents](ProtectApiEvents.md) | Utilities to help decode packets from the UniFi Protect realtime events API. |
 | [ProtectLivestream](ProtectLivestream.md) | Access a direct MP4 livestream for a UniFi Protect camera. |

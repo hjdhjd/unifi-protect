@@ -13,25 +13,11 @@
  */
 import { ALPNProtocol, AbortError, FetchError, Headers, Request, RequestOptions, Response, context, timeoutSignal } from "@adobe/fetch";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "./settings.js";
-import {
-  ProtectCameraChannelConfigInterface,
-  ProtectCameraConfig,
-  ProtectCameraConfigInterface,
-  ProtectCameraConfigPayload,
-  ProtectChimeConfig,
-  ProtectChimeConfigPayload,
-  ProtectLightConfig,
-  ProtectLightConfigPayload,
-  ProtectNvrBootstrap,
-  ProtectNvrConfig,
-  ProtectNvrConfigPayload,
-  ProtectNvrUserConfig,
-  ProtectSensorConfig,
-  ProtectSensorConfigPayload,
-  ProtectViewerConfig,
-  ProtectViewerConfigPayload
-} from "./protect-types.js";
+import { ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectCameraConfigPayload, ProtectChimeConfig,
+  ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload, ProtectNvrUserConfig,
+  ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
 import { EventEmitter } from "node:events";
+import { Nullable } from "homebridge-plugin-utils";
 import { ProtectApiEvents } from "./protect-api-events.js";
 import { ProtectLivestream } from "./protect-api-livestream.js";
 import { ProtectLogging } from "./protect-logging.js";
@@ -65,8 +51,8 @@ export type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChi
  */
 export class ProtectApi extends EventEmitter {
 
-  private _bootstrap: ProtectNvrBootstrap | null;
-  private _eventsWs: WebSocket | null;
+  private _bootstrap: Nullable<ProtectNvrBootstrap>;
+  private _eventsWs: Nullable<WebSocket>;
 
   private apiErrorCount: number;
   private apiLastSuccess: number;
@@ -96,7 +82,7 @@ export class ProtectApi extends EventEmitter {
     log ??= {
 
       /* eslint-disable no-console */
-      debug: (message: string, ...parameters: unknown[]): void => { /* No debug logging by default. */ },
+      debug: (): void => { /* No debug logging by default. */ },
       error: (message: string, ...parameters: unknown[]): void => console.error(message, ...parameters),
       info: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters),
       warn: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters)
@@ -269,7 +255,7 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Now let's get our NVR configuration information.
-    let data: ProtectNvrBootstrap | null = null;
+    let data: Nullable<ProtectNvrBootstrap> = null;
 
     try {
 
@@ -342,7 +328,7 @@ export class ProtectApi extends EventEmitter {
         return false;
       }
 
-      let messageHandler: ((event: Buffer) => void) | null;
+      let messageHandler: Nullable<(event: Buffer) => void>;
 
       // Cleanup after ourselves if our websocket closes for some resaon.
       ws.once("close", (): void => {
@@ -473,7 +459,14 @@ export class ProtectApi extends EventEmitter {
   // Check admin privileges.
   private checkAdminUserStatus(isFirstRun = false): boolean {
 
-    if(!this._bootstrap?.users) {
+    // Get the properties we care about from the bootstrap.
+    const { users, authUserId } = this._bootstrap ?? {};
+
+    // Find this user, if it exists.
+    const user = users?.find((x: ProtectNvrUserConfig) => x.id === authUserId);
+
+    // User doesn't exist, we're done.
+    if(!user?.allPermissions) {
 
       return false;
     }
@@ -481,49 +474,16 @@ export class ProtectApi extends EventEmitter {
     // Save our prior state so we can detect role changes without having to restart.
     const oldAdminStatus = this.isAdminUser;
 
-    // Find this user.
-    const user = this._bootstrap?.users.find((x: ProtectNvrUserConfig) => x.id === this._bootstrap?.authUserId);
+    // Determine if the user has administrative camera permissions.
+    this._isAdminUser = user.allPermissions.some(entry => entry.startsWith("camera:") && entry.split(":")[1].split(",").includes("write"));
 
-    if(!user?.allPermissions) {
-
-      return false;
-    }
-
-    // Let's figure out this user's permissions.
-    let newAdminStatus = false;
-
-    for(const entry of user.allPermissions) {
-
-      // Each permission line exists as: permissiontype:permissions:scope.
-      const permType = entry.split(":");
-
-      // We only care about camera permissions.
-      if(permType[0] !== "camera") {
-
-        continue;
-      }
-
-      // Get the individual permissions.
-      const permissions = permType[1].split(",");
-
-      // We found our administrative privileges - we're done.
-      if(permissions.indexOf("write") !== -1) {
-
-        newAdminStatus = true;
-
-        break;
-      }
-    }
-
-    this._isAdminUser = newAdminStatus;
-
-    // Only admin users can activate RTSP streams. Inform the user on startup, or if we detect a role change.
+    // Only admin users can change certain settings. Inform the user on startup, or if we detect a role change.
     if(isFirstRun && !this.isAdminUser) {
 
-      this.log.info("The user '%s' requires the Administrator role in order to automatically configure camera RTSP streams.", this.username);
+      this.log.info("User '%s' requires the Super Admin role in order to change certain settings like camera RTSP stream availability.", this.username);
     } else if(!isFirstRun && (oldAdminStatus !== this.isAdminUser)) {
 
-      this.log.info("Detected a role change for user '%s': the Administrator role has been %s.", this.username, this.isAdminUser ? "enabled" : "disabled");
+      this.log.info("Role change detected for user '%s': the Super Admin role has been %s.", this.username, this.isAdminUser ? "enabled" : "disabled");
     }
 
     return true;
@@ -533,39 +493,44 @@ export class ProtectApi extends EventEmitter {
    * Retrieve a snapshot image from a Protect camera.
    *
    * @param device           - Protect device.
-   * @param width            - Optionally specify the image width to request. Defaults selected by the Protect controller, based on the camera resolution.
-   * @param height           - Optionally specify the image height to request. Defaults selected by the Protect controller, based on the camera resolution.
-   * @param timestamp        - Optionally specify the timestamp index to retrieve. Defaults to the current time.
-   * @param usePackageCamera - Optionally specify retrieving a snapshot fron the package camera, rather than the primary camera lens. Defaults to `false`.
+   * @param options          - Parameters to pass on for the snapshot request.
    *
    * @returns Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
    *
+   * @remarks The `options` object for snapshot parameters accepts the following properties, all of which are optional:
+   *
+   * | Property          | Description                                                                                                |
+   * |-------------------|------------------------------------------------------------------------------------------------------------|
+   * | height            | The image height to request. Defaults selected by the Protect controller, based on the camera resolution.  |
+   * | width             | The image width to request. Defaults selected by the Protect controller, based on the camera resolution.   |
+   * | usePackageCamera  | Retriver a snapshot fron the package camera rather than the primary camera lens. Defaults to `false`.      |
+   *
    * @category API Access
    */
-  public async getSnapshot(device: ProtectCameraConfig, width?: number, height?: number, timestamp = Date.now(), usePackageCamera = false): Promise<Buffer | null> {
+  public async getSnapshot(device: ProtectCameraConfig, options: Partial<{ width: number, height: number, usePackageCamera: boolean }> = {}): Promise<Nullable<Buffer>> {
 
     // No device object, or it's not a camera, or we're requesting a package camera snapshot on a camera without one - we're done.
-    if(!device || (device.modelKey !== "camera") || (usePackageCamera && !device.featureFlags.hasPackageCamera)) {
+    if(!device || (device.modelKey !== "camera") || (options.usePackageCamera && !device.featureFlags.hasPackageCamera)) {
 
       return null;
     }
 
     // Create the parameters needed for the snapshot request.
-    const params = new URLSearchParams({ ts: timestamp.toString() });
+    const params = new URLSearchParams();
 
     // If we have details of the snapshot request, use it to request the right size.
-    if(height !== undefined) {
+    if(options.height !== undefined) {
 
-      params.append("h", height.toString());
+      params.append("h", options.height.toString());
     }
 
-    if(width !== undefined) {
+    if(options.width !== undefined) {
 
-      params.append("w", width.toString());
+      params.append("w", options.width.toString());
     }
 
     // Request the image from the controller.
-    const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id + "/" + (usePackageCamera ? "package-" : "") +
+    const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id + "/" + (options.usePackageCamera ? "package-" : "") +
       "snapshot?" + params.toString(), { method: "GET" });
 
     if(!response?.ok) {
@@ -605,7 +570,7 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  public async updateDevice<DeviceType extends ProtectKnownDeviceTypes>(device: DeviceType, payload: ProtectKnownDevicePayloads): Promise<DeviceType | null> {
+  public async updateDevice<DeviceType extends ProtectKnownDeviceTypes>(device: DeviceType, payload: ProtectKnownDevicePayloads): Promise<Nullable<DeviceType>> {
 
     // No device object, we're done.
     if(!device) {
@@ -652,7 +617,7 @@ export class ProtectApi extends EventEmitter {
   }
 
   // Update camera channels on a supported Protect device.
-  private async updateCameraChannels(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
+  private async updateCameraChannels(device: ProtectCameraConfigInterface): Promise<Nullable<ProtectCameraConfig>> {
 
     // Make sure we have the permissions to modify the camera JSON.
     if(!(await this.canModifyCamera(device))) {
@@ -702,7 +667,7 @@ export class ProtectApi extends EventEmitter {
    *
    * @category Utilities
    */
-  public async enableRtsp(device: ProtectCameraConfigInterface): Promise<ProtectCameraConfig | null> {
+  public async enableRtsp(device: ProtectCameraConfigInterface): Promise<Nullable<ProtectCameraConfig>> {
 
     // Make sure we have the permissions to modify the camera JSON.
     if(!(await this.canModifyCamera(device))) {
@@ -862,13 +827,13 @@ export class ProtectApi extends EventEmitter {
    * @category API Access
    */
   // Return a WebSocket URL endpoint from the Protect controller for Protect API services (e.g. livestream, talkback).
-  public async getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams): Promise<string | null> {
+  public async getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams): Promise<Nullable<string>> {
 
     return this._getWsEndpoint(endpoint, params);
   }
 
   // Internal interface to returning a WebSocket URL endpoint from the Protect controller for Protect API services (e.g. livestream, talkback).
-  private async _getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams, retry = true): Promise<string | null> {
+  private async _getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams, retry = true): Promise<Nullable<string>> {
 
     if(!endpoint) {
 
@@ -882,7 +847,8 @@ export class ProtectApi extends EventEmitter {
     }
 
     // Ask Protect to give us a URL for this websocket.
-    const response = await this.retrieve(this.getApiEndpoint("websocket") + "/" + endpoint + ((params && params.toString().length) ? "?" + params.toString() : ""));
+    const response = await this.retrieve(this.getApiEndpoint("websocket") + "/" + endpoint +
+      ((params && params.toString().length) ? "?" + params.toString() : ""), undefined, !retry);
 
     // Something went wrong, we're done here.
     if(!response?.ok) {
@@ -955,13 +921,25 @@ export class ProtectApi extends EventEmitter {
    * @category API Access
    */
   // Communicate HTTP requests with a Protect controller.
-  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true): Promise<Response | null> {
+  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true): Promise<Nullable<Response>> {
 
     return this._retrieve(url, options, logErrors);
   }
 
   // Internal interface to communicating HTTP requests with a Protect controller, with error handling.
-  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false): Promise<Response | null> {
+  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false):
+  Promise<Nullable<Response>> {
+
+    // Log errors if that's what the caller requested.
+    const logError = (message: string, ...parameters: unknown[]): void => {
+
+      if(!logErrors) {
+
+        return;
+      }
+
+      this.log.error(message, ...parameters);
+    };
 
     // Catch Protect controller server-side issues:
     //
@@ -976,7 +954,7 @@ export class ProtectApi extends EventEmitter {
     let response: Response;
 
     // Create a signal handler to deliver the abort operation.
-    const signal = timeoutSignal(PROTECT_API_TIMEOUT * 1000);
+    const signal = timeoutSignal(PROTECT_API_TIMEOUT);
 
     options.headers = this.headers;
     options.signal = signal;
@@ -995,6 +973,7 @@ export class ProtectApi extends EventEmitter {
             this.apiErrorCount, PROTECT_API_RETRY_INTERVAL / 60);
           this.apiErrorCount++;
           this.apiLastSuccess = now;
+          this.reset();
 
           return null;
         }
@@ -1025,14 +1004,17 @@ export class ProtectApi extends EventEmitter {
         return response;
       }
 
-      // Preemptively increase the error count.
-      this.apiErrorCount++;
+      // Preemptively increase the error count, but only if we're not retrying.
+      if(!isRetry) {
+
+        this.apiErrorCount++;
+      }
 
       // Bad username and password.
       if(response.status === 401) {
 
         this.logout();
-        this.log.error("Invalid login credentials given. Please check your login and password.");
+        logError("Invalid login credentials given. Please check your login and password.");
 
         return null;
       }
@@ -1040,14 +1022,14 @@ export class ProtectApi extends EventEmitter {
       // Insufficient privileges.
       if(response.status === 403) {
 
-        this.log.error("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
+        logError("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
 
         return null;
       }
 
       if(!response.ok && isServerSideIssue(response.status)) {
 
-        this.log.error("Unable to connect to the Protect controller. This is usually temporary and will occur during Protect controller reboots and firmware updates.");
+        logError("Unable to connect to the Protect controller. This is usually temporary and will occur during device reboots.");
 
         return null;
       }
@@ -1055,7 +1037,7 @@ export class ProtectApi extends EventEmitter {
       // Some other unknown error occurred.
       if(!response.ok) {
 
-        this.log.error("%s - %s", response.status, response.statusText);
+        logError("%s - %s", response.status, response.statusText);
 
         return null;
       }
@@ -1070,7 +1052,7 @@ export class ProtectApi extends EventEmitter {
 
       if(error instanceof AbortError) {
 
-        this.log.error("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
+        logError("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
         this.log.debug("Original request was: %s", url);
 
         return null;
@@ -1078,30 +1060,42 @@ export class ProtectApi extends EventEmitter {
 
       if(error instanceof FetchError) {
 
+        // We'll delay our retry by 50 to 150ms, with a little randomness thrown in for good measure, to give the controller a chance to recover from it's quirkiness.
+        const retry = async (): Promise<Nullable<Response>> => new Promise(res => setTimeout(() => res(this._retrieve(url, options, logErrors, decodeResponse, true)),
+          Math.floor(Math.random() * (150 - 50 + 1)) + 50));
+
         switch(error.code) {
 
           case "ECONNREFUSED":
-          case "ERR_HTTP2_STREAM_CANCEL":
+          case "EHOSTDOWN":
 
-            this.log.error("Connection refused.");
+            // Retry on connection refused, but no more than once.
+            if(!isRetry) {
+
+              return retry();
+            }
+
+            logError("Connection refused.");
 
             break;
 
           case "ECONNRESET":
+          case "ERR_HTTP2_STREAM_CANCEL":
+          case "ERR_HTTP2_STREAM_ERROR":
 
             // Retry on connection reset, but no more than once.
             if(!isRetry) {
 
-              return this._retrieve(url, options, logErrors, decodeResponse, true);
+              return retry();
             }
 
-            this.log.error("Network connection to Protect controller has been reset.");
+            logError("Network connection to Protect controller has been reset.");
 
             break;
 
           case "ENOTFOUND":
 
-            this.log.error("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.",
+            logError("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.",
               this.nvrAddress);
 
             break;
@@ -1109,10 +1103,7 @@ export class ProtectApi extends EventEmitter {
           default:
 
             // If we're logging when we have an error, do so.
-            if(logErrors) {
-
-              this.log.error("Error: %s %s.", error.code, error.message);
-            }
+            logError("Error: %s | %s.", error.code, error.message);
 
             break;
         }
@@ -1155,7 +1146,6 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  // Create a new livestream API instance.
   public createLivestream(): ProtectLivestream {
 
     return new ProtectLivestream(this, this.log);
@@ -1172,7 +1162,6 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  // Return the appropriate URL to access various Protect API endpoints.
   public getApiEndpoint(endpoint: string): string {
 
     let endpointSuffix;
@@ -1264,8 +1253,7 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  // Get the bootstrap JSON.
-  public get bootstrap(): ProtectNvrBootstrap | null {
+  public get bootstrap(): Nullable<ProtectNvrBootstrap> {
 
     return this._bootstrap;
   }
@@ -1277,10 +1265,21 @@ export class ProtectApi extends EventEmitter {
    *
    * @category Utilities
    */
-  // Return whether the logged in credentials are an admin user or not.
   public get isAdminUser(): boolean {
 
     return this._isAdminUser;
+  }
+
+  /**
+   * Utility method that returns whether our connection to the Protect controller is currently throttled or not.
+   *
+   * @returns Returns `true` if the API has returned too many errors and is now throttled for a period of time, `false` otherwise.
+   *
+   * @category Utilities
+   */
+  public get isThrottled(): boolean {
+
+    return this.apiErrorCount >= PROTECT_API_ERROR_LIMIT;
   }
 
   /**
@@ -1291,7 +1290,6 @@ export class ProtectApi extends EventEmitter {
    *
    * @category Utilities
    */
-  // Utility to generate a nicely formatted NVR string.
   public get name(): string {
 
     // Our NVR string, if it exists, appears as `NVR [NVR Type]`. Otherwise, we appear as `NVRaddress`.

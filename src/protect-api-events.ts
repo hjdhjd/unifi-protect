@@ -63,6 +63,7 @@
  *
  * @module ProtectApiEvents
  */
+import { Nullable } from "homebridge-plugin-utils";
 import { ProtectLogging } from "./protect-logging.js";
 import zlib from "node:zlib";
 
@@ -129,15 +130,17 @@ export type ProtectEventPacket = {
  * @param payload  - Protect event payload.
  *
  * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
- *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
- *   related to the device and action specified in the header.
+ *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to and can contain arbitrary information, though has
+ *   a few properties that are always present (`action`, `id`, `modelKey`, and `newUpdateId`). The `payload` contains the detailed information related to the device and
+ *   action specified in the header.
  */
 export type ProtectEventHeader = {
 
   action: string,
   id: string,
   modelKey: string,
-  newUpdateId: string
+  newUpdateId: string,
+  [key: string]: boolean | number | object | string
 };
 
 /**
@@ -161,7 +164,7 @@ export class ProtectApiEvents {
    * successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
    * {@link ProtectApi}.
    */
-  public static decodePacket(log: ProtectLogging, packet: Buffer): ProtectEventPacket | null {
+  public static decodePacket(log: ProtectLogging, packet: Buffer): Nullable<ProtectEventPacket> {
 
     // What we need to do here is to split this packet into the header and payload, and decode them.
 
@@ -199,7 +202,7 @@ export class ProtectApiEvents {
   }
 
   // Decode a frame, composed of a header and payload, received through the update events API.
-  private static decodeFrame(log: ProtectLogging, packet: Buffer, packetType: ProtectEventPacketType): Buffer | JSON | ProtectEventHeader | null | string {
+  private static decodeFrame(log: ProtectLogging, packet: Buffer, packetType: ProtectEventPacketType): Nullable<Buffer | JSON | ProtectEventHeader | string> {
 
     // Read the packet frame type.
     const frameType = packet.readUInt8(ProtectEventPacketHeader.TYPE) as ProtectEventPacketType;

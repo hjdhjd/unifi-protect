@@ -1,4 +1,4 @@
-[**unifi-protect**](README.md) • **Docs**
+[**unifi-protect**](README.md)
 
 ***
 
@@ -33,7 +33,7 @@ debug(message, ...parameters): void
 ###### Parameters
 
 | Parameter | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `message` | `string` |
 | ...`parameters` | `unknown`[] |
 
@@ -50,7 +50,7 @@ error(message, ...parameters): void
 ###### Parameters
 
 | Parameter | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `message` | `string` |
 | ...`parameters` | `unknown`[] |
 
@@ -67,7 +67,7 @@ info(message, ...parameters): void
 ###### Parameters
 
 | Parameter | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `message` | `string` |
 | ...`parameters` | `unknown`[] |
 
@@ -84,7 +84,7 @@ warn(message, ...parameters): void
 ###### Parameters
 
 | Parameter | Type |
-| :------ | :------ |
+| ------ | ------ |
 | `message` | `string` |
 | ...`parameters` | `unknown`[] |
 

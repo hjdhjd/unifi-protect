@@ -36,6 +36,7 @@ export interface ProtectNvrBootstrapInterface {
   lights: ProtectLightConfig[],
   liveviews: ProtectNvrLiveviewConfig[],
   nvr: ProtectNvrConfig,
+  ringtones: ProtectRingtoneConfigInterface[],
   sensors: ProtectSensorConfig[],
   users: ProtectNvrUserConfig[],
   viewers: ProtectViewerConfig[],
@@ -292,6 +293,7 @@ export interface ProtectCameraConfigInterface {
   currentResolution: string,
   displayName: string,
   elementInfo: null,
+  enableNfc: boolean,
   featureFlags: {
 
     audio: string[],
@@ -309,6 +311,7 @@ export interface ProtectCameraConfigInterface {
     hasChime: boolean,
     hasColorLcdScreen: boolean,
     hasExternalIr: boolean,
+    hasFingerprintSensor: boolean,
     hasFlash: boolean,
     hasHdr: boolean,
     hasIcrSensitivity: boolean,
@@ -351,6 +354,7 @@ export interface ProtectCameraConfigInterface {
     },
     isDoorbell: boolean,
     isPtz: boolean,
+    maxScaleDownLevel: number,
     motionAlgorithms: string[],
     privacyMaskCapability: {
       maxMasks: number,
@@ -359,12 +363,32 @@ export interface ProtectCameraConfigInterface {
     smartDetectAudioTypes: string[],
     smartDetectTypes: string[],
     supportDoorAccessConfig: boolean,
+    supportLpDetectionWithoutVehicle: boolean,
+    supportNfc: boolean,
     videoCodecs: string[],
     videoModeMaxFps: number[],
     videoModes: string[]
   },
+  fingerprintSettings: {
+
+    enable: boolean,
+    enablePrintLatency: boolean,
+    mode: string,
+    reportCaptureComplete: boolean,
+    reportFingerTouch: boolean
+  },
+  fingerprintState: {
+
+    fingerprintId: string,
+    free: number,
+    progress: string,
+    status: string,
+    total: number
+  },
   firmwareBuild: string,
   firmwareVersion: string,
+  fwUpdateState: string,
+  guid: string,
   hardwareRevision: string,
   hasRecordings: boolean,
   hasSpeaker: boolean,
@@ -395,7 +419,9 @@ export interface ProtectCameraConfigInterface {
   isLiveHeatmapEnabled: boolean,
   isManaged: boolean,
   isMicEnabled: boolean,
+  isMissingRecordingDetected: boolean,
   isMotionDetected: boolean,
+  isPairedWithAiPort: boolean,
   isPoorNetwork: boolean,
   isProbingForWifi: boolean,
   isProvisioned: boolean,
@@ -404,6 +430,7 @@ export interface ProtectCameraConfigInterface {
   isRestoring: boolean,
   isSmartDetected: boolean,
   isSshEnabled: boolean,
+  isThirdPartyCamera: boolean,
   isUpdating: boolean,
   isWaterproofCaseAttached: boolean,
   isWirelessUplinkEnabled: boolean,
@@ -420,6 +447,7 @@ export interface ProtectCameraConfigInterface {
     focusMode: string,
     focusPosition: number,
     hue: number,
+    icrCustomValue: number,
     icrSensitivity: number,
     irLedLevel: number,
     irLedMode: string,
@@ -467,6 +495,18 @@ export interface ProtectCameraConfigInterface {
   micVolume: number,
   modelKey: string
   name: string,
+  nfcSettings: {
+
+    enableNfc: boolean,
+    supportThirdPartyCard: boolean
+  },
+  nfcState: {
+
+    cardId: string,
+    isUACard: boolean,
+    lastSeen: number,
+    mode: string
+  },
   nvrMac: string,
   osdSettings: {
 
@@ -568,6 +608,7 @@ export interface ProtectCameraConfigInterface {
     sharedByUser: string | null,
     maxStreams: number | null
   },  
+  supportedScalingResolutions: string[],
   talkbackSettings: {
 
     bindAddr: string,
@@ -581,10 +622,28 @@ export interface ProtectCameraConfigInterface {
     quality: number,
     samplingRate: number
   },
+  thirdPartyCameraInfo: {
+
+    port: number,
+    rtspUrl: string,
+    rtspUrlLQ: string,
+    snapshotUrl: string
+  },
+  tiltLimitsOfPrivacyZones: {
+
+    limit: number,
+    side: string
+  },
   type: string,
   upSince: number,
+  uptime: number,
+  useGlobal: boolean,
   videoCodec: string,
+  videoCodecState: number,
+  videoCodecSwitchingSince: number,
   videoMode: string,
+  videoReconfigurationInProgress: boolean,
+  voltage: number,
   wifiConnectionState: {
 
     channel: number,
@@ -648,7 +707,9 @@ export interface ProtectChimeConfigInterface {
   elementInfo: string,
   featureFlags: {
 
-    hasWifi: boolean
+    hasHttpsClientOTA: boolean,
+    hasWifi: boolean,
+    supportCustomRingtone: boolean
   },
   firmwareBuild: string,
   firmwareVersion: string,
@@ -675,10 +736,31 @@ export interface ProtectChimeConfigInterface {
   marketName: string,
   modelKey: string,
   name: string,
+  nvrMac: string,
+  platform: string,
+  repeatTimes: number,
+  ringSettings: {
+
+    cameraId: string,
+    repeatTimes: number,
+    ringtoneId: string,
+    volume: number
+  }[],
+  speakerTrackList: {
+
+    md5: string,
+    name: string,
+    size: number,
+    state: string,
+    track_no: number,
+    volume: number
+  }[],
   state: string,
+  sysId: string,
   type: string,
   upSince: number,
   uptime: number,
+  userConfiguredAp: boolean,
   volume: number,
   wifiConnectionState: {
 
@@ -752,6 +834,7 @@ export interface ProtectLightConfigInterface {
   marketName: string,
   modelKey: string,
   name: string,
+  nvrMac: string,
   state: string,
   type: string,
   upSince: number,
@@ -903,6 +986,19 @@ export interface ProtectNvrSystemEventControllerInterface {
 }
 
 /**
+ * A semi-complete description of the UniFi Protect ringtone JSON.
+ */
+export interface ProtectRingtoneConfigInterface {
+
+  id: string,
+  isDefault: boolean,
+  modelKey: string,
+  name: string,
+  nvrMac: string,
+  size: number
+}
+
+/**
  * A semi-complete description of the UniFi Protect sensor JSON.
  */
 export interface ProtectSensorConfigInterface {
@@ -975,6 +1071,7 @@ export interface ProtectSensorConfigInterface {
   },
   mountType: string,
   name: string,
+  nvrMac: string,
   openStatusChangedAt: number,
   state: string,
   stats: {
@@ -1041,6 +1138,7 @@ export interface ProtectViewerConfigInterface {
   marketName: string,
   modelKey: string,
   name: string,
+  nvrMac: string,
   softwareVersion: string,
   state: string,
   streamLimit: number,
@@ -1059,7 +1157,10 @@ export interface ProtectViewerConfigInterface {
 export interface ProtectEventAddInterface {
 
   camera: string,
+  cameraId: string,
+  detectedAt: number,
   end: number,
+  eventId: string,
   id: string,
   metadata: ProtectEventMetadata,
   modelKey: string,
@@ -1068,6 +1169,7 @@ export interface ProtectEventAddInterface {
   smartDetectEvents: string[],
   smartDetectTypes: string[],
   start: number,
+  thumbnailId: string,
   type: string,
   user: string
 }
@@ -1081,6 +1183,10 @@ export interface ProtectEventMetadataInterface {
 
     text: string
   },
+  fingerprint: {
+
+    ulpId: string
+  },
   isLowBattery: boolean,
   isWireless: boolean,
   licensePlate: {
@@ -1091,6 +1197,11 @@ export interface ProtectEventMetadataInterface {
   name: {
 
     text: string
+  },
+  nfc: {
+
+    nfcId: string,
+    ulpId: string
   },
   reason: string
 }
@@ -1151,6 +1262,9 @@ export type ProtectNvrSystemEventController = ProtectNvrSystemEventControllerInt
 
 /** @see {@link ProtectNvrUserConfigInterface} */
 export type ProtectNvrUserConfig = ProtectNvrUserConfigInterface;
+
+/** @see {@link ProtectRingtoneConfigInterface} */
+export type ProtectRingtoneConfig = ProtectRingtoneConfigInterface;
 
 /** @see {@link ProtectSensorConfigInterface} */
 export type ProtectSensorConfig = ProtectSensorConfigInterface;

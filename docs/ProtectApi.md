@@ -1,4 +1,4 @@
-[**unifi-protect**](README.md) • **Docs**
+[**unifi-protect**](README.md)
 
 ***
 
@@ -31,7 +31,7 @@ Those are the basics that gets us up and running.
 
 - `EventEmitter`
 
-#### Constructor
+#### Constructors
 
 ##### new ProtectApi()
 
@@ -44,27 +44,29 @@ Create an instance of the UniFi Protect API.
 ###### Parameters
 
 | Parameter | Type | Description |
-| :------ | :------ | :------ |
+| ------ | ------ | ------ |
 | `log`? | [`ProtectLogging`](ProtectLogging.md#protectlogging) | Logging functions to use. |
 
 ###### Returns
 
 [`ProtectApi`](ProtectApi.md#protectapi)
 
-###### Overrides
-
-`EventEmitter.constructor`
-
 ###### Default Value
 
 `none` - Logging will be done to stdout and stderr.
+
+###### Overrides
+
+`EventEmitter.constructor`
 
 #### API Access
 
 ##### bootstrap
 
+###### Get Signature
+
 ```ts
-get bootstrap(): null | ProtectNvrBootstrapInterface
+get bootstrap(): Nullable<ProtectNvrBootstrapInterface>
 ```
 
 Access the Protect controller bootstrap JSON.
@@ -76,7 +78,7 @@ request to the Protect controller before accessing the bootstrap JSON.
 
 ###### Returns
 
-`null` \| [`ProtectNvrBootstrapInterface`](ProtectTypes.md#protectnvrbootstrapinterface)
+`Nullable`\<[`ProtectNvrBootstrapInterface`](ProtectTypes.md#protectnvrbootstrapinterface)\>
 
 Returns the bootstrap JSON if the Protect controller has been bootstrapped, `null` otherwise.
 
@@ -110,7 +112,7 @@ Return an API endpoint for the requested endpoint type.
 ###### Parameters
 
 | Parameter | Type | Description |
-| :------ | :------ | :------ |
+| ------ | ------ | ------ |
 | `endpoint` | `string` | Requested endpoint type. |
 
 ###### Returns
@@ -204,36 +206,38 @@ process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, so
 ##### getSnapshot()
 
 ```ts
-getSnapshot(
-   device, 
-   width?, 
-   height?, 
-   timestamp?, 
-usePackageCamera?): Promise<null | Buffer>
+getSnapshot(device, options): Promise<Nullable<Buffer<ArrayBufferLike>>>
 ```
 
 Retrieve a snapshot image from a Protect camera.
 
 ###### Parameters
 
-| Parameter | Type | Default value | Description |
-| :------ | :------ | :------ | :------ |
-| `device` | [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface) | `undefined` | Protect device. |
-| `width`? | `number` | `undefined` | Optionally specify the image width to request. Defaults selected by the Protect controller, based on the camera resolution. |
-| `height`? | `number` | `undefined` | Optionally specify the image height to request. Defaults selected by the Protect controller, based on the camera resolution. |
-| `timestamp`? | `number` | `undefined` | Optionally specify the timestamp index to retrieve. Defaults to the current time. |
-| `usePackageCamera`? | `boolean` | `false` | Optionally specify retrieving a snapshot fron the package camera, rather than the primary camera lens. Defaults to `false`. |
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `device` | [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface) | Protect device. |
+| `options` | `Partial`\<\{ `height`: `number`; `usePackageCamera`: `boolean`; `width`: `number`; \}\> | Parameters to pass on for the snapshot request. |
 
 ###### Returns
 
-`Promise`\<`null` \| `Buffer`\>
+`Promise`\<`Nullable`\<`Buffer`\<`ArrayBufferLike`\>\>\>
 
 Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
+
+###### Remarks
+
+The `options` object for snapshot parameters accepts the following properties, all of which are optional:
+
+| Property          | Description                                                                                                |
+|-------------------|------------------------------------------------------------------------------------------------------------|
+| height            | The image height to request. Defaults selected by the Protect controller, based on the camera resolution.  |
+| width             | The image width to request. Defaults selected by the Protect controller, based on the camera resolution.   |
+| usePackageCamera  | Retriver a snapshot fron the package camera rather than the primary camera lens. Defaults to `false`.      |
 
 ##### getWsEndpoint()
 
 ```ts
-getWsEndpoint(endpoint, params?): Promise<null | string>
+getWsEndpoint(endpoint, params?): Promise<Nullable<string>>
 ```
 
 Return a websocket API endpoint for the requested endpoint type.
@@ -241,13 +245,13 @@ Return a websocket API endpoint for the requested endpoint type.
 ###### Parameters
 
 | Parameter | Type | Description |
-| :------ | :------ | :------ |
+| ------ | ------ | ------ |
 | `endpoint` | `"livestream"` \| `"talkback"` | Requested endpoint type. Valid types are `livestream` and `talkback`. |
 | `params`? | `URLSearchParams` | Parameters to pass on for the endpoint request. |
 
 ###### Returns
 
-`Promise`\<`null` \| `string`\>
+`Promise`\<`Nullable`\<`string`\>\>
 
 Returns a promise that will resolve to a URL to the requested endpoint if successful, and `null` otherwise.
 
@@ -267,7 +271,7 @@ Valid API endpoints are `livestream` and `talkback`.
 retrieve(
    url, 
    options, 
-logErrors): Promise<null | Response>
+logErrors): Promise<Nullable<Response>>
 ```
 
 Execute an HTTP fetch request to the Protect controller.
@@ -275,14 +279,14 @@ Execute an HTTP fetch request to the Protect controller.
 ###### Parameters
 
 | Parameter | Type | Default value | Description |
-| :------ | :------ | :------ | :------ |
+| ------ | ------ | ------ | ------ |
 | `url` | `string` | `undefined` | Complete URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot). |
-| `options` | `RequestOptions` | `undefined` | Parameters to pass on for the endpoint request. |
+| `options` | `RequestOptions` | `...` | Parameters to pass on for the endpoint request. |
 | `logErrors` | `boolean` | `true` | Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`. |
 
 ###### Returns
 
-`Promise`\<`null` \| `Response`\>
+`Promise`\<`Nullable`\<`Response`\>\>
 
 Returns a promise that will resolve to a Response object successful, and `null` otherwise.
 
@@ -295,27 +299,27 @@ This method should be used when direct access to the Protect controller is neede
 ##### updateDevice()
 
 ```ts
-updateDevice<DeviceType>(device, payload): Promise<null | DeviceType>
+updateDevice<DeviceType>(device, payload): Promise<Nullable<DeviceType>>
 ```
 
 Update a Protect device's configuration on the UniFi Protect controller.
 
-###### Type parameters
+###### Type Parameters
 
-| Type parameter | Description |
-| :------ | :------ |
+| Type Parameter | Description |
+| ------ | ------ |
 | `DeviceType` *extends* [`ProtectKnownDeviceTypes`](ProtectApi.md#protectknowndevicetypes) | Generic for any known Protect device type. |
 
 ###### Parameters
 
 | Parameter | Type | Description |
-| :------ | :------ | :------ |
+| ------ | ------ | ------ |
 | `device` | `DeviceType` | Protect device. |
 | `payload` | [`ProtectKnownDevicePayloads`](ProtectApi.md#protectknowndevicepayloads) | Device configuration payload to upload, usually a subset of the device-specific configuration JSON. |
 
 ###### Returns
 
-`Promise`\<`null` \| `DeviceType`\>
+`Promise`\<`Nullable`\<`DeviceType`\>\>
 
 Returns a promise that will resolve to the updated device-specific configuration JSON if successful, and `null` otherwise.
 
@@ -327,6 +331,8 @@ Use this method to change the configuration of a given Protect device or control
 #### Utilities
 
 ##### isAdminUser
+
+###### Get Signature
 
 ```ts
 get isAdminUser(): boolean
@@ -340,7 +346,25 @@ Utility method that returns whether the credentials that were used to login to t
 
 Returns `true` if the logged in user has administrative privileges, `false` otherwise.
 
+##### isThrottled
+
+###### Get Signature
+
+```ts
+get isThrottled(): boolean
+```
+
+Utility method that returns whether our connection to the Protect controller is currently throttled or not.
+
+###### Returns
+
+`boolean`
+
+Returns `true` if the API has returned too many errors and is now throttled for a period of time, `false` otherwise.
+
 ##### name
+
+###### Get Signature
 
 ```ts
 get name(): string
@@ -358,7 +382,7 @@ Returns the Protect controller name in the following format:
 ##### enableRtsp()
 
 ```ts
-enableRtsp(device): Promise<null | ProtectCameraConfigInterface>
+enableRtsp(device): Promise<Nullable<ProtectCameraConfigInterface>>
 ```
 
 Utility method that enables all RTSP channels on a given Protect camera.
@@ -366,12 +390,12 @@ Utility method that enables all RTSP channels on a given Protect camera.
 ###### Parameters
 
 | Parameter | Type | Description |
-| :------ | :------ | :------ |
+| ------ | ------ | ------ |
 | `device` | [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface) | Protect camera to modify. |
 
 ###### Returns
 
-`Promise`\<`null` \| [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)\>
+`Promise`\<`Nullable`\<[`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)\>\>
 
 Returns a promise that will resolve to the updated [ProtectCameraConfig](ProtectTypes.md#protectcameraconfig) if successful, and `null` otherwise.
 
@@ -389,7 +413,7 @@ Utility method that generates a nicely formatted device information string.
 ###### Parameters
 
 | Parameter | Type | Default value | Description |
-| :------ | :------ | :------ | :------ |
+| ------ | ------ | ------ | ------ |
 | `device` | [`ProtectKnownDeviceTypes`](ProtectApi.md#protectknowndevicetypes) | `undefined` | Protect device. |
 | `name` | `string` | `device.name` | Optional name for the device. Defaults to the device type (e.g. `G4 Pro`). |
 | `deviceInfo` | `boolean` | `false` | Optionally specify whether or not to include the IP address and MAC address in the returned string. Defaults to `false`. |
@@ -416,7 +440,7 @@ Utility method that generates a combined, nicely formatted device and NVR string
 ###### Parameters
 
 | Parameter | Type | Description |
-| :------ | :------ | :------ |
+| ------ | ------ | ------ |
 | `device` | [`ProtectKnownDeviceTypes`](ProtectApi.md#protectknowndevicetypes) | Protect device. |
 
 ###### Returns
@@ -454,7 +478,7 @@ Execute a login attempt to the UniFi Protect API.
 ###### Parameters
 
 | Parameter | Type | Description |
-| :------ | :------ | :------ |
+| ------ | ------ | ------ |
 | `nvrAddress` | `string` | Address of the UniFi Protect controller, expressed as an FQDN or IP address. |
 | `username` | `string` | Username to use when logging into the controller. |
 | `password` | `string` | Password to use when logging into the controller. |
@@ -516,7 +540,7 @@ Clear the login credentials and terminate any open connection to the UniFi Prote
 ### ProtectKnownDevicePayloads
 
 ```ts
-type ProtectKnownDevicePayloads: 
+type ProtectKnownDevicePayloads = 
   | ProtectCameraConfigPayload
   | ProtectChimeConfigPayload
   | ProtectLightConfigPayload
@@ -532,7 +556,7 @@ Define our known Protect device payload types.
 ### ProtectKnownDeviceTypes
 
 ```ts
-type ProtectKnownDeviceTypes: 
+type ProtectKnownDeviceTypes = 
   | ProtectCameraConfig
   | ProtectChimeConfig
   | ProtectLightConfig
