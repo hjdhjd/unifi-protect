@@ -118,14 +118,14 @@ Returns a string containing the codec information,if it exists, or `null` otherw
 ###### Get Signature
 
 ```ts
-get initSegment(): null | Buffer<ArrayBufferLike>
+get initSegment(): Nullable<Buffer<ArrayBufferLike>>
 ```
 
 The initialization segment that must be at the start of every fMP4 stream.
 
 ###### Returns
 
-`null` \| `Buffer`\<`ArrayBufferLike`\>
+`Nullable`\<`Buffer`\<`ArrayBufferLike`\>\>
 
 Returns the initialization segment if it exists, or `null` otherwise.
 

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.18.0 (2024-12-08)
+  * Breaking change: the minimum supported node version is now node 20.
+  * Improvement: we've changed strategies to deal with Protect controller quirkiness/bugginess that results in network disconnects from the controller, while ensuring we have reasonable backpressure measures.
+  * Housekeeping.
+
 ## 4.17.0 (2024-12-08)
   * Minor updates to the Protect JSON descriptions.
   * Housekeeping.

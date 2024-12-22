@@ -1045,7 +1045,7 @@ A semi-complete description of the UniFi Protect viewer JSON.
 ### ProtectCameraChannelConfig
 
 ```ts
-type ProtectCameraChannelConfig: ProtectCameraChannelConfigInterface;
+type ProtectCameraChannelConfig = ProtectCameraChannelConfigInterface;
 ```
 
 #### See
@@ -1057,7 +1057,7 @@ type ProtectCameraChannelConfig: ProtectCameraChannelConfigInterface;
 ### ProtectCameraConfig
 
 ```ts
-type ProtectCameraConfig: ProtectCameraConfigInterface;
+type ProtectCameraConfig = ProtectCameraConfigInterface;
 ```
 
 #### See
@@ -1069,7 +1069,7 @@ type ProtectCameraConfig: ProtectCameraConfigInterface;
 ### ProtectCameraConfigPayload
 
 ```ts
-type ProtectCameraConfigPayload: DeepPartial<ProtectCameraConfigInterface>;
+type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterface>;
 ```
 
 #### See
@@ -1081,7 +1081,7 @@ type ProtectCameraConfigPayload: DeepPartial<ProtectCameraConfigInterface>;
 ### ProtectCameraLcdMessageConfig
 
 ```ts
-type ProtectCameraLcdMessageConfig: ProtectCameraLcdMessageConfigInterface;
+type ProtectCameraLcdMessageConfig = ProtectCameraLcdMessageConfigInterface;
 ```
 
 #### See
@@ -1093,7 +1093,7 @@ type ProtectCameraLcdMessageConfig: ProtectCameraLcdMessageConfigInterface;
 ### ProtectCameraLcdMessagePayload
 
 ```ts
-type ProtectCameraLcdMessagePayload: DeepPartial<ProtectCameraLcdMessageConfigInterface>;
+type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
 ```
 
 #### See
@@ -1105,7 +1105,7 @@ type ProtectCameraLcdMessagePayload: DeepPartial<ProtectCameraLcdMessageConfigIn
 ### ProtectChimeConfig
 
 ```ts
-type ProtectChimeConfig: ProtectChimeConfigInterface;
+type ProtectChimeConfig = ProtectChimeConfigInterface;
 ```
 
 #### See
@@ -1117,7 +1117,7 @@ type ProtectChimeConfig: ProtectChimeConfigInterface;
 ### ProtectChimeConfigPayload
 
 ```ts
-type ProtectChimeConfigPayload: DeepPartial<ProtectChimeConfigInterface>;
+type ProtectChimeConfigPayload = DeepPartial<ProtectChimeConfigInterface>;
 ```
 
 #### See
@@ -1129,7 +1129,7 @@ type ProtectChimeConfigPayload: DeepPartial<ProtectChimeConfigInterface>;
 ### ProtectEventAdd
 
 ```ts
-type ProtectEventAdd: ProtectEventAddInterface;
+type ProtectEventAdd = ProtectEventAddInterface;
 ```
 
 #### See
@@ -1141,7 +1141,7 @@ type ProtectEventAdd: ProtectEventAddInterface;
 ### ProtectEventMetadata
 
 ```ts
-type ProtectEventMetadata: ProtectEventMetadataInterface;
+type ProtectEventMetadata = ProtectEventMetadataInterface;
 ```
 
 #### See
@@ -1153,7 +1153,7 @@ type ProtectEventMetadata: ProtectEventMetadataInterface;
 ### ProtectLightConfig
 
 ```ts
-type ProtectLightConfig: ProtectLightConfigInterface;
+type ProtectLightConfig = ProtectLightConfigInterface;
 ```
 
 #### See
@@ -1165,7 +1165,7 @@ type ProtectLightConfig: ProtectLightConfigInterface;
 ### ProtectLightConfigPayload
 
 ```ts
-type ProtectLightConfigPayload: DeepPartial<ProtectLightConfigInterface>;
+type ProtectLightConfigPayload = DeepPartial<ProtectLightConfigInterface>;
 ```
 
 #### See
@@ -1177,7 +1177,7 @@ type ProtectLightConfigPayload: DeepPartial<ProtectLightConfigInterface>;
 ### ProtectNvrBootstrap
 
 ```ts
-type ProtectNvrBootstrap: ProtectNvrBootstrapInterface;
+type ProtectNvrBootstrap = ProtectNvrBootstrapInterface;
 ```
 
 #### See
@@ -1189,7 +1189,7 @@ type ProtectNvrBootstrap: ProtectNvrBootstrapInterface;
 ### ProtectNvrConfig
 
 ```ts
-type ProtectNvrConfig: ProtectNvrConfigInterface;
+type ProtectNvrConfig = ProtectNvrConfigInterface;
 ```
 
 #### See
@@ -1201,7 +1201,7 @@ type ProtectNvrConfig: ProtectNvrConfigInterface;
 ### ProtectNvrConfigPayload
 
 ```ts
-type ProtectNvrConfigPayload: DeepPartial<ProtectNvrConfigInterface>;
+type ProtectNvrConfigPayload = DeepPartial<ProtectNvrConfigInterface>;
 ```
 
 #### See
@@ -1213,7 +1213,7 @@ type ProtectNvrConfigPayload: DeepPartial<ProtectNvrConfigInterface>;
 ### ProtectNvrLiveviewConfig
 
 ```ts
-type ProtectNvrLiveviewConfig: ProtectNvrLiveviewConfigInterface;
+type ProtectNvrLiveviewConfig = ProtectNvrLiveviewConfigInterface;
 ```
 
 #### See
@@ -1225,7 +1225,7 @@ type ProtectNvrLiveviewConfig: ProtectNvrLiveviewConfigInterface;
 ### ProtectNvrSystemEvent
 
 ```ts
-type ProtectNvrSystemEvent: ProtectNvrSystemEventInterface;
+type ProtectNvrSystemEvent = ProtectNvrSystemEventInterface;
 ```
 
 #### See
@@ -1237,7 +1237,7 @@ type ProtectNvrSystemEvent: ProtectNvrSystemEventInterface;
 ### ProtectNvrSystemEventController
 
 ```ts
-type ProtectNvrSystemEventController: ProtectNvrSystemEventControllerInterface;
+type ProtectNvrSystemEventController = ProtectNvrSystemEventControllerInterface;
 ```
 
 #### See
@@ -1249,7 +1249,7 @@ type ProtectNvrSystemEventController: ProtectNvrSystemEventControllerInterface;
 ### ProtectNvrSystemInfoConfig
 
 ```ts
-type ProtectNvrSystemInfoConfig: ProtectNvrSystemInfoInterface;
+type ProtectNvrSystemInfoConfig = ProtectNvrSystemInfoInterface;
 ```
 
 #### See
@@ -1261,7 +1261,7 @@ type ProtectNvrSystemInfoConfig: ProtectNvrSystemInfoInterface;
 ### ProtectNvrUserConfig
 
 ```ts
-type ProtectNvrUserConfig: ProtectNvrUserConfigInterface;
+type ProtectNvrUserConfig = ProtectNvrUserConfigInterface;
 ```
 
 #### See
@@ -1273,7 +1273,7 @@ type ProtectNvrUserConfig: ProtectNvrUserConfigInterface;
 ### ProtectRingtoneConfig
 
 ```ts
-type ProtectRingtoneConfig: ProtectRingtoneConfigInterface;
+type ProtectRingtoneConfig = ProtectRingtoneConfigInterface;
 ```
 
 #### See
@@ -1285,7 +1285,7 @@ type ProtectRingtoneConfig: ProtectRingtoneConfigInterface;
 ### ProtectSensorConfig
 
 ```ts
-type ProtectSensorConfig: ProtectSensorConfigInterface;
+type ProtectSensorConfig = ProtectSensorConfigInterface;
 ```
 
 #### See
@@ -1297,7 +1297,7 @@ type ProtectSensorConfig: ProtectSensorConfigInterface;
 ### ProtectSensorConfigPayload
 
 ```ts
-type ProtectSensorConfigPayload: DeepPartial<ProtectSensorConfigInterface>;
+type ProtectSensorConfigPayload = DeepPartial<ProtectSensorConfigInterface>;
 ```
 
 #### See
@@ -1309,7 +1309,7 @@ type ProtectSensorConfigPayload: DeepPartial<ProtectSensorConfigInterface>;
 ### ProtectViewerConfig
 
 ```ts
-type ProtectViewerConfig: ProtectViewerConfigInterface;
+type ProtectViewerConfig = ProtectViewerConfigInterface;
 ```
 
 #### See
@@ -1321,7 +1321,7 @@ type ProtectViewerConfig: ProtectViewerConfigInterface;
 ### ProtectViewerConfigPayload
 
 ```ts
-type ProtectViewerConfigPayload: DeepPartial<ProtectViewerConfigInterface>;
+type ProtectViewerConfigPayload = DeepPartial<ProtectViewerConfigInterface>;
 ```
 
 #### See

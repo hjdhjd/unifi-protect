@@ -74,7 +74,7 @@ UniFi Protect event utility class that provides functions for decoding realtime 
 ##### decodePacket()
 
 ```ts
-static decodePacket(log, packet): null | ProtectEventPacket
+static decodePacket(log, packet): Nullable<ProtectEventPacket>
 ```
 
 Decode a UniFi Protect event packet.
@@ -88,7 +88,7 @@ Decode a UniFi Protect event packet.
 
 ###### Returns
 
-`null` \| [`ProtectEventPacket`](ProtectApiEvents.md#protecteventpacket)
+`Nullable`\<[`ProtectEventPacket`](ProtectApiEvents.md#protecteventpacket)\>
 
 ###### Remarks
 
@@ -102,7 +102,7 @@ successfully logged into the Protect controller, events are generated automatica
 ### ProtectEventHeader
 
 ```ts
-type ProtectEventHeader: {
+type ProtectEventHeader = {
 [key: string]: string | number | boolean | object;   action: string;
   id: string;
   modelKey: string;
@@ -145,7 +145,7 @@ A UniFi Protect event packet represents a realtime event update from a UniFi Pro
 ### ProtectEventPacket
 
 ```ts
-type ProtectEventPacket: {
+type ProtectEventPacket = {
   header: ProtectEventHeader;
   payload: unknown;
 };

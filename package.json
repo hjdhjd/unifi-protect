@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "module",
-  "version": "4.17.0",
+  "version": "4.18.0",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {
@@ -48,7 +48,7 @@
     "rtsp"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "bin": {
     "ufp": "dist/util/ufp.js"
@@ -64,17 +64,17 @@
     "test": "eslint src/**.ts"
   },
   "devDependencies": {
-    "@stylistic/eslint-plugin": "2.11.0",
-    "@types/node": "22.10.1",
+    "@stylistic/eslint-plugin": "2.12.1",
+    "@types/node": "22.10.2",
     "@types/ws": "8.5.13",
-    "eslint": "9.16.0",
+    "eslint": "9.17.0",
     "homebridge": "1.8.4",
-    "homebridge-plugin-utils": "^1.11.3",
+    "homebridge-plugin-utils": "^1.12.0",
     "shx": "0.3.4",
-    "typedoc": "0.27.4",
-    "typedoc-plugin-markdown": "4.3.2",
+    "typedoc": "0.27.5",
+    "typedoc-plugin-markdown": "4.3.3",
     "typescript": "5.7.2",
-    "typescript-eslint": "8.17.0"
+    "typescript-eslint": "8.18.1"
   },
   "dependencies": {
     "@adobe/fetch": "4.1.11",

@@ -66,7 +66,7 @@ Create an instance of the UniFi Protect API.
 ###### Get Signature
 
 ```ts
-get bootstrap(): null | ProtectNvrBootstrapInterface
+get bootstrap(): Nullable<ProtectNvrBootstrapInterface>
 ```
 
 Access the Protect controller bootstrap JSON.
@@ -78,7 +78,7 @@ request to the Protect controller before accessing the bootstrap JSON.
 
 ###### Returns
 
-`null` \| [`ProtectNvrBootstrapInterface`](ProtectTypes.md#protectnvrbootstrapinterface)
+`Nullable`\<[`ProtectNvrBootstrapInterface`](ProtectTypes.md#protectnvrbootstrapinterface)\>
 
 Returns the bootstrap JSON if the Protect controller has been bootstrapped, `null` otherwise.
 
@@ -206,7 +206,7 @@ process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, so
 ##### getSnapshot()
 
 ```ts
-getSnapshot(device, options): Promise<null | Buffer<ArrayBufferLike>>
+getSnapshot(device, options): Promise<Nullable<Buffer<ArrayBufferLike>>>
 ```
 
 Retrieve a snapshot image from a Protect camera.
@@ -220,7 +220,7 @@ Retrieve a snapshot image from a Protect camera.
 
 ###### Returns
 
-`Promise`\<`null` \| `Buffer`\<`ArrayBufferLike`\>\>
+`Promise`\<`Nullable`\<`Buffer`\<`ArrayBufferLike`\>\>\>
 
 Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
 
@@ -237,7 +237,7 @@ The `options` object for snapshot parameters accepts the following properties, a
 ##### getWsEndpoint()
 
 ```ts
-getWsEndpoint(endpoint, params?): Promise<null | string>
+getWsEndpoint(endpoint, params?): Promise<Nullable<string>>
 ```
 
 Return a websocket API endpoint for the requested endpoint type.
@@ -251,7 +251,7 @@ Return a websocket API endpoint for the requested endpoint type.
 
 ###### Returns
 
-`Promise`\<`null` \| `string`\>
+`Promise`\<`Nullable`\<`string`\>\>
 
 Returns a promise that will resolve to a URL to the requested endpoint if successful, and `null` otherwise.
 
@@ -271,7 +271,7 @@ Valid API endpoints are `livestream` and `talkback`.
 retrieve(
    url, 
    options, 
-logErrors): Promise<null | Response>
+logErrors): Promise<Nullable<Response>>
 ```
 
 Execute an HTTP fetch request to the Protect controller.
@@ -286,7 +286,7 @@ Execute an HTTP fetch request to the Protect controller.
 
 ###### Returns
 
-`Promise`\<`null` \| `Response`\>
+`Promise`\<`Nullable`\<`Response`\>\>
 
 Returns a promise that will resolve to a Response object successful, and `null` otherwise.
 
@@ -299,7 +299,7 @@ This method should be used when direct access to the Protect controller is neede
 ##### updateDevice()
 
 ```ts
-updateDevice<DeviceType>(device, payload): Promise<null | DeviceType>
+updateDevice<DeviceType>(device, payload): Promise<Nullable<DeviceType>>
 ```
 
 Update a Protect device's configuration on the UniFi Protect controller.
@@ -319,7 +319,7 @@ Update a Protect device's configuration on the UniFi Protect controller.
 
 ###### Returns
 
-`Promise`\<`null` \| `DeviceType`\>
+`Promise`\<`Nullable`\<`DeviceType`\>\>
 
 Returns a promise that will resolve to the updated device-specific configuration JSON if successful, and `null` otherwise.
 
@@ -382,7 +382,7 @@ Returns the Protect controller name in the following format:
 ##### enableRtsp()
 
 ```ts
-enableRtsp(device): Promise<null | ProtectCameraConfigInterface>
+enableRtsp(device): Promise<Nullable<ProtectCameraConfigInterface>>
 ```
 
 Utility method that enables all RTSP channels on a given Protect camera.
@@ -395,7 +395,7 @@ Utility method that enables all RTSP channels on a given Protect camera.
 
 ###### Returns
 
-`Promise`\<`null` \| [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)\>
+`Promise`\<`Nullable`\<[`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)\>\>
 
 Returns a promise that will resolve to the updated [ProtectCameraConfig](ProtectTypes.md#protectcameraconfig) if successful, and `null` otherwise.
 
@@ -540,7 +540,7 @@ Clear the login credentials and terminate any open connection to the UniFi Prote
 ### ProtectKnownDevicePayloads
 
 ```ts
-type ProtectKnownDevicePayloads: 
+type ProtectKnownDevicePayloads = 
   | ProtectCameraConfigPayload
   | ProtectChimeConfigPayload
   | ProtectLightConfigPayload
@@ -556,7 +556,7 @@ Define our known Protect device payload types.
 ### ProtectKnownDeviceTypes
 
 ```ts
-type ProtectKnownDeviceTypes: 
+type ProtectKnownDeviceTypes = 
   | ProtectCameraConfig
   | ProtectChimeConfig
   | ProtectLightConfig

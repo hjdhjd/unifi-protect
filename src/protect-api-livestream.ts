@@ -43,6 +43,7 @@
  */
 /* eslint-enable @stylistic/max-len */
 import events, { EventEmitter } from "node:events";
+import { Nullable } from "homebridge-plugin-utils";
 import { PROTECT_API_TIMEOUT } from "./settings.js";
 import { ProtectApi } from "./protect-api.js";
 import { ProtectLogging } from "./protect-logging.js";
@@ -79,15 +80,15 @@ enum ProtectLiveFrame {
  */
 export class ProtectLivestream extends EventEmitter {
 
-  private _initSegment: Buffer | null;
-  private _codec: string | null;
+  private _initSegment: Nullable<Buffer>;
+  private _codec: Nullable<string>;
   private api: ProtectApi;
-  private errorHandler: ((error: Error) => void) | null;
-  private heartbeat: NodeJS.Timeout | null;
+  private errorHandler: Nullable<(error: Error) => void>;
+  private heartbeat: Nullable<NodeJS.Timeout>;
   private lastMessage: number;
   private log: ProtectLogging;
-  private segmentHandler: ((packet: Buffer) => void) | null;
-  private ws: WebSocket | null;
+  private segmentHandler: Nullable<(packet: Buffer) => void>;
+  private ws: Nullable<WebSocket>;
 
   // Create a new instance.
   constructor(api: ProtectApi, log: ProtectLogging) {
@@ -231,7 +232,7 @@ export class ProtectLivestream extends EventEmitter {
       }
 
       // Setup our heartbeat timer.
-      let heartbeat: NodeJS.Timeout | null = null;
+      let heartbeat: Nullable<NodeJS.Timeout> = null;
 
       // Start our heartbeat once we've opened the connection.
       this.ws?.once("open", () => {
@@ -506,7 +507,7 @@ export class ProtectLivestream extends EventEmitter {
    *
    * @returns Returns the initialization segment if it exists, or `null` otherwise.
    */
-  public get initSegment(): Buffer | null {
+  public get initSegment(): Nullable<Buffer> {
 
     return this._initSegment;
   }
