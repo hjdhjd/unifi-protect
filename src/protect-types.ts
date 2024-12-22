@@ -54,6 +54,16 @@ export interface ProtectNvrConfigInterface {
   avgMotions: number[],
   cameraUtilization: number,
   canAutoUpdate: boolean,
+  cameraCapacity: {
+
+    state: string,
+    qualities: {
+
+      type: string,
+      count: number,
+      fraction: number
+    }[]
+  },  
   consoleEnv: string,
   corruptionState: string,
   countryCode: string,
@@ -324,6 +334,21 @@ export interface ProtectCameraConfigInterface {
     hasSquareEventThumbnail: boolean,
     hasVerticalFlip: boolean,
     hasWifi: boolean,
+    hotplug: {
+
+      audio: string | null
+      video: string | null
+      standaloneAdoption: boolean
+      extender: {
+        isAttached: boolean
+        hasFlash: boolean
+        flashRange: number
+        hasIR: boolean
+        hasRadar: boolean
+        radarRangeMax: number
+        radarRangeMin: number
+      }
+    },
     isDoorbell: boolean,
     isPtz: boolean,
     motionAlgorithms: string[],
@@ -533,6 +558,16 @@ export interface ProtectCameraConfigInterface {
     wifiQuality: number,
     wifiStrength: number
   },
+  streamSharing: {
+
+    enabled: boolean,
+    token: string | null,
+    shareLink: string | null,
+    expires: number | null,
+    sharedByUserId: string | null,
+    sharedByUser: string | null,
+    maxStreams: number | null
+  },  
   talkbackSettings: {
 
     bindAddr: string,
@@ -754,7 +789,18 @@ export interface ProtectNvrUserConfigInterface {
 
   alertRules: unknown[],
   allPermissions: string[],
-  cloudAccount: string,
+  cloudAccount: {
+
+    firstName: string,
+    lastName: string,
+    email: string,
+    profileImg: string,
+    user: string,
+    id: string,
+    cloudId: string,
+    name: string,
+    modelKey: string
+  },
   email: string,
   enableNotifications: boolean,
   firstName: string,
