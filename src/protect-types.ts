@@ -1025,9 +1025,12 @@ export interface ProtectSensorConfigInterface {
   canAdopt: boolean,
   connectedSince: number,
   connectionHost: string,
+  displayName: string,
   firmwareBuild: string,
   firmwareVersion: string,
+  fwUpdateState: string,
   hardwareRevision: string,
+  host: string,
   humiditySettings: {
 
     highThreshold: number,
@@ -1041,12 +1044,15 @@ export interface ProtectSensorConfigInterface {
   isAdopting: boolean,
   isAttemptingToConnect: boolean,
   isConnected: boolean,
+  isDownloadingFW: boolean,
   isMotionDetected: boolean,
   isOpened: boolean,
   isProvisioned: boolean,
   isRebooting: boolean,
+  isRestoring: boolean,
   isSshEnabled: boolean,
   isUpdating: boolean,
+  lastDisconnect: number,
   lastSeen: number,
   latestFirmwareVersion: string,
   leakDetectedAt: number,
@@ -1104,6 +1110,20 @@ export interface ProtectSensorConfigInterface {
   type: string,
   upSince: number,
   uptime: number,
+  wifiConnectionState: {
+
+    apName: string | null,
+    bssid: string | null,
+    channel: string | null,
+    connectivity: string,
+    experience: null,
+    frequency: null,
+    phyRate: number,
+    signalQuality: number,
+    signalStrength: number,
+    ssid: string | null,
+    txRate: null
+  }, 
   wiredConnectionState: {
 
     phyRate: number
