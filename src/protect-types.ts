@@ -53,6 +53,16 @@ export interface ProtectNvrConfigInterface {
   anonymouseDeviceId: string,
   availableUpdate: string,
   avgMotions: number[],
+  cameraCapacity: {
+
+    state: string,
+    qualities: {
+
+      type: string,
+      count: number,
+      fraction: number
+    }[]
+  },
   cameraUtilization: number,
   canAutoUpdate: boolean,
   consoleEnv: string,
@@ -422,6 +432,22 @@ export interface ProtectCameraConfigInterface {
     focusMode: string,
     focusPosition: number,
     hue: number,
+    hotplug: {
+
+      audio: string | null
+      video: string | null
+      standaloneAdoption: boolean
+      extender: {
+
+        isAttached: boolean
+        hasFlash: boolean
+        flashRange: number
+        hasIR: boolean
+        hasRadar: boolean
+        radarRangeMax: number
+        radarRangeMin: number
+      }
+    },
     icrCustomValue: number,
     icrSensitivity: number,
     irLedLevel: number,
@@ -572,6 +598,16 @@ export interface ProtectCameraConfigInterface {
     },
     wifiQuality: number,
     wifiStrength: number
+  },
+  streamSharing: {
+
+    enabled: boolean,
+    token: string | null,
+    shareLink: string | null,
+    expires: number | null,
+    sharedByUserId: string | null,
+    sharedByUser: string | null,
+    maxStreams: number | null
   },
   supportedScalingResolutions: string[],
   talkbackSettings: {
@@ -837,7 +873,18 @@ export interface ProtectNvrUserConfigInterface {
 
   alertRules: unknown[],
   allPermissions: string[],
-  cloudAccount: string,
+  cloudAccount: {
+
+    firstName: string,
+    lastName: string,
+    email: string,
+    profileImg: string,
+    user: string,
+    id: string,
+    cloudId: string,
+    name: string,
+    modelKey: string
+  },
   email: string,
   enableNotifications: boolean,
   firstName: string,
