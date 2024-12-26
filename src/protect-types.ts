@@ -1123,7 +1123,7 @@ export interface ProtectSensorConfigInterface {
     signalStrength: number,
     ssid: string | null,
     txRate: null
-  }, 
+  },
   wiredConnectionState: {
 
     phyRate: number
