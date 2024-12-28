@@ -173,7 +173,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `isPoorNetwork` | `boolean` |
 | `isProbingForWifi` | `boolean` |
 | `isProvisioned` | `boolean` |
-| `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `denoise`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hue`: `number`; `icrCustomValue`: `number`; `icrSensitivity`: `number`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `saturation`: `number`; `sharpness`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} |
+| `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `denoise`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hotplug`: \{ `audio`: `Nullable`\<`string`\>; `extender`: \{ `flashRange`: `number`; `hasFlash`: `boolean`; `hasIR`: `boolean`; `hasRadar`: `boolean`; `isAttached`: `boolean`; `radarRangeMax`: `number`; `radarRangeMin`: `number`; \}; `standaloneAdoption`: `boolean`; `video`: `Nullable`\<`string`\>; \}; `hue`: `number`; `icrCustomValue`: `number`; `icrSensitivity`: `number`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `saturation`: `number`; `sharpness`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} |
 | `ispSettings.aeMode` | `string` |
 | `ispSettings.brightness` | `number` |
 | `ispSettings.contrast` | `number` |
@@ -184,6 +184,18 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `ispSettings.dZoomStreamId` | `number` |
 | `ispSettings.focusMode` | `string` |
 | `ispSettings.focusPosition` | `number` |
+| `ispSettings.hotplug` | \{ `audio`: `Nullable`\<`string`\>; `extender`: \{ `flashRange`: `number`; `hasFlash`: `boolean`; `hasIR`: `boolean`; `hasRadar`: `boolean`; `isAttached`: `boolean`; `radarRangeMax`: `number`; `radarRangeMin`: `number`; \}; `standaloneAdoption`: `boolean`; `video`: `Nullable`\<`string`\>; \} |
+| `ispSettings.hotplug.audio` | `Nullable`\<`string`\> |
+| `ispSettings.hotplug.extender` | \{ `flashRange`: `number`; `hasFlash`: `boolean`; `hasIR`: `boolean`; `hasRadar`: `boolean`; `isAttached`: `boolean`; `radarRangeMax`: `number`; `radarRangeMin`: `number`; \} |
+| `ispSettings.hotplug.extender.flashRange` | `number` |
+| `ispSettings.hotplug.extender.hasFlash` | `boolean` |
+| `ispSettings.hotplug.extender.hasIR` | `boolean` |
+| `ispSettings.hotplug.extender.hasRadar` | `boolean` |
+| `ispSettings.hotplug.extender.isAttached` | `boolean` |
+| `ispSettings.hotplug.extender.radarRangeMax` | `number` |
+| `ispSettings.hotplug.extender.radarRangeMin` | `number` |
+| `ispSettings.hotplug.standaloneAdoption` | `boolean` |
+| `ispSettings.hotplug.video` | `Nullable`\<`string`\> |
 | `ispSettings.hue` | `number` |
 | `ispSettings.icrCustomValue` | `number` |
 | `ispSettings.icrSensitivity` | `number` |
@@ -213,14 +225,14 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `isWaterproofCaseAttached` | `boolean` |
 | `isWirelessUplinkEnabled` | `boolean` |
 | `lastMotion` | `number` |
-| `lastRing` | `null` \| `number` |
+| `lastRing` | `Nullable`\<`number`\> |
 | `lastSeen` | `number` |
 | `latestFirmwareVersion` | `string` |
 | `lcdMessage` | [`ProtectCameraLcdMessageConfigInterface`](ProtectTypes.md#protectcameralcdmessageconfiginterface) |
 | `ledSettings` | \{ `blinkRate`: `number`; `isEnabled`: `boolean`; \} |
 | `ledSettings.blinkRate` | `number` |
 | `ledSettings.isEnabled` | `boolean` |
-| `lenses` | \{ `id`: `number`; `video`: \{ `recordingEnd`: `null` \| `number`; `recordingEndLQ`: `null` \| `number`; `recordingStart`: `null` \| `number`; `recordingStartLQ`: `null` \| `number`; `timelapseEnd`: `null` \| `number`; `timelapseEndLQ`: `null` \| `number`; `timelapseStart`: `null` \| `number`; `timelapseStartLQ`: `null` \| `number`; \}; \}[] |
+| `lenses` | \{ `id`: `number`; `video`: \{ `recordingEnd`: `Nullable`\<`number`\>; `recordingEndLQ`: `Nullable`\<`number`\>; `recordingStart`: `Nullable`\<`number`\>; `recordingStartLQ`: `Nullable`\<`number`\>; `timelapseEnd`: `Nullable`\<`number`\>; `timelapseEndLQ`: `Nullable`\<`number`\>; `timelapseStart`: `Nullable`\<`number`\>; `timelapseStartLQ`: `Nullable`\<`number`\>; \}; \}[] |
 | `mac` | `string` |
 | `marketName` | `string` |
 | `micVolume` | `number` |
@@ -248,7 +260,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `pirSettings.timelapseTransferInterval` | `number` |
 | `platform` | `string` |
 | `recordingSchedule` | `null` |
-| `recordingSettings` | \{ `enablePirTimelapse`: `boolean`; `endMotionEventDelay`: `number`; `geofencing`: `string`; `minMotionEventTrigger`: `number`; `mode`: `string`; `postPaddingSecs`: `number`; `prePaddingSecs`: `number`; `retentionDurationMs`: `null` \| `number`; `suppressIlluminationSurge`: `boolean`; `useNewMotionAlgorithm`: `boolean`; \} |
+| `recordingSettings` | \{ `enablePirTimelapse`: `boolean`; `endMotionEventDelay`: `number`; `geofencing`: `string`; `minMotionEventTrigger`: `number`; `mode`: `string`; `postPaddingSecs`: `number`; `prePaddingSecs`: `number`; `retentionDurationMs`: `Nullable`\<`number`\>; `suppressIlluminationSurge`: `boolean`; `useNewMotionAlgorithm`: `boolean`; \} |
 | `recordingSettings.enablePirTimelapse` | `boolean` |
 | `recordingSettings.endMotionEventDelay` | `number` |
 | `recordingSettings.geofencing` | `string` |
@@ -256,7 +268,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `recordingSettings.mode` | `string` |
 | `recordingSettings.postPaddingSecs` | `number` |
 | `recordingSettings.prePaddingSecs` | `number` |
-| `recordingSettings.retentionDurationMs` | `null` \| `number` |
+| `recordingSettings.retentionDurationMs` | `Nullable`\<`number`\> |
 | `recordingSettings.suppressIlluminationSurge` | `boolean` |
 | `recordingSettings.useNewMotionAlgorithm` | `boolean` |
 | `smartDetectLines` | [] |
@@ -271,10 +283,10 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `speakerSettings.isEnabled` | `boolean` |
 | `speakerSettings.volume` | `number` |
 | `state` | `string` |
-| `stats` | \{ `battery`: \{ `isCharging`: `boolean`; `percentage`: `null` \| `number`; `sleepState`: `string`; \}; `rxBytes`: `number`; `storage`: \{ `rate`: `number`; `used`: `number`; \}; `txBytes`: `number`; `video`: \{ `recordingEnd`: `number`; `recordingEndLQ`: `number`; `recordingStart`: `number`; `recordingStartLQ`: `number`; `timelapseEnd`: `number`; `timelapseEndLQ`: `number`; `timelapseStart`: `number`; `timelapseStartLQ`: `number`; \}; `wifi`: \{ `channel`: `null` \| `number`; `frequency`: `null` \| `number`; `linkSpeedMbps`: `null` \| `number`; `signalQuality`: `number`; `signalStrength`: `number`; \}; `wifiQuality`: `number`; `wifiStrength`: `number`; \} |
-| `stats.battery` | \{ `isCharging`: `boolean`; `percentage`: `null` \| `number`; `sleepState`: `string`; \} |
+| `stats` | \{ `battery`: \{ `isCharging`: `boolean`; `percentage`: `Nullable`\<`number`\>; `sleepState`: `string`; \}; `rxBytes`: `number`; `storage`: \{ `rate`: `number`; `used`: `number`; \}; `txBytes`: `number`; `video`: \{ `recordingEnd`: `number`; `recordingEndLQ`: `number`; `recordingStart`: `number`; `recordingStartLQ`: `number`; `timelapseEnd`: `number`; `timelapseEndLQ`: `number`; `timelapseStart`: `number`; `timelapseStartLQ`: `number`; \}; `wifi`: \{ `channel`: `Nullable`\<`number`\>; `frequency`: `Nullable`\<`number`\>; `linkSpeedMbps`: `Nullable`\<`number`\>; `signalQuality`: `number`; `signalStrength`: `number`; \}; `wifiQuality`: `number`; `wifiStrength`: `number`; \} |
+| `stats.battery` | \{ `isCharging`: `boolean`; `percentage`: `Nullable`\<`number`\>; `sleepState`: `string`; \} |
 | `stats.battery.isCharging` | `boolean` |
-| `stats.battery.percentage` | `null` \| `number` |
+| `stats.battery.percentage` | `Nullable`\<`number`\> |
 | `stats.battery.sleepState` | `string` |
 | `stats.rxBytes` | `number` |
 | `stats.storage` | \{ `rate`: `number`; `used`: `number`; \} |
@@ -290,14 +302,22 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `stats.video.timelapseEndLQ` | `number` |
 | `stats.video.timelapseStart` | `number` |
 | `stats.video.timelapseStartLQ` | `number` |
-| `stats.wifi` | \{ `channel`: `null` \| `number`; `frequency`: `null` \| `number`; `linkSpeedMbps`: `null` \| `number`; `signalQuality`: `number`; `signalStrength`: `number`; \} |
-| `stats.wifi.channel` | `null` \| `number` |
-| `stats.wifi.frequency` | `null` \| `number` |
-| `stats.wifi.linkSpeedMbps` | `null` \| `number` |
+| `stats.wifi` | \{ `channel`: `Nullable`\<`number`\>; `frequency`: `Nullable`\<`number`\>; `linkSpeedMbps`: `Nullable`\<`number`\>; `signalQuality`: `number`; `signalStrength`: `number`; \} |
+| `stats.wifi.channel` | `Nullable`\<`number`\> |
+| `stats.wifi.frequency` | `Nullable`\<`number`\> |
+| `stats.wifi.linkSpeedMbps` | `Nullable`\<`number`\> |
 | `stats.wifi.signalQuality` | `number` |
 | `stats.wifi.signalStrength` | `number` |
 | `stats.wifiQuality` | `number` |
 | `stats.wifiStrength` | `number` |
+| `streamSharing` | \{ `enabled`: `boolean`; `expires`: `Nullable`\<`number`\>; `maxStreams`: `Nullable`\<`number`\>; `sharedByUser`: `Nullable`\<`string`\>; `sharedByUserId`: `Nullable`\<`string`\>; `shareLink`: `Nullable`\<`string`\>; `token`: `Nullable`\<`string`\>; \} |
+| `streamSharing.enabled` | `boolean` |
+| `streamSharing.expires` | `Nullable`\<`number`\> |
+| `streamSharing.maxStreams` | `Nullable`\<`number`\> |
+| `streamSharing.sharedByUser` | `Nullable`\<`string`\> |
+| `streamSharing.sharedByUserId` | `Nullable`\<`string`\> |
+| `streamSharing.shareLink` | `Nullable`\<`string`\> |
+| `streamSharing.token` | `Nullable`\<`string`\> |
 | `supportedScalingResolutions` | `string`[] |
 | `talkbackSettings` | \{ `bindAddr`: `string`; `bindPort`: `number`; `bitsPerSample`: `number`; `channels`: `number`; `filterAddr`: `string`; `filterPort`: `number`; `quality`: `number`; `samplingRate`: `number`; `typeFmt`: `string`; `typeIn`: `string`; \} |
 | `talkbackSettings.bindAddr` | `string` |
@@ -348,7 +368,7 @@ A semi-complete description of the UniFi Protect LCD message JSON.
 | Property | Type |
 | ------ | ------ |
 | `duration` | `number` |
-| `resetAt` | `null` \| `number` |
+| `resetAt` | `Nullable`\<`number`\> |
 | `text` | `string` |
 | `type` | `string` |
 
@@ -411,17 +431,17 @@ A semi-complete description of the UniFi Protect chime JSON.
 | `uptime` | `number` |
 | `userConfiguredAp` | `boolean` |
 | `volume` | `number` |
-| `wifiConnectionState` | \{ `apName`: `null` \| `string`; `bssid`: `null` \| `string`; `channel`: `null` \| `string`; `connectivity`: `string`; `experience`: `null`; `frequency`: `null`; `phyRate`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; `ssid`: `null` \| `string`; `txRate`: `null`; \} |
-| `wifiConnectionState.apName` | `null` \| `string` |
-| `wifiConnectionState.bssid` | `null` \| `string` |
-| `wifiConnectionState.channel` | `null` \| `string` |
+| `wifiConnectionState` | \{ `apName`: `Nullable`\<`string`\>; `bssid`: `Nullable`\<`string`\>; `channel`: `Nullable`\<`string`\>; `connectivity`: `string`; `experience`: `null`; `frequency`: `null`; `phyRate`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; `ssid`: `Nullable`\<`string`\>; `txRate`: `null`; \} |
+| `wifiConnectionState.apName` | `Nullable`\<`string`\> |
+| `wifiConnectionState.bssid` | `Nullable`\<`string`\> |
+| `wifiConnectionState.channel` | `Nullable`\<`string`\> |
 | `wifiConnectionState.connectivity` | `string` |
 | `wifiConnectionState.experience` | `null` |
 | `wifiConnectionState.frequency` | `null` |
 | `wifiConnectionState.phyRate` | `number` |
 | `wifiConnectionState.signalQuality` | `number` |
 | `wifiConnectionState.signalStrength` | `number` |
-| `wifiConnectionState.ssid` | `null` \| `string` |
+| `wifiConnectionState.ssid` | `Nullable`\<`string`\> |
 | `wifiConnectionState.txRate` | `null` |
 | `wiredConnectionState` | \{ `phyRate`: `number`; \} |
 | `wiredConnectionState.phyRate` | `number` |
@@ -592,6 +612,9 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `anonymouseDeviceId` | `string` |
 | `availableUpdate` | `string` |
 | `avgMotions` | `number`[] |
+| `cameraCapacity` | \{ `qualities`: \{ `count`: `number`; `fraction`: `number`; `type`: `string`; \}[]; `state`: `string`; \} |
+| `cameraCapacity.qualities` | \{ `count`: `number`; `fraction`: `number`; `type`: `string`; \}[] |
+| `cameraCapacity.state` | `string` |
 | `cameraUtilization` | `number` |
 | `canAutoUpdate` | `boolean` |
 | `consoleEnv` | `string` |
@@ -614,7 +637,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `enableBridgeAutoAdoption` | `boolean` |
 | `enableCrashReporting` | `boolean` |
 | `enableStatsReporting` | `boolean` |
-| `errorCode` | `null` \| `string` |
+| `errorCode` | `Nullable`\<`string`\> |
 | `featureFlags` | \{ `beta`: `boolean`; `detectionLabels`: `boolean`; `dev`: `boolean`; `hasTwoWayAudioMediaStreams`: `boolean`; `homekitPaired`: `boolean`; `notificationsV2`: `boolean`; `ulpRoleManagement`: `boolean`; \} |
 | `featureFlags.beta` | `boolean` |
 | `featureFlags.detectionLabels` | `boolean` |
@@ -653,7 +676,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `isUpdating` | `boolean` |
 | `isWirelessUplinkEnabled` | `boolean` |
 | `lastSeen` | `number` |
-| `lastUpdateAt` | `null` \| `number` |
+| `lastUpdateAt` | `Nullable`\<`number`\> |
 | `locationSettings` | \{ `isAway`: `boolean`; `isGeofencingEnabled`: `boolean`; `latitude`: `number`; `longitude`: `number`; `radius`: `number`; \} |
 | `locationSettings.isAway` | `boolean` |
 | `locationSettings.isGeofencingEnabled` | `boolean` |
@@ -694,14 +717,14 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `recordingRetentionDurationMs` | `string` |
 | `releaseChannel` | `string` |
 | `skipFirmwareUpdate` | `boolean` |
-| `smartDetectAgreement` | \{ `lastUpdateAt`: `null` \| `number`; `status`: `string`; \} |
-| `smartDetectAgreement.lastUpdateAt` | `null` \| `number` |
+| `smartDetectAgreement` | \{ `lastUpdateAt`: `Nullable`\<`number`\>; `status`: `string`; \} |
+| `smartDetectAgreement.lastUpdateAt` | `Nullable`\<`number`\> |
 | `smartDetectAgreement.status` | `string` |
 | `smartDetection` | \{ `enable`: `boolean`; `faceRecognition`: `boolean`; `licensePlateRecognition`: `boolean`; \} |
 | `smartDetection.enable` | `boolean` |
 | `smartDetection.faceRecognition` | `boolean` |
 | `smartDetection.licensePlateRecognition` | `boolean` |
-| `ssoChannel` | `null` \| `string` |
+| `ssoChannel` | `Nullable`\<`string`\> |
 | `storageStats` | \{ `capacity`: `number`; `recordingSpace`: \{ `available`: `number`; `total`: `number`; `used`: `number`; \}; `remainingCapacity`: `number`; `storageDistribution`: \{ `recordingTypeDistributions`: \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[]; `resolutionDistributions`: \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[]; \}; `utilization`: `number`; \} |
 | `storageStats.capacity` | `number` |
 | `storageStats.recordingSpace` | \{ `available`: `number`; `total`: `number`; `used`: `number`; \} |
@@ -725,9 +748,9 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `uptime` | `number` |
 | `version` | `string` |
 | `wanIp` | `string` |
-| `wifiSettings` | \{ `password`: `null` \| `string`; `ssid`: `null` \| `string`; `useThirdPartyWifi`: `boolean`; \} |
-| `wifiSettings.password` | `null` \| `string` |
-| `wifiSettings.ssid` | `null` \| `string` |
+| `wifiSettings` | \{ `password`: `Nullable`\<`string`\>; `ssid`: `Nullable`\<`string`\>; `useThirdPartyWifi`: `boolean`; \} |
+| `wifiSettings.password` | `Nullable`\<`string`\> |
+| `wifiSettings.ssid` | `Nullable`\<`string`\> |
 | `wifiSettings.useThirdPartyWifi` | `boolean` |
 
 ***
@@ -866,7 +889,16 @@ A semi-complete description of the UniFi Protect NVR user JSON.
 | ------ | ------ |
 | `alertRules` | `unknown`[] |
 | `allPermissions` | `string`[] |
-| `cloudAccount` | `string` |
+| `cloudAccount` | \{ `cloudId`: `string`; `email`: `string`; `firstName`: `string`; `id`: `string`; `lastName`: `string`; `modelKey`: `string`; `name`: `string`; `profileImg`: `string`; `user`: `string`; \} |
+| `cloudAccount.cloudId` | `string` |
+| `cloudAccount.email` | `string` |
+| `cloudAccount.firstName` | `string` |
+| `cloudAccount.id` | `string` |
+| `cloudAccount.lastName` | `string` |
+| `cloudAccount.modelKey` | `string` |
+| `cloudAccount.name` | `string` |
+| `cloudAccount.profileImg` | `string` |
+| `cloudAccount.user` | `string` |
 | `email` | `string` |
 | `enableNotifications` | `boolean` |
 | `firstName` | `string` |
@@ -919,7 +951,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | ------ | ------ |
 | `alarmSettings` | \{ `isEnabled`: `boolean`; \} |
 | `alarmSettings.isEnabled` | `boolean` |
-| `alarmTriggeredAt` | `null` \| `number` |
+| `alarmTriggeredAt` | `Nullable`\<`number`\> |
 | `batteryStatus` | \{ `isLow`: `boolean`; `percentage`: `number`; \} |
 | `batteryStatus.isLow` | `boolean` |
 | `batteryStatus.percentage` | `number` |
@@ -932,9 +964,12 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `canAdopt` | `boolean` |
 | `connectedSince` | `number` |
 | `connectionHost` | `string` |
+| `displayName` | `string` |
 | `firmwareBuild` | `string` |
 | `firmwareVersion` | `string` |
+| `fwUpdateState` | `string` |
 | `hardwareRevision` | `string` |
+| `host` | `string` |
 | `humiditySettings` | \{ `highThreshold`: `number`; `isEnabled`: `boolean`; `lowThreshold`: `number`; `margin`: `number`; \} |
 | `humiditySettings.highThreshold` | `number` |
 | `humiditySettings.isEnabled` | `boolean` |
@@ -946,12 +981,15 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `isAdopting` | `boolean` |
 | `isAttemptingToConnect` | `boolean` |
 | `isConnected` | `boolean` |
+| `isDownloadingFW` | `boolean` |
 | `isMotionDetected` | `boolean` |
 | `isOpened` | `boolean` |
 | `isProvisioned` | `boolean` |
 | `isRebooting` | `boolean` |
+| `isRestoring` | `boolean` |
 | `isSshEnabled` | `boolean` |
 | `isUpdating` | `boolean` |
+| `lastDisconnect` | `number` |
 | `lastSeen` | `number` |
 | `latestFirmwareVersion` | `string` |
 | `leakDetectedAt` | `number` |
@@ -974,17 +1012,17 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `nvrMac` | `string` |
 | `openStatusChangedAt` | `number` |
 | `state` | `string` |
-| `stats` | \{ `humidity`: \{ `status`: `string`; `value`: `null` \| `number`; \}; `light`: \{ `status`: `string`; `value`: `null` \| `number`; \}; `temperature`: \{ `status`: `string`; `value`: `null` \| `number`; \}; \} |
-| `stats.humidity` | \{ `status`: `string`; `value`: `null` \| `number`; \} |
+| `stats` | \{ `humidity`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; `light`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; `temperature`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; \} |
+| `stats.humidity` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
 | `stats.humidity.status` | `string` |
-| `stats.humidity.value` | `null` \| `number` |
-| `stats.light` | \{ `status`: `string`; `value`: `null` \| `number`; \} |
+| `stats.humidity.value` | `Nullable`\<`number`\> |
+| `stats.light` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
 | `stats.light.status` | `string` |
-| `stats.light.value` | `null` \| `number` |
-| `stats.temperature` | \{ `status`: `string`; `value`: `null` \| `number`; \} |
+| `stats.light.value` | `Nullable`\<`number`\> |
+| `stats.temperature` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
 | `stats.temperature.status` | `string` |
-| `stats.temperature.value` | `null` \| `number` |
-| `tamperingDetectedAt` | `null` \| `number` |
+| `stats.temperature.value` | `Nullable`\<`number`\> |
+| `tamperingDetectedAt` | `Nullable`\<`number`\> |
 | `temperatureSettings` | \{ `highThreshold`: `number`; `isEnabled`: `boolean`; `lowThreshold`: `number`; `margin`: `number`; \} |
 | `temperatureSettings.highThreshold` | `number` |
 | `temperatureSettings.isEnabled` | `boolean` |
@@ -993,6 +1031,18 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `type` | `string` |
 | `upSince` | `number` |
 | `uptime` | `number` |
+| `wifiConnectionState` | \{ `apName`: `Nullable`\<`string`\>; `bssid`: `Nullable`\<`string`\>; `channel`: `Nullable`\<`string`\>; `connectivity`: `string`; `experience`: `null`; `frequency`: `null`; `phyRate`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; `ssid`: `Nullable`\<`string`\>; `txRate`: `null`; \} |
+| `wifiConnectionState.apName` | `Nullable`\<`string`\> |
+| `wifiConnectionState.bssid` | `Nullable`\<`string`\> |
+| `wifiConnectionState.channel` | `Nullable`\<`string`\> |
+| `wifiConnectionState.connectivity` | `string` |
+| `wifiConnectionState.experience` | `null` |
+| `wifiConnectionState.frequency` | `null` |
+| `wifiConnectionState.phyRate` | `number` |
+| `wifiConnectionState.signalQuality` | `number` |
+| `wifiConnectionState.signalStrength` | `number` |
+| `wifiConnectionState.ssid` | `Nullable`\<`string`\> |
+| `wifiConnectionState.txRate` | `null` |
 | `wiredConnectionState` | \{ `phyRate`: `number`; \} |
 | `wiredConnectionState.phyRate` | `number` |
 
@@ -1025,7 +1075,7 @@ A semi-complete description of the UniFi Protect viewer JSON.
 | `isUpdating` | `boolean` |
 | `lastSeen` | `number` |
 | `latestFirmwareVersion` | `string` |
-| `liveview` | `null` \| `string` |
+| `liveview` | `Nullable`\<`string`\> |
 | `mac` | `string` |
 | `marketName` | `string` |
 | `modelKey` | `string` |

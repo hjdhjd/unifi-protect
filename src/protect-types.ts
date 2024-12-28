@@ -17,7 +17,7 @@
  *
  * @module ProtectTypes
  */
-import { DeepPartial } from "homebridge-plugin-utils";
+import { DeepPartial, Nullable } from "homebridge-plugin-utils";
 
 /**
  * An semi-complete description of the UniFi Protect NVR bootstrap JSON.
@@ -55,13 +55,13 @@ export interface ProtectNvrConfigInterface {
   avgMotions: number[],
   cameraCapacity: {
 
-    state: string,
     qualities: {
 
-      type: string,
       count: number,
-      fraction: number
-    }[]
+      fraction: number,
+      type: string
+    }[],
+    state: string
   },
   cameraUtilization: number,
   canAutoUpdate: boolean,
@@ -92,7 +92,7 @@ export interface ProtectNvrConfigInterface {
   enableBridgeAutoAdoption: boolean,
   enableCrashReporting: boolean,
   enableStatsReporting: boolean,
-  errorCode: string | null,
+  errorCode: Nullable<string>,
   featureFlags: {
 
     beta: boolean,
@@ -133,7 +133,7 @@ export interface ProtectNvrConfigInterface {
   isUpdating: boolean,
   isWirelessUplinkEnabled: boolean,
   lastSeen: number,
-  lastUpdateAt: number | null,
+  lastUpdateAt: Nullable<number>,
   locationSettings: {
 
     isAway: boolean,
@@ -180,7 +180,7 @@ export interface ProtectNvrConfigInterface {
   skipFirmwareUpdate: boolean,
   smartDetectAgreement: {
 
-    lastUpdateAt: number | null,
+    lastUpdateAt: Nullable<number>,
     status: string
   },
   smartDetection: {
@@ -189,7 +189,7 @@ export interface ProtectNvrConfigInterface {
     faceRecognition: boolean,
     licensePlateRecognition: boolean
   },
-  ssoChannel: string | null,
+  ssoChannel: Nullable<string>,
   storageStats: {
 
     capacity: number,
@@ -232,8 +232,8 @@ export interface ProtectNvrConfigInterface {
   wanIp: string,
   wifiSettings: {
 
-    password: string | null,
-    ssid: string | null,
+    password: Nullable<string>,
+    ssid: Nullable<string>,
     useThirdPartyWifi: boolean
   }
 }
@@ -434,19 +434,19 @@ export interface ProtectCameraConfigInterface {
     hue: number,
     hotplug: {
 
-      audio: string | null
-      video: string | null
-      standaloneAdoption: boolean
+      audio: Nullable<string>,
       extender: {
 
-        isAttached: boolean
-        hasFlash: boolean
-        flashRange: number
-        hasIR: boolean
-        hasRadar: boolean
-        radarRangeMax: number
+        flashRange: number,
+        hasFlash: boolean,
+        hasIR: boolean,
+        hasRadar: boolean,
+        isAttached: boolean,
+        radarRangeMax: number,
         radarRangeMin: number
       }
+      standaloneAdoption: boolean,
+      video: Nullable<string>
     },
     icrCustomValue: number,
     icrSensitivity: number,
@@ -468,7 +468,7 @@ export interface ProtectCameraConfigInterface {
     zoomPosition: number
   },
   lastMotion: number,
-  lastRing: number | null,
+  lastRing: Nullable<number>,
   lastSeen: number,
   latestFirmwareVersion: string,
   lcdMessage: ProtectCameraLcdMessageConfigInterface,
@@ -481,14 +481,14 @@ export interface ProtectCameraConfigInterface {
 
     id: number,
     video: {
-      recordingEnd: number | null,
-      recordingEndLQ: number | null,
-      recordingStart: number | null,
-      recordingStartLQ: number | null,
-      timelapseEnd: number | null,
-      timelapseEndLQ: number | null,
-      timelapseStart: number | null,
-      timelapseStartLQ: number | null
+      recordingEnd: Nullable<number>,
+      recordingEndLQ: Nullable<number>,
+      recordingStart: Nullable<number>,
+      recordingStartLQ: Nullable<number>,
+      timelapseEnd: Nullable<number>,
+      timelapseEndLQ: Nullable<number>,
+      timelapseStart: Nullable<number>,
+      timelapseStartLQ: Nullable<number>
     }
   }[],
   mac: string,
@@ -535,7 +535,7 @@ export interface ProtectCameraConfigInterface {
     mode: string,
     postPaddingSecs: number,
     prePaddingSecs: number,
-    retentionDurationMs: number | null,
+    retentionDurationMs: Nullable<number>,
     suppressIlluminationSurge: boolean,
     useNewMotionAlgorithm: boolean
   },
@@ -567,7 +567,7 @@ export interface ProtectCameraConfigInterface {
     battery: {
 
       isCharging: boolean,
-      percentage: number | null,
+      percentage: Nullable<number>,
       sleepState: string
     },
     rxBytes: number,
@@ -590,9 +590,9 @@ export interface ProtectCameraConfigInterface {
     },
     wifi: {
 
-      channel: number | null,
-      frequency: number | null,
-      linkSpeedMbps: number | null,
+      channel: Nullable<number>,
+      frequency: Nullable<number>,
+      linkSpeedMbps: Nullable<number>,
       signalQuality: number,
       signalStrength: number
     },
@@ -602,12 +602,12 @@ export interface ProtectCameraConfigInterface {
   streamSharing: {
 
     enabled: boolean,
-    token: string | null,
-    shareLink: string | null,
-    expires: number | null,
-    sharedByUserId: string | null,
-    sharedByUser: string | null,
-    maxStreams: number | null
+    token: Nullable<string>,
+    shareLink: Nullable<string>,
+    expires: Nullable<number>,
+    sharedByUserId: Nullable<string>,
+    sharedByUser: Nullable<string>,
+    maxStreams: Nullable<number>
   },
   supportedScalingResolutions: string[],
   talkbackSettings: {
@@ -688,7 +688,7 @@ export interface ProtectCameraChannelConfigInterface {
 export interface ProtectCameraLcdMessageConfigInterface {
 
   duration: number,
-  resetAt: number | null,
+  resetAt: Nullable<number>,
   text: string,
   type: string
 }
@@ -765,16 +765,16 @@ export interface ProtectChimeConfigInterface {
   volume: number,
   wifiConnectionState: {
 
-    apName: string | null,
-    bssid: string | null,
-    channel: string | null,
+    apName: Nullable<string>,
+    bssid: Nullable<string>,
+    channel: Nullable<string>,
     connectivity: string,
     experience: null,
     frequency: null,
     phyRate: number,
     signalQuality: number,
     signalStrength: number,
-    ssid: string | null,
+    ssid: Nullable<string>,
     txRate: null
   },
   wiredConnectionState: {
@@ -1008,7 +1008,7 @@ export interface ProtectSensorConfigInterface {
 
     isEnabled: boolean
   },
-  alarmTriggeredAt: number | null,
+  alarmTriggeredAt: Nullable<number>,
   batteryStatus: {
 
     isLow: boolean,
@@ -1086,20 +1086,20 @@ export interface ProtectSensorConfigInterface {
     humidity: {
 
       status: string,
-      value: number | null
+      value: Nullable<number>
     },
     light: {
 
       status: string,
-      value: number | null
+      value: Nullable<number>
     },
     temperature: {
 
       status: string,
-      value: number | null
+      value: Nullable<number>
     }
   },
-  tamperingDetectedAt: number | null,
+  tamperingDetectedAt: Nullable<number>,
   temperatureSettings: {
 
     highThreshold: number,
@@ -1112,16 +1112,16 @@ export interface ProtectSensorConfigInterface {
   uptime: number,
   wifiConnectionState: {
 
-    apName: string | null,
-    bssid: string | null,
-    channel: string | null,
+    apName: Nullable<string>,
+    bssid: Nullable<string>,
+    channel: Nullable<string>,
     connectivity: string,
     experience: null,
     frequency: null,
     phyRate: number,
     signalQuality: number,
     signalStrength: number,
-    ssid: string | null,
+    ssid: Nullable<string>,
     txRate: null
   },
   wiredConnectionState: {
@@ -1154,7 +1154,7 @@ export interface ProtectViewerConfigInterface {
   isUpdating: boolean,
   lastSeen: number,
   latestFirmwareVersion: string,
-  liveview: string | null,
+  liveview: Nullable<string>,
   mac: string,
   marketName: string,
   modelKey: string,

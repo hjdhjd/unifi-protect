@@ -206,7 +206,7 @@ process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, so
 ##### getSnapshot()
 
 ```ts
-getSnapshot(device, options): Promise<Nullable<Buffer<ArrayBufferLike>>>
+getSnapshot(device, options): Promise<Nullable<Buffer>>
 ```
 
 Retrieve a snapshot image from a Protect camera.
@@ -220,7 +220,7 @@ Retrieve a snapshot image from a Protect camera.
 
 ###### Returns
 
-`Promise`\<`Nullable`\<`Buffer`\<`ArrayBufferLike`\>\>\>
+`Promise`\<`Nullable`\<`Buffer`\>\>
 
 Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
 

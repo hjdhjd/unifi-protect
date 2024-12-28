@@ -2,13 +2,18 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.19.0 (2024-12-27)
+  * Improvement: refinements to Protect controller connectivity and recovery.
+  * Improvement: minor updates to the Protect JSON descriptions.
+  * Housekeeping.
+
 ## 4.18.0 (2024-12-22)
   * Breaking change: the minimum supported node version is now node 20.
-  * Improvement: we've changed strategies to deal with Protect controller quirkiness/bugginess that results in network disconnects from the controller, while ensuring we have reasonable backpressure measures.
+  * Improvement: we've adjusted strategies to deal with Protect controller quirkiness/bugginess that results in network disconnects from the controller, while ensuring we have reasonable backpressure measures.
   * Housekeeping.
 
 ## 4.17.0 (2024-12-08)
-  * Minor updates to the Protect JSON descriptions.
+  * Improvement: minor updates to the Protect JSON descriptions.
   * Housekeeping.
 
 ## 4.16.0 (2024-10-05)
@@ -16,7 +21,7 @@ All notable changes to this project will be documented in this file. This projec
   * Housekeeping.
 
 ## 4.15.1 (2024-09-29)
-  * Minor updates to the Protect JSON descriptions.
+  * Improvement: minor updates to the Protect JSON descriptions.
   * Housekeeping.
 
 ## 4.15.0 (2024-09-26)
@@ -24,11 +29,11 @@ All notable changes to this project will be documented in this file. This projec
   * Housekeeping.
 
 ## 4.14.0 (2024-09-22)
-  * Updates to the Protect JSON descriptions.
+  * Improvement: minor updates to the Protect JSON descriptions.
   * Housekeeping.
 
 ## 4.13.0 (2024-09-15)
-  * Updates to the Protect JSON descriptions.
+  * Improvement: minor updates to the Protect JSON descriptions.
   * Housekeeping.
 
 ## 4.12.0 (2024-09-14)
@@ -43,13 +48,13 @@ All notable changes to this project will be documented in this file. This projec
   * Performance improvements and housekeeping.
 
 ## 4.10.0 (2024-06-01)
-  * Device JSON updates for Protect 4.0.
+  * Improvement: device JSON updates for Protect 4.0.
   * Improvement: added the codec event to the livestream API so you can retrieve the codec information associated with a particular livestream.
   * Documentation updates.
   * Housekeeping.
 
 ## 4.9.0 (2024-04-20)
-  * Minor updates to the Protect JSON descriptions.
+  * Improvement: minor updates to the Protect JSON descriptions.
   * Housekeeping.
 
 ## 4.8.2 (2024-03-17)

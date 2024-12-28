@@ -10,4 +10,4 @@ export const PROTECT_API_ERROR_LIMIT = 10;
 export const PROTECT_API_RETRY_INTERVAL = 300;
 
 // Protect API response timeout, in milliseconds. This should never be greater than 5 seconds.
-export const PROTECT_API_TIMEOUT = 4000;
+export const PROTECT_API_TIMEOUT = 3500;

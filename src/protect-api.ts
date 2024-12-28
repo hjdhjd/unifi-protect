@@ -1048,9 +1048,17 @@ export class ProtectApi extends EventEmitter {
       return response;
     } catch(error) {
 
-      this.apiErrorCount++;
+      // We'll delay our retry by 50 to 150ms, with a little randomness thrown in for good measure, to give the controller a chance to recover from it's quirkiness.
+      const retry = async (): Promise<Nullable<Response>> => new Promise(res => setTimeout(() => res(this._retrieve(url, options, logErrors, decodeResponse, true)),
+        Math.floor(Math.random() * (150 - 50 + 1)) + 50));
 
       if(error instanceof AbortError) {
+
+        // Retry on API timeouts, but no more than once.
+        if(!isRetry) {
+
+          return retry();
+        }
 
         logError("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
         this.log.debug("Original request was: %s", url);
@@ -1059,10 +1067,6 @@ export class ProtectApi extends EventEmitter {
       }
 
       if(error instanceof FetchError) {
-
-        // We'll delay our retry by 50 to 150ms, with a little randomness thrown in for good measure, to give the controller a chance to recover from it's quirkiness.
-        const retry = async (): Promise<Nullable<Response>> => new Promise(res => setTimeout(() => res(this._retrieve(url, options, logErrors, decodeResponse, true)),
-          Math.floor(Math.random() * (150 - 50 + 1)) + 50));
 
         switch(error.code) {
 
@@ -1107,6 +1111,12 @@ export class ProtectApi extends EventEmitter {
 
             break;
         }
+      }
+
+      // Increment our API error count only if we're not in currently in a retry.
+      if(!isRetry) {
+
+        this.apiErrorCount++;
       }
 
       return null;

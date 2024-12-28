@@ -84,7 +84,7 @@ Decode a UniFi Protect event packet.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `log` | [`ProtectLogging`](ProtectLogging.md#protectlogging) | Logging functions to use. |
-| `packet` | `Buffer`\<`ArrayBufferLike`\> | Input packet to decode. |
+| `packet` | `Buffer` | Input packet to decode. |
 
 ###### Returns
 
