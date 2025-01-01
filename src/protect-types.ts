@@ -17,7 +17,7 @@
  *
  * @module ProtectTypes
  */
-import { DeepPartial, Nullable } from "homebridge-plugin-utils";
+import { DeepPartial, Nullable } from "./util";
 
 /**
  * An semi-complete description of the UniFi Protect NVR bootstrap JSON.

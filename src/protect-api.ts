@@ -17,7 +17,7 @@ import { ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCamera
   ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload, ProtectNvrUserConfig,
   ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
 import { EventEmitter } from "node:events";
-import { Nullable } from "homebridge-plugin-utils";
+import { Nullable } from "./util";
 import { ProtectApiEvents } from "./protect-api-events.js";
 import { ProtectLivestream } from "./protect-api-livestream.js";
 import { ProtectLogging } from "./protect-logging.js";

@@ -63,7 +63,7 @@
  *
  * @module ProtectApiEvents
  */
-import { Nullable } from "homebridge-plugin-utils";
+import { Nullable } from "./util";
 import { ProtectLogging } from "./protect-logging.js";
 import zlib from "node:zlib";
 

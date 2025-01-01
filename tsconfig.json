@@ -2,10 +2,27 @@
   "compilerOptions": {
 
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+
+    "allowSyntheticDefaultImports": true,
+    "declaration": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "lib": [
+
+      "DOM",
+      "ES2023"
+    ],
+
+    "module": "ES2022",
+    "moduleResolution":"node",
+    "sourceMap": true,
+    "strict": true,
+    "target": "ES2023"
   },
 
+
   "exclude": [ "dist", "node_modules" ],
-  "extends": "./node_modules/homebridge-plugin-utils/build/tsconfig.json",
   "include": [ "eslint.config.mjs", "src" ]
 }

@@ -9,4 +9,4 @@ export { ProtectApiEvents, ProtectEventPacket } from "./protect-api-events.js";
 export * from "./protect-logging.js";
 export * from "./protect-types.js";
 export { FetchError } from "@adobe/fetch";
-export { Nullable } from "homebridge-plugin-utils";
+export * from "./util";
