@@ -68,7 +68,6 @@
     "@types/node": "22.10.5",
     "@types/ws": "8.5.13",
     "eslint": "9.17.0",
-    "homebridge": "^1.8.4",
     "homebridge-plugin-utils": "^1.13.0",
     "shx": "0.3.4",
     "typedoc": "0.27.6",
