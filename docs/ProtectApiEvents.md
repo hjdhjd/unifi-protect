@@ -116,14 +116,16 @@ UniFi Protect event header.
 
 #### Index Signature
 
- \[`key`: `string`\]: `string` \| `number` \| `boolean` \| `object`
+```ts
+[key: string]: string | number | boolean | object
+```
 
 | Name | Type |
 | ------ | ------ |
-| `action` | `string` |
-| `id` | `string` |
-| `modelKey` | `string` |
-| `newUpdateId` | `string` |
+| <a id="action"></a> `action` | `string` |
+| <a id="id"></a> `id` | `string` |
+| <a id="modelkey"></a> `modelKey` | `string` |
+| <a id="newupdateid"></a> `newUpdateId` | `string` |
 
 #### Param
 
@@ -157,8 +159,8 @@ UniFi Protect event packet.
 
 | Name | Type |
 | ------ | ------ |
-| `header` | [`ProtectEventHeader`](ProtectApiEvents.md#protecteventheader) |
-| `payload` | `unknown` |
+| <a id="header"></a> `header` | [`ProtectEventHeader`](ProtectApiEvents.md#protecteventheader) |
+| <a id="payload"></a> `payload` | `unknown` |
 
 #### Param
 

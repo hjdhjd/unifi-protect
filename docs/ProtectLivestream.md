@@ -83,7 +83,9 @@ new ProtectLivestream(api, log): ProtectLivestream
 
 ###### Overrides
 
-`EventEmitter.constructor`
+```ts
+EventEmitter.constructor
+```
 
 #### Accessors
 

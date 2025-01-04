@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-api.ts: Our UniFi Protect API implementation.
  */
@@ -11,7 +11,7 @@
  *
  * @module ProtectApi
  */
-import { ALPNProtocol, AbortError, FetchError, Headers, Request, RequestOptions, Response, context, timeoutSignal } from "@adobe/fetch";
+import { ALPNProtocol, AbortError, FetchError, Headers, Request, RequestOptions, Response, context, reset, timeoutSignal } from "@adobe/fetch";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "./settings.js";
 import { ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectCameraConfigPayload, ProtectChimeConfig,
   ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload, ProtectNvrUserConfig,
@@ -103,7 +103,7 @@ export class ProtectApi extends EventEmitter {
 
     this.apiErrorCount = 0;
     this.apiLastSuccess = 0;
-    this.fetch = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], rejectUnauthorized: false, userAgent: "unifi-protect" }).fetch;
+    this.fetch = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], maxCacheSize: 0, rejectUnauthorized: false, userAgent: "unifi-protect" }).fetch;
     this.headers = new Headers();
     this.nvrAddress = "";
     this.username = "";
@@ -996,6 +996,7 @@ export class ProtectApi extends EventEmitter {
         }
       }
 
+      // Execute the API request.
       response = await this.fetch(url, options);
 
       // The caller will sort through responses instead of us.
@@ -1049,8 +1050,14 @@ export class ProtectApi extends EventEmitter {
     } catch(error) {
 
       // We'll delay our retry by 50 to 150ms, with a little randomness thrown in for good measure, to give the controller a chance to recover from it's quirkiness.
-      const retry = async (): Promise<Nullable<Response>> => new Promise(res => setTimeout(() => res(this._retrieve(url, options, logErrors, decodeResponse, true)),
-        Math.floor(Math.random() * (150 - 50 + 1)) + 50));
+      const retry = async (): Promise<Nullable<Response>> => {
+
+        // Reset our connection context compleely.
+        await reset();
+
+        return new Promise(resolve => setTimeout(() => resolve(this._retrieve(url, options, logErrors, decodeResponse, true)),
+          Math.floor(Math.random() * (150 - 50 + 1)) + 50));
+      };
 
       if(error instanceof AbortError) {
 
@@ -1122,7 +1129,7 @@ export class ProtectApi extends EventEmitter {
       return null;
     } finally {
 
-      // Clear out our response timeout if needed.
+      // Clear out our response timeout.
       signal.clear();
     }
   }

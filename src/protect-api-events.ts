@@ -1,4 +1,4 @@
-/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-api-events.ts: Our UniFi Protect realtime events API packet utilities.
  */

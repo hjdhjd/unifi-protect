@@ -1,4 +1,4 @@
-/* Copyright(C) 2022-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2022-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * protect-api-livestream.ts: Our UniFi Protect livestream API implementation.
  */

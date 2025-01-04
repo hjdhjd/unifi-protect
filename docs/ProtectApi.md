@@ -57,7 +57,9 @@ Create an instance of the UniFi Protect API.
 
 ###### Overrides
 
-`EventEmitter.constructor`
+```ts
+EventEmitter.constructor
+```
 
 #### API Access
 

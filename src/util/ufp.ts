@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Copyright(C) 2019-2024, HJD (https://github.com/hjdhjd). All rights reserved.
+/* Copyright(C) 2019-2025, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * ufp.ts: UniFi Protect API command line utility.
  */
