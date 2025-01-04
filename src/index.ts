@@ -6,7 +6,6 @@
 
 // Export our support types.
 export { FetchError } from "@adobe/fetch";
-export type Nullable<T> = T | null;
 
 // Export our API.
 export * from "./protect-api.js";

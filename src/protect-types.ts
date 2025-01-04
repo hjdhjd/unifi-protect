@@ -17,7 +17,14 @@
  *
  * @module ProtectTypes
  */
-import { DeepPartial, Nullable } from "homebridge-plugin-utils";
+/** @ignore */
+export type DeepPartial<T> = {
+
+  [P in keyof T]?: T[P] extends Array<infer I> ? Array<DeepPartial<I>> : DeepPartial<T[P]>
+};
+
+/** @ignore */
+export type Nullable<T> = T | null;
 
 /**
  * An semi-complete description of the UniFi Protect NVR bootstrap JSON.

@@ -43,7 +43,7 @@
  */
 /* eslint-enable @stylistic/max-len */
 import events, { EventEmitter } from "node:events";
-import { Nullable } from "homebridge-plugin-utils";
+import { Nullable } from "./protect-types.js";
 import { PROTECT_API_TIMEOUT } from "./settings.js";
 import { ProtectApi } from "./protect-api.js";
 import { ProtectLogging } from "./protect-logging.js";
