@@ -2,9 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.20.1 (2025-01-03)
+  * Fix: address a regression related to type exports.
+  * Housekeeping.
+
 ## 4.20.0 (2025-01-03)
   * Improvement: further refinements to Protect controller connectivity and recovery.
-  * Fix: address a regression related to type exports.
   * Housekeeping.
 
 ## 4.19.0 (2024-12-27)
