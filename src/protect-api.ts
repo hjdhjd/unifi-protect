@@ -237,6 +237,12 @@ export class ProtectApi extends EventEmitter {
   // Attempt to retrieve the bootstrap configuration from the Protect NVR.
   private async bootstrapController(retry: boolean): Promise<boolean> {
 
+    // If we're retrying, let's first reset our connection context compleely.
+    if(retry) {
+
+      await reset();
+    }
+
     // Log us in if needed.
     if(!(await this.loginController())) {
 
@@ -1042,11 +1048,18 @@ export class ProtectApi extends EventEmitter {
         return null;
       }
 
+      // We're all good - return the response and we're done.
       this.apiLastSuccess = Date.now();
       this.apiErrorCount = 0;
 
       return response;
     } catch(error) {
+
+      // Increment our API error count only if we're not in currently in a retry.
+      if(!isRetry) {
+
+        this.apiErrorCount++;
+      }
 
       // We'll delay our retry by 50 to 150ms, with a little randomness thrown in for good measure, to give the controller a chance to recover from it's quirkiness.
       const retry = async (): Promise<Nullable<Response>> => {
@@ -1117,12 +1130,6 @@ export class ProtectApi extends EventEmitter {
 
             break;
         }
-      }
-
-      // Increment our API error count only if we're not in currently in a retry.
-      if(!isRetry) {
-
-        this.apiErrorCount++;
       }
 
       return null;

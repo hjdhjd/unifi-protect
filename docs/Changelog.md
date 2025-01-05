@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.20.2 (2025-01-05)
+  * Housekeeping.
+
 ## 4.20.1 (2025-01-03)
   * Fix: address a regression related to type exports.
   * Housekeeping.
