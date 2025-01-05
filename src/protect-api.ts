@@ -946,6 +946,16 @@ export class ProtectApi extends EventEmitter {
       this.log.error(message, ...parameters);
     };
 
+    // We'll delay our retry by 50 to 150ms, with a little randomness thrown in for good measure, to give the controller a chance to recover from it's quirkiness.
+    const retry = async (): Promise<Nullable<Response>> => {
+
+      // Reset our connection context compleely.
+      await reset();
+
+      return new Promise(resolve => setTimeout(() => resolve(this._retrieve(url, options, logErrors, decodeResponse, true)),
+        Math.floor(Math.random() * (150 - 50 + 1)) + 50));
+    };
+
     // Catch Protect controller server-side issues:
     //
     // 400: Bad request.
@@ -1035,6 +1045,12 @@ export class ProtectApi extends EventEmitter {
 
       if(!response.ok && isServerSideIssue(response.status)) {
 
+        // Retry on server side status issues, but no more than once.
+        if(!isRetry) {
+
+          return retry();
+        }
+
         logError("Unable to connect to the Protect controller. This is usually temporary and will occur during device reboots.");
 
         return null;
@@ -1060,16 +1076,6 @@ export class ProtectApi extends EventEmitter {
 
         this.apiErrorCount++;
       }
-
-      // We'll delay our retry by 50 to 150ms, with a little randomness thrown in for good measure, to give the controller a chance to recover from it's quirkiness.
-      const retry = async (): Promise<Nullable<Response>> => {
-
-        // Reset our connection context compleely.
-        await reset();
-
-        return new Promise(resolve => setTimeout(() => resolve(this._retrieve(url, options, logErrors, decodeResponse, true)),
-          Math.floor(Math.random() * (150 - 50 + 1)) + 50));
-      };
 
       if(error instanceof AbortError) {
 

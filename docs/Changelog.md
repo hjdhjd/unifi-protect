@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.20.3 (2025-01-05)
+  * Improvement: refinements to Protect controller connectivity and recovery.
+  * Housekeeping.
+
 ## 4.20.2 (2025-01-05)
   * Housekeeping.
 
