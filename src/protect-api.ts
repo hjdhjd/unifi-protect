@@ -635,7 +635,7 @@ export class ProtectApi extends EventEmitter {
 
       body: JSON.stringify({ channels: device.channels }),
       method: "PATCH"
-    }, true, false);
+    }, true, undefined, false);
 
     // Since we took responsibility for interpreting the outcome of the fetch, we need to check for any errors.
     if(!response || !response?.ok) {
@@ -916,6 +916,7 @@ export class ProtectApi extends EventEmitter {
    * @param url       - Complete URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot).
    * @param options   - Parameters to pass on for the endpoint request.
    * @param logErrors - Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`.
+   * @param overrideTimeout - Override the default timeout for the request (useful for AI-Key analyzer requests). Defaults to the global timeout value.
    *
    * @returns Returns a promise that will resolve to a Response object successful, and `null` otherwise.
    *
@@ -926,13 +927,13 @@ export class ProtectApi extends EventEmitter {
    * @category API Access
    */
   // Communicate HTTP requests with a Protect controller.
-  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true): Promise<Nullable<Response>> {
+  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, overrideTimeout?: number): Promise<Nullable<Response>> {
 
-    return this._retrieve(url, options, logErrors);
+    return this._retrieve(url, options, logErrors, overrideTimeout);
   }
 
   // Internal interface to communicating HTTP requests with a Protect controller, with error handling.
-  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false):
+  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, overrideTimeout?: number, decodeResponse = true, isRetry = false):
   Promise<Nullable<Response>> {
 
     // Log errors if that's what the caller requested.
@@ -952,7 +953,7 @@ export class ProtectApi extends EventEmitter {
       // Reset our connection context compleely.
       await reset();
 
-      return new Promise(resolve => setTimeout(() => resolve(this._retrieve(url, options, logErrors, decodeResponse, true)),
+      return new Promise(resolve => setTimeout(() => resolve(this._retrieve(url, options, logErrors, overrideTimeout, decodeResponse, true)),
         Math.floor(Math.random() * (150 - 50 + 1)) + 50));
     };
 
@@ -969,7 +970,7 @@ export class ProtectApi extends EventEmitter {
     let response: Response;
 
     // Create a signal handler to deliver the abort operation.
-    const signal = timeoutSignal(PROTECT_API_TIMEOUT);
+    const signal = timeoutSignal(overrideTimeout ?? PROTECT_API_TIMEOUT);
 
     options.headers = this.headers;
     options.signal = signal;
