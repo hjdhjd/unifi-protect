@@ -913,9 +913,10 @@ export class ProtectApi extends EventEmitter {
   /**
    * Execute an HTTP fetch request to the Protect controller.
    *
-   * @param url       - Complete URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot).
-   * @param options   - Parameters to pass on for the endpoint request.
-   * @param logErrors - Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`.
+   * @param url             - Complete URL to execute **without** any additional parameters you want to pass
+   *                          (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot).
+   * @param options         - Parameters to pass on for the endpoint request.
+   * @param logErrors       - Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`.
    * @param overrideTimeout - Override the default timeout for the request (useful for AI-Key analyzer requests). Defaults to the global timeout value.
    *
    * @returns Returns a promise that will resolve to a Response object successful, and `null` otherwise.
