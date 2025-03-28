@@ -272,8 +272,9 @@ Valid API endpoints are `livestream` and `talkback`.
 ```ts
 retrieve(
    url, 
-   options, 
-logErrors): Promise<Nullable<Response>>
+   options,
+   logErrors,
+overrideTimeout): Promise<Nullable<Response>>
 ```
 
 Execute an HTTP fetch request to the Protect controller.
@@ -285,6 +286,7 @@ Execute an HTTP fetch request to the Protect controller.
 | `url` | `string` | `undefined` | Complete URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot). |
 | `options` | `RequestOptions` | `...` | Parameters to pass on for the endpoint request. |
 | `logErrors` | `boolean` | `true` | Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`. |
+| `overrideTimeout` | `number` | `undefined` | Override the default timeout for the request (useful for AI-Key analyzer requests). Defaults to the global timeout value. |
 
 ###### Returns
 
