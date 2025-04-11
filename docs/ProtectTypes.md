@@ -27,6 +27,8 @@ A semi-complete description of the UniFi Protect camera channel JSON.
 
 | Property | Type |
 | ------ | ------ |
+| <a id="autobitrate"></a> `autoBitrate` | `boolean` |
+| <a id="autofps"></a> `autoFps` | `boolean` |
 | <a id="bitrate"></a> `bitrate` | `number` |
 | <a id="enabled"></a> `enabled` | `boolean` |
 | <a id="fps"></a> `fps` | `number` |
@@ -54,11 +56,30 @@ A semi-complete description of the UniFi Protect camera JSON.
 
 | Property | Type |
 | ------ | ------ |
+| <a id="accessdevicemetadata"></a> `accessDeviceMetadata` | \{ `channels`: \{ `bitrate`: `number`; `fps`: `number`; `fpsValues`: `number`[]; `height`: `number`; `id`: `number`; `localStreamName`: `string`; `quality`: `string`; `width`: `number`; \}[]; `connectedSince`: `number`; `disableRecordingByDefault`: `boolean`; `doorInfo`: \{ `canLock`: `boolean`; `lockState`: `string`; \}; `featureFlags`: \{ `supportLivestream`: `boolean`; `supportUnlock`: `boolean`; \}; `ledSettings`: \{ `isEnabled`: `boolean`; \}; `micVolume`: `number`; `pairedInfo`: \{ `name`: `string`; `uri`: `string`; \}; `speakerSettings`: \{ `areSystemSoundsEnabled`: `boolean`; \}; `talkbackSettings`: [`ProtectCameraTalkbackConfigInterface`](#protectcameratalkbackconfiginterface)[]; \} |
+| `accessDeviceMetadata.channels` | \{ `bitrate`: `number`; `fps`: `number`; `fpsValues`: `number`[]; `height`: `number`; `id`: `number`; `localStreamName`: `string`; `quality`: `string`; `width`: `number`; \}[] |
+| `accessDeviceMetadata.connectedSince` | `number` |
+| `accessDeviceMetadata.disableRecordingByDefault` | `boolean` |
+| `accessDeviceMetadata.doorInfo` | \{ `canLock`: `boolean`; `lockState`: `string`; \} |
+| `accessDeviceMetadata.doorInfo.canLock` | `boolean` |
+| `accessDeviceMetadata.doorInfo.lockState` | `string` |
+| `accessDeviceMetadata.featureFlags` | \{ `supportLivestream`: `boolean`; `supportUnlock`: `boolean`; \} |
+| `accessDeviceMetadata.featureFlags.supportLivestream` | `boolean` |
+| `accessDeviceMetadata.featureFlags.supportUnlock` | `boolean` |
+| `accessDeviceMetadata.ledSettings` | \{ `isEnabled`: `boolean`; \} |
+| `accessDeviceMetadata.ledSettings.isEnabled` | `boolean` |
+| `accessDeviceMetadata.micVolume` | `number` |
+| `accessDeviceMetadata.pairedInfo` | \{ `name`: `string`; `uri`: `string`; \} |
+| `accessDeviceMetadata.pairedInfo.name` | `string` |
+| `accessDeviceMetadata.pairedInfo.uri` | `string` |
+| `accessDeviceMetadata.speakerSettings` | \{ `areSystemSoundsEnabled`: `boolean`; \} |
+| `accessDeviceMetadata.speakerSettings.areSystemSoundsEnabled` | `boolean` |
+| `accessDeviceMetadata.talkbackSettings` | [`ProtectCameraTalkbackConfigInterface`](#protectcameratalkbackconfiginterface)[] |
 | <a id="apmac"></a> `apMac` | `string` |
 | <a id="aprssi"></a> `apRssi` | `string` |
 | <a id="audiobitrate"></a> `audioBitrate` | `number` |
 | <a id="canmanage"></a> `canManage` | `boolean` |
-| <a id="channels"></a> `channels` | [`ProtectCameraChannelConfigInterface`](ProtectTypes.md#protectcamerachannelconfiginterface)[] |
+| <a id="channels"></a> `channels` | [`ProtectCameraChannelConfigInterface`](#protectcamerachannelconfiginterface)[] |
 | <a id="chimeduration"></a> `chimeDuration` | `number` |
 | <a id="connectedsince"></a> `connectedSince` | `number` |
 | <a id="connectionhost"></a> `connectionHost` | `string` |
@@ -155,6 +176,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="is2k"></a> `is2K` | `boolean` |
 | <a id="is4k"></a> `is4K` | `boolean` |
 | <a id="isadopted"></a> `isAdopted` | `boolean` |
+| <a id="isadoptedbyaccessapp"></a> `isAdoptedByAccessApp` | `boolean` |
 | <a id="isadoptedbyother"></a> `isAdoptedByOther` | `boolean` |
 | <a id="isadopting"></a> `isAdopting` | `boolean` |
 | <a id="isattemptingtoconnect"></a> `isAttemptingToConnect` | `boolean` |
@@ -228,7 +250,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="lastring"></a> `lastRing` | `Nullable`\<`number`\> |
 | <a id="lastseen"></a> `lastSeen` | `number` |
 | <a id="latestfirmwareversion"></a> `latestFirmwareVersion` | `string` |
-| <a id="lcdmessage"></a> `lcdMessage` | [`ProtectCameraLcdMessageConfigInterface`](ProtectTypes.md#protectcameralcdmessageconfiginterface) |
+| <a id="lcdmessage"></a> `lcdMessage` | [`ProtectCameraLcdMessageConfigInterface`](#protectcameralcdmessageconfiginterface) |
 | <a id="ledsettings"></a> `ledSettings` | \{ `blinkRate`: `number`; `isEnabled`: `boolean`; \} |
 | `ledSettings.blinkRate` | `number` |
 | `ledSettings.isEnabled` | `boolean` |
@@ -319,17 +341,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `streamSharing.shareLink` | `Nullable`\<`string`\> |
 | `streamSharing.token` | `Nullable`\<`string`\> |
 | <a id="supportedscalingresolutions"></a> `supportedScalingResolutions` | `string`[] |
-| <a id="talkbacksettings"></a> `talkbackSettings` | \{ `bindAddr`: `string`; `bindPort`: `number`; `bitsPerSample`: `number`; `channels`: `number`; `filterAddr`: `string`; `filterPort`: `number`; `quality`: `number`; `samplingRate`: `number`; `typeFmt`: `string`; `typeIn`: `string`; \} |
-| `talkbackSettings.bindAddr` | `string` |
-| `talkbackSettings.bindPort` | `number` |
-| `talkbackSettings.bitsPerSample` | `number` |
-| `talkbackSettings.channels` | `number` |
-| `talkbackSettings.filterAddr` | `string` |
-| `talkbackSettings.filterPort` | `number` |
-| `talkbackSettings.quality` | `number` |
-| `talkbackSettings.samplingRate` | `number` |
-| `talkbackSettings.typeFmt` | `string` |
-| `talkbackSettings.typeIn` | `string` |
+| <a id="talkbacksettings"></a> `talkbackSettings` | [`ProtectCameraTalkbackConfigInterface`](#protectcameratalkbackconfiginterface) |
 | <a id="thirdpartycamerainfo"></a> `thirdPartyCameraInfo` | \{ `port`: `number`; `rtspUrl`: `string`; `rtspUrlLQ`: `string`; `snapshotUrl`: `string`; \} |
 | `thirdPartyCameraInfo.port` | `number` |
 | `thirdPartyCameraInfo.rtspUrl` | `string` |
@@ -371,6 +383,28 @@ A semi-complete description of the UniFi Protect LCD message JSON.
 | <a id="resetat"></a> `resetAt` | `Nullable`\<`number`\> |
 | <a id="text"></a> `text` | `string` |
 | <a id="type-1"></a> `type` | `string` |
+
+***
+
+### ProtectCameraTalkbackConfigInterface
+
+A semi-complete description of the UniFi Protect talkback settings JSON.
+
+#### Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="bindaddr"></a> `bindAddr` | `string` |
+| <a id="bindport"></a> `bindPort` | `number` |
+| <a id="bitspersample"></a> `bitsPerSample` | `number` |
+| <a id="channels-1"></a> `channels` | `number` |
+| <a id="filteraddr"></a> `filterAddr` | `string` |
+| <a id="filterport"></a> `filterPort` | `number` |
+| <a id="quality"></a> `quality` | `number` |
+| <a id="samplingrate"></a> `samplingRate` | `number` |
+| <a id="typefmt"></a> `typeFmt` | `string` |
+| <a id="typein"></a> `typeIn` | `string` |
+| <a id="url"></a> `url` | `string` |
 
 ***
 
@@ -462,7 +496,8 @@ A semi-complete description of the UniFi Protect smart motion detection event JS
 | <a id="end"></a> `end` | `number` |
 | <a id="eventid"></a> `eventId` | `string` |
 | <a id="id-3"></a> `id` | `string` |
-| <a id="metadata"></a> `metadata` | [`ProtectEventMetadataInterface`](ProtectTypes.md#protecteventmetadatainterface) |
+| <a id="locked"></a> `locked` | `boolean` |
+| <a id="metadata"></a> `metadata` | [`ProtectEventMetadataInterface`](#protecteventmetadatainterface) |
 | <a id="modelkey-2"></a> `modelKey` | `string` |
 | <a id="partition"></a> `partition` | `string` |
 | <a id="score"></a> `score` | `number` |
@@ -483,12 +518,18 @@ A description of metadata in UniFi Protect smart motion detect events.
 
 | Property | Type |
 | ------ | ------ |
+| <a id="accesseventid"></a> `accessEventId` | `string` |
+| <a id="action"></a> `action` | `string` |
 | <a id="deviceid"></a> `deviceId` | \{ `text`: `string`; \} |
 | `deviceId.text` | `string` |
+| <a id="direction"></a> `direction` | `string` |
+| <a id="doorname"></a> `doorName` | `string` |
 | <a id="fingerprint"></a> `fingerprint` | \{ `ulpId`: `string`; \} |
 | `fingerprint.ulpId` | `string` |
+| <a id="firstname"></a> `firstName` | `string` |
 | <a id="islowbattery"></a> `isLowBattery` | `boolean` |
 | <a id="iswireless"></a> `isWireless` | `boolean` |
+| <a id="lastname"></a> `lastName` | `string` |
 | <a id="licenseplate"></a> `licensePlate` | \{ `confidenceLevel`: `number`; `name`: `string`; \} |
 | `licensePlate.confidenceLevel` | `number` |
 | `licensePlate.name` | `string` |
@@ -497,7 +538,11 @@ A description of metadata in UniFi Protect smart motion detect events.
 | <a id="nfc"></a> `nfc` | \{ `nfcId`: `string`; `ulpId`: `string`; \} |
 | `nfc.nfcId` | `string` |
 | `nfc.ulpId` | `string` |
+| <a id="openmethod"></a> `openMethod` | `string` |
+| <a id="opensuccess"></a> `openSuccess` | `boolean` |
 | <a id="reason"></a> `reason` | `string` |
+| <a id="uniqueid"></a> `uniqueId` | `string` |
+| <a id="usertype"></a> `userType` | `string` |
 
 ***
 
@@ -587,18 +632,18 @@ An semi-complete description of the UniFi Protect NVR bootstrap JSON.
 | <a id="accesskey"></a> `accessKey` | `string` |
 | <a id="authuserid"></a> `authUserId` | `string` |
 | <a id="bridges"></a> `bridges` | `unknown`[] |
-| <a id="cameras"></a> `cameras` | [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)[] |
-| <a id="chimes"></a> `chimes` | [`ProtectChimeConfigInterface`](ProtectTypes.md#protectchimeconfiginterface)[] |
+| <a id="cameras"></a> `cameras` | [`ProtectCameraConfigInterface`](#protectcameraconfiginterface)[] |
+| <a id="chimes"></a> `chimes` | [`ProtectChimeConfigInterface`](#protectchimeconfiginterface)[] |
 | <a id="cloudportalurl"></a> `cloudPortalUrl` | `string` |
 | <a id="groups"></a> `groups` | `unknown`[] |
 | <a id="lastupdateid"></a> `lastUpdateId` | `string` |
-| <a id="lights"></a> `lights` | [`ProtectLightConfigInterface`](ProtectTypes.md#protectlightconfiginterface)[] |
-| <a id="liveviews"></a> `liveviews` | [`ProtectNvrLiveviewConfigInterface`](ProtectTypes.md#protectnvrliveviewconfiginterface)[] |
-| <a id="nvr"></a> `nvr` | [`ProtectNvrConfigInterface`](ProtectTypes.md#protectnvrconfiginterface) |
-| <a id="ringtones"></a> `ringtones` | [`ProtectRingtoneConfigInterface`](ProtectTypes.md#protectringtoneconfiginterface)[] |
-| <a id="sensors"></a> `sensors` | [`ProtectSensorConfigInterface`](ProtectTypes.md#protectsensorconfiginterface)[] |
-| <a id="users"></a> `users` | [`ProtectNvrUserConfigInterface`](ProtectTypes.md#protectnvruserconfiginterface)[] |
-| <a id="viewers"></a> `viewers` | [`ProtectViewerConfigInterface`](ProtectTypes.md#protectviewerconfiginterface)[] |
+| <a id="lights"></a> `lights` | [`ProtectLightConfigInterface`](#protectlightconfiginterface)[] |
+| <a id="liveviews"></a> `liveviews` | [`ProtectNvrLiveviewConfigInterface`](#protectnvrliveviewconfiginterface)[] |
+| <a id="nvr"></a> `nvr` | [`ProtectNvrConfigInterface`](#protectnvrconfiginterface) |
+| <a id="ringtones"></a> `ringtones` | [`ProtectRingtoneConfigInterface`](#protectringtoneconfiginterface)[] |
+| <a id="sensors"></a> `sensors` | [`ProtectSensorConfigInterface`](#protectsensorconfiginterface)[] |
+| <a id="users"></a> `users` | [`ProtectNvrUserConfigInterface`](#protectnvruserconfiginterface)[] |
+| <a id="viewers"></a> `viewers` | [`ProtectViewerConfigInterface`](#protectviewerconfiginterface)[] |
 
 ***
 
@@ -658,6 +703,8 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="hostshortname"></a> `hostShortname` | `string` |
 | <a id="hosttype"></a> `hostType` | `string` |
 | <a id="id-5"></a> `id` | `string` |
+| <a id="isaccessinstalled"></a> `isAccessInstalled` | `boolean` |
+| <a id="isaireportingenabled"></a> `isAiReportingEnabled` | `boolean` |
 | <a id="isaway"></a> `isAway` | `boolean` |
 | <a id="ishardware"></a> `isHardware` | `boolean` |
 | <a id="isinsightsenabled"></a> `isInsightsEnabled` | `boolean` |
@@ -667,6 +714,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="isrecordingdisabled"></a> `isRecordingDisabled` | `boolean` |
 | <a id="isrecordingmotiononly"></a> `isRecordingMotionOnly` | `boolean` |
 | <a id="isrecycling"></a> `isRecycling` | `boolean` |
+| <a id="isremoteaccessenabled"></a> `isRemoteAccessEnabled` | `boolean` |
 | <a id="issetup"></a> `isSetup` | `boolean` |
 | <a id="issshenabled-3"></a> `isSshEnabled` | `boolean` |
 | <a id="isstacked"></a> `isStacked` | `boolean` |
@@ -739,7 +787,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `storageStats.storageDistribution.resolutionDistributions` | \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[] |
 | `storageStats.utilization` | `number` |
 | <a id="streamsharingavailable"></a> `streamSharingAvailable` | `boolean` |
-| <a id="systeminfo"></a> `systemInfo` | [`ProtectNvrSystemInfoInterface`](ProtectTypes.md#protectnvrsysteminfointerface) |
+| <a id="systeminfo"></a> `systemInfo` | [`ProtectNvrSystemInfoInterface`](#protectnvrsysteminfointerface) |
 | <a id="temperatureunit"></a> `temperatureUnit` | `string` |
 | <a id="timeformat"></a> `timeFormat` | `string` |
 | <a id="timezone"></a> `timezone` | `string` |
@@ -843,9 +891,9 @@ A semi-complete description of the UniFi Protect system events JSON.
 
 | Property | Type |
 | ------ | ------ |
-| <a id="apps"></a> `apps` | \{ `apps`: `unknown`[]; `controllers`: [`ProtectNvrSystemEventControllerInterface`](ProtectTypes.md#protectnvrsystemeventcontrollerinterface)[]; \} |
+| <a id="apps"></a> `apps` | \{ `apps`: `unknown`[]; `controllers`: [`ProtectNvrSystemEventControllerInterface`](#protectnvrsystemeventcontrollerinterface)[]; \} |
 | `apps.apps` | `unknown`[] |
-| `apps.controllers` | [`ProtectNvrSystemEventControllerInterface`](ProtectTypes.md#protectnvrsystemeventcontrollerinterface)[] |
+| `apps.controllers` | [`ProtectNvrSystemEventControllerInterface`](#protectnvrsystemeventcontrollerinterface)[] |
 | <a id="system"></a> `system` | `unknown` |
 | <a id="type-7"></a> `type` | `string` |
 
@@ -903,14 +951,14 @@ A semi-complete description of the UniFi Protect NVR user JSON.
 | `cloudAccount.user` | `string` |
 | <a id="email"></a> `email` | `string` |
 | <a id="enablenotifications"></a> `enableNotifications` | `boolean` |
-| <a id="firstname"></a> `firstName` | `string` |
+| <a id="firstname-1"></a> `firstName` | `string` |
 | <a id="groups-1"></a> `groups` | `string`[] |
 | <a id="hasacceptedinvite"></a> `hasAcceptedInvite` | `boolean` |
 | <a id="id-7"></a> `id` | `string` |
 | <a id="isowner"></a> `isOwner` | `boolean` |
 | <a id="lastloginip"></a> `lastLoginIp` | `string` |
 | <a id="lastlogintime"></a> `lastLoginTime` | `number` |
-| <a id="lastname"></a> `lastName` | `string` |
+| <a id="lastname-1"></a> `lastName` | `string` |
 | <a id="localusername"></a> `localUsername` | `string` |
 | <a id="location"></a> `location` | \{ `isAway`: `boolean`; `latitude`: `string`; `longitude`: `string`; \} |
 | `location.isAway` | `boolean` |
@@ -1102,7 +1150,7 @@ type ProtectCameraChannelConfig = ProtectCameraChannelConfigInterface;
 
 #### See
 
-[ProtectCameraChannelConfigInterface](ProtectTypes.md#protectcamerachannelconfiginterface)
+[ProtectCameraChannelConfigInterface](#protectcamerachannelconfiginterface)
 
 ***
 
@@ -1114,7 +1162,7 @@ type ProtectCameraConfig = ProtectCameraConfigInterface;
 
 #### See
 
-[ProtectCameraConfigInterface](ProtectTypes.md#protectcameraconfiginterface)
+[ProtectCameraConfigInterface](#protectcameraconfiginterface)
 
 ***
 
@@ -1126,7 +1174,7 @@ type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterface>;
 
 #### See
 
-[ProtectCameraConfigInterface](ProtectTypes.md#protectcameraconfiginterface)
+[ProtectCameraConfigInterface](#protectcameraconfiginterface)
 
 ***
 
@@ -1138,7 +1186,7 @@ type ProtectCameraLcdMessageConfig = ProtectCameraLcdMessageConfigInterface;
 
 #### See
 
-[ProtectCameraLcdMessageConfigInterface](ProtectTypes.md#protectcameralcdmessageconfiginterface)
+[ProtectCameraLcdMessageConfigInterface](#protectcameralcdmessageconfiginterface)
 
 ***
 
@@ -1150,7 +1198,7 @@ type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigI
 
 #### See
 
-[ProtectCameraLcdMessageConfigInterface](ProtectTypes.md#protectcameralcdmessageconfiginterface)
+[ProtectCameraLcdMessageConfigInterface](#protectcameralcdmessageconfiginterface)
 
 ***
 
@@ -1162,7 +1210,7 @@ type ProtectChimeConfig = ProtectChimeConfigInterface;
 
 #### See
 
-[ProtectChimeConfigInterface](ProtectTypes.md#protectchimeconfiginterface)
+[ProtectChimeConfigInterface](#protectchimeconfiginterface)
 
 ***
 
@@ -1174,7 +1222,7 @@ type ProtectChimeConfigPayload = DeepPartial<ProtectChimeConfigInterface>;
 
 #### See
 
-[ProtectChimeConfigInterface](ProtectTypes.md#protectchimeconfiginterface)
+[ProtectChimeConfigInterface](#protectchimeconfiginterface)
 
 ***
 
@@ -1186,7 +1234,7 @@ type ProtectEventAdd = ProtectEventAddInterface;
 
 #### See
 
-[ProtectEventAddInterface](ProtectTypes.md#protecteventaddinterface)
+[ProtectEventAddInterface](#protecteventaddinterface)
 
 ***
 
@@ -1198,7 +1246,7 @@ type ProtectEventMetadata = ProtectEventMetadataInterface;
 
 #### See
 
-[ProtectEventMetadataInterface](ProtectTypes.md#protecteventmetadatainterface)
+[ProtectEventMetadataInterface](#protecteventmetadatainterface)
 
 ***
 
@@ -1210,7 +1258,7 @@ type ProtectLightConfig = ProtectLightConfigInterface;
 
 #### See
 
-[ProtectLightConfigInterface](ProtectTypes.md#protectlightconfiginterface)
+[ProtectLightConfigInterface](#protectlightconfiginterface)
 
 ***
 
@@ -1222,7 +1270,7 @@ type ProtectLightConfigPayload = DeepPartial<ProtectLightConfigInterface>;
 
 #### See
 
-[ProtectLightConfigInterface](ProtectTypes.md#protectlightconfiginterface)
+[ProtectLightConfigInterface](#protectlightconfiginterface)
 
 ***
 
@@ -1234,7 +1282,7 @@ type ProtectNvrBootstrap = ProtectNvrBootstrapInterface;
 
 #### See
 
-[ProtectNvrBootstrapInterface](ProtectTypes.md#protectnvrbootstrapinterface)
+[ProtectNvrBootstrapInterface](#protectnvrbootstrapinterface)
 
 ***
 
@@ -1246,7 +1294,7 @@ type ProtectNvrConfig = ProtectNvrConfigInterface;
 
 #### See
 
-[ProtectNvrConfigInterface](ProtectTypes.md#protectnvrconfiginterface)
+[ProtectNvrConfigInterface](#protectnvrconfiginterface)
 
 ***
 
@@ -1258,7 +1306,7 @@ type ProtectNvrConfigPayload = DeepPartial<ProtectNvrConfigInterface>;
 
 #### See
 
-[ProtectNvrConfigInterface](ProtectTypes.md#protectnvrconfiginterface)
+[ProtectNvrConfigInterface](#protectnvrconfiginterface)
 
 ***
 
@@ -1270,7 +1318,7 @@ type ProtectNvrLiveviewConfig = ProtectNvrLiveviewConfigInterface;
 
 #### See
 
-[ProtectNvrLiveviewConfigInterface](ProtectTypes.md#protectnvrliveviewconfiginterface)
+[ProtectNvrLiveviewConfigInterface](#protectnvrliveviewconfiginterface)
 
 ***
 
@@ -1282,7 +1330,7 @@ type ProtectNvrSystemEvent = ProtectNvrSystemEventInterface;
 
 #### See
 
-[ProtectNvrSystemEventInterface](ProtectTypes.md#protectnvrsystemeventinterface)
+[ProtectNvrSystemEventInterface](#protectnvrsystemeventinterface)
 
 ***
 
@@ -1294,7 +1342,7 @@ type ProtectNvrSystemEventController = ProtectNvrSystemEventControllerInterface;
 
 #### See
 
-[ProtectNvrSystemEventInterface](ProtectTypes.md#protectnvrsystemeventinterface)
+[ProtectNvrSystemEventInterface](#protectnvrsystemeventinterface)
 
 ***
 
@@ -1306,7 +1354,7 @@ type ProtectNvrSystemInfoConfig = ProtectNvrSystemInfoInterface;
 
 #### See
 
-[ProtectNvrSystemInfoInterface](ProtectTypes.md#protectnvrsysteminfointerface)
+[ProtectNvrSystemInfoInterface](#protectnvrsysteminfointerface)
 
 ***
 
@@ -1318,7 +1366,7 @@ type ProtectNvrUserConfig = ProtectNvrUserConfigInterface;
 
 #### See
 
-[ProtectNvrUserConfigInterface](ProtectTypes.md#protectnvruserconfiginterface)
+[ProtectNvrUserConfigInterface](#protectnvruserconfiginterface)
 
 ***
 
@@ -1330,7 +1378,7 @@ type ProtectRingtoneConfig = ProtectRingtoneConfigInterface;
 
 #### See
 
-[ProtectRingtoneConfigInterface](ProtectTypes.md#protectringtoneconfiginterface)
+[ProtectRingtoneConfigInterface](#protectringtoneconfiginterface)
 
 ***
 
@@ -1342,7 +1390,7 @@ type ProtectSensorConfig = ProtectSensorConfigInterface;
 
 #### See
 
-[ProtectSensorConfigInterface](ProtectTypes.md#protectsensorconfiginterface)
+[ProtectSensorConfigInterface](#protectsensorconfiginterface)
 
 ***
 
@@ -1354,7 +1402,7 @@ type ProtectSensorConfigPayload = DeepPartial<ProtectSensorConfigInterface>;
 
 #### See
 
-[ProtectSensorConfigInterface](ProtectTypes.md#protectsensorconfiginterface)
+[ProtectSensorConfigInterface](#protectsensorconfiginterface)
 
 ***
 
@@ -1366,7 +1414,7 @@ type ProtectViewerConfig = ProtectViewerConfigInterface;
 
 #### See
 
-[ProtectViewerConfigInterface](ProtectTypes.md#protectviewerconfiginterface)
+[ProtectViewerConfigInterface](#protectviewerconfiginterface)
 
 ***
 
@@ -1378,4 +1426,4 @@ type ProtectViewerConfigPayload = DeepPartial<ProtectViewerConfigInterface>;
 
 #### See
 
-[ProtectViewerConfigInterface](ProtectTypes.md#protectviewerconfiginterface)
+[ProtectViewerConfigInterface](#protectviewerconfiginterface)

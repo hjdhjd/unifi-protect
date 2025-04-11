@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.21.0 (2025-04-11)
+  * Breaking change: the `retrieve` method has updated semantics to make it more future-proof as options and capabilities evolve.
+  * Improvement: minor updates to the Protect JSON descriptions.
+  * Fix: address edge cases in the livestream API.
+  * Housekeeping.
+
 ## 4.20.3 (2025-01-05)
   * Improvement: refinements to Protect controller connectivity and recovery.
   * Housekeeping.

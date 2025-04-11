@@ -74,7 +74,7 @@ UniFi Protect event utility class that provides functions for decoding realtime 
 ##### decodePacket()
 
 ```ts
-static decodePacket(log, packet): Nullable<ProtectEventPacket>
+static decodePacket(log, packet): Nullable<ProtectEventPacket>;
 ```
 
 Decode a UniFi Protect event packet.
@@ -88,7 +88,7 @@ Decode a UniFi Protect event packet.
 
 ###### Returns
 
-`Nullable`\<[`ProtectEventPacket`](ProtectApiEvents.md#protecteventpacket)\>
+`Nullable`\<[`ProtectEventPacket`](#protecteventpacket)\>
 
 ###### Remarks
 
@@ -103,7 +103,8 @@ successfully logged into the Protect controller, events are generated automatica
 
 ```ts
 type ProtectEventHeader = {
-[key: string]: string | number | boolean | object;   action: string;
+[key: string]: string | number | boolean | object;
+  action: string;
   id: string;
   modelKey: string;
   newUpdateId: string;
@@ -111,21 +112,6 @@ type ProtectEventHeader = {
 ```
 
 UniFi Protect event header.
-
-#### Type declaration
-
-#### Index Signature
-
-```ts
-[key: string]: string | number | boolean | object
-```
-
-| Name | Type |
-| ------ | ------ |
-| <a id="action"></a> `action` | `string` |
-| <a id="id"></a> `id` | `string` |
-| <a id="modelkey"></a> `modelKey` | `string` |
-| <a id="newupdateid"></a> `newUpdateId` | `string` |
 
 #### Param
 
@@ -142,6 +128,21 @@ A UniFi Protect event packet represents a realtime event update from a UniFi Pro
   a few properties that are always present (`action`, `id`, `modelKey`, and `newUpdateId`). The `payload` contains the detailed information related to the device and
   action specified in the header.
 
+#### Indexable
+
+```ts
+[key: string]: string | number | boolean | object
+```
+
+#### Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="action"></a> `action` | `string` |
+| <a id="id"></a> `id` | `string` |
+| <a id="modelkey"></a> `modelKey` | `string` |
+| <a id="newupdateid"></a> `newUpdateId` | `string` |
+
 ***
 
 ### ProtectEventPacket
@@ -154,13 +155,6 @@ type ProtectEventPacket = {
 ```
 
 UniFi Protect event packet.
-
-#### Type declaration
-
-| Name | Type |
-| ------ | ------ |
-| <a id="header"></a> `header` | [`ProtectEventHeader`](ProtectApiEvents.md#protecteventheader) |
-| <a id="payload"></a> `payload` | `unknown` |
 
 #### Param
 
@@ -175,3 +169,10 @@ Protect event payload.
 A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
   a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
   related to the device and action specified in the header.
+
+#### Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="header"></a> `header` | [`ProtectEventHeader`](#protecteventheader) |
+| <a id="payload"></a> `payload` | `unknown` |

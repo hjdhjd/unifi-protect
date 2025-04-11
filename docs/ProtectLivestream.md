@@ -48,12 +48,12 @@ This class provides a complete event-driven API to access the UniFi Protect Live
 
 1. Create an instance of the [UniFi Protect API](ProtectApi.md#protectapi) to connect to the Protect controller.
 
-2. Create an instance of [Protect Livestream](ProtectLivestream.md#protectlivestream) using the API instance above either directly, or through calling
-[createLivestream](ProtectApi.md#createlivestream) method on an instance of [ProtectApi](ProtectApi.md#protectapi) (preferred).
+2. Create an instance of [Protect Livestream](#protectlivestream) using the API instance above either directly, or through calling
+[createLivestream](ProtectApi.md#protectapi#createlivestream) method on an instance of [ProtectApi](ProtectApi.md#protectapi) (preferred).
 
-3. Start a livestream using [start](ProtectLivestream.md#start), stop it with [stop](ProtectLivestream.md#stop), and listen for events.
+3. Start a livestream using [start](#start), stop it with [stop](#stop), and listen for events.
 
-3. Listen for `message` events emitted by [ProtectLivestream](ProtectLivestream.md#protectlivestream) which provides Buffers containing the raw fMP4 segment data as it's produced by Protect. You can
+3. Listen for `message` events emitted by [ProtectLivestream](#protectlivestream) which provides Buffers containing the raw fMP4 segment data as it's produced by Protect. You can
    alternatively listen individually for the initialization segment or regular fMP4 segments if you'd like to distinguish between the two types of segments.
 
 Those are the basics that gets us up and running.
@@ -64,10 +64,10 @@ Those are the basics that gets us up and running.
 
 #### Constructors
 
-##### new ProtectLivestream()
+##### Constructor
 
 ```ts
-new ProtectLivestream(api, log): ProtectLivestream
+new ProtectLivestream(api, log): ProtectLivestream;
 ```
 
 ###### Parameters
@@ -79,7 +79,7 @@ new ProtectLivestream(api, log): ProtectLivestream
 
 ###### Returns
 
-[`ProtectLivestream`](ProtectLivestream.md#protectlivestream)
+[`ProtectLivestream`](#protectlivestream)
 
 ###### Overrides
 
@@ -94,7 +94,7 @@ EventEmitter.constructor
 ###### Get Signature
 
 ```ts
-get codec(): string
+get codec(): string;
 ```
 
 The codecs in use for this livestream session.
@@ -120,14 +120,14 @@ Returns a string containing the codec information,if it exists, or `null` otherw
 ###### Get Signature
 
 ```ts
-get initSegment(): Nullable<Buffer>
+get initSegment(): Nullable<Buffer<ArrayBufferLike>>;
 ```
 
 The initialization segment that must be at the start of every fMP4 stream.
 
 ###### Returns
 
-`Nullable`\<`Buffer`\>
+`Nullable`\<`Buffer`\<`ArrayBufferLike`\>\>
 
 Returns the initialization segment if it exists, or `null` otherwise.
 
@@ -136,14 +136,14 @@ Returns the initialization segment if it exists, or `null` otherwise.
 ##### getInitSegment()
 
 ```ts
-getInitSegment(): Promise<Buffer>
+getInitSegment(): Promise<Buffer<ArrayBufferLike>>;
 ```
 
 Retrieve the initialization segment that must be at the start of every fMP4 stream.
 
 ###### Returns
 
-`Promise`\<`Buffer`\>
+`Promise`\<`Buffer`\<`ArrayBufferLike`\>\>
 
 Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
 
@@ -155,7 +155,7 @@ start(
    channel, 
    lens, 
    segmentLength, 
-requestId): Promise<boolean>
+requestId): Promise<boolean>;
 ```
 
 Start an fMP4 livestream session from the Protect controller.
@@ -191,7 +191,7 @@ Once a livestream session has started, the following events can be listened for:
 ##### stop()
 
 ```ts
-stop(): void
+stop(): void;
 ```
 
 Stop an fMP4 livestream session from the Protect controller.

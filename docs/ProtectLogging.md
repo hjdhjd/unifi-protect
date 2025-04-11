@@ -27,7 +27,7 @@ By default, logging is done to the console. If you use your own logging function
 ##### debug()
 
 ```ts
-debug(message, ...parameters): void
+debug(message, ...parameters): void;
 ```
 
 ###### Parameters
@@ -44,7 +44,7 @@ debug(message, ...parameters): void
 ##### error()
 
 ```ts
-error(message, ...parameters): void
+error(message, ...parameters): void;
 ```
 
 ###### Parameters
@@ -61,7 +61,7 @@ error(message, ...parameters): void
 ##### info()
 
 ```ts
-info(message, ...parameters): void
+info(message, ...parameters): void;
 ```
 
 ###### Parameters
@@ -78,7 +78,7 @@ info(message, ...parameters): void
 ##### warn()
 
 ```ts
-warn(message, ...parameters): void
+warn(message, ...parameters): void;
 ```
 
 ###### Parameters
