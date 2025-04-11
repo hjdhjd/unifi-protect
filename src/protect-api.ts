@@ -36,6 +36,25 @@ export type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChi
   ProtectSensorConfigPayload | ProtectViewerConfigPayload;
 
 /**
+ * Options to tailor the behavior of {@link ProtectApi.retrieve}.
+ *
+ * @property {boolean} [logErrors=true] - Log errors. Defaults to `true`.
+ * @property {number} [timeout=3500] - Amount of time, in milliseconds, to wait for the Protect controller to respond before timing out. Defaults to `3500`.
+ */
+export interface RetrieveOptions {
+
+  logErrors?: boolean,
+  timeout?: number
+}
+
+// Our private interface to retrieve.
+interface InternalRetrieveOptions extends RetrieveOptions {
+
+  decodeResponse?: boolean,
+  isRetry?: boolean
+}
+
+/**
  * This class provides an event-driven API to access the UniFi Protect API. Here's how to quickly get up and running with this library once you've instantiated the class:
  *
  * 1. {@link login | Login} to the UniFi Protect controller and acquire security credentials for further calls to the API.
@@ -183,7 +202,7 @@ export class ProtectApi extends EventEmitter {
 
       // UniFi OS has cross-site request forgery protection built into it's web management UI. We retrieve the CSRF token, if available, by connecting to the Protect
       // controller and checking the headers for it.
-      const response = await this.retrieve("https://" + this.nvrAddress, { method: "GET" }, false);
+      const response = await this.retrieve("https://" + this.nvrAddress, { method: "GET" }, { logErrors: false });
 
       if(response?.ok) {
 
@@ -635,7 +654,7 @@ export class ProtectApi extends EventEmitter {
 
       body: JSON.stringify({ channels: device.channels }),
       method: "PATCH"
-    }, true, false);
+    }, { decodeResponse: false });
 
     // Since we took responsibility for interpreting the outcome of the fetch, we need to check for any errors.
     if(!response || !response?.ok) {
@@ -853,7 +872,7 @@ export class ProtectApi extends EventEmitter {
 
     // Ask Protect to give us a URL for this websocket.
     const response = await this.retrieve(this.getApiEndpoint("websocket") + "/" + endpoint +
-      ((params && params.toString().length) ? "?" + params.toString() : ""), undefined, !retry);
+      ((params && params.toString().length) ? "?" + params.toString() : ""), undefined, { logErrors: !retry });
 
     // Something went wrong, we're done here.
     if(!response?.ok) {
@@ -913,9 +932,9 @@ export class ProtectApi extends EventEmitter {
   /**
    * Execute an HTTP fetch request to the Protect controller.
    *
-   * @param url       - Complete URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot).
-   * @param options   - Parameters to pass on for the endpoint request.
-   * @param logErrors - Log errors that aren't already accounted for and handled, rather than failing silently. Defaults to `true`.
+   * @param url             - URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot).
+   * @param options         - Parameters to pass on for the endpoint request.
+   * @param retrieveOptions - Options that modify whether errors are logged and timeout intervals to wait for a response from the Protect controller.
    *
    * @returns Returns a promise that will resolve to a Response object successful, and `null` otherwise.
    *
@@ -926,19 +945,24 @@ export class ProtectApi extends EventEmitter {
    * @category API Access
    */
   // Communicate HTTP requests with a Protect controller.
-  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true): Promise<Nullable<Response>> {
+  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, retrieveOptions: RetrieveOptions = {}): Promise<Nullable<Response>> {
 
-    return this._retrieve(url, options, logErrors);
+    return this._retrieve(url, options, retrieveOptions);
   }
 
   // Internal interface to communicating HTTP requests with a Protect controller, with error handling.
-  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, logErrors = true, decodeResponse = true, isRetry = false):
-  Promise<Nullable<Response>> {
+  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, retrieveOptions: InternalRetrieveOptions = {}): Promise<Nullable<Response>> {
+
+    // Set our defaults unless the user has overriden them.
+    retrieveOptions.decodeResponse ??= true;
+    retrieveOptions.isRetry ??= false;
+    retrieveOptions.logErrors ??= true;
+    retrieveOptions.timeout ??= PROTECT_API_TIMEOUT;
 
     // Log errors if that's what the caller requested.
     const logError = (message: string, ...parameters: unknown[]): void => {
 
-      if(!logErrors) {
+      if(!retrieveOptions.logErrors) {
 
         return;
       }
@@ -951,9 +975,9 @@ export class ProtectApi extends EventEmitter {
 
       // Reset our connection context compleely.
       await reset();
+      retrieveOptions.isRetry = true;
 
-      return new Promise(resolve => setTimeout(() => resolve(this._retrieve(url, options, logErrors, decodeResponse, true)),
-        Math.floor(Math.random() * (150 - 50 + 1)) + 50));
+      return new Promise(resolve => setTimeout(() => resolve(this._retrieve(url, options, retrieveOptions)), Math.floor(Math.random() * (150 - 50 + 1)) + 50));
     };
 
     // Catch Protect controller server-side issues:
@@ -969,7 +993,7 @@ export class ProtectApi extends EventEmitter {
     let response: Response;
 
     // Create a signal handler to deliver the abort operation.
-    const signal = timeoutSignal(PROTECT_API_TIMEOUT);
+    const signal = timeoutSignal(retrieveOptions.timeout);
 
     options.headers = this.headers;
     options.signal = signal;
@@ -1015,13 +1039,13 @@ export class ProtectApi extends EventEmitter {
       response = await this.fetch(url, options);
 
       // The caller will sort through responses instead of us.
-      if(!decodeResponse) {
+      if(!retrieveOptions.decodeResponse) {
 
         return response;
       }
 
       // Preemptively increase the error count, but only if we're not retrying.
-      if(!isRetry) {
+      if(!retrieveOptions.isRetry) {
 
         this.apiErrorCount++;
       }
@@ -1046,7 +1070,7 @@ export class ProtectApi extends EventEmitter {
       if(!response.ok && isServerSideIssue(response.status)) {
 
         // Retry on server side status issues, but no more than once.
-        if(!isRetry) {
+        if(!retrieveOptions.isRetry) {
 
           return retry();
         }
@@ -1072,7 +1096,7 @@ export class ProtectApi extends EventEmitter {
     } catch(error) {
 
       // Increment our API error count only if we're not in currently in a retry.
-      if(!isRetry) {
+      if(!retrieveOptions.isRetry) {
 
         this.apiErrorCount++;
       }
@@ -1080,7 +1104,7 @@ export class ProtectApi extends EventEmitter {
       if(error instanceof AbortError) {
 
         // Retry on API timeouts, but no more than once.
-        if(!isRetry) {
+        if(!retrieveOptions.isRetry) {
 
           return retry();
         }
@@ -1099,7 +1123,7 @@ export class ProtectApi extends EventEmitter {
           case "EHOSTDOWN":
 
             // Retry on connection refused, but no more than once.
-            if(!isRetry) {
+            if(!retrieveOptions.isRetry) {
 
               return retry();
             }
@@ -1113,7 +1137,7 @@ export class ProtectApi extends EventEmitter {
           case "ERR_HTTP2_STREAM_ERROR":
 
             // Retry on connection reset, but no more than once.
-            if(!isRetry) {
+            if(!retrieveOptions.isRetry) {
 
               return retry();
             }
