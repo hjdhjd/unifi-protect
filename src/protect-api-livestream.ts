@@ -85,6 +85,7 @@ export class ProtectLivestream extends EventEmitter {
   private api: ProtectApi;
   private errorHandler: Nullable<(error: Error) => void>;
   private heartbeat: Nullable<NodeJS.Timeout>;
+  private isStopping: boolean;
   private lastMessage: number;
   private log: ProtectLogging;
   private segmentHandler: Nullable<(packet: Buffer) => void>;
@@ -100,6 +101,7 @@ export class ProtectLivestream extends EventEmitter {
     this._codec = null;
     this.api = api;
     this.errorHandler = null;
+    this.isStopping = false;
     this.lastMessage = 0;
     this.log = log;
     this.segmentHandler = null;
@@ -136,8 +138,11 @@ export class ProtectLivestream extends EventEmitter {
     // Clear out the initialization segment.
     this._initSegment = null;
 
+    // Clear out our stopping state.
+    this.isStopping = false;
+
     // Launch the livestream.
-    return await this.launchLivestream(cameraId, channel, lens, segmentLength, requestId);
+    return this.launchLivestream(cameraId, channel, lens, segmentLength, requestId);
   }
 
   /**
@@ -243,6 +248,18 @@ export class ProtectLivestream extends EventEmitter {
         // lockup due to regressions in the controller firmware. This ensures we can never hang waiting on data from the API, especially in a livestream scenario.
         heartbeat = setInterval(() => {
 
+          // Clear out our heartbeat if our websocket no longer exists.
+          if(!this.ws) {
+
+            // Clear out our heartbeat since we're closing.
+            if(heartbeat) {
+
+              clearInterval(heartbeat);
+            }
+
+            return;
+          }
+
           if((Date.now() - this.lastMessage) > PROTECT_API_TIMEOUT) {
 
             logError("the livestream API is not responding.");
@@ -280,6 +297,7 @@ export class ProtectLivestream extends EventEmitter {
           // The websocket has been closed normally. We fire off a close event to inform our listeners and we're done.
           case 1005:
 
+            this.isStopping = true;
             this.stop();
             this.emit("close");
 
@@ -297,6 +315,10 @@ export class ProtectLivestream extends EventEmitter {
             break;
         }
 
+        if(!this.isStopping) {
+
+          this.emit("close");
+        }
       });
 
       // Process packets coming to our websocket.
