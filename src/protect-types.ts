@@ -120,6 +120,8 @@ export interface ProtectNvrConfigInterface {
   hostType: string,
   hosts: string[],
   id: string,
+  isAccessInstalled: boolean,
+  isAiReportingEnabled: boolean,
   isAway: boolean,
   isHardware: boolean,
   isInsightsEnabled: boolean,
@@ -129,6 +131,7 @@ export interface ProtectNvrConfigInterface {
   isRecordingDisabled: boolean,
   isRecordingMotionOnly: boolean,
   isRecycling: boolean,
+  isRemoteAccessEnabled: boolean,
   isSetup: boolean,
   isSshEnabled: boolean,
   isStacked: boolean,
@@ -289,6 +292,49 @@ export interface ProtectNvrSystemInfoInterface {
  */
 export interface ProtectCameraConfigInterface {
 
+  accessDeviceMetadata: {
+
+    channels: {
+
+      bitrate: number,
+      fps: number,
+      fpsValues: number[],
+      height: number,
+      id: number,
+      localStreamName: string,
+      quality: string,
+      width: number
+    }[],
+
+    connectedSince: number,
+    disableRecordingByDefault: boolean,
+    doorInfo: {
+
+      canLock: boolean,
+      lockState: string
+    },
+    featureFlags: {
+
+      supportLivestream: boolean,
+      supportUnlock: boolean
+    },
+    ledSettings: {
+
+      isEnabled: boolean
+    },
+    micVolume: number,
+    pairedInfo: {
+
+      name: string,
+      uri: string
+    },
+    speakerSettings: {
+
+      areSystemSoundsEnabled: boolean
+    },
+
+    talkbackSettings: ProtectCameraTalkbackConfigInterface[]
+  },
   apMac: string,
   apRssi: string,
   audioBitrate: number,
@@ -399,6 +445,7 @@ export interface ProtectCameraConfigInterface {
   is2K: boolean,
   is4K: boolean,
   isAdopted: boolean,
+  isAdoptedByAccessApp: boolean,
   isAdoptedByOther: boolean,
   isAdopting: boolean,
   isAttemptingToConnect: boolean,
@@ -617,19 +664,7 @@ export interface ProtectCameraConfigInterface {
     maxStreams: Nullable<number>
   },
   supportedScalingResolutions: string[],
-  talkbackSettings: {
-
-    bindAddr: string,
-    bindPort: number,
-    bitsPerSample: number,
-    channels: number,
-    filterAddr: string,
-    filterPort: number,
-    typeFmt: string,
-    typeIn: string,
-    quality: number,
-    samplingRate: number
-  },
+  talkbackSettings: ProtectCameraTalkbackConfigInterface,
   thirdPartyCameraInfo: {
 
     port: number,
@@ -671,6 +706,8 @@ export interface ProtectCameraConfigInterface {
  */
 export interface ProtectCameraChannelConfigInterface {
 
+  autoBitrate: boolean,
+  autoFps: boolean,
   bitrate: number,
   enabled: boolean,
   fps: number,
@@ -698,6 +735,24 @@ export interface ProtectCameraLcdMessageConfigInterface {
   resetAt: Nullable<number>,
   text: string,
   type: string
+}
+
+/**
+ * A semi-complete description of the UniFi Protect talkback settings JSON.
+ */
+export interface ProtectCameraTalkbackConfigInterface {
+
+  bindAddr: string,
+  bindPort: number,
+  bitsPerSample: number,
+  channels: number,
+  filterAddr: string,
+  filterPort: number,
+  quality: number,
+  samplingRate: number,
+  typeFmt: string,
+  typeIn: string,
+  url: string
 }
 
 /**
@@ -1190,6 +1245,7 @@ export interface ProtectEventAddInterface {
   end: number,
   eventId: string,
   id: string,
+  locked: boolean,
   metadata: ProtectEventMetadata,
   modelKey: string,
   partition: string,
@@ -1207,16 +1263,22 @@ export interface ProtectEventAddInterface {
  */
 export interface ProtectEventMetadataInterface {
 
+  accessEventId: string,
+  action: string,
   deviceId: {
 
     text: string
   },
+  direction: string,
+  doorName: string,
   fingerprint: {
 
     ulpId: string
   },
+  firstName: string,
   isLowBattery: boolean,
   isWireless: boolean,
+  lastName: string,
   licensePlate: {
 
     confidenceLevel: number,
@@ -1231,7 +1293,11 @@ export interface ProtectEventMetadataInterface {
     nfcId: string,
     ulpId: string
   },
-  reason: string
+  openMethod: string,
+  openSuccess: boolean,
+  reason: string,
+  uniqueId: string,
+  userType: string
 }
 
 /** @see {@link ProtectEventAddInterface} */
