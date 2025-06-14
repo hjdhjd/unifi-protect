@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.22.0 (2025-06-14)
+  * Breaking change: the semantics for starting a livestream API session have changed to be more future-proof.
+  * New feature: the livestream API semantics now support creating a Node Readable stream to process the live video. The benefit for users is this frees up the semantics of handling backpressure and edge cases in many instances for more straightforward and simple use cases.
+  * Improvement: optimizations to the livestream API pipeline.
+  * Housekeeping.
+
 ## 4.21.0 (2025-04-11)
   * Breaking change: the `retrieve` method has updated semantics to make it more future-proof as options and capabilities evolve.
   * Improvement: minor updates to the Protect JSON descriptions.

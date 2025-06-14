@@ -131,6 +131,21 @@ The initialization segment that must be at the start of every fMP4 stream.
 
 Returns the initialization segment if it exists, or `null` otherwise.
 
+##### stream
+
+###### Get Signature
+
+```ts
+get stream(): Nullable<Readable>;
+```
+
+Retrieve a Node.js Readable stream if `useStream` was set to true (defaults to false) when starting the livestream.
+Otherwise, returns `null`.
+
+###### Returns
+
+`Nullable`\<`Readable`\>
+
 #### Methods
 
 ##### getInitSegment()
@@ -153,22 +168,18 @@ Returns a promise that resolves once the initialization segment has been seen, o
 start(
    cameraId, 
    channel, 
-   lens, 
-   segmentLength, 
-requestId): Promise<boolean>;
+options): Promise<boolean>;
 ```
 
 Start an fMP4 livestream session from the Protect controller.
 
 ###### Parameters
 
-| Parameter | Type | Default value | Description |
-| ------ | ------ | ------ | ------ |
-| `cameraId` | `string` | `undefined` | Protect camera device ID property from the camera's [ProtectCameraConfig](ProtectTypes.md#protectcameraconfiginterface). |
-| `channel` | `number` | `undefined` | Camera channel to use, indexing the channels array in the camera's [ProtectCameraConfig](ProtectTypes.md#protectcameraconfiginterface). |
-| `lens` | `number` | `0` | Optionally specify alternate cameras on a Protect device, such as a package camera. |
-| `segmentLength` | `number` | `100` | Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms. |
-| `requestId` | `string` | `...` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `cameraId` | `string` | Protect camera device ID property from the camera's [ProtectCameraConfig](ProtectTypes.md#protectcameraconfiginterface). |
+| `channel` | `number` | Camera channel to use, indexing the channels array in the camera's [ProtectCameraConfig](ProtectTypes.md#protectcameraconfiginterface). |
+| `options` | `Partial`\<[`LivestreamOptions`](#livestreamoptions)\> | Optional parameters to further customize the livestream session. |
 
 ###### Returns
 
@@ -178,7 +189,8 @@ Returns `true` if the livestream has successfully started, `false` otherwise.
 
 ###### Remarks
 
-Once a livestream session has started, the following events can be listened for:
+Once a livestream session has started, the following events can be listened for (unless you've specified `useStream` in `options`, in which case only the
+         `close` event is available):
 
 | Event         | Description                                                                                                                                  |
 |---------------|----------------------------------------------------------------------------------------------------------------------------------------------|
@@ -199,3 +211,18 @@ Stop an fMP4 livestream session from the Protect controller.
 ###### Returns
 
 `void`
+
+## Interfaces
+
+### LivestreamOptions
+
+Options for configuring a livestream session.
+
+#### Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="lens"></a> `lens` | `number` | Optionally specify alternate cameras on a Protect device, such as a package camera. |
+| <a id="requestid"></a> `requestId` | `string` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
+| <a id="segmentlength"></a> `segmentLength` | `number` | Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms. |
+| <a id="usestream"></a> `useStream` | `boolean` | If `true`, a Node.js Readable stream interface will be created for consuming raw fMP4 segments instead of using EventEmitter events. Defaults to false. |

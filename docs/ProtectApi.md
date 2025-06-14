@@ -6,7 +6,7 @@
 
 # ProtectApi
 
-A complete implementation of the UniFi Protect API, including access to the events, livestream data (not just RTSP), and websockets endpoints.
+A complete implementation of the UniFi Protect API, including access to the events, livestream data (not just RTSP), and websocket endpoints.
 
 The UniFi Protect API is largely undocumented and has been reverse engineered mostly through the Protect native web interface as well as trial and error. This
 implementation provides a high-performance, event-driven interface into the Protect API, allowing you to access all of Protect's rich capabilities.
