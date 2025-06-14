@@ -3,7 +3,7 @@
  *
  * ufp.ts: UniFi Protect API command line utility.
  */
-import { ProtectApi, ProtectEventPacket } from "../index.js";
+import { ProtectApi, type ProtectEventPacket } from "../index.js";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import util from "util";
@@ -64,6 +64,22 @@ if(!(await ufp.getBootstrap())) {
   process.exit(0);
 }
 
+// Silently exit on pipe errors but still process other errors.
+process.stdout.on("error", (err) => {
+
+  if(err.code === "EPIPE") {
+
+    process.exit(0);
+  } else {
+
+    throw err;
+  }
+});
+
+let camera;
+let channel: number | undefined = 0;
+let ls;
+
 // Command line processing.
 switch(process.argv.length) {
 
@@ -105,6 +121,29 @@ switch(process.argv.length) {
 
         break;
 
+      // Set channel IDR intervals.
+      case "idr":
+
+        // We can only specify a valid number here.
+        if(Number.isNaN(Number(process.argv[3])) || !Number.isInteger(Number(process.argv[3])) || (Number(process.argv[3]) < 1) || (Number(process.argv[3]) > 5)) {
+
+          usage();
+        }
+
+        // Restart every camera.
+        for(const device of ufp.bootstrap?.cameras.filter(camera => !camera.isThirdPartyCamera) ?? []) {
+
+          // Update the Protect controller with the new channel map and IDR interval.
+          //eslint-disable-next-line no-await-in-loop
+          await ufp.updateDevice(device, { channels: device.channels.map(x => Object.assign(x, { idrInterval: Number(process.argv[3]) })) });
+
+          log.info("%s: IDR set.", ufp.getDeviceName(device));
+        }
+
+        process.exit(0);
+
+        break;
+
       // Restart devices.
       case "restart":
 
@@ -114,22 +153,59 @@ switch(process.argv.length) {
         }
 
         // Restart every camera.
-        for(const camera of ufp.bootstrap?.cameras.filter(x => !x.isRebooting && x.state === "CONNECTED") ?? []) {
+        for(const device of ufp.bootstrap?.cameras.filter(camera => !camera.isRebooting && camera.state === "CONNECTED") ?? []) {
 
           //eslint-disable-next-line no-await-in-loop
-          const response = await ufp.retrieve(ufp.getApiEndpoint(camera.modelKey) + "/" + camera.id + "/reboot", { body: JSON.stringify({}), method: "POST" });
+          const response = await ufp.retrieve(ufp.getApiEndpoint(device.modelKey) + "/" + device.id + "/reboot", { body: JSON.stringify({}), method: "POST" });
 
           if(!response?.ok) {
 
-            log.error("%s: unable to reboot: %s", ufp.getDeviceName(camera), response);
+            log.error("%s: unable to reboot: %s", ufp.getDeviceName(device), response);
 
             break;
           }
 
-          log.info("%s: restarted.", ufp.getDeviceName(camera));
+          log.info("%s: restarted.", ufp.getDeviceName(device));
         }
 
         process.exit(0);
+
+        break;
+
+      case "stream":
+
+        if(![4, 5].includes(process.argv.length)) {
+
+          usage();
+
+          break;
+        }
+
+        camera = ufp.bootstrap?.cameras.find(camera => camera.name?.toLowerCase() === process.argv[3].toLowerCase());
+
+        if(!camera) {
+
+          usage();
+
+          break;
+        }
+
+        if(process.argv.length === 5) {
+
+          channel = camera.channels.find(channel => channel.name?.toLowerCase() === process.argv[4].toLowerCase())?.id;
+
+          if(channel === undefined) {
+
+            usage();
+
+            break;
+          }
+        }
+
+        ls = ufp.createLivestream();
+
+        await ls.start(camera.id, channel, { useStream: true });
+        ls.stream?.pipe(process.stdout);
 
         break;
 
@@ -150,6 +226,7 @@ function usage(): void {
   log.error("Usage: %s bootstrap", process.argv[1]);
   log.error("Usage: %s events [action | id | modelKey | other_event_header_property] [value] (all parameters are case-sensitive)", process.argv[1]);
   log.error("Usage: %s restart cameras", process.argv[1]);
+  log.error("Usage: %s stream [camera name]", process.argv[1]);
   log.error("");
 
   // If we're bootstrapped, we also want to inform users what the various device identifiers are to make filtering events easier.
@@ -158,31 +235,31 @@ function usage(): void {
     if(ufp.bootstrap.cameras.length) {
 
       log.error("Cameras:");
-      ufp.bootstrap.cameras.map(x => log.error("  %s => %s", x.name ?? x.marketName, x.id));
+      ufp.bootstrap.cameras.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
 
     if(ufp.bootstrap.chimes.length) {
 
       log.error("Chimes:");
-      ufp.bootstrap.chimes.map(x => log.error("  %s => %s", x.name ?? x.marketName, x.id));
+      ufp.bootstrap.chimes.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
 
     if(ufp.bootstrap.lights.length) {
 
       log.error("Lights:");
-      ufp.bootstrap.lights.map(x => log.error("  %s => %s", x.name ?? x.marketName, x.id));
+      ufp.bootstrap.lights.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
 
     if(ufp.bootstrap.sensors.length) {
 
       log.error("Sensors:");
-      ufp.bootstrap.sensors.map(x => log.error("  %s => %s", x.name ?? x.marketName, x.id));
+      ufp.bootstrap.sensors.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
 
     if(ufp.bootstrap.viewers.length) {
 
       log.error("Viewers:");
-      ufp.bootstrap.viewers.map(x => log.error("  %s => %s", x.name ?? x.marketName, x.id));
+      ufp.bootstrap.viewers.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
   }
 

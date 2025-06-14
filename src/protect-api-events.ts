@@ -63,8 +63,8 @@
  *
  * @module ProtectApiEvents
  */
-import { Nullable } from "./protect-types.js";
-import { ProtectLogging } from "./protect-logging.js";
+import type { Nullable } from "./protect-types.js";
+import type { ProtectLogging } from "./protect-logging.js";
 import zlib from "node:zlib";
 
 // UniFi Protect events API packet header size, in bytes.

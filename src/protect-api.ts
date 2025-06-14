@@ -4,22 +4,22 @@
  */
 
 /**
- * A complete implementation of the UniFi Protect API, including access to the events, livestream data (not just RTSP), and websockets endpoints.
+ * A complete implementation of the UniFi Protect API, including access to the events, livestream data (not just RTSP), and websocket endpoints.
  *
  * The UniFi Protect API is largely undocumented and has been reverse engineered mostly through the Protect native web interface as well as trial and error. This
  * implementation provides a high-performance, event-driven interface into the Protect API, allowing you to access all of Protect's rich capabilities.
  *
  * @module ProtectApi
  */
-import { ALPNProtocol, AbortError, FetchError, Headers, Request, RequestOptions, Response, context, reset, timeoutSignal } from "@adobe/fetch";
-import { Nullable, ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectCameraConfigPayload, ProtectChimeConfig,
+import { ALPNProtocol, AbortError, FetchError, Headers, type Request, type RequestOptions, type Response, context, reset, timeoutSignal } from "@adobe/fetch";
+import type { Nullable, ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectCameraConfigPayload, ProtectChimeConfig,
   ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload, ProtectNvrUserConfig,
   ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "./settings.js";
 import { EventEmitter } from "node:events";
 import { ProtectApiEvents } from "./protect-api-events.js";
 import { ProtectLivestream } from "./protect-api-livestream.js";
-import { ProtectLogging } from "./protect-logging.js";
+import type { ProtectLogging } from "./protect-logging.js";
 import WebSocket from "ws";
 import util from "node:util";
 
@@ -919,6 +919,9 @@ export class ProtectApi extends EventEmitter {
 
             break;
         }
+      } else if(error instanceof SyntaxError) {
+
+        this.log.error("Received syntax error while communicating with the controller. This is typically due to a controller reboot.");
 
       } else {
 
