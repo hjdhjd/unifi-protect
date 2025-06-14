@@ -42,12 +42,13 @@
  * @module ProtectLivestream
  */
 /* eslint-enable @stylistic/max-len */
+import WebSocket, { createWebSocketStream } from "ws";
 import events, { EventEmitter } from "node:events";
-import { Nullable } from "./protect-types.js";
+import type { Nullable } from "./protect-types.js";
 import { PROTECT_API_TIMEOUT } from "./settings.js";
-import { ProtectApi } from "./protect-api.js";
-import { ProtectLogging } from "./protect-logging.js";
-import WebSocket from "ws";
+import type { ProtectApi } from "./protect-api.js";
+import type { ProtectLogging } from "./protect-logging.js";
+import { Readable } from "node:stream";
 
 // A complete description of the UniFi Protect livestream API websocket API.
 enum ProtectLiveFrame {
@@ -61,6 +62,23 @@ enum ProtectLiveFrame {
   AUDIO = 253,
   MDAT = 254,
   ENDSEGMENT = 255
+}
+
+/**
+ * Options for configuring a livestream session.
+ *
+ * @property lens             - Optionally specify alternate cameras on a Protect device, such as a package camera.
+ * @property segmentLength    - Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms.
+ * @property requestId        - Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes.
+ * @property useStream        - If `true`, a Node.js Readable stream interface will be created for consuming raw fMP4 segments instead of using EventEmitter events.
+ *                              Defaults to false.
+ */
+export interface LivestreamOptions {
+
+  lens: number;
+  requestId: string;
+  segmentLength: number;
+  useStream: boolean;
 }
 
 /**
@@ -82,14 +100,16 @@ export class ProtectLivestream extends EventEmitter {
 
   private _initSegment: Nullable<Buffer>;
   private _codec: Nullable<string>;
+  private _stream: Nullable<Readable>;
   private api: ProtectApi;
+  private dataHandler: Nullable<(packet: Buffer) => void>;
   private errorHandler: Nullable<(error: Error) => void>;
   private heartbeat: Nullable<NodeJS.Timeout>;
   private isStopping: boolean;
   private lastMessage: number;
   private log: ProtectLogging;
-  private segmentHandler: Nullable<(packet: Buffer) => void>;
   private ws: Nullable<WebSocket>;
+  private wsStream: Nullable<Readable>;
 
   // Create a new instance.
   constructor(api: ProtectApi, log: ProtectLogging) {
@@ -97,16 +117,18 @@ export class ProtectLivestream extends EventEmitter {
     // Initialize the event emitter.
     super();
 
-    this._initSegment = null;
     this._codec = null;
+    this._initSegment = null;
+    this._stream = null;
     this.api = api;
+    this.dataHandler = null;
     this.errorHandler = null;
     this.isStopping = false;
     this.lastMessage = 0;
     this.log = log;
-    this.segmentHandler = null;
     this.heartbeat = null;
     this.ws = null;
+    this.wsStream = null;
   }
 
   /**
@@ -114,13 +136,12 @@ export class ProtectLivestream extends EventEmitter {
    *
    * @param cameraId         - Protect camera device ID property from the camera's {@link ProtectTypes.ProtectCameraConfigInterface | ProtectCameraConfig}.
    * @param channel          - Camera channel to use, indexing the channels array in the camera's {@link ProtectTypes.ProtectCameraConfigInterface | ProtectCameraConfig}.
-   * @param lens             - Optionally specify alternate cameras on a Protect device, such as a package camera.
-   * @param segmentLength    - Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms.
-   * @param requestId        - Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes.
+   * @param options          - Optional parameters to further customize the livestream session.
    *
    * @returns Returns `true` if the livestream has successfully started, `false` otherwise.
    *
-   * @remarks Once a livestream session has started, the following events can be listened for:
+   * @remarks Once a livestream session has started, the following events can be listened for (unless you've specified `useStream` in `options`, in which case only the
+   *          `close` event is available):
    *
    * | Event         | Description                                                                                                                                  |
    * |---------------|----------------------------------------------------------------------------------------------------------------------------------------------|
@@ -130,7 +151,12 @@ export class ProtectLivestream extends EventEmitter {
    * | `message`     | An fMP4 segment has been received. No distinction is made between segment types. The segment will be passed as an argument to any listeners. |
    * | `segment`     | A non-initialization fMP4 segment has been received. The segment will be passed as an argument to any listeners.                             |
    */
-  public async start(cameraId: string, channel: number, lens = 0, segmentLength = 100, requestId = cameraId + "-" + channel.toString()): Promise<boolean> {
+  public async start(cameraId: string, channel: number, options: Partial<LivestreamOptions> = {}): Promise<boolean> {
+
+    options.lens ??= 0;
+    options.requestId ??= cameraId + "-" + channel.toString();
+    options.segmentLength ??= 100;
+    options.useStream ??= false;
 
     // Stop any existing stream.
     this.stop();
@@ -142,7 +168,7 @@ export class ProtectLivestream extends EventEmitter {
     this.isStopping = false;
 
     // Launch the livestream.
-    return this.launchLivestream(cameraId, channel, lens, segmentLength, requestId);
+    return this.launchLivestream(cameraId, channel, options as LivestreamOptions);
   }
 
   /**
@@ -156,17 +182,30 @@ export class ProtectLivestream extends EventEmitter {
       this.ws?.terminate();
     }
 
-    // Clean up our segment processing handler.
+    // Destroy the underlying WebSocket stream if it exists.
+    if(this.wsStream) {
+
+      if(this.dataHandler) {
+
+        this.wsStream.removeListener("data", this.dataHandler);
+        this.dataHandler = null;
+      }
+
+      this.wsStream.destroy();
+      this.wsStream = null;
+    }
+
     if(this.errorHandler) {
 
       this.ws?.removeListener("error", this.errorHandler);
       this.errorHandler = null;
     }
 
-    if(this.segmentHandler) {
+    // If we've created a stream, end it gracefully.
+    if(this._stream) {
 
-      this.ws?.removeListener("message", this.segmentHandler);
-      this.segmentHandler = null;
+      this._stream.push(null);
+      this._stream = null;
     }
 
     // Flag that we are no longer running.
@@ -174,15 +213,15 @@ export class ProtectLivestream extends EventEmitter {
   }
 
   // Configure the websocket to populate the prebuffer.
-  private async launchLivestream(cameraId: string, channel: number, lens: number, segmentLength: number, requestId: string): Promise<boolean> {
+  private async launchLivestream(cameraId: string, channel: number, options: LivestreamOptions): Promise<boolean> {
 
-    const logError = (message: string, ...parameters: unknown[]): void => this.log.error(requestId + ": " + message, ...parameters);
+    const logError = (message: string, ...parameters: unknown[]): void => this.log.error(options.requestId + ": " + message, ...parameters);
 
     // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for segment length. Protect happens to default to a 100ms segment
     // length as well, so we do too.
-    if(segmentLength < 100) {
+    if(options.segmentLength < 100) {
 
-      segmentLength = 100;
+      options.segmentLength = 100;
     }
 
     // Parameters that can be set for the livestream. We allow the modification of a useful subset of these,
@@ -204,11 +243,11 @@ export class ProtectLivestream extends EventEmitter {
       camera: cameraId,
       channel: channel.toString(),
       extendedVideoMetadata: "", // Try excluding?
-      fragmentDurationMillis: segmentLength.toString(),
-      lens: lens.toString(),
+      fragmentDurationMillis: options.segmentLength.toString(),
+      lens: options.lens.toString(),
       progressive: "",
       rebaseTimestampsToZero: "true",
-      requestId: requestId,
+      requestId: options.requestId,
       type: "fmp4"
     });
 
@@ -236,25 +275,36 @@ export class ProtectLivestream extends EventEmitter {
         return false;
       }
 
-      // Setup our heartbeat timer.
-      let heartbeat: Nullable<NodeJS.Timeout> = null;
+      // The user's requested that we use a stream interface instead of an event interface to push complete fMP4 segments.
+      if(options.useStream) {
+
+        this._stream = new Readable({
+
+          // This is intentionally a no-op, since we're going to push complete fMP4 segments as soon as they're available.
+          read:(): void => {}
+        });
+      }
 
       // Start our heartbeat once we've opened the connection.
       this.ws?.once("open", () => {
+
+        // Create a Readable stream from the WebSocket to consume incoming messages as a stream.
+        this.wsStream = createWebSocketStream(this.ws as WebSocket) as Readable;
 
         this.lastMessage = Date.now();
 
         // Heartbeat the controller. We need this because if we don't heartbeat the controller, it can sometimes just decide not to give us a livestream to work with, or
         // lockup due to regressions in the controller firmware. This ensures we can never hang waiting on data from the API, especially in a livestream scenario.
-        heartbeat = setInterval(() => {
+        this.heartbeat = setInterval(() => {
 
           // Clear out our heartbeat if our websocket no longer exists.
           if(!this.ws) {
 
             // Clear out our heartbeat since we're closing.
-            if(heartbeat) {
+            if(this.heartbeat) {
 
-              clearInterval(heartbeat);
+              clearInterval(this.heartbeat);
+              this.heartbeat = null;
             }
 
             return;
@@ -270,6 +320,10 @@ export class ProtectLivestream extends EventEmitter {
             }
           }
         }, PROTECT_API_TIMEOUT);
+
+
+        // Process packets coming to our websocket.
+        this.processLivestream();
       });
 
       // Catch any errors and inform the user, if needed.
@@ -287,9 +341,10 @@ export class ProtectLivestream extends EventEmitter {
       this.ws?.once("close", (code: number) => {
 
         // Clear out our heartbeat since we're closing.
-        if(heartbeat) {
+        if(this.heartbeat) {
 
-          clearInterval(heartbeat);
+          clearInterval(this.heartbeat);
+          this.heartbeat = null;
         }
 
         switch(code) {
@@ -321,9 +376,6 @@ export class ProtectLivestream extends EventEmitter {
         }
       });
 
-      // Process packets coming to our websocket.
-      this.processLivestream();
-
     } catch(error) {
 
       logError("error while connecting to the livestream websocket API: %s", error);
@@ -337,7 +389,7 @@ export class ProtectLivestream extends EventEmitter {
   private processLivestream(): void {
 
     // Check to ensure our websocket is live.
-    if(!this.ws) {
+    if(!this.wsStream) {
 
       return;
     }
@@ -354,7 +406,7 @@ export class ProtectLivestream extends EventEmitter {
     let packetRemaining = Buffer.alloc(0);
 
     // Process data coming in from the websocket.
-    this.ws.on("message", this.segmentHandler = (packet: Buffer): void => {
+    this.wsStream.on("data", this.dataHandler = (packet: Buffer): void => {
 
       // Update our heartbeat.
       this.lastMessage = Date.now();
@@ -374,41 +426,41 @@ export class ProtectLivestream extends EventEmitter {
         // prepend to the next packet that comes across.
         if((packet.length - offset) < 4) {
 
-          packetRemaining = packet.slice(offset);
+          packetRemaining = packet.subarray(offset);
 
           break;
         }
 
-        // Grab the encoded packet header.
-        const offsetWithHeader = offset + 4;
-        const header = packet.slice(offset, offsetWithHeader);
+        // Read the packet header.
+        const header = packet.readUInt8(offset);
 
-        // Ensure we have a valid header before we do anything.
-        if(!Object.values(ProtectLiveFrame).includes(header[0] as ProtectLiveFrame)) {
+        // Validate our header before we do anything else.
+        if(!Object.values(ProtectLiveFrame).includes(header as ProtectLiveFrame)) {
 
-          this.log.error("Invalid header found while decoding the livestream: %s", header[0]);
+          this.log.error("Invalid header found while decoding the livestream: %s", header);
 
           break;
         }
 
-        // Get the length of the actual fMP4 segment we are decoding. Since all this is done over a websocket, portions of an fMP4 segment can span packets and need to be
-        // encoded. Protect encodes the length of the entire fMP4 segment in the first three bytes of the header like so...
-        const segmentLength = (((header[1] << 8) | header[2]) << 8) | header[3];
+        // Protect encodes the length of the entire fMP4 segment in the first three bytes of the header.
+        const length = ((packet.readUInt8(offset + 1) << 8) | packet.readUInt8(offset + 2)) << 8 | packet.readUInt8(offset + 3);
 
         // Once we know our length, if we don't have the complete packet, we save it and punt until we see more data come across.
-        if(packet.length < (offset + segmentLength + 4)) {
+        if(packet.length < offset + 4 + length) {
 
-          packetRemaining = packet.slice(offset);
+          packetRemaining = packet.subarray(offset);
 
           break;
         }
 
-        // Grab the data portion of the packet.
-        const data = packet.slice(offsetWithHeader, offsetWithHeader + segmentLength);
+        // We have a full segment. Let's slice it out, process it, and advance our offset.
         let completeSegment = null;
+        const dataStart = offset + 4;
+        const dataEnd = dataStart + length;
+        const data = packet.subarray(dataStart, dataEnd);
 
         // Figure out which data type we've got based on our header, and process it.
-        switch(header[0] as ProtectLiveFrame) {
+        switch(header as ProtectLiveFrame) {
 
           // We've got audio data. Add it to our current segment.
           case ProtectLiveFrame.AUDIO:
@@ -422,10 +474,16 @@ export class ProtectLivestream extends EventEmitter {
 
             completeSegment = Buffer.concat([ currentSegment.moof, currentSegment.mdat, currentSegment.video, currentSegment.audio ]);
 
-            this.emit("segment", completeSegment);
-            this.emit("message", completeSegment);
-            this.emit("moof", currentSegment.moof);
-            this.emit("mdat", currentSegment.mdat);
+            if(this._stream) {
+
+              this._stream.push(completeSegment);
+            } else {
+
+              this.emit("segment", completeSegment);
+              this.emit("message", completeSegment);
+              this.emit("moof", currentSegment.moof);
+              this.emit("mdat", currentSegment.mdat);
+            }
 
             break;
 
@@ -434,7 +492,10 @@ export class ProtectLivestream extends EventEmitter {
 
             this._codec = data.toString();
 
-            this.emit("codec", this.codec);
+            if(!this._stream) {
+
+              this.emit("codec", this.codec);
+            }
 
             // Inform the user about what codec is used in the livestream.
             this.log.debug("Livestream codec information: %s", data);
@@ -459,8 +520,15 @@ export class ProtectLivestream extends EventEmitter {
           case ProtectLiveFrame.INITSEGMENT:
 
             this._initSegment = data;
-            this.emit("initsegment", this.initSegment);
-            this.emit("message", this.initSegment);
+
+            if(this._stream) {
+
+              this._stream.push(this._initSegment);
+            } else {
+
+              this.emit("initsegment", this._initSegment);
+              this.emit("message", this._initSegment);
+            }
 
             break;
 
@@ -468,7 +536,11 @@ export class ProtectLivestream extends EventEmitter {
           case ProtectLiveFrame.KEYFRAME:
 
             currentSegment.keyframe = data;
-            this.emit("keyframe", data);
+
+            if(!this._stream) {
+
+              this.emit("keyframe", data);
+            }
 
             break;
 
@@ -499,8 +571,8 @@ export class ProtectLivestream extends EventEmitter {
             break;
         }
 
-        // Move the offset to the next segment.
-        offset = offsetWithHeader + segmentLength;
+        // Advance the offset past this entire packet (header + payload).
+        offset = dataEnd;
       }
     });
   }
@@ -546,5 +618,14 @@ export class ProtectLivestream extends EventEmitter {
   public get codec(): string {
 
     return this._codec ?? "";
+  }
+
+  /**
+   * Retrieve a Node.js Readable stream if `useStream` was set to true (defaults to false) when starting the livestream.
+   * Otherwise, returns `null`.
+   */
+  public get stream(): Nullable<Readable> {
+
+    return this._stream;
   }
 }
