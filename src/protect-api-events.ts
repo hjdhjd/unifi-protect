@@ -190,8 +190,8 @@ export class ProtectApiEvents {
     }
 
     // Decode the action and payload frames now that we know where everything is.
-    const headerFrame = this.decodeFrame(log, packet.slice(0, dataOffset), ProtectEventPacketType.HEADER) as ProtectEventHeader;
-    const payloadFrame = this.decodeFrame(log, packet.slice(dataOffset), ProtectEventPacketType.PAYLOAD);
+    const headerFrame = this.decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.HEADER) as ProtectEventHeader;
+    const payloadFrame = this.decodeFrame(log, packet.subarray(dataOffset), ProtectEventPacketType.PAYLOAD);
 
     if(!headerFrame || !payloadFrame) {
 
@@ -218,7 +218,7 @@ export class ProtectApiEvents {
 
     // Check to see if we're compressed or not, and inflate if needed after skipping past the 8-byte header.
     const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ?
-      zlib.inflateSync(packet.slice(EVENT_PACKET_HEADER_SIZE)) : packet.slice(EVENT_PACKET_HEADER_SIZE);
+      zlib.inflateSync(packet.subarray(EVENT_PACKET_HEADER_SIZE)) : packet.subarray(EVENT_PACKET_HEADER_SIZE);
 
     // If it's a header, it can only have one format.
     if(frameType === ProtectEventPacketType.HEADER) {

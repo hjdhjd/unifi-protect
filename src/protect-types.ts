@@ -1259,12 +1259,52 @@ export interface ProtectEventAddInterface {
 }
 
 /**
+ * A semi-complete description of the UniFi Protect smart motion detection thumbnail metadata JSON.
+ */
+export interface ProtectEventMetadataDetectedThumbnailInterface {
+
+  attributes: {
+
+    color: {
+
+      confidence: number,
+      val: string
+    },
+    faceMask: {
+
+      confidence: number,
+      val: string
+    },
+    trackerId: string,
+    vehicleType: {
+
+      confidence: number,
+      val: string
+    },
+    zone: number[]
+  },
+  clockBestWall: number,
+  confidence: number,
+  coord: [ number, number, number, number ],
+  croppedId: string,
+  name: string,
+  objectId: string,
+  type: string
+}
+
+/**
  * A description of metadata in UniFi Protect smart motion detect events.
  */
 export interface ProtectEventMetadataInterface {
 
   accessEventId: string,
   action: string,
+  detectedAreas: {
+
+    areaIndexes: number[],
+    smartDetectObject: string,
+  }[],
+  detectedThumbnails: ProtectEventMetadataDetectedThumbnail[],
   deviceId: {
 
     text: string
@@ -1276,6 +1316,7 @@ export interface ProtectEventMetadataInterface {
     ulpId: string
   },
   firstName: string,
+  hallwayMode: string,
   isLowBattery: boolean,
   isWireless: boolean,
   lastName: string,
@@ -1297,14 +1338,18 @@ export interface ProtectEventMetadataInterface {
   openSuccess: boolean,
   reason: string,
   uniqueId: string,
-  userType: string
+  userType: string,
+  zonesStatus: Record<string, { level: number, status: string }>
 }
 
 /** @see {@link ProtectEventAddInterface} */
 export type ProtectEventAdd = ProtectEventAddInterface;
 
 /** @see {@link ProtectEventMetadataInterface} */
-export type ProtectEventMetadata = ProtectEventMetadataInterface;
+export type ProtectEventMetadata = DeepPartial<ProtectEventMetadataInterface>;
+
+/** @see {@link ProtectEventMetadataDetectedThumbnailInterface} */
+export type ProtectEventMetadataDetectedThumbnail = DeepPartial<ProtectEventMetadataDetectedThumbnailInterface>;
 
 /** @see {@link ProtectNvrBootstrapInterface} */
 export type ProtectNvrBootstrap = ProtectNvrBootstrapInterface;
