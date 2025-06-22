@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.23.0 (2025-06-22)
+  * New feature: UniFi Protect v6 support.
+  * Improvement: updates to various Protect JSON descriptions.
+  * Housekeeping.
+
 ## 4.22.0 (2025-06-14)
   * Breaking change: the semantics for starting a livestream API session have changed to be more future-proof.
   * New feature: the livestream API semantics now support creating a Node Readable stream to process the live video. The benefit for users is this frees up the semantics of handling backpressure and edge cases in many instances for more straightforward and simple use cases.

@@ -497,7 +497,7 @@ A semi-complete description of the UniFi Protect smart motion detection event JS
 | <a id="eventid"></a> `eventId` | `string` |
 | <a id="id-3"></a> `id` | `string` |
 | <a id="locked"></a> `locked` | `boolean` |
-| <a id="metadata"></a> `metadata` | [`ProtectEventMetadataInterface`](#protecteventmetadatainterface) |
+| <a id="metadata"></a> `metadata` | [`ProtectEventMetadata`](#protecteventmetadata) |
 | <a id="modelkey-2"></a> `modelKey` | `string` |
 | <a id="partition"></a> `partition` | `string` |
 | <a id="score"></a> `score` | `number` |
@@ -507,6 +507,36 @@ A semi-complete description of the UniFi Protect smart motion detection event JS
 | <a id="thumbnailid"></a> `thumbnailId` | `string` |
 | <a id="type-3"></a> `type` | `string` |
 | <a id="user"></a> `user` | `string` |
+
+***
+
+### ProtectEventMetadataDetectedThumbnailInterface
+
+A semi-complete description of the UniFi Protect smart motion detection thumbnail metadata JSON.
+
+#### Properties
+
+| Property | Type |
+| ------ | ------ |
+| <a id="attributes"></a> `attributes` | \{ `color`: \{ `confidence`: `number`; `val`: `string`; \}; `faceMask`: \{ `confidence`: `number`; `val`: `string`; \}; `trackerId`: `string`; `vehicleType`: \{ `confidence`: `number`; `val`: `string`; \}; `zone`: `number`[]; \} |
+| `attributes.color` | \{ `confidence`: `number`; `val`: `string`; \} |
+| `attributes.color.confidence` | `number` |
+| `attributes.color.val` | `string` |
+| `attributes.faceMask` | \{ `confidence`: `number`; `val`: `string`; \} |
+| `attributes.faceMask.confidence` | `number` |
+| `attributes.faceMask.val` | `string` |
+| `attributes.trackerId` | `string` |
+| `attributes.vehicleType` | \{ `confidence`: `number`; `val`: `string`; \} |
+| `attributes.vehicleType.confidence` | `number` |
+| `attributes.vehicleType.val` | `string` |
+| `attributes.zone` | `number`[] |
+| <a id="clockbestwall"></a> `clockBestWall` | `number` |
+| <a id="confidence"></a> `confidence` | `number` |
+| <a id="coord"></a> `coord` | \[`number`, `number`, `number`, `number`\] |
+| <a id="croppedid"></a> `croppedId` | `string` |
+| <a id="name-3"></a> `name` | `string` |
+| <a id="objectid"></a> `objectId` | `string` |
+| <a id="type-4"></a> `type` | `string` |
 
 ***
 
@@ -520,6 +550,8 @@ A description of metadata in UniFi Protect smart motion detect events.
 | ------ | ------ |
 | <a id="accesseventid"></a> `accessEventId` | `string` |
 | <a id="action"></a> `action` | `string` |
+| <a id="detectedareas"></a> `detectedAreas` | \{ `areaIndexes`: `number`[]; `smartDetectObject`: `string`; \}[] |
+| <a id="detectedthumbnails"></a> `detectedThumbnails` | `DeepPartial`\<[`ProtectEventMetadataDetectedThumbnailInterface`](#protecteventmetadatadetectedthumbnailinterface)\>[] |
 | <a id="deviceid"></a> `deviceId` | \{ `text`: `string`; \} |
 | `deviceId.text` | `string` |
 | <a id="direction"></a> `direction` | `string` |
@@ -527,13 +559,14 @@ A description of metadata in UniFi Protect smart motion detect events.
 | <a id="fingerprint"></a> `fingerprint` | \{ `ulpId`: `string`; \} |
 | `fingerprint.ulpId` | `string` |
 | <a id="firstname"></a> `firstName` | `string` |
+| <a id="hallwaymode"></a> `hallwayMode` | `string` |
 | <a id="islowbattery"></a> `isLowBattery` | `boolean` |
 | <a id="iswireless"></a> `isWireless` | `boolean` |
 | <a id="lastname"></a> `lastName` | `string` |
 | <a id="licenseplate"></a> `licensePlate` | \{ `confidenceLevel`: `number`; `name`: `string`; \} |
 | `licensePlate.confidenceLevel` | `number` |
 | `licensePlate.name` | `string` |
-| <a id="name-3"></a> `name` | \{ `text`: `string`; \} |
+| <a id="name-4"></a> `name` | \{ `text`: `string`; \} |
 | `name.text` | `string` |
 | <a id="nfc"></a> `nfc` | \{ `nfcId`: `string`; `ulpId`: `string`; \} |
 | `nfc.nfcId` | `string` |
@@ -543,6 +576,7 @@ A description of metadata in UniFi Protect smart motion detect events.
 | <a id="reason"></a> `reason` | `string` |
 | <a id="uniqueid"></a> `uniqueId` | `string` |
 | <a id="usertype"></a> `userType` | `string` |
+| <a id="zonesstatus"></a> `zonesStatus` | `Record`\<`string`, \{ `level`: `number`; `status`: `string`; \}\> |
 
 ***
 
@@ -594,10 +628,10 @@ A semi-complete description of the UniFi Protect light JSON.
 | <a id="mac-2"></a> `mac` | `string` |
 | <a id="marketname-2"></a> `marketName` | `string` |
 | <a id="modelkey-3"></a> `modelKey` | `string` |
-| <a id="name-4"></a> `name` | `string` |
+| <a id="name-5"></a> `name` | `string` |
 | <a id="nvrmac-2"></a> `nvrMac` | `string` |
 | <a id="state-2"></a> `state` | `string` |
-| <a id="type-4"></a> `type` | `string` |
+| <a id="type-5"></a> `type` | `string` |
 | <a id="upsince-2"></a> `upSince` | `number` |
 | <a id="uptime-2"></a> `uptime` | `number` |
 | <a id="wiredconnectionstate-2"></a> `wiredConnectionState` | \{ `phyRate`: `number`; \} |
@@ -737,7 +771,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="marketname-3"></a> `marketName` | `string` |
 | <a id="maxcameracapacity"></a> `maxCameraCapacity` | `Record`\<`string`, `number`\> |
 | <a id="modelkey-4"></a> `modelKey` | `string` |
-| <a id="name-5"></a> `name` | `string` |
+| <a id="name-6"></a> `name` | `string` |
 | <a id="network"></a> `network` | `string` |
 | <a id="ports"></a> `ports` | \{ `aiFeatureConsole`: `number`; `cameraEvents`: `number`; `cameraHttps`: `number`; `cameraTcp`: `number`; `devicesWss`: `number`; `discoveryClient`: `number`; `emsCLI`: `number`; `emsJsonCLI`: `number`; `emsLiveFLV`: `number`; `http`: `number`; `https`: `number`; `liveWs`: `number`; `liveWss`: `number`; `piongw`: `number`; `playback`: `number`; `rtmp`: `number`; `rtsp`: `number`; `rtsps`: `number`; `stacking`: `number`; `tcpBridge`: `number`; `tcpStreams`: `number`; `ucore`: `number`; `ump`: `number`; \} |
 | `ports.aiFeatureConsole` | `number` |
@@ -791,7 +825,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="temperatureunit"></a> `temperatureUnit` | `string` |
 | <a id="timeformat"></a> `timeFormat` | `string` |
 | <a id="timezone"></a> `timezone` | `string` |
-| <a id="type-5"></a> `type` | `string` |
+| <a id="type-6"></a> `type` | `string` |
 | <a id="ucoreversion"></a> `ucoreVersion` | `string` |
 | <a id="uiversion"></a> `uiVersion` | `string` |
 | <a id="upsince-3"></a> `upSince` | `number` |
@@ -818,7 +852,7 @@ A semi-complete description of the UniFi Protect NVR liveview JSON.
 | <a id="isglobal"></a> `isGlobal` | `boolean` |
 | <a id="layout"></a> `layout` | `number` |
 | <a id="modelkey-5"></a> `modelKey` | `string` |
-| <a id="name-6"></a> `name` | `string` |
+| <a id="name-7"></a> `name` | `string` |
 | <a id="owner"></a> `owner` | `string` |
 | <a id="slots"></a> `slots` | \{ `cameras`: `string`[]; `cycleInterval`: `number`; `cycleMode`: `string`; \}[] |
 
@@ -858,14 +892,14 @@ A semi-complete description of the UniFi Protect system events controller JSON.
 | <a id="isconfigured"></a> `isConfigured` | `boolean` |
 | <a id="isinstalled"></a> `isInstalled` | `boolean` |
 | <a id="isrunning"></a> `isRunning` | `boolean` |
-| <a id="name-7"></a> `name` | `string` |
+| <a id="name-8"></a> `name` | `string` |
 | <a id="port"></a> `port` | `number` |
 | <a id="required"></a> `required` | `boolean` |
 | <a id="state-3"></a> `state` | `string` |
 | <a id="status"></a> `status` | `string` |
 | <a id="statusmessage"></a> `statusMessage` | `string` |
 | <a id="swaiversion"></a> `swaiVersion` | `number` |
-| <a id="type-6"></a> `type` | `string` |
+| <a id="type-7"></a> `type` | `string` |
 | <a id="ui"></a> `ui` | \{ `apiPrefix`: `string`; `baseUrl`: `string`; `cdnPublicPaths`: `string`[]; `entrypoint`: `string`; `hotkey`: `string`; `icon`: `string`; `publicPath`: `string`; `swaiVersion`: `number`; \} |
 | `ui.apiPrefix` | `string` |
 | `ui.baseUrl` | `string` |
@@ -895,7 +929,7 @@ A semi-complete description of the UniFi Protect system events JSON.
 | `apps.apps` | `unknown`[] |
 | `apps.controllers` | [`ProtectNvrSystemEventControllerInterface`](#protectnvrsystemeventcontrollerinterface)[] |
 | <a id="system"></a> `system` | `unknown` |
-| <a id="type-7"></a> `type` | `string` |
+| <a id="type-8"></a> `type` | `string` |
 
 ***
 
@@ -965,7 +999,7 @@ A semi-complete description of the UniFi Protect NVR user JSON.
 | `location.latitude` | `string` |
 | `location.longitude` | `string` |
 | <a id="modelkey-6"></a> `modelKey` | `string` |
-| <a id="name-8"></a> `name` | `string` |
+| <a id="name-9"></a> `name` | `string` |
 | <a id="permissions"></a> `permissions` | `string`[] |
 | <a id="role"></a> `role` | `string` |
 | <a id="settings"></a> `settings` | \{ `flags`: `string`[]; \} |
@@ -985,7 +1019,7 @@ A semi-complete description of the UniFi Protect ringtone JSON.
 | <a id="id-8"></a> `id` | `string` |
 | <a id="isdefault-1"></a> `isDefault` | `boolean` |
 | <a id="modelkey-7"></a> `modelKey` | `string` |
-| <a id="name-9"></a> `name` | `string` |
+| <a id="name-10"></a> `name` | `string` |
 | <a id="nvrmac-3"></a> `nvrMac` | `string` |
 | <a id="size"></a> `size` | `number` |
 
@@ -1058,7 +1092,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `motionSettings.isEnabled` | `boolean` |
 | `motionSettings.sensitivity` | `number` |
 | <a id="mounttype"></a> `mountType` | `string` |
-| <a id="name-10"></a> `name` | `string` |
+| <a id="name-11"></a> `name` | `string` |
 | <a id="nvrmac-4"></a> `nvrMac` | `string` |
 | <a id="openstatuschangedat"></a> `openStatusChangedAt` | `number` |
 | <a id="state-4"></a> `state` | `string` |
@@ -1078,7 +1112,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `temperatureSettings.isEnabled` | `boolean` |
 | `temperatureSettings.lowThreshold` | `number` |
 | `temperatureSettings.margin` | `number` |
-| <a id="type-8"></a> `type` | `string` |
+| <a id="type-9"></a> `type` | `string` |
 | <a id="upsince-4"></a> `upSince` | `number` |
 | <a id="uptime-4"></a> `uptime` | `number` |
 | <a id="wificonnectionstate-2"></a> `wifiConnectionState` | \{ `apName`: `Nullable`\<`string`\>; `bssid`: `Nullable`\<`string`\>; `channel`: `Nullable`\<`string`\>; `connectivity`: `string`; `experience`: `null`; `frequency`: `null`; `phyRate`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; `ssid`: `Nullable`\<`string`\>; `txRate`: `null`; \} |
@@ -1129,12 +1163,12 @@ A semi-complete description of the UniFi Protect viewer JSON.
 | <a id="mac-5"></a> `mac` | `string` |
 | <a id="marketname-5"></a> `marketName` | `string` |
 | <a id="modelkey-9"></a> `modelKey` | `string` |
-| <a id="name-11"></a> `name` | `string` |
+| <a id="name-12"></a> `name` | `string` |
 | <a id="nvrmac-5"></a> `nvrMac` | `string` |
 | <a id="softwareversion"></a> `softwareVersion` | `string` |
 | <a id="state-5"></a> `state` | `string` |
 | <a id="streamlimit"></a> `streamLimit` | `number` |
-| <a id="type-9"></a> `type` | `string` |
+| <a id="type-10"></a> `type` | `string` |
 | <a id="upsince-5"></a> `upSince` | `number` |
 | <a id="uptime-5"></a> `uptime` | `number` |
 | <a id="wiredconnectionstate-4"></a> `wiredConnectionState` | \{ `phyRate`: `number`; \} |
@@ -1241,12 +1275,24 @@ type ProtectEventAdd = ProtectEventAddInterface;
 ### ProtectEventMetadata
 
 ```ts
-type ProtectEventMetadata = ProtectEventMetadataInterface;
+type ProtectEventMetadata = DeepPartial<ProtectEventMetadataInterface>;
 ```
 
 #### See
 
 [ProtectEventMetadataInterface](#protecteventmetadatainterface)
+
+***
+
+### ProtectEventMetadataDetectedThumbnail
+
+```ts
+type ProtectEventMetadataDetectedThumbnail = DeepPartial<ProtectEventMetadataDetectedThumbnailInterface>;
+```
+
+#### See
+
+[ProtectEventMetadataDetectedThumbnailInterface](#protecteventmetadatadetectedthumbnailinterface)
 
 ***
 
