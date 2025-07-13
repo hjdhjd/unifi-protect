@@ -42,13 +42,14 @@
  * @module ProtectLivestream
  */
 /* eslint-enable @stylistic/max-len */
-import WebSocket, { createWebSocketStream } from "ws";
+import { Agent, type ErrorEvent, type MessageEvent, WebSocket } from "undici";
 import events, { EventEmitter } from "node:events";
 import type { Nullable } from "./protect-types.js";
 import { PROTECT_API_TIMEOUT } from "./settings.js";
 import type { ProtectApi } from "./protect-api.js";
 import type { ProtectLogging } from "./protect-logging.js";
 import { Readable } from "node:stream";
+import util from "node:util";
 
 // A complete description of the UniFi Protect livestream API websocket API.
 enum ProtectLiveFrame {
@@ -102,14 +103,12 @@ export class ProtectLivestream extends EventEmitter {
   private _codec: Nullable<string>;
   private _stream: Nullable<Readable>;
   private api: ProtectApi;
-  private dataHandler: Nullable<(packet: Buffer) => void>;
-  private errorHandler: Nullable<(error: Error) => void>;
+  private errorHandler: Nullable<(event: ErrorEvent) => void>;
   private heartbeat: Nullable<NodeJS.Timeout>;
-  private isStopping: boolean;
   private lastMessage: number;
   private log: ProtectLogging;
+  private messageHandler: Nullable<(event: MessageEvent) => void>;
   private ws: Nullable<WebSocket>;
-  private wsStream: Nullable<Readable>;
 
   // Create a new instance.
   constructor(api: ProtectApi, log: ProtectLogging) {
@@ -121,14 +120,12 @@ export class ProtectLivestream extends EventEmitter {
     this._initSegment = null;
     this._stream = null;
     this.api = api;
-    this.dataHandler = null;
     this.errorHandler = null;
-    this.isStopping = false;
+    this.heartbeat = null;
     this.lastMessage = 0;
     this.log = log;
-    this.heartbeat = null;
+    this.messageHandler = null;
     this.ws = null;
-    this.wsStream = null;
   }
 
   /**
@@ -164,9 +161,6 @@ export class ProtectLivestream extends EventEmitter {
     // Clear out the initialization segment.
     this._initSegment = null;
 
-    // Clear out our stopping state.
-    this.isStopping = false;
-
     // Launch the livestream.
     return this.launchLivestream(cameraId, channel, options as LivestreamOptions);
   }
@@ -177,27 +171,17 @@ export class ProtectLivestream extends EventEmitter {
   public stop(): void {
 
     // Close the websocket.
-    if((this.ws?.readyState === WebSocket.CLOSING) || (this.ws?.readyState === WebSocket.OPEN)) {
+    this.ws?.close();
 
-      this.ws?.terminate();
-    }
+    if(this.messageHandler) {
 
-    // Destroy the underlying WebSocket stream if it exists.
-    if(this.wsStream) {
-
-      if(this.dataHandler) {
-
-        this.wsStream.removeListener("data", this.dataHandler);
-        this.dataHandler = null;
-      }
-
-      this.wsStream.destroy();
-      this.wsStream = null;
+      this.ws?.removeEventListener("message", this.messageHandler);
+      this.messageHandler = null;
     }
 
     if(this.errorHandler) {
 
-      this.ws?.removeListener("error", this.errorHandler);
+      this.ws?.removeEventListener("error", this.errorHandler);
       this.errorHandler = null;
     }
 
@@ -242,13 +226,15 @@ export class ProtectLivestream extends EventEmitter {
       allowPartialGOP: "",
       camera: cameraId,
       channel: channel.toString(),
+      chunkSize: "1024",
       extendedVideoMetadata: "", // Try excluding?
       fragmentDurationMillis: options.segmentLength.toString(),
       lens: options.lens.toString(),
       progressive: "",
-      rebaseTimestampsToZero: "true",
+      rebaseTimestampsToZero: "false",
       requestId: options.requestId,
-      type: "fmp4"
+      type: "fmp4",
+      useWallClock: "true"
     });
 
     // Get the websocket endpoint URL from Protect.
@@ -264,8 +250,9 @@ export class ProtectLivestream extends EventEmitter {
 
     try {
 
-      // Open the livestream websocket.
-      this.ws = new WebSocket(wsUrl, { rejectUnauthorized: false });
+      // Open the livestream WebSocket. We create a new dispatcher here because WebSocket upgrades can only happen over HTTP/1.1 and we've asked for HTTP/2 whenever
+      // possible in our global pool.
+      this.ws = new WebSocket(wsUrl, { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }) });
 
       if(!this.ws) {
 
@@ -286,10 +273,7 @@ export class ProtectLivestream extends EventEmitter {
       }
 
       // Start our heartbeat once we've opened the connection.
-      this.ws?.once("open", () => {
-
-        // Create a Readable stream from the WebSocket to consume incoming messages as a stream.
-        this.wsStream = createWebSocketStream(this.ws as WebSocket) as Readable;
+      this.ws?.addEventListener("open", () => {
 
         this.lastMessage = Date.now();
 
@@ -316,29 +300,31 @@ export class ProtectLivestream extends EventEmitter {
 
             if((this.ws?.readyState === WebSocket.CLOSING) || (this.ws?.readyState === WebSocket.OPEN)) {
 
-              this.ws?.terminate();
+              this.ws?.close();
             }
           }
         }, PROTECT_API_TIMEOUT);
 
-
         // Process packets coming to our websocket.
         this.processLivestream();
-      });
+      }, { once: true });
 
       // Catch any errors and inform the user, if needed.
-      this.ws?.once("error", this.errorHandler = (error: Error): void => {
+      this.ws?.addEventListener("error", this.errorHandler = (event: ErrorEvent): void => {
+
+        const error = event.error as NodeJS.ErrnoException;
 
         // Ignore timeout errors, but notify the user about anything else.
-        if((error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
+        if(error.code !== "ETIMEDOUT") {
 
           logError("error while communicating with the livestream websocket API: %s", error);
+          logError(util.inspect(error, { colors: true, depth: null, sorted: true }));
         }
 
         this.stop();
-      });
+      }, { once: true });
 
-      this.ws?.once("close", (code: number) => {
+      this.ws?.addEventListener("close", () => {
 
         // Clear out our heartbeat since we're closing.
         if(this.heartbeat) {
@@ -347,34 +333,9 @@ export class ProtectLivestream extends EventEmitter {
           this.heartbeat = null;
         }
 
-        switch(code) {
-
-          // The websocket has been closed normally. We fire off a close event to inform our listeners and we're done.
-          case 1005:
-
-            this.isStopping = true;
-            this.stop();
-            this.emit("close");
-
-            break;
-
-          // The websocket has been forcibly closed by us. Ignore it.
-          case 1006:
-
-            break;
-
-          default:
-
-            logError("unknown livestream API websocket error. Error code: %s.", code);
-
-            break;
-        }
-
-        if(!this.isStopping) {
-
-          this.emit("close");
-        }
-      });
+        this.stop();
+        this.emit("close");
+      }, { once: true });
 
     } catch(error) {
 
@@ -389,7 +350,7 @@ export class ProtectLivestream extends EventEmitter {
   private processLivestream(): void {
 
     // Check to ensure our websocket is live.
-    if(!this.wsStream) {
+    if(!this.ws) {
 
       return;
     }
@@ -406,10 +367,44 @@ export class ProtectLivestream extends EventEmitter {
     let packetRemaining = Buffer.alloc(0);
 
     // Process data coming in from the websocket.
-    this.wsStream.on("data", this.dataHandler = (packet: Buffer): void => {
+    this.ws.addEventListener("message", this.messageHandler = async (event: MessageEvent): Promise<void> => {
 
       // Update our heartbeat.
       this.lastMessage = Date.now();
+
+      // We need to normalize event.data into an ArrayBuffer so we can process it.
+      let ab: ArrayBuffer | undefined;
+
+      try {
+
+        if(event.data instanceof Blob) {
+
+          ab = await event.data.arrayBuffer();
+        } else if(event.data instanceof ArrayBuffer) {
+
+          ab = event.data;
+        } else if(typeof event.data === "string") {
+
+          ab = new TextEncoder().encode(event.data).buffer;
+        } else {
+
+          this.log.error("Unsupported WebSocket message type: %s", typeof event.data);
+          this.ws?.close();
+
+          return;
+        }
+      } catch(error) {
+
+        this.log.error("Error processing livestream WebSocket message: ", error);
+        this.ws?.close();
+      }
+
+      if(!ab) {
+
+        return;
+      }
+
+      let packet = Buffer.from(ab);
 
       // If we have anything left from the last packet we processed, prepend it to this packet.
       if(packetRemaining.length > 0) {

@@ -11,7 +11,31 @@ A complete implementation of the UniFi Protect API, including access to the even
 The UniFi Protect API is largely undocumented and has been reverse engineered mostly through the Protect native web interface as well as trial and error. This
 implementation provides a high-performance, event-driven interface into the Protect API, allowing you to access all of Protect's rich capabilities.
 
-## Classes
+## API Access
+
+### RequestOptions
+
+```ts
+type RequestOptions = {
+  dispatcher?: Dispatcher;
+} & Omit<Dispatcher.RequestOptions, "origin" | "path">;
+```
+
+Configuration options for HTTP requests executed by `retrieve()`.
+
+#### Type declaration
+
+| Name | Type | Description |
+| ------ | ------ | ------ |
+| `dispatcher?` | `Dispatcher` | Optional custom Undici `Dispatcher` instance to use for this request. If omitted, the native `unifi-protect` dispatcher is used, which should be suitable for most use cases. |
+
+#### Remarks
+
+Extends Undici’s [`Dispatcher.RequestOptions`](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), but omits the `origin` and
+`path` properties, since those are derived from the `url` argument passed to `retrieve()`. You can optionally supply a custom `Dispatcher` instance to control
+connection pooling, timeouts, etc.
+
+## Other
 
 ### ProtectApi
 
@@ -273,7 +297,7 @@ Valid API endpoints are `livestream` and `talkback`.
 retrieve(
    url, 
    options, 
-retrieveOptions): Promise<Nullable<Response>>;
+retrieveOptions): Promise<Nullable<ResponseData<unknown>>>;
 ```
 
 Execute an HTTP fetch request to the Protect controller.
@@ -283,20 +307,21 @@ Execute an HTTP fetch request to the Protect controller.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `url` | `string` | URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot). |
-| `options` | `RequestOptions` | Parameters to pass on for the endpoint request. |
+| `options` | [`RequestOptions`](#requestoptions) | Parameters to pass on for the endpoint request. |
 | `retrieveOptions` | [`RetrieveOptions`](#retrieveoptions) | Options that modify whether errors are logged and timeout intervals to wait for a response from the Protect controller. |
 
 ###### Returns
 
-`Promise`\<`Nullable`\<`Response`\>\>
+`Promise`\<`Nullable`\<`ResponseData`\<`unknown`\>\>\>
 
 Returns a promise that will resolve to a Response object successful, and `null` otherwise.
 
 ###### Remarks
 
 This method should be used when direct access to the Protect controller is needed, or when this library doesn't have a needed method to access
-  controller capabilities. `options` must be a
-  [Fetch API compatible](https://developer.mozilla.org/en-US/docs/Web/API/Request/Request#options) request options object.
+  controller capabilities. `options` must be an
+  [Undici request API compatible](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions) request options object which itself is an
+  extension of [DispatchOptions](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-dispatchoptions).
 
 ##### updateDevice()
 
@@ -464,6 +489,26 @@ Terminate any open connection to the UniFi Protect API.
 
 `void`
 
+##### responseOk()
+
+```ts
+responseOk(code?): boolean;
+```
+
+Determines whether a given HTTP status code represents a successful response.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `code?` | `number` | The HTTP status code returned by a request. If `undefined`, the response is considered not okay. |
+
+###### Returns
+
+`boolean`
+
+`true` if `code` is between 200 (inclusive) and 300 (exclusive); otherwise returns `false`.
+
 #### Authentication
 
 ##### login()
@@ -537,7 +582,7 @@ Clear the login credentials and terminate any open connection to the UniFi Prote
 
 `void`
 
-## Interfaces
+***
 
 ### RetrieveOptions
 
@@ -550,7 +595,7 @@ Options to tailor the behavior of [ProtectApi.retrieve](#retrieve).
 | <a id="logerrors"></a> `logErrors?` | `boolean` | Log errors. Defaults to `true`. |
 | <a id="timeout"></a> `timeout?` | `number` | Amount of time, in milliseconds, to wait for the Protect controller to respond before timing out. Defaults to `3500`. |
 
-## Type Aliases
+***
 
 ### ProtectKnownDevicePayloads
 

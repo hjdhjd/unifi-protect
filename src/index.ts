@@ -4,9 +4,6 @@
  */
 /** @internal */
 
-// Export our support types.
-export { FetchError } from "@adobe/fetch";
-
 // Export our API.
 export * from "./protect-api.js";
 export type { ProtectLivestream } from "./protect-api-livestream.js";

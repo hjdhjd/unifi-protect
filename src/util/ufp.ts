@@ -158,7 +158,7 @@ switch(process.argv.length) {
           //eslint-disable-next-line no-await-in-loop
           const response = await ufp.retrieve(ufp.getApiEndpoint(device.modelKey) + "/" + device.id + "/reboot", { body: JSON.stringify({}), method: "POST" });
 
-          if(!response?.ok) {
+          if(!ufp.responseOk(response?.statusCode)) {
 
             log.error("%s: unable to reboot: %s", ufp.getDeviceName(device), response);
 

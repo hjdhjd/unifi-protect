@@ -11,7 +11,7 @@
  *
  * @module ProtectApi
  */
-import { ALPNProtocol, AbortError, FetchError, Headers, type Request, type RequestOptions, type Response, context, reset, timeoutSignal } from "@adobe/fetch";
+import { Agent, type Dispatcher, type ErrorEvent, type MessageEvent, Pool, WebSocket, errors, interceptors, request } from "undici";
 import type { Nullable, ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectCameraConfigPayload, ProtectChimeConfig,
   ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload, ProtectNvrUserConfig,
   ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
@@ -20,7 +20,7 @@ import { EventEmitter } from "node:events";
 import { ProtectApiEvents } from "./protect-api-events.js";
 import { ProtectLivestream } from "./protect-api-livestream.js";
 import type { ProtectLogging } from "./protect-logging.js";
-import WebSocket from "ws";
+import { STATUS_CODES } from "node:http";
 import util from "node:util";
 
 /**
@@ -34,6 +34,24 @@ export type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectChimeConfig |
  */
 export type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChimeConfigPayload | ProtectLightConfigPayload | ProtectNvrConfigPayload |
   ProtectSensorConfigPayload | ProtectViewerConfigPayload;
+
+/**
+ * Configuration options for HTTP requests executed by `retrieve()`.
+ *
+ * @remarks Extends Undici’s [`Dispatcher.RequestOptions`](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), but omits the `origin` and
+ * `path` properties, since those are derived from the `url` argument passed to `retrieve()`. You can optionally supply a custom `Dispatcher` instance to control
+ * connection pooling, timeouts, etc.
+ *
+ * @category API Access
+ */
+export type RequestOptions = {
+
+  /**
+   * Optional custom Undici `Dispatcher` instance to use for this request. If omitted, the native `unifi-protect` dispatcher is used, which should be suitable for most
+   * use cases.
+   */
+  dispatcher?: Dispatcher
+} & Omit<Dispatcher.RequestOptions, "origin" | "path">;
 
 /**
  * Options to tailor the behavior of {@link ProtectApi.retrieve}.
@@ -50,8 +68,7 @@ export interface RetrieveOptions {
 // Our private interface to retrieve.
 interface InternalRetrieveOptions extends RetrieveOptions {
 
-  decodeResponse?: boolean,
-  isRetry?: boolean
+  decodeResponse?: boolean
 }
 
 /**
@@ -74,9 +91,10 @@ export class ProtectApi extends EventEmitter {
 
   private apiErrorCount: number;
   private apiLastSuccess: number;
-  private fetch: (url: string | Request, options?: RequestOptions) => Promise<Response>;
-  private headers: Headers;
+  private dispatcher!: Dispatcher;
+  private headers: Record<string, string>;
   private _isAdminUser: boolean;
+  private _isThrottled: boolean;
   private log: ProtectLogging;
   private nvrAddress: string;
   private password: string;
@@ -110,6 +128,7 @@ export class ProtectApi extends EventEmitter {
     this._bootstrap = null;
     this._eventsWs = null;
     this._isAdminUser = false;
+    this._isThrottled = false;
 
     this.log = {
 
@@ -121,8 +140,7 @@ export class ProtectApi extends EventEmitter {
 
     this.apiErrorCount = 0;
     this.apiLastSuccess = 0;
-    this.fetch = context({ alpnProtocols: [ ALPNProtocol.ALPN_HTTP2 ], maxCacheSize: 0, rejectUnauthorized: false, userAgent: "unifi-protect" }).fetch;
-    this.headers = new Headers();
+    this.headers = {};
     this.nvrAddress = "";
     this.username = "";
     this.password = "";
@@ -172,11 +190,11 @@ export class ProtectApi extends EventEmitter {
    */
   public async login(nvrAddress: string, username: string, password: string): Promise<boolean> {
 
-    this.logout();
-
     this.nvrAddress = nvrAddress;
     this.username = username;
     this.password = password;
+
+    this.logout();
 
     // Let's attempt to login.
     const loginSuccess = await this.loginController();
@@ -192,26 +210,40 @@ export class ProtectApi extends EventEmitter {
   private async loginController(): Promise<boolean> {
 
     // If we're already logged in, we're done.
-    if(this.headers.has("Cookie") && this.headers.has("X-CSRF-Token")) {
+    if(this.headers.cookie && this.headers["x-csrf-token"]) {
 
       return true;
     }
 
+    // Utility to grab the headers we're interested in a normalized manner.
+    const getHeader = (name: string, headers?: Record<string, string | string[] | undefined>): Nullable<string> => {
+
+      const rawHeader = headers?.[name.toLowerCase()];
+
+      if(!rawHeader) {
+
+        return null;
+      }
+
+      // Normalize it to a string:
+      return Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+    };
+
     // Acquire a CSRF token, if needed. We only need to do this if we aren't already logged in, or we don't already have a token.
-    if(!this.headers.has("X-CSRF-Token")) {
+    if(!this.headers["x-csrf-token"]) {
 
       // UniFi OS has cross-site request forgery protection built into it's web management UI. We retrieve the CSRF token, if available, by connecting to the Protect
       // controller and checking the headers for it.
       const response = await this.retrieve("https://" + this.nvrAddress, { method: "GET" }, { logErrors: false });
 
-      if(response?.ok) {
+      if(this.responseOk(response?.statusCode)) {
 
-        const csrfToken = response.headers.get("X-CSRF-Token");
+        const csrfToken = getHeader("X-CSRF-Token", response?.headers);
 
         // Preserve the CSRF token, if found, for future API calls.
         if(csrfToken) {
 
-          this.headers.set("X-CSRF-Token", csrfToken);
+          this.headers["x-csrf-token"] = csrfToken;
         }
       }
     }
@@ -224,7 +256,7 @@ export class ProtectApi extends EventEmitter {
     });
 
     // Something went wrong with the login call, possibly a controller reboot or failure.
-    if(!response?.ok) {
+    if(!this.responseOk(response?.statusCode)) {
 
       this.logout();
 
@@ -232,17 +264,17 @@ export class ProtectApi extends EventEmitter {
     }
 
     // We're logged in. Let's configure our headers.
-    const csrfToken = response.headers.get("X-Updated-CSRF-Token") ?? response.headers.get("X-CSRF-Token");
-    const cookie = response.headers.get("Set-Cookie");
+    const csrfToken = getHeader("X-Updated-CSRF-Token", response?.headers) ?? getHeader("X-CSRF-Token", response?.headers);
+    const cookie = getHeader("Set-Cookie", response?.headers);
 
     // Save the refreshed cookie and CSRF token for future API calls and we're done.
     if(csrfToken && cookie) {
 
       // Only preserve the token element of the cookie and not the superfluous information that's been added to it.
-      this.headers.set("Cookie", cookie.split(";")[0]);
+      this.headers.cookie = cookie.split(";")[0];
 
       // Save the CSRF token.
-      this.headers.set("X-CSRF-Token", csrfToken);
+      this.headers["x-csrf-token"] = csrfToken;
 
       return true;
     }
@@ -256,12 +288,6 @@ export class ProtectApi extends EventEmitter {
   // Attempt to retrieve the bootstrap configuration from the Protect NVR.
   private async bootstrapController(retry: boolean): Promise<boolean> {
 
-    // If we're retrying, let's first reset our connection context compleely.
-    if(retry) {
-
-      await reset();
-    }
-
     // Log us in if needed.
     if(!(await this.loginController())) {
 
@@ -271,7 +297,7 @@ export class ProtectApi extends EventEmitter {
     const response = await this.retrieve(this.getApiEndpoint("bootstrap"));
 
     // Something went wrong. Retry the bootstrap attempt once, and then we're done.
-    if(!response?.ok) {
+    if(!this.responseOk(response?.statusCode)) {
 
       this.logRetry("Unable to retrieve the UniFi Protect controller configuration.", retry);
 
@@ -283,7 +309,7 @@ export class ProtectApi extends EventEmitter {
 
     try {
 
-      data = await response.json() as ProtectNvrBootstrap;
+      data = await response?.body.json() as ProtectNvrBootstrap;
 
     } catch(error) {
 
@@ -334,69 +360,84 @@ export class ProtectApi extends EventEmitter {
 
     try {
 
-      const ws = new WebSocket("wss://" + this.nvrAddress + "/proxy/protect/ws/updates?" + params.toString(), {
+      // Let's open the WebSocket connection.
+      const ws = new WebSocket("wss://" + this.nvrAddress + "/proxy/protect/ws/updates?" + params.toString(),
+        { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }), headers: { Cookie: this.headers.cookie ?? "" } });
 
-        headers: {
+      let messageHandler: Nullable<(event: MessageEvent) => void>;
 
-          Cookie: this.headers.get("Cookie") ?? ""
-        },
+      // Fired when the handshake completes
+      ws.addEventListener("open", (): void => {
 
-        rejectUnauthorized: false
-      });
+        // Make the WebSocket available.
+        this._eventsWs = ws;
+      }, { once: true });
 
-      if(!ws) {
+      // Handle any WebSocket errors.
+      ws.addEventListener("error", (event: ErrorEvent): void => {
 
-        this.log.error("Unable to connect to the realtime update events API. Will retry again later.");
-        this._eventsWs = null;
+        this.log.error("Events API error: %s", event.error.cause);
+        this.log.error(util.inspect(event.error, { colors: true, depth: null, sorted: true }));
 
-        return false;
-      }
+        ws.close();
+      }, { once: true });
 
-      let messageHandler: Nullable<(event: Buffer) => void>;
-
-      // Cleanup after ourselves if our websocket closes for some resaon.
-      ws.once("close", (): void => {
+      // Cleanup after ourselves if our WebSocket closes for some resaon.
+      ws.addEventListener("close", (): void => {
 
         this._eventsWs = null;
 
         if(messageHandler) {
 
-          ws.removeListener("message", messageHandler);
+          ws.removeEventListener("message", messageHandler);
           messageHandler = null;
         }
-      });
-
-      // Handle any websocket errors.
-      ws.once("error", (error: Error): void => {
-
-        // If we're closing before fully established it's because we're shutting down the API - ignore it.
-        if(error.message !== "WebSocket was closed before the connection was established") {
-
-          this.log.error(error.toString());
-        }
-
-        ws.terminate();
-      });
+      }, { once: true });
 
       // Process messages as they come in.
-      ws.on("message", messageHandler = (event: Buffer): void => {
+      ws.addEventListener("message", messageHandler = async (event: MessageEvent): Promise<void> => {
 
-        const packet = ProtectApiEvents.decodePacket(this.log, event);
+        try {
 
-        if(!packet) {
+          // We need to normalize event.data into an ArrayBuffer so we can process it.
+          let ab: ArrayBuffer;
 
-          this.log.error("Unable to process message from the realtime update events API.");
-          ws.terminate();
+          if(event.data instanceof Blob) {
 
-          return;
+            ab = await event.data.arrayBuffer();
+          } else if(event.data instanceof ArrayBuffer) {
+
+            ab = event.data;
+          } else if(typeof event.data === "string") {
+
+            ab = new TextEncoder().encode(event.data).buffer;
+          } else {
+
+            this.log.error("Unsupported WebSocket message type: %s", typeof event.data);
+            ws.close();
+
+            return;
+          }
+
+          // Now we decode our packet.
+          const packet = ProtectApiEvents.decodePacket(this.log, Buffer.from(ab));
+
+          if(!packet) {
+
+            this.log.error("Unable to process message from the realtime update events API.");
+            ws.close();
+
+            return;
+          }
+
+          // Emit the decoded packet for users.
+          this.emit("message", packet);
+        } catch(error) {
+
+          this.log.error("Error processing events WebSocket message: ", error);
+          ws.close();
         }
-
-        // Emit the decoded packet for users.
-        this.emit("message", packet);
       });
-
-      // Make the websocket available, and then we're done.
-      this._eventsWs = ws;
     } catch(error) {
 
       this.log.error("Error connecting to the realtime update events API: %s", error);
@@ -557,7 +598,7 @@ export class ProtectApi extends EventEmitter {
     const response = await this.retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id + "/" + (options.usePackageCamera ? "package-" : "") +
       "snapshot?" + params.toString(), { method: "GET" });
 
-    if(!response?.ok) {
+    if(!response || !this.responseOk(response?.statusCode)) {
 
       this.log.error("%s: Unable to retrieve the snapshot.", this.getFullName(device));
 
@@ -568,7 +609,7 @@ export class ProtectApi extends EventEmitter {
 
     try {
 
-      snapshot = Buffer.from(await response.arrayBuffer());
+      snapshot = Buffer.from(await response.body.arrayBuffer());
     } catch(error) {
 
       this.log.error("%s: Error retrieving the snapshot image: %s", this.getFullName(device), error);
@@ -629,15 +670,15 @@ export class ProtectApi extends EventEmitter {
       return null;
     }
 
-    if(!response.ok) {
+    if(!this.responseOk(response.statusCode)) {
 
-      this.log.error("%s: Unable to configure the %s: %s.", this.getFullName(device), device.modelKey, response?.status);
+      this.log.error("%s: Unable to configure the %s: %s.", this.getFullName(device), device.modelKey, response?.statusCode);
 
       return null;
     }
 
     // We successfully set the message, return the updated device object.
-    return await response.json() as DeviceType;
+    return await response.body.json() as DeviceType;
   }
 
   // Update camera channels on a supported Protect device.
@@ -657,17 +698,17 @@ export class ProtectApi extends EventEmitter {
     }, { decodeResponse: false });
 
     // Since we took responsibility for interpreting the outcome of the fetch, we need to check for any errors.
-    if(!response || !response?.ok) {
+    if(!response || !this.responseOk(response.statusCode)) {
 
       this.apiErrorCount++;
 
-      if(response?.status === 403) {
+      if(response?.statusCode === 403) {
 
         this.log.error("%s: Insufficient privileges to enable RTSP on all channels. Please ensure this username has the Administrator role assigned in UniFi Protect.",
           this.getFullName(device));
       } else {
 
-        this.log.error("%s: Unable to enable RTSP on all channels: %s.", this.getFullName(device), response?.status);
+        this.log.error("%s: Unable to enable RTSP on all channels: %s.", this.getFullName(device), response?.statusCode);
       }
 
       // We still return our camera object if there is at least one RTSP channel enabled.
@@ -679,7 +720,7 @@ export class ProtectApi extends EventEmitter {
     this.apiLastSuccess = Date.now();
 
     // Everything worked, save the new channel array.
-    return await response.json() as ProtectCameraConfig;
+    return await response.body.json() as ProtectCameraConfig;
   }
 
   /**
@@ -776,8 +817,31 @@ export class ProtectApi extends EventEmitter {
 
     this._bootstrap = null;
 
-    this._eventsWs?.terminate();
+    this._eventsWs?.close();
     this._eventsWs = null;
+
+    if(this.nvrAddress) {
+
+      // Cleanup any prior pool.
+      if(this.dispatcher) {
+
+        void this.dispatcher.destroy();
+      }
+
+      // Create an interceptor that allows us to set the user agent to our liking.
+      const ua: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (opts: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler) => {
+
+        opts.headers ??= {};
+        (opts.headers as Record<string, string>)["user-agent"] = "unifi-protect";
+
+        return dispatch(opts, handler);
+      };
+
+      // Create a dispatcher using a new pool. We want to explicitly allow self-signed SSL certificates, enabled HTTP2 connections, and allow up to five connections at a
+      // time and provide some robust retry handling - we retry each request up to three times, with backoff.
+      this.dispatcher = new Pool("https://" + this.nvrAddress, { allowH2: true, clientTtl: 60 * 1000, connect: { rejectUnauthorized: false }, connections: 5 })
+        .compose(ua, interceptors.retry({ maxRetries: 5, maxTimeout: 1000, minTimeout: 100, statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ], timeoutFactor: 2 }));
+    }
   }
 
   /**
@@ -795,16 +859,16 @@ export class ProtectApi extends EventEmitter {
     this._isAdminUser = false;
 
     // Save our CSRF token, if we have one.
-    const csrfToken = this.headers?.get("X-CSRF-Token");
+    const csrfToken = this.headers["x-csrf-token"];
 
     // Initialize the headers we need.
-    this.headers = new Headers();
-    this.headers.set("Content-Type", "application/json");
+    this.headers = {};
+    this.headers["content-type"] = "application/json";
 
     // Restore the CSRF token if we have one.
     if(csrfToken) {
 
-      this.headers.set("X-CSRF-Token", csrfToken);
+      this.headers["x-csrf-token"] = csrfToken;
     }
   }
 
@@ -857,7 +921,7 @@ export class ProtectApi extends EventEmitter {
   }
 
   // Internal interface to returning a WebSocket URL endpoint from the Protect controller for Protect API services (e.g. livestream, talkback).
-  private async _getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams, retry = true): Promise<Nullable<string>> {
+  private async _getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams): Promise<Nullable<string>> {
 
     if(!endpoint) {
 
@@ -872,24 +936,15 @@ export class ProtectApi extends EventEmitter {
 
     // Ask Protect to give us a URL for this websocket.
     const response = await this.retrieve(this.getApiEndpoint("websocket") + "/" + endpoint +
-      ((params && params.toString().length) ? "?" + params.toString() : ""), undefined, { logErrors: !retry });
+      ((params && params.toString().length) ? "?" + params.toString() : ""));
 
     // Something went wrong, we're done here.
-    if(!response?.ok) {
+    if(!response || !this.responseOk(response.statusCode)) {
 
       // Only inform users if we have a response if we have something to say.
       if(response) {
 
-        this.logRetry("API endpoint access error: " + response.status.toString() + " - " + response.statusText + ".", retry);
-      }
-
-      // We failed, but controllers are sometimes rebooted, we can lose our access token or something else may have occurred. Retry one time, after resetting the
-      // connection.
-      if(retry) {
-
-        this.reset();
-
-        return this._getWsEndpoint(endpoint, params, false);
+        this.log.error("API endpoint access error: " + response.statusCode.toString() + " - " + STATUS_CODES[response.statusCode] + ".");
       }
 
       return null;
@@ -897,7 +952,7 @@ export class ProtectApi extends EventEmitter {
 
     try {
 
-      const responseJson = await response.json() as Record<string, string>;
+      const responseJson = await response.body.json() as Record<string, string>;
 
       // Adjust the URL for our address.
       const responseUrl = new URL(responseJson.url);
@@ -909,13 +964,15 @@ export class ProtectApi extends EventEmitter {
 
     } catch(error) {
 
-      if(error instanceof FetchError) {
+      if(error instanceof TypeError) {
 
-        switch(error.code) {
+        const cause = error.cause as NodeJS.ErrnoException;
+
+        switch(cause.code) {
 
           default:
 
-            this.log.error("Unknown error while communicating with the controller: %s", error.message);
+            this.log.error("Unknown error while communicating with the controller: %s", cause.message);
 
             break;
         }
@@ -942,23 +999,25 @@ export class ProtectApi extends EventEmitter {
    * @returns Returns a promise that will resolve to a Response object successful, and `null` otherwise.
    *
    * @remarks This method should be used when direct access to the Protect controller is needed, or when this library doesn't have a needed method to access
-   *   controller capabilities. `options` must be a
-   *   [Fetch API compatible](https://developer.mozilla.org/en-US/docs/Web/API/Request/Request#options) request options object.
+   *   controller capabilities. `options` must be an
+   *   [Undici request API compatible](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions) request options object which itself is an
+   *   extension of [DispatchOptions](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-dispatchoptions).
    *
    * @category API Access
    */
   // Communicate HTTP requests with a Protect controller.
-  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, retrieveOptions: RetrieveOptions = {}): Promise<Nullable<Response>> {
+  public async retrieve(url: string, options: RequestOptions = { method: "GET" }, retrieveOptions: RetrieveOptions = {}):
+  Promise<Nullable<Dispatcher.ResponseData<unknown>>> {
 
     return this._retrieve(url, options, retrieveOptions);
   }
 
   // Internal interface to communicating HTTP requests with a Protect controller, with error handling.
-  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, retrieveOptions: InternalRetrieveOptions = {}): Promise<Nullable<Response>> {
+  private async _retrieve(url: string, options: RequestOptions = { method: "GET" }, retrieveOptions: InternalRetrieveOptions = {}):
+  Promise<Nullable<Dispatcher.ResponseData<unknown>>> {
 
     // Set our defaults unless the user has overriden them.
     retrieveOptions.decodeResponse ??= true;
-    retrieveOptions.isRetry ??= false;
     retrieveOptions.logErrors ??= true;
     retrieveOptions.timeout ??= PROTECT_API_TIMEOUT;
 
@@ -973,16 +1032,6 @@ export class ProtectApi extends EventEmitter {
       this.log.error(message, ...parameters);
     };
 
-    // We'll delay our retry by 50 to 150ms, with a little randomness thrown in for good measure, to give the controller a chance to recover from it's quirkiness.
-    const retry = async (): Promise<Nullable<Response>> => {
-
-      // Reset our connection context compleely.
-      await reset();
-      retrieveOptions.isRetry = true;
-
-      return new Promise(resolve => setTimeout(() => resolve(this._retrieve(url, options, retrieveOptions)), Math.floor(Math.random() * (150 - 50 + 1)) + 50));
-    };
-
     // Catch Protect controller server-side issues:
     //
     // 400: Bad request.
@@ -991,15 +1040,17 @@ export class ProtectApi extends EventEmitter {
     // 500: Internal server error.
     // 502: Bad gateway.
     // 503: Service temporarily unavailable.
-    const isServerSideIssue = (code: number): boolean => [400, 404, 429, 500, 502, 503].some(x => x === code);
+    const serverErrors = new Set([400, 404, 429, 500, 502, 503]);
 
-    let response: Response;
+    let response: Dispatcher.ResponseData<unknown>;
 
     // Create a signal handler to deliver the abort operation.
-    const signal = timeoutSignal(retrieveOptions.timeout);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), retrieveOptions.timeout);
 
+    options.dispatcher = this.dispatcher;
     options.headers = this.headers;
-    options.signal = signal;
+    options.signal = controller.signal;
 
     try {
 
@@ -1009,19 +1060,21 @@ export class ProtectApi extends EventEmitter {
       if(this.apiErrorCount >= PROTECT_API_ERROR_LIMIT) {
 
         // Let the user know we've got an API problem.
-        if(this.apiErrorCount === PROTECT_API_ERROR_LIMIT) {
+        if(!this._isThrottled) {
+
+          this.apiLastSuccess = now;
+          this._isThrottled = true;
 
           this.log.error("Throttling API calls due to errors with the %s previous attempts. Pausing communication with the Protect controller for %s minutes.",
-            this.apiErrorCount, PROTECT_API_RETRY_INTERVAL / 60);
-          this.apiErrorCount++;
-          this.apiLastSuccess = now;
+            this.apiErrorCount++, PROTECT_API_RETRY_INTERVAL / 60);
+
           this.reset();
 
           return null;
         }
 
         // Check to see if we are still throttling our API calls.
-        if((this.apiLastSuccess + (PROTECT_API_RETRY_INTERVAL * 1000)) > now) {
+        if((now - this.apiLastSuccess) < (PROTECT_API_RETRY_INTERVAL * 1000)) {
 
           return null;
         }
@@ -1030,7 +1083,7 @@ export class ProtectApi extends EventEmitter {
         this.log.error("Resuming connectivity to the UniFi Protect API after pausing for %s minutes.", PROTECT_API_RETRY_INTERVAL / 60);
 
         this.apiErrorCount = 0;
-        this.reset();
+        this._isThrottled = false;
 
         if(!(await this.loginController())) {
 
@@ -1039,7 +1092,7 @@ export class ProtectApi extends EventEmitter {
       }
 
       // Execute the API request.
-      response = await this.fetch(url, options);
+      response = await request(url, options);
 
       // The caller will sort through responses instead of us.
       if(!retrieveOptions.decodeResponse) {
@@ -1047,14 +1100,11 @@ export class ProtectApi extends EventEmitter {
         return response;
       }
 
-      // Preemptively increase the error count, but only if we're not retrying.
-      if(!retrieveOptions.isRetry) {
-
-        this.apiErrorCount++;
-      }
+      // Preemptively increase the error count.
+      this.apiErrorCount++;
 
       // Bad username and password.
-      if(response.status === 401) {
+      if(response.statusCode === 401) {
 
         this.logout();
         logError("Invalid login credentials given. Please check your login and password.");
@@ -1063,30 +1113,24 @@ export class ProtectApi extends EventEmitter {
       }
 
       // Insufficient privileges.
-      if(response.status === 403) {
+      if(response.statusCode === 403) {
 
         logError("Insufficient privileges for this user. Please check the roles assigned to this user and ensure it has sufficient privileges.");
 
         return null;
       }
 
-      if(!response.ok && isServerSideIssue(response.status)) {
+      if(!this.responseOk(response.statusCode)) {
 
-        // Retry on server side status issues, but no more than once.
-        if(!retrieveOptions.isRetry) {
+        if(serverErrors.has(response.statusCode)) {
 
-          return retry();
+          logError("Unable to connect to the Protect controller. This is usually temporary and will occur during device reboots.");
+
+          return null;
         }
 
-        logError("Unable to connect to the Protect controller. This is usually temporary and will occur during device reboots.");
-
-        return null;
-      }
-
-      // Some other unknown error occurred.
-      if(!response.ok) {
-
-        logError("%s - %s", response.status, response.statusText);
+        // Some other unknown error occurred.
+        logError("%s - %s", response.statusCode, STATUS_CODES[response.statusCode]);
 
         return null;
       }
@@ -1094,23 +1138,16 @@ export class ProtectApi extends EventEmitter {
       // We're all good - return the response and we're done.
       this.apiLastSuccess = Date.now();
       this.apiErrorCount = 0;
+      this._isThrottled = false;
 
       return response;
     } catch(error) {
 
-      // Increment our API error count only if we're not in currently in a retry.
-      if(!retrieveOptions.isRetry) {
+      // Increment our API error count.
+      this.apiErrorCount++;
 
-        this.apiErrorCount++;
-      }
-
-      if(error instanceof AbortError) {
-
-        // Retry on API timeouts, but no more than once.
-        if(!retrieveOptions.isRetry) {
-
-          return retry();
-        }
+      // We aborted the connection.
+      if((error instanceof DOMException) && (error.name === "AbortError")) {
 
         logError("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
         this.log.debug("Original request was: %s", url);
@@ -1118,32 +1155,75 @@ export class ProtectApi extends EventEmitter {
         return null;
       }
 
-      if(error instanceof FetchError) {
+      // We destroyed the pool due to a reset event and our inflight connections are failing.
+      if(error instanceof errors.ClientDestroyedError) {
 
         switch(error.code) {
 
+          case "UND_ERR_DESTROYED":
+
+            break;
+
+          default:
+
+            break;
+        }
+
+        return null;
+      }
+
+      // We destroyed the pool due to a reset event and our inflight connections are failing.
+      if(error instanceof errors.RequestRetryError) {
+
+        switch(error.code) {
+
+          case "UND_ERR_REQ_RETRY":
+
+            logError("Unable to connect to the Protect controller. This is usually temporary and will occur during device reboots.");
+
+            break;
+
+          default:
+
+            break;
+        }
+
+        return null;
+      }
+
+      // Connection timed out.
+      if(error instanceof errors.ConnectTimeoutError) {
+
+        switch(error.code) {
+
+          case "UND_ERR_CONNECT_TIMEOUT":
+
+            logError("Connection timed out.");
+
+            break;
+
+          default:
+
+            break;
+        }
+
+        return null;
+      }
+
+      if(error instanceof TypeError) {
+
+        const cause = error.cause as NodeJS.ErrnoException;
+
+        switch(cause.code) {
+
           case "ECONNREFUSED":
           case "EHOSTDOWN":
-
-            // Retry on connection refused, but no more than once.
-            if(!retrieveOptions.isRetry) {
-
-              return retry();
-            }
 
             logError("Connection refused.");
 
             break;
 
           case "ECONNRESET":
-          case "ERR_HTTP2_STREAM_CANCEL":
-          case "ERR_HTTP2_STREAM_ERROR":
-
-            // Retry on connection reset, but no more than once.
-            if(!retrieveOptions.isRetry) {
-
-              return retry();
-            }
 
             logError("Network connection to Protect controller has been reset.");
 
@@ -1159,17 +1239,21 @@ export class ProtectApi extends EventEmitter {
           default:
 
             // If we're logging when we have an error, do so.
-            logError("Error: %s | %s.", error.code, error.message);
+            logError("Error: %s | %s.", cause.code, cause.message);
 
             break;
         }
+
+        return null;
       }
+
+      logError(util.inspect(error, { colors: true, depth: null, sorted: true}));
 
       return null;
     } finally {
 
       // Clear out our response timeout.
-      signal.clear();
+      clearTimeout(timer);
     }
   }
 
@@ -1190,6 +1274,20 @@ export class ProtectApi extends EventEmitter {
 
       this.log.error(logMessage);
     }
+  }
+
+  /**
+   * Determines whether a given HTTP status code represents a successful response.
+   *
+   * @param code - The HTTP status code returned by a request. If `undefined`, the response is considered not okay.
+   *
+   * @returns `true` if `code` is between 200 (inclusive) and 300 (exclusive); otherwise returns `false`.
+   *
+   * @category Utilities
+   */
+  public responseOk(code?: number): boolean {
+
+    return (code !== undefined) && (code >= 200) && (code < 300);
   }
 
   /**
@@ -1335,7 +1433,7 @@ export class ProtectApi extends EventEmitter {
    */
   public get isThrottled(): boolean {
 
-    return this.apiErrorCount >= PROTECT_API_ERROR_LIMIT;
+    return this._isThrottled;
   }
 
   /**
