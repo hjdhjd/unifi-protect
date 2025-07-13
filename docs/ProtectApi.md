@@ -11,31 +11,7 @@ A complete implementation of the UniFi Protect API, including access to the even
 The UniFi Protect API is largely undocumented and has been reverse engineered mostly through the Protect native web interface as well as trial and error. This
 implementation provides a high-performance, event-driven interface into the Protect API, allowing you to access all of Protect's rich capabilities.
 
-## API Access
-
-### RequestOptions
-
-```ts
-type RequestOptions = {
-  dispatcher?: Dispatcher;
-} & Omit<Dispatcher.RequestOptions, "origin" | "path">;
-```
-
-Configuration options for HTTP requests executed by `retrieve()`.
-
-#### Type declaration
-
-| Name | Type | Description |
-| ------ | ------ | ------ |
-| `dispatcher?` | `Dispatcher` | Optional custom Undici `Dispatcher` instance to use for this request. If omitted, the native `unifi-protect` dispatcher is used, which should be suitable for most use cases. |
-
-#### Remarks
-
-Extends Undici’s [`Dispatcher.RequestOptions`](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), but omits the `origin` and
-`path` properties, since those are derived from the `url` argument passed to `retrieve()`. You can optionally supply a custom `Dispatcher` instance to control
-connection pooling, timeouts, etc.
-
-## Other
+## Classes
 
 ### ProtectApi
 
@@ -582,7 +558,7 @@ Clear the login credentials and terminate any open connection to the UniFi Prote
 
 `void`
 
-***
+## Interfaces
 
 ### RetrieveOptions
 
@@ -595,7 +571,7 @@ Options to tailor the behavior of [ProtectApi.retrieve](#retrieve).
 | <a id="logerrors"></a> `logErrors?` | `boolean` | Log errors. Defaults to `true`. |
 | <a id="timeout"></a> `timeout?` | `number` | Amount of time, in milliseconds, to wait for the Protect controller to respond before timing out. Defaults to `3500`. |
 
-***
+## Type Aliases
 
 ### ProtectKnownDevicePayloads
 
@@ -626,3 +602,27 @@ type ProtectKnownDeviceTypes =
 ```
 
 Define our known Protect device types.
+
+***
+
+### RequestOptions
+
+```ts
+type RequestOptions = {
+  dispatcher?: Dispatcher;
+} & Omit<Dispatcher.RequestOptions, "origin" | "path">;
+```
+
+Configuration options for HTTP requests executed by `retrieve()`.
+
+#### Type declaration
+
+| Name | Type | Description |
+| ------ | ------ | ------ |
+| `dispatcher?` | `Dispatcher` | Optional custom Undici `Dispatcher` instance to use for this request. If omitted, the native `unifi-protect` dispatcher is used, which should be suitable for most use cases. |
+
+#### Remarks
+
+Extends Undici’s [`Dispatcher.RequestOptions`](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), but omits the `origin` and
+`path` properties, since those are derived from the `url` argument passed to `retrieve()`. You can optionally supply a custom `Dispatcher` instance to control
+connection pooling, timeouts, etc.

@@ -41,8 +41,6 @@ export type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChi
  * @remarks Extends Undici’s [`Dispatcher.RequestOptions`](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), but omits the `origin` and
  * `path` properties, since those are derived from the `url` argument passed to `retrieve()`. You can optionally supply a custom `Dispatcher` instance to control
  * connection pooling, timeouts, etc.
- *
- * @category API Access
  */
 export type RequestOptions = {
 
