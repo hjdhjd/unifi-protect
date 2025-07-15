@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.25.0 (2025-07-14)
+  * Improvement: refinements to the livestream API.
+  * Housekeeping.
+
 ## 4.24.0 (2025-07-13)
   * Breaking change: `unifi-protect` now uses the modern Undici library for network requests to the Protect controller to improve connection resilience. If you rely on custom `retrieve` options, you may need to revise your code. Documentation has been updated to reflect the changes.
   * Improvement: added a utility helper, `requestOk` to validate that responses from `retrieve` are valid, given we no longer use the `fetch` API and `response.ok` is no longer available to us.

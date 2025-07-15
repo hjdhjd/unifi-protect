@@ -199,6 +199,7 @@ Once a livestream session has started, the following events can be listened for 
 | `initsegment` | An fMP4 initialization segment has been received. The segment will be passed as an argument to any listeners.                                |
 | `message`     | An fMP4 segment has been received. No distinction is made between segment types. The segment will be passed as an argument to any listeners. |
 | `segment`     | A non-initialization fMP4 segment has been received. The segment will be passed as an argument to any listeners.                             |
+| `timestamp`   | A `BigInt` representing the decode timestamp of frames. It mirrors what is provided in the `tfdt` box in fMP4 segments.                      |
 
 ##### stop()
 
@@ -222,6 +223,7 @@ Options for configuring a livestream session.
 
 | Property | Type | Description |
 | ------ | ------ | ------ |
+| <a id="emittimestamps"></a> `emitTimestamps` | `boolean` | Optionally emit the decode timestamps of frames as timestamp events. This is the same information that appears in `tfdt` boxes. |
 | <a id="lens"></a> `lens` | `number` | Optionally specify alternate cameras on a Protect device, such as a package camera. |
 | <a id="requestid"></a> `requestId` | `string` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
 | <a id="segmentlength"></a> `segmentLength` | `number` | Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms. |
