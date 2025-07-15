@@ -54,7 +54,7 @@ import util from "node:util";
 // A complete description of the UniFi Protect livestream API websocket API.
 enum ProtectLiveFrame {
 
-  KEYFRAME = 247,
+  TIMESTAMP = 247,
   CODECINFORMATION = 248,
   BEGINSEGMENT = 249,
   INITSEGMENT = 250,
@@ -68,6 +68,7 @@ enum ProtectLiveFrame {
 /**
  * Options for configuring a livestream session.
  *
+ * @property emitTimestamps   - Optionally emit the decode timestamps of frames as timestamp events. This is the same information that appears in `tfdt` boxes.
  * @property lens             - Optionally specify alternate cameras on a Protect device, such as a package camera.
  * @property segmentLength    - Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms.
  * @property requestId        - Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes.
@@ -76,6 +77,7 @@ enum ProtectLiveFrame {
  */
 export interface LivestreamOptions {
 
+  emitTimestamps: boolean;
   lens: number;
   requestId: string;
   segmentLength: number;
@@ -147,9 +149,11 @@ export class ProtectLivestream extends EventEmitter {
    * | `initsegment` | An fMP4 initialization segment has been received. The segment will be passed as an argument to any listeners.                                |
    * | `message`     | An fMP4 segment has been received. No distinction is made between segment types. The segment will be passed as an argument to any listeners. |
    * | `segment`     | A non-initialization fMP4 segment has been received. The segment will be passed as an argument to any listeners.                             |
+   * | `timestamp`   | A `BigInt` representing the decode timestamp of frames. It mirrors what is provided in the `tfdt` box in fMP4 segments.                      |
    */
   public async start(cameraId: string, channel: number, options: Partial<LivestreamOptions> = {}): Promise<boolean> {
 
+    options.emitTimestamps ??= false;
     options.lens ??= 0;
     options.requestId ??= cameraId + "-" + channel.toString();
     options.segmentLength ??= 100;
@@ -226,15 +230,15 @@ export class ProtectLivestream extends EventEmitter {
       allowPartialGOP: "",
       camera: cameraId,
       channel: channel.toString(),
-      chunkSize: "1024",
-      extendedVideoMetadata: "", // Try excluding?
+      chunkSize: "4096",
+      ...(options.emitTimestamps ? { extendedVideoMetadata: "" } : {}),
       fragmentDurationMillis: options.segmentLength.toString(),
       lens: options.lens.toString(),
       progressive: "",
-      rebaseTimestampsToZero: "false",
+      rebaseTimestampsToZero: "true",
       requestId: options.requestId,
       type: "fmp4",
-      useWallClock: "true"
+      useWallClock: "false"
     });
 
     // Get the websocket endpoint URL from Protect.
@@ -355,15 +359,16 @@ export class ProtectLivestream extends EventEmitter {
       return;
     }
 
+    // Track the segment under construction.
     let currentSegment = {
 
       audio: Buffer.alloc(0),
-      keyframe: Buffer.alloc(0),
       mdat: Buffer.alloc(0),
       moof: Buffer.alloc(0),
       video: Buffer.alloc(0)
     };
 
+    // Keep any tail bytes that didn't form a full packet yet.
     let packetRemaining = Buffer.alloc(0);
 
     // Process data coming in from the websocket.
@@ -404,6 +409,7 @@ export class ProtectLivestream extends EventEmitter {
         return;
       }
 
+      // Prepend any leftover partial packet.
       let packet = Buffer.from(ab);
 
       // If we have anything left from the last packet we processed, prepend it to this packet.
@@ -426,7 +432,7 @@ export class ProtectLivestream extends EventEmitter {
           break;
         }
 
-        // Read the packet header.
+        // Read the one-byte packet header.
         const header = packet.readUInt8(offset);
 
         // Validate our header before we do anything else.
@@ -437,7 +443,7 @@ export class ProtectLivestream extends EventEmitter {
           break;
         }
 
-        // Protect encodes the length of the entire fMP4 segment in the first three bytes of the header.
+        // Protect encodes the length of the entire fMP4 segment in the first three bytes (big-endian) of the header.
         const length = ((packet.readUInt8(offset + 1) << 8) | packet.readUInt8(offset + 2)) << 8 | packet.readUInt8(offset + 3);
 
         // Once we know our length, if we don't have the complete packet, we save it and punt until we see more data come across.
@@ -503,7 +509,6 @@ export class ProtectLivestream extends EventEmitter {
             currentSegment = {
 
               audio: Buffer.alloc(0),
-              keyframe: Buffer.alloc(0),
               mdat: Buffer.alloc(0),
               moof: Buffer.alloc(0),
               video: Buffer.alloc(0)
@@ -527,14 +532,12 @@ export class ProtectLivestream extends EventEmitter {
 
             break;
 
-          // We've got a keyframe. Add it to our current segment.
-          case ProtectLiveFrame.KEYFRAME:
+          // We've got a timestamp packet. Protect sends over decode timestamps identical to what's in the tfdt box in the segment.
+          case ProtectLiveFrame.TIMESTAMP:
 
-            currentSegment.keyframe = data;
+            for(let offset = 0; offset < data.length; offset += 8) {
 
-            if(!this._stream) {
-
-              this.emit("keyframe", data);
+              this.emit("timestamp", data.readBigUInt64BE(offset));
             }
 
             break;
