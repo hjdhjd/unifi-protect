@@ -49,7 +49,7 @@ This class provides a complete event-driven API to access the UniFi Protect Live
 1. Create an instance of the [UniFi Protect API](ProtectApi.md#protectapi) to connect to the Protect controller.
 
 2. Create an instance of [Protect Livestream](#protectlivestream) using the API instance above either directly, or through calling
-[createLivestream](ProtectApi.md#protectapi#createlivestream) method on an instance of [ProtectApi](ProtectApi.md#protectapi) (preferred).
+[createLivestream](ProtectApi.md#createlivestream) method on an instance of [ProtectApi](ProtectApi.md#protectapi) (preferred).
 
 3. Start a livestream using [start](#start), stop it with [stop](#stop), and listen for events.
 

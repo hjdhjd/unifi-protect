@@ -821,10 +821,7 @@ export class ProtectApi extends EventEmitter {
     if(this.nvrAddress) {
 
       // Cleanup any prior pool.
-      if(this.dispatcher) {
-
-        void this.dispatcher.destroy();
-      }
+      void this.dispatcher?.destroy();
 
       // Create an interceptor that allows us to set the user agent to our liking.
       const ua: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (opts: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler) => {
@@ -836,9 +833,11 @@ export class ProtectApi extends EventEmitter {
       };
 
       // Create a dispatcher using a new pool. We want to explicitly allow self-signed SSL certificates, enabled HTTP2 connections, and allow up to five connections at a
-      // time and provide some robust retry handling - we retry each request up to three times, with backoff.
+      // time and provide some robust retry handling - we retry each request up to three times, with backoff. We allow for up to five retries, with a maximum wait time of
+      // 1500ms per retry, in factors of 2 starting from a 100ms delay.
       this.dispatcher = new Pool("https://" + this.nvrAddress, { allowH2: true, clientTtl: 60 * 1000, connect: { rejectUnauthorized: false }, connections: 5 })
-        .compose(ua, interceptors.retry({ maxRetries: 5, maxTimeout: 1000, minTimeout: 100, statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ], timeoutFactor: 2 }));
+        .compose(ua, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
+          statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ], timeoutFactor: 2 }));
     }
   }
 
@@ -1038,7 +1037,7 @@ export class ProtectApi extends EventEmitter {
     // 500: Internal server error.
     // 502: Bad gateway.
     // 503: Service temporarily unavailable.
-    const serverErrors = new Set([400, 404, 429, 500, 502, 503]);
+    const serverErrors = new Set([ 400, 404, 429, 500, 502, 503 ]);
 
     let response: Dispatcher.ResponseData<unknown>;
 
@@ -1122,7 +1121,7 @@ export class ProtectApi extends EventEmitter {
 
         if(serverErrors.has(response.statusCode)) {
 
-          logError("Unable to connect to the Protect controller. This is usually temporary and will occur during device reboots.");
+          logError("Unable to connect to the Protect controller. This is temporary and may occur during device reboots.");
 
           return null;
         }
@@ -1148,7 +1147,6 @@ export class ProtectApi extends EventEmitter {
       if((error instanceof DOMException) && (error.name === "AbortError")) {
 
         logError("Protect controller is taking too long to respond to a request. This error can usually be safely ignored.");
-        this.log.debug("Original request was: %s", url);
 
         return null;
       }
@@ -1177,7 +1175,7 @@ export class ProtectApi extends EventEmitter {
 
           case "UND_ERR_REQ_RETRY":
 
-            logError("Unable to connect to the Protect controller. This is usually temporary and will occur during device reboots.");
+            logError("Unable to connect to the Protect controller. This is temporary and may occur during device reboots.");
 
             break;
 
@@ -1208,9 +1206,19 @@ export class ProtectApi extends EventEmitter {
         return null;
       }
 
+      let cause;
+
       if(error instanceof TypeError) {
 
-        const cause = error.cause as NodeJS.ErrnoException;
+        cause = error.cause as NodeJS.ErrnoException;
+      }
+
+      if((error instanceof Error) && ("code" in error) && (typeof (error as NodeJS.ErrnoException).code === "string")) {
+
+        cause = error;
+      }
+
+      if(cause) {
 
         switch(cause.code) {
 
@@ -1229,8 +1237,13 @@ export class ProtectApi extends EventEmitter {
 
           case "ENOTFOUND":
 
-            logError("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.",
-              this.nvrAddress);
+            if(this.nvrAddress) {
+
+              logError("Hostname or IP address not found: %s. Please ensure the address you configured for this UniFi Protect controller is correct.", this.nvrAddress);
+            } else {
+
+              logError("No hostname or IP address provided.");
+            }
 
             break;
 
@@ -1245,7 +1258,7 @@ export class ProtectApi extends EventEmitter {
         return null;
       }
 
-      logError(util.inspect(error, { colors: true, depth: null, sorted: true}));
+      logError("Unknown error: %s", util.inspect(error, { colors: true, depth: null, sorted: true}));
 
       return null;
     } finally {

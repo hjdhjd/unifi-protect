@@ -104,9 +104,11 @@ export class ProtectLivestream extends EventEmitter {
   private _initSegment: Nullable<Buffer>;
   private _codec: Nullable<string>;
   private _stream: Nullable<Readable>;
+  private agent: Nullable<Agent>;
   private api: ProtectApi;
   private errorHandler: Nullable<(event: ErrorEvent) => void>;
   private heartbeat: Nullable<NodeJS.Timeout>;
+  private initSegmentPromise?: Promise<Buffer>;
   private lastMessage: number;
   private log: ProtectLogging;
   private messageHandler: Nullable<(event: MessageEvent) => void>;
@@ -121,6 +123,7 @@ export class ProtectLivestream extends EventEmitter {
     this._codec = null;
     this._initSegment = null;
     this._stream = null;
+    this.agent = null;
     this.api = api;
     this.errorHandler = null;
     this.heartbeat = null;
@@ -254,9 +257,20 @@ export class ProtectLivestream extends EventEmitter {
 
     try {
 
+      // Configure our agent to ensure we don't enable keepalive or HTTP pipelining so we can quickly tear down the connection when needed.
+      this.agent = new Agent({
+
+        connect: {
+
+          keepAlive: false,
+          rejectUnauthorized: false
+        },
+        pipelining: 0
+      });
+
       // Open the livestream WebSocket. We create a new dispatcher here because WebSocket upgrades can only happen over HTTP/1.1 and we've asked for HTTP/2 whenever
       // possible in our global pool.
-      this.ws = new WebSocket(wsUrl, { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }) });
+      this.ws = new WebSocket(wsUrl, { dispatcher: this.agent });
 
       if(!this.ws) {
 
@@ -328,7 +342,7 @@ export class ProtectLivestream extends EventEmitter {
         this.stop();
       }, { once: true });
 
-      this.ws?.addEventListener("close", () => {
+      this.ws?.addEventListener("close", async () => {
 
         // Clear out our heartbeat since we're closing.
         if(this.heartbeat) {
@@ -338,6 +352,10 @@ export class ProtectLivestream extends EventEmitter {
         }
 
         this.stop();
+
+        await this.agent?.destroy();
+        this.agent = null;
+
         this.emit("close");
       }, { once: true });
 
@@ -415,7 +433,7 @@ export class ProtectLivestream extends EventEmitter {
       // If we have anything left from the last packet we processed, prepend it to this packet.
       if(packetRemaining.length > 0) {
 
-        packet = Buffer.concat([packetRemaining, packet]);
+        packet = Buffer.concat([ packetRemaining, packet ]);
         packetRemaining = Buffer.alloc(0);
       }
 
@@ -466,7 +484,7 @@ export class ProtectLivestream extends EventEmitter {
           // We've got audio data. Add it to our current segment.
           case ProtectLiveFrame.AUDIO:
 
-            currentSegment.audio = Buffer.concat([currentSegment.audio, data]);
+            currentSegment.audio = Buffer.concat([ currentSegment.audio, data ]);
 
             break;
 
@@ -588,10 +606,8 @@ export class ProtectLivestream extends EventEmitter {
       return this.initSegment;
     }
 
-    // Wait until the initialization segment is seen and then try again.
-    await events.once(this, "initsegment");
-
-    return this.getInitSegment();
+    // Cache a promise that resolves when the initsegment event is emitted. We need to wait until the initialization segment is seen and then return it.
+    return this.initSegmentPromise ??= events.once(this, "initsegment").then(() => this.initSegment as Buffer);
   }
 
   /**

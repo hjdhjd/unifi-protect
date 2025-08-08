@@ -174,7 +174,7 @@ switch(process.argv.length) {
 
       case "stream":
 
-        if(![4, 5].includes(process.argv.length)) {
+        if(![ 4, 5 ].includes(process.argv.length)) {
 
           usage();
 

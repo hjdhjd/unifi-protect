@@ -22,7 +22,7 @@ export default ts.config(
 
   {
 
-    files: [ "eslint.config.mjs" ],
+    files: ["eslint.config.mjs"],
     rules: {
 
       ...hbPluginUtils.rules.js
@@ -33,7 +33,7 @@ export default ts.config(
 
     files: [ "eslint.config.mjs", "src/**.ts", "src/util/**.ts" ],
 
-    ignores: [ "dist" ],
+    ignores: ["dist"],
 
     languageOptions: {
 
@@ -46,7 +46,7 @@ export default ts.config(
 
         projectService: {
 
-          allowDefaultProject: [ "eslint.config.mjs" ],
+          allowDefaultProject: ["eslint.config.mjs"],
           defaultProject: "./tsconfig.json"
         }
       },
