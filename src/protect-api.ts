@@ -90,7 +90,7 @@ export class ProtectApi extends EventEmitter {
   private apiErrorCount: number;
   private apiLastSuccess: number;
   private dispatcher!: Dispatcher;
-  private headers: Record<string, string>;
+  private _headers: Record<string, string>;
   private _isAdminUser: boolean;
   private _isThrottled: boolean;
   private log: ProtectLogging;
@@ -138,7 +138,7 @@ export class ProtectApi extends EventEmitter {
 
     this.apiErrorCount = 0;
     this.apiLastSuccess = 0;
-    this.headers = {};
+    this._headers = {};
     this.nvrAddress = "";
     this.username = "";
     this.password = "";
@@ -208,7 +208,7 @@ export class ProtectApi extends EventEmitter {
   private async loginController(): Promise<boolean> {
 
     // If we're already logged in, we're done.
-    if(this.headers.cookie && this.headers["x-csrf-token"]) {
+    if(this._headers.cookie && this._headers["x-csrf-token"]) {
 
       return true;
     }
@@ -228,7 +228,7 @@ export class ProtectApi extends EventEmitter {
     };
 
     // Acquire a CSRF token, if needed. We only need to do this if we aren't already logged in, or we don't already have a token.
-    if(!this.headers["x-csrf-token"]) {
+    if(!this._headers["x-csrf-token"]) {
 
       // UniFi OS has cross-site request forgery protection built into it's web management UI. We retrieve the CSRF token, if available, by connecting to the Protect
       // controller and checking the headers for it.
@@ -241,7 +241,7 @@ export class ProtectApi extends EventEmitter {
         // Preserve the CSRF token, if found, for future API calls.
         if(csrfToken) {
 
-          this.headers["x-csrf-token"] = csrfToken;
+          this._headers["x-csrf-token"] = csrfToken;
         }
       }
     }
@@ -269,10 +269,10 @@ export class ProtectApi extends EventEmitter {
     if(csrfToken && cookie) {
 
       // Only preserve the token element of the cookie and not the superfluous information that's been added to it.
-      this.headers.cookie = cookie.split(";")[0];
+      this._headers.cookie = cookie.split(";")[0];
 
       // Save the CSRF token.
-      this.headers["x-csrf-token"] = csrfToken;
+      this._headers["x-csrf-token"] = csrfToken;
 
       return true;
     }
@@ -360,7 +360,7 @@ export class ProtectApi extends EventEmitter {
 
       // Let's open the WebSocket connection.
       const ws = new WebSocket("wss://" + this.nvrAddress + "/proxy/protect/ws/updates?" + params.toString(),
-        { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }), headers: { Cookie: this.headers.cookie ?? "" } });
+        { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }), headers: { Cookie: this._headers.cookie ?? "" } });
 
       let messageHandler: Nullable<(event: MessageEvent) => void>;
 
@@ -857,16 +857,16 @@ export class ProtectApi extends EventEmitter {
     this._isAdminUser = false;
 
     // Save our CSRF token, if we have one.
-    const csrfToken = this.headers["x-csrf-token"];
+    const csrfToken = this._headers["x-csrf-token"];
 
     // Initialize the headers we need.
-    this.headers = {};
-    this.headers["content-type"] = "application/json";
+    this._headers = {};
+    this._headers["content-type"] = "application/json";
 
     // Restore the CSRF token if we have one.
     if(csrfToken) {
 
-      this.headers["x-csrf-token"] = csrfToken;
+      this._headers["x-csrf-token"] = csrfToken;
     }
   }
 
@@ -1047,7 +1047,7 @@ export class ProtectApi extends EventEmitter {
     const timer = setTimeout(() => controller.abort(), retrieveOptions.timeout);
 
     options.dispatcher = this.dispatcher;
-    options.headers = this.headers;
+    options.headers = this._headers;
     options.signal = controller.signal;
 
     try {
@@ -1408,6 +1408,20 @@ export class ProtectApi extends EventEmitter {
   public get bootstrap(): Nullable<ProtectNvrBootstrap> {
 
     return this._bootstrap;
+  }
+
+  /**
+   * Access the headers of connection to the Protect controller
+   *
+   * @returns Returns the headers if a valid connection established, `null` otherwise.
+   *
+   * @remarks A call to {@link login} is required before calling this getter. Otherwise, it will return `null`.
+   *
+   * @category API Access
+   */
+  public get headers(): Nullable<Record<string, string>> {
+
+    return this._headers;
   }
 
   /**
