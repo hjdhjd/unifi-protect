@@ -44,7 +44,7 @@ npm install unifi-protect
 
 ## Documentation
 
-Documentation and examples for using this library to access UniFi Protect controllers is [available here](https://github.com/hjdhjd/unifi-protect/blob/main/docs/classes/ProtectApi.md). Additionally, if you'd like to see all this in action in a well-documented, real-world example, please take a good look at my [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) project. It relies heavily on this library for the core functionality it provides.
+Documentation and examples for using this library to access UniFi Protect controllers is [available here](https://github.com/hjdhjd/unifi-protect/blob/main/docs/ProtectApi.md). Additionally, if you'd like to see all this in action in a well-documented, real-world example, please take a good look at my [homebridge-unifi-protect](https://github.com/hjdhjd/homebridge-unifi-protect) project. It relies heavily on this library for the core functionality it provides.
 
 ## UniFi Protect Realtime Events API
 So...how does UniFi Protect provide realtime events? On UniFi OS-based controllers, it uses a websocket called `updates`. This connection provides a realtime stream of health, status, and events that the cameras encounter - including motion events and doorbell ring events.
