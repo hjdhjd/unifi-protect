@@ -56,7 +56,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 
 | Property | Type |
 | ------ | ------ |
-| <a id="accessdevicemetadata"></a> `accessDeviceMetadata` | \{ `channels`: \{ `bitrate`: `number`; `fps`: `number`; `fpsValues`: `number`[]; `height`: `number`; `id`: `number`; `localStreamName`: `string`; `quality`: `string`; `width`: `number`; \}[]; `connectedSince`: `number`; `disableRecordingByDefault`: `boolean`; `doorInfo`: \{ `canLock`: `boolean`; `lockState`: `string`; \}; `featureFlags`: \{ `supportLivestream`: `boolean`; `supportUnlock`: `boolean`; \}; `ledSettings`: \{ `isEnabled`: `boolean`; \}; `micVolume`: `number`; `pairedInfo`: \{ `name`: `string`; `uri`: `string`; \}; `speakerSettings`: \{ `areSystemSoundsEnabled`: `boolean`; \}; `talkbackSettings`: [`ProtectCameraTalkbackConfigInterface`](#protectcameratalkbackconfiginterface)[]; \} |
+| <a id="accessdevicemetadata"></a> `accessDeviceMetadata?` | \{ `channels`: \{ `bitrate`: `number`; `fps`: `number`; `fpsValues`: `number`[]; `height`: `number`; `id`: `number`; `localStreamName`: `string`; `quality`: `string`; `width`: `number`; \}[]; `connectedSince`: `number`; `disableRecordingByDefault`: `boolean`; `doorInfo`: \{ `canLock`: `boolean`; `lockState`: `string`; \}; `featureFlags`: \{ `supportLivestream`: `boolean`; `supportUnlock`: `boolean`; \}; `ledSettings`: \{ `isEnabled`: `boolean`; \}; `micVolume`: `number`; `pairedInfo`: \{ `name`: `string`; `uri`: `string`; \}; `speakerSettings`: \{ `areSystemSoundsEnabled`: `boolean`; \}; `talkbackSettings`: [`ProtectCameraTalkbackConfigInterface`](#protectcameratalkbackconfiginterface)[]; \} |
 | `accessDeviceMetadata.channels` | \{ `bitrate`: `number`; `fps`: `number`; `fpsValues`: `number`[]; `height`: `number`; `id`: `number`; `localStreamName`: `string`; `quality`: `string`; `width`: `number`; \}[] |
 | `accessDeviceMetadata.connectedSince` | `number` |
 | `accessDeviceMetadata.disableRecordingByDefault` | `boolean` |
@@ -157,10 +157,10 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `fingerprintState.status` | `string` |
 | `fingerprintState.total` | `number` |
 | <a id="firmwarebuild"></a> `firmwareBuild` | `string` |
-| <a id="firmwareversion"></a> `firmwareVersion` | `string` |
+| <a id="firmwareversion"></a> `firmwareVersion?` | `string` |
 | <a id="fwupdatestate"></a> `fwUpdateState` | `string` |
 | <a id="guid"></a> `guid` | `string` |
-| <a id="hardwarerevision"></a> `hardwareRevision` | `string` |
+| <a id="hardwarerevision"></a> `hardwareRevision?` | `string` |
 | <a id="hasrecordings"></a> `hasRecordings` | `boolean` |
 | <a id="hasspeaker"></a> `hasSpeaker` | `boolean` |
 | <a id="haswifi"></a> `hasWifi` | `boolean` |
@@ -250,7 +250,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="lastring"></a> `lastRing` | `Nullable`\<`number`\> |
 | <a id="lastseen"></a> `lastSeen` | `number` |
 | <a id="latestfirmwareversion"></a> `latestFirmwareVersion` | `string` |
-| <a id="lcdmessage"></a> `lcdMessage` | [`ProtectCameraLcdMessageConfigInterface`](#protectcameralcdmessageconfiginterface) |
+| <a id="lcdmessage"></a> `lcdMessage?` | `DeepPartial`\<[`ProtectCameraLcdMessageConfigInterface`](#protectcameralcdmessageconfiginterface)\> |
 | <a id="ledsettings"></a> `ledSettings` | \{ `blinkRate`: `number`; `isEnabled`: `boolean`; \} |
 | `ledSettings.blinkRate` | `number` |
 | `ledSettings.isEnabled` | `boolean` |
@@ -259,7 +259,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="marketname"></a> `marketName` | `string` |
 | <a id="micvolume"></a> `micVolume` | `number` |
 | <a id="modelkey"></a> `modelKey` | `string` |
-| <a id="name-1"></a> `name` | `string` |
+| <a id="name-1"></a> `name?` | `string` |
 | <a id="nfcsettings"></a> `nfcSettings` | \{ `enableNfc`: `boolean`; `supportThirdPartyCard`: `boolean`; \} |
 | `nfcSettings.enableNfc` | `boolean` |
 | `nfcSettings.supportThirdPartyCard` | `boolean` |
@@ -452,7 +452,7 @@ A semi-complete description of the UniFi Protect chime JSON.
 | <a id="mac-1"></a> `mac` | `string` |
 | <a id="marketname-1"></a> `marketName` | `string` |
 | <a id="modelkey-1"></a> `modelKey` | `string` |
-| <a id="name-2"></a> `name` | `string` |
+| <a id="name-2"></a> `name?` | `string` |
 | <a id="nvrmac-1"></a> `nvrMac` | `string` |
 | <a id="platform-1"></a> `platform` | `string` |
 | <a id="repeattimes"></a> `repeatTimes` | `number` |
@@ -490,19 +490,19 @@ A semi-complete description of the UniFi Protect smart motion detection event JS
 
 | Property | Type |
 | ------ | ------ |
-| <a id="camera"></a> `camera` | `string` |
+| <a id="camera"></a> `camera?` | `string` |
 | <a id="cameraid"></a> `cameraId` | `string` |
 | <a id="detectedat"></a> `detectedAt` | `number` |
 | <a id="end"></a> `end` | `number` |
 | <a id="eventid"></a> `eventId` | `string` |
 | <a id="id-3"></a> `id` | `string` |
 | <a id="locked"></a> `locked` | `boolean` |
-| <a id="metadata"></a> `metadata` | [`ProtectEventMetadata`](#protecteventmetadata) |
+| <a id="metadata"></a> `metadata?` | `DeepPartial`\<[`ProtectEventMetadataInterface`](#protecteventmetadatainterface)\> |
 | <a id="modelkey-2"></a> `modelKey` | `string` |
 | <a id="partition"></a> `partition` | `string` |
 | <a id="score"></a> `score` | `number` |
 | <a id="smartdetectevents"></a> `smartDetectEvents` | `string`[] |
-| <a id="smartdetecttypes"></a> `smartDetectTypes` | `string`[] |
+| <a id="smartdetecttypes"></a> `smartDetectTypes?` | `string`[] |
 | <a id="start"></a> `start` | `number` |
 | <a id="thumbnailid"></a> `thumbnailId` | `string` |
 | <a id="type-3"></a> `type` | `string` |
@@ -628,7 +628,7 @@ A semi-complete description of the UniFi Protect light JSON.
 | <a id="mac-2"></a> `mac` | `string` |
 | <a id="marketname-2"></a> `marketName` | `string` |
 | <a id="modelkey-3"></a> `modelKey` | `string` |
-| <a id="name-5"></a> `name` | `string` |
+| <a id="name-5"></a> `name?` | `string` |
 | <a id="nvrmac-2"></a> `nvrMac` | `string` |
 | <a id="state-2"></a> `state` | `string` |
 | <a id="type-5"></a> `type` | `string` |
@@ -708,7 +708,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `deviceFirmwareSettings.schedule.hour` | `number` |
 | <a id="disableaudio"></a> `disableAudio` | `boolean` |
 | <a id="disableautolink"></a> `disableAutoLink` | `boolean` |
-| <a id="doorbellsettings"></a> `doorbellSettings` | \{ `allMessages`: \{ `text`: `string`; `type`: `string`; \}[]; `customImages`: `string`[]; `customMessages`: `string`[]; `defaultMessageResetTimeoutMs`: `number`; `defaultMessageText`: `string`; \} |
+| <a id="doorbellsettings"></a> `doorbellSettings?` | \{ `allMessages`: \{ `text`: `string`; `type`: `string`; \}[]; `customImages`: `string`[]; `customMessages`: `string`[]; `defaultMessageResetTimeoutMs`: `number`; `defaultMessageText`: `string`; \} |
 | `doorbellSettings.allMessages` | \{ `text`: `string`; `type`: `string`; \}[] |
 | `doorbellSettings.customImages` | `string`[] |
 | `doorbellSettings.customMessages` | `string`[] |
@@ -771,7 +771,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="marketname-3"></a> `marketName` | `string` |
 | <a id="maxcameracapacity"></a> `maxCameraCapacity` | `Record`\<`string`, `number`\> |
 | <a id="modelkey-4"></a> `modelKey` | `string` |
-| <a id="name-6"></a> `name` | `string` |
+| <a id="name-6"></a> `name?` | `string` |
 | <a id="network"></a> `network` | `string` |
 | <a id="ports"></a> `ports` | \{ `aiFeatureConsole`: `number`; `cameraEvents`: `number`; `cameraHttps`: `number`; `cameraTcp`: `number`; `devicesWss`: `number`; `discoveryClient`: `number`; `emsCLI`: `number`; `emsJsonCLI`: `number`; `emsLiveFLV`: `number`; `http`: `number`; `https`: `number`; `liveWs`: `number`; `liveWss`: `number`; `piongw`: `number`; `playback`: `number`; `rtmp`: `number`; `rtsp`: `number`; `rtsps`: `number`; `stacking`: `number`; `tcpBridge`: `number`; `tcpStreams`: `number`; `ucore`: `number`; `ump`: `number`; \} |
 | `ports.aiFeatureConsole` | `number` |
@@ -1076,7 +1076,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | <a id="lastdisconnect"></a> `lastDisconnect` | `number` |
 | <a id="lastseen-4"></a> `lastSeen` | `number` |
 | <a id="latestfirmwareversion-3"></a> `latestFirmwareVersion` | `string` |
-| <a id="leakdetectedat"></a> `leakDetectedAt` | `number` |
+| <a id="leakdetectedat"></a> `leakDetectedAt` | `Nullable`\<`number`\> |
 | <a id="ledsettings-1"></a> `ledSettings` | \{ `isEnabled`: `boolean`; \} |
 | `ledSettings.isEnabled` | `boolean` |
 | <a id="lightsettings"></a> `lightSettings` | \{ `highThreshold`: `number`; `isEnabled`: `boolean`; `lowThreshold`: `number`; `margin`: `number`; \} |
@@ -1092,18 +1092,18 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | `motionSettings.isEnabled` | `boolean` |
 | `motionSettings.sensitivity` | `number` |
 | <a id="mounttype"></a> `mountType` | `string` |
-| <a id="name-11"></a> `name` | `string` |
+| <a id="name-11"></a> `name?` | `string` |
 | <a id="nvrmac-4"></a> `nvrMac` | `string` |
 | <a id="openstatuschangedat"></a> `openStatusChangedAt` | `number` |
 | <a id="state-4"></a> `state` | `string` |
-| <a id="stats-1"></a> `stats` | \{ `humidity`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; `light`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; `temperature`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; \} |
-| `stats.humidity` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
+| <a id="stats-1"></a> `stats?` | \{ `humidity?`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; `light?`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; `temperature?`: \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \}; \} |
+| `stats.humidity?` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
 | `stats.humidity.status` | `string` |
 | `stats.humidity.value` | `Nullable`\<`number`\> |
-| `stats.light` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
+| `stats.light?` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
 | `stats.light.status` | `string` |
 | `stats.light.value` | `Nullable`\<`number`\> |
-| `stats.temperature` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
+| `stats.temperature?` | \{ `status`: `string`; `value`: `Nullable`\<`number`\>; \} |
 | `stats.temperature.status` | `string` |
 | `stats.temperature.value` | `Nullable`\<`number`\> |
 | <a id="tamperingdetectedat"></a> `tamperingDetectedAt` | `Nullable`\<`number`\> |
@@ -1163,7 +1163,7 @@ A semi-complete description of the UniFi Protect viewer JSON.
 | <a id="mac-5"></a> `mac` | `string` |
 | <a id="marketname-5"></a> `marketName` | `string` |
 | <a id="modelkey-9"></a> `modelKey` | `string` |
-| <a id="name-12"></a> `name` | `string` |
+| <a id="name-12"></a> `name?` | `string` |
 | <a id="nvrmac-5"></a> `nvrMac` | `string` |
 | <a id="softwareversion"></a> `softwareVersion` | `string` |
 | <a id="state-5"></a> `state` | `string` |

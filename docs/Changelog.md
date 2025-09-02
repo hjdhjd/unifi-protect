@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.27.0 (2025-09-01)
+  * Improvement: the livestream API semantics have been expanded to provide additional options that can be tailored.
+  * Housekeeping.
+
 ## 4.26.0 (2025-08-08)
   * Housekeeping.
 

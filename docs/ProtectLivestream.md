@@ -40,7 +40,24 @@ The UniFi Protect livestream API provides a straightforward interface to generat
 can be tailored depending on your needs. This implementation of the API allows you to access those streams, retrieve all the relevant boxes/atoms you need to
 manipulate them for your application.
 
-## Classes
+## Interfaces
+
+### LivestreamOptions
+
+Options for configuring a livestream session.
+
+#### Properties
+
+| Property | Type | Description |
+| ------ | ------ | ------ |
+| <a id="chunksize"></a> `chunkSize` | `number` | Optionally specify the maximum payload size of each websocket packet. Larger sizes mean lower fragmentation. Defaults to 4096. |
+| <a id="emittimestamps"></a> `emitTimestamps` | `boolean` | Optionally emit the decode timestamps of frames as timestamp events. This is the same information that appears in `tfdt` boxes. |
+| <a id="lens"></a> `lens` | `number` | Optionally specify alternate cameras on a Protect device, such as a package camera. |
+| <a id="requestid"></a> `requestId` | `string` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
+| <a id="segmentlength"></a> `segmentLength` | `number` | Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms. |
+| <a id="usestream"></a> `useStream` | `boolean` | If `true`, a Node.js Readable stream interface will be created for consuming raw fMP4 segments instead of using EventEmitter events. Defaults to false. |
+
+## Events
 
 ### ProtectLivestream
 
@@ -57,6 +74,23 @@ This class provides a complete event-driven API to access the UniFi Protect Live
    alternatively listen individually for the initialization segment or regular fMP4 segments if you'd like to distinguish between the two types of segments.
 
 Those are the basics that gets us up and running.
+
+ close       - Emitted when the livestream WebSocket connection has been closed. This event fires after cleanup is complete and the connection is fully
+                     terminated.
+ codec       - Emitted when codec information is received from the controller. The codec string is passed as an argument in the format "codec,container"
+                     (e.g., "hev1.1.6.L150,mp4a.40.2"). Only emitted when not using stream mode.
+ initsegment - Emitted when an fMP4 initialization segment (FTYP and MOOV boxes) is received. The complete initialization segment Buffer is passed as an
+                     argument. Only emitted when not using stream mode.
+ mdat        - Emitted when an MDAT box (media data) has been received as part of a segment. The MDAT Buffer is passed as an argument. Only emitted when not
+                     using stream mode.
+ message     - Emitted when any complete fMP4 segment is received, whether initialization or regular segment. The complete segment Buffer is passed as an
+                     argument. Only emitted when not using stream mode.
+ moof        - Emitted when a MOOF box (movie fragment metadata) has been received as part of a segment. The MOOF Buffer is passed as an argument. Only emitted
+                     when not using stream mode.
+ segment     - Emitted when a non-initialization fMP4 segment (MOOF/MDAT pair) is fully assembled. The complete segment Buffer is passed as an argument. Only
+                     emitted when not using stream mode.
+ timestamps  - Emitted when decode timestamp information is received from the controller. An array of numbers containing the decode timestamps of frames in the
+                     next segment is passed as an argument, mirroring the tfdt box contents.
 
 #### Extends
 
@@ -162,6 +196,20 @@ Retrieve the initialization segment that must be at the start of every fMP4 stre
 
 Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
 
+##### stop()
+
+```ts
+stop(): void;
+```
+
+Stop an fMP4 livestream session from the Protect controller.
+
+###### Returns
+
+`void`
+
+#### Events
+
 ##### start()
 
 ```ts
@@ -187,6 +235,13 @@ Start an fMP4 livestream session from the Protect controller.
 
 Returns `true` if the livestream has successfully started, `false` otherwise.
 
+ close       - Emitted when the livestream connection terminates for any reason, including manual stops or errors.
+ codec       - Emitted with the codec information string when received from the controller (stream mode disabled only).
+ initsegment - Emitted with the initialization segment Buffer containing FTYP and MOOV boxes (stream mode disabled only).
+ message     - Emitted with each complete fMP4 segment Buffer, both initialization and regular segments (stream mode disabled only).
+ segment     - Emitted with each complete non-initialization segment Buffer containing MOOF/MDAT pairs (stream mode disabled only).
+ timestamps  - Emitted with decode timestamp arrays when extendedVideoMetadata is enabled in options.
+
 ###### Remarks
 
 Once a livestream session has started, the following events can be listened for (unless you've specified `useStream` in `options`, in which case only the
@@ -199,32 +254,4 @@ Once a livestream session has started, the following events can be listened for 
 | `initsegment` | An fMP4 initialization segment has been received. The segment will be passed as an argument to any listeners.                                |
 | `message`     | An fMP4 segment has been received. No distinction is made between segment types. The segment will be passed as an argument to any listeners. |
 | `segment`     | A non-initialization fMP4 segment has been received. The segment will be passed as an argument to any listeners.                             |
-| `timestamp`   | A `BigInt` representing the decode timestamp of frames. It mirrors what is provided in the `tfdt` box in fMP4 segments.                      |
-
-##### stop()
-
-```ts
-stop(): void;
-```
-
-Stop an fMP4 livestream session from the Protect controller.
-
-###### Returns
-
-`void`
-
-## Interfaces
-
-### LivestreamOptions
-
-Options for configuring a livestream session.
-
-#### Properties
-
-| Property | Type | Description |
-| ------ | ------ | ------ |
-| <a id="emittimestamps"></a> `emitTimestamps` | `boolean` | Optionally emit the decode timestamps of frames as timestamp events. This is the same information that appears in `tfdt` boxes. |
-| <a id="lens"></a> `lens` | `number` | Optionally specify alternate cameras on a Protect device, such as a package camera. |
-| <a id="requestid"></a> `requestId` | `string` | Optionally specify a request ID to the Protect controller. This is primarily used for logging purposes. |
-| <a id="segmentlength"></a> `segmentLength` | `number` | Optionally specify the segment length, in milliseconds, of each fMP4 segment. Defaults to 100ms. |
-| <a id="usestream"></a> `useStream` | `boolean` | If `true`, a Node.js Readable stream interface will be created for consuming raw fMP4 segments instead of using EventEmitter events. Defaults to false. |
+| `timestamps`  | An array of numbers containing the decode timestamps of the frames in the next segment. It mirrors what is provided in the `tfdt` box.       |

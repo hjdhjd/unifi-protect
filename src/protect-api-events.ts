@@ -119,8 +119,8 @@ enum ProtectEventPacketHeader {
  */
 export type ProtectEventPacket = {
 
-  header: ProtectEventHeader,
-  payload: unknown
+  header: ProtectEventHeader;
+  payload: unknown;
 };
 
 /**
@@ -136,11 +136,11 @@ export type ProtectEventPacket = {
  */
 export type ProtectEventHeader = {
 
-  action: string,
-  id: string,
-  modelKey: string,
-  newUpdateId: string,
-  [key: string]: boolean | number | object | string
+  action: string;
+  id: string;
+  modelKey: string;
+  newUpdateId: string;
+  [key: string]: boolean | number | object | string;
 };
 
 /**
@@ -190,7 +190,7 @@ export class ProtectApiEvents {
     }
 
     // Decode the action and payload frames now that we know where everything is.
-    const headerFrame = this.decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.HEADER) as ProtectEventHeader;
+    const headerFrame = this.decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.HEADER);
     const payloadFrame = this.decodeFrame(log, packet.subarray(dataOffset), ProtectEventPacketType.PAYLOAD);
 
     if(!headerFrame || !payloadFrame) {
@@ -198,7 +198,7 @@ export class ProtectApiEvents {
       return null;
     }
 
-    return ({ header: headerFrame, payload: payloadFrame });
+    return ({ header: headerFrame as ProtectEventHeader, payload: payloadFrame });
   }
 
   // Decode a frame, composed of a header and payload, received through the update events API.

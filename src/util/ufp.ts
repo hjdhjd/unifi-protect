@@ -110,7 +110,7 @@ switch(process.argv.length) {
 
           if(process.argv.length === 5) {
 
-            if((packet.header as Record<string, string>)[process.argv[3]]?.toLowerCase() !== process.argv[4]?.toLowerCase()) {
+            if((packet.header as Record<string, string>)[process.argv[3]].toLowerCase() !== process.argv[4]?.toLowerCase()) {
 
               return;
             }
@@ -192,7 +192,7 @@ switch(process.argv.length) {
 
         if(process.argv.length === 5) {
 
-          channel = camera.channels.find(channel => channel.name?.toLowerCase() === process.argv[4].toLowerCase())?.id;
+          channel = camera.channels.find(channel => channel.name.toLowerCase() === process.argv[4].toLowerCase())?.id;
 
           if(channel === undefined) {
 
@@ -204,7 +204,7 @@ switch(process.argv.length) {
 
         ls = ufp.createLivestream();
 
-        await ls.start(camera.id, channel, { useStream: true });
+        await ls.start(camera.id, channel, { chunkSize: 16384, useStream: true });
         ls.stream?.pipe(process.stdout);
 
         break;
@@ -235,30 +235,35 @@ function usage(): void {
     if(ufp.bootstrap.cameras.length) {
 
       log.error("Cameras:");
+
       ufp.bootstrap.cameras.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
 
     if(ufp.bootstrap.chimes.length) {
 
       log.error("Chimes:");
+
       ufp.bootstrap.chimes.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
 
     if(ufp.bootstrap.lights.length) {
 
       log.error("Lights:");
+
       ufp.bootstrap.lights.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
 
     if(ufp.bootstrap.sensors.length) {
 
       log.error("Sensors:");
+
       ufp.bootstrap.sensors.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
 
     if(ufp.bootstrap.viewers.length) {
 
       log.error("Viewers:");
+
       ufp.bootstrap.viewers.map(device => log.error("  %s => %s", device.name ?? device.marketName, device.id));
     }
   }

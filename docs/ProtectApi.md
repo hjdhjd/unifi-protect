@@ -6,557 +6,57 @@
 
 # ProtectApi
 
-A complete implementation of the UniFi Protect API, including access to the events, livestream data (not just RTSP), and websocket endpoints.
+A complete implementation of the UniFi Protect API, providing comprehensive access to UniFi Protect controllers.
 
-The UniFi Protect API is largely undocumented and has been reverse engineered mostly through the Protect native web interface as well as trial and error. This
-implementation provides a high-performance, event-driven interface into the Protect API, allowing you to access all of Protect's rich capabilities.
+## Overview
 
-## Classes
+This module provides a high-performance, event-driven interface to the UniFi Protect API, enabling full access to
+Protect's rich ecosystem of security devices and capabilities. The API has been reverse-engineered through careful
+analysis of the Protect web interface and extensive testing, as Ubiquiti does not provide official documentation.
 
-### ProtectApi
+## Key Features
 
-This class provides an event-driven API to access the UniFi Protect API. Here's how to quickly get up and running with this library once you've instantiated the class:
+- **Complete Device Support**: Cameras, lights, sensors, chimes, viewers, and the NVR itself
+- **Real-time Events**: WebSocket-based event streaming for instant notifications
+- **Livestream Access**: Direct H.264 fMP4 stream access, not just RTSP
+- **Robust Error Handling**: Automatic retry logic with exponential backoff
+- **Type Safety**: Full TypeScript support with comprehensive type definitions
 
-1. [Login](#login) to the UniFi Protect controller and acquire security credentials for further calls to the API.
+## Quick Start
 
-2. Retrieve the current configuration and state of the Protect controller by calling the [bootstrap](#bootstrap) endpoint. This contains everything you would want to know
-   about this particular UniFi Protect controller, including enumerating all the devices it knows about.
-
-3. Listen for `message` events emitted by [ProtectApi](#protectapi) containing all Protect controller events, in realtime. They are delivered as
-   [ProtectEventPacket](ProtectApiEvents.md#protecteventpacket) packets, containing the event-specific details.
-
-Those are the basics that gets us up and running.
-
-#### Extends
-
-- `EventEmitter`
-
-#### Constructors
-
-##### Constructor
-
-```ts
-new ProtectApi(log?): ProtectApi;
-```
-
-Create an instance of the UniFi Protect API.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `log?` | [`ProtectLogging`](ProtectLogging.md#protectlogging) | Logging functions to use. |
-
-###### Returns
-
-[`ProtectApi`](#protectapi)
-
-###### Default Value
-
-`none` - Logging will be done to stdout and stderr.
-
-###### Overrides
-
-```ts
-EventEmitter.constructor
-```
-
-#### API Access
-
-##### bootstrap
-
-###### Get Signature
-
-```ts
-get bootstrap(): Nullable<ProtectNvrBootstrapInterface>;
-```
-
-Access the Protect controller bootstrap JSON.
-
-###### Remarks
-
-A call to [getBootstrap](#getbootstrap) is required before calling this getter. Otherwise, it will return `null`. Put another way, you need to execute a bootstrap
-request to the Protect controller before accessing the bootstrap JSON.
-
-###### Returns
-
-`Nullable`\<[`ProtectNvrBootstrapInterface`](ProtectTypes.md#protectnvrbootstrapinterface)\>
-
-Returns the bootstrap JSON if the Protect controller has been bootstrapped, `null` otherwise.
-
-##### createLivestream()
-
-```ts
-createLivestream(): ProtectLivestream;
-```
-
-Return a new instance of the Protect livestream API.
-
-###### Returns
-
-[`ProtectLivestream`](ProtectLivestream.md#protectlivestream)
-
-Returns a new livestream API object.
-
-###### Remarks
-
-This method should be used to create a new livestream API object. It allows you to create access livestreams of individual cameras and interact
-  directly with the H.264 fMP4 streams for a given camera.
-
-##### getApiEndpoint()
-
-```ts
-getApiEndpoint(endpoint): string;
-```
-
-Return an API endpoint for the requested endpoint type.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `endpoint` | `string` | Requested endpoint type. |
-
-###### Returns
-
-`string`
-
-Returns a URL to the requested endpoint if successful, and an empty string otherwise.
-
-###### Remarks
-
-Valid API endpoints are `bootstrap`, `camera`, `chime`, `light`, `login`, `nvr`, `self`, `sensor`, `websocket` and `viewer`.
-
-##### getBootstrap()
-
-```ts
-getBootstrap(): Promise<boolean>;
-```
-
-Retrieve the bootstrap JSON from a UniFi Protect controller.
-
-###### Returns
-
-`Promise`\<`boolean`\>
-
-Returns a promise that will resolve to `true` if successful and `false` otherwise.
-
-###### Remarks
-
-A `bootstrap` event will be emitted each time this method is successfully called, with the [ProtectNvrBootstrap](ProtectTypes.md#protectnvrbootstrap) JSON as an argument.
-
-###### Example
-
-Retrieve the bootstrap JSON. You can selectively choose to either `await` the promise that is returned by `getBootstrap`, or subscribe to the `bootstrap` event.
-
-```ts
-import { ProtectApi, ProtectNvrBootstrap } from "unifi-protect";
-import util from "node:util";
-
-// Create a new Protect API instance.
-const ufp = new ProtectApi();
-
-// Set a listener to wait for the bootstrap event to occur.
-ufp.once("bootstrap", (bootstrapJSON: ProtectNvrBootstrap) => {
-
-  // Once we've bootstrapped the Protect controller, output the bootstrap JSON and we're done.
-  process.stdout.write(util.inspect(bootstrapJSON, { colors: true, depth: null, sorted: true }) + "\n", () => process.exit(0));
-});
-
-// Login to the Protect controller.
-if(!(await ufp.login("protect-controller.local", "username", "password"))) {
-
-  console.log("Invalid login credentials.");
-  process.exit(0);
-};
-
-// Bootstrap the controller. It will emit a message once it's received the bootstrap JSON, or you can alternatively wait for the promise to resolve.
-if(!(await ufp.getBootstrap())) {
-
-  console.log("Unable to bootstrap the Protect controller.");
-  process.exit(0);
-}
-```
-
-Alternatively, you can access the bootstrap JSON directly through the [bootstrap](#bootstrap) accessor:
-
-```ts
-import { ProtectApi } from "unifi-protect";
-import util from "node:util";
-
-// Create a new Protect API instance.
-const ufp = new ProtectApi();
-
-// Login to the Protect controller.
-if(!(await ufp.login("protect-controller.local", "username", "password"))) {
-
-  console.log("Invalid login credentials.");
-  process.exit(0);
-};
-
-// Bootstrap the controller.
-if(!(await ufp.getBootstrap())) {
-
-  console.log("Unable to bootstrap the Protect controller.");
-  process.exit(0);
-}
-
-// Once we've bootstrapped the Protect controller, access the bootstrap JSON through the bootstrap accessor and we're done.
-process.stdout.write(util.inspect(ufp.bootstrap, { colors: true, depth: null, sorted: true }) + "\n", () => process.exit(0));
-```
-
-##### getSnapshot()
-
-```ts
-getSnapshot(device, options): Promise<Nullable<Buffer<ArrayBufferLike>>>;
-```
-
-Retrieve a snapshot image from a Protect camera.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `device` | [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface) | Protect device. |
-| `options` | `Partial`\<\{ `height`: `number`; `usePackageCamera`: `boolean`; `width`: `number`; \}\> | Parameters to pass on for the snapshot request. |
-
-###### Returns
-
-`Promise`\<`Nullable`\<`Buffer`\<`ArrayBufferLike`\>\>\>
-
-Returns a promise that will resolve to a Buffer containing the JPEG image snapshot if successful, and `null` otherwise.
-
-###### Remarks
-
-The `options` object for snapshot parameters accepts the following properties, all of which are optional:
-
-| Property          | Description                                                                                                |
-|-------------------|------------------------------------------------------------------------------------------------------------|
-| height            | The image height to request. Defaults selected by the Protect controller, based on the camera resolution.  |
-| width             | The image width to request. Defaults selected by the Protect controller, based on the camera resolution.   |
-| usePackageCamera  | Retriver a snapshot fron the package camera rather than the primary camera lens. Defaults to `false`.      |
-
-##### getWsEndpoint()
-
-```ts
-getWsEndpoint(endpoint, params?): Promise<Nullable<string>>;
-```
-
-Return a websocket API endpoint for the requested endpoint type.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `endpoint` | `"livestream"` \| `"talkback"` | Requested endpoint type. Valid types are `livestream` and `talkback`. |
-| `params?` | `URLSearchParams` | Parameters to pass on for the endpoint request. |
-
-###### Returns
-
-`Promise`\<`Nullable`\<`string`\>\>
-
-Returns a promise that will resolve to a URL to the requested endpoint if successful, and `null` otherwise.
-
-###### Remarks
-
-Valid API endpoints are `livestream` and `talkback`.
-
-- The `livestream` endpoint will return a URL to a websocket that provides an encoded livestream from a given camera. **Do not access this endpoint directly, use
-  [createLivestream](#createlivestream) instead.** Accessing the livestream endpoint directly is not directly useful without additional manipulation, which, unless you have
-  a need for, you should avoid dealing with and use the [ProtectLivestream](ProtectLivestream.md#protectlivestream) API instead that provides you direct access to the livestream as an H.264 fMP4.
-- The `talkback` endpoint creates a talkback connection to a Protect camera that contains a speaker (e.g. Protect doorbells).
-  The returned websocket accepts an AAC-encoded ADTS stream. The only valid parameter is `camera`, containing the ID of the Protect camera you want to connect to.
-
-##### retrieve()
-
-```ts
-retrieve(
-   url, 
-   options, 
-retrieveOptions): Promise<Nullable<ResponseData<unknown>>>;
-```
-
-Execute an HTTP fetch request to the Protect controller.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `url` | `string` | URL to execute **without** any additional parameters you want to pass (e.g. https://unvr.local/proxy/protect/cameras/someid/snapshot). |
-| `options` | [`RequestOptions`](#requestoptions) | Parameters to pass on for the endpoint request. |
-| `retrieveOptions` | [`RetrieveOptions`](#retrieveoptions) | Options that modify whether errors are logged and timeout intervals to wait for a response from the Protect controller. |
-
-###### Returns
-
-`Promise`\<`Nullable`\<`ResponseData`\<`unknown`\>\>\>
-
-Returns a promise that will resolve to a Response object successful, and `null` otherwise.
-
-###### Remarks
-
-This method should be used when direct access to the Protect controller is needed, or when this library doesn't have a needed method to access
-  controller capabilities. `options` must be an
-  [Undici request API compatible](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions) request options object which itself is an
-  extension of [DispatchOptions](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-dispatchoptions).
-
-##### updateDevice()
-
-```ts
-updateDevice<DeviceType>(device, payload): Promise<Nullable<DeviceType>>;
-```
-
-Update a Protect device's configuration on the UniFi Protect controller.
-
-###### Type Parameters
-
-| Type Parameter | Description |
-| ------ | ------ |
-| `DeviceType` *extends* [`ProtectKnownDeviceTypes`](#protectknowndevicetypes) | Generic for any known Protect device type. |
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `device` | `DeviceType` | Protect device. |
-| `payload` | [`ProtectKnownDevicePayloads`](#protectknowndevicepayloads) | Device configuration payload to upload, usually a subset of the device-specific configuration JSON. |
-
-###### Returns
-
-`Promise`\<`Nullable`\<`DeviceType`\>\>
-
-Returns a promise that will resolve to the updated device-specific configuration JSON if successful, and `null` otherwise.
-
-###### Remarks
-
-Use this method to change the configuration of a given Protect device or controller. It requires the credentials used to login to the Protect API
-  to have administrative privileges for most settings.
-
-#### Utilities
-
-##### isAdminUser
-
-###### Get Signature
-
-```ts
-get isAdminUser(): boolean;
-```
-
-Utility method that returns whether the credentials that were used to login to the Protect controller have administrative privileges or not.
-
-###### Returns
-
-`boolean`
-
-Returns `true` if the logged in user has administrative privileges, `false` otherwise.
-
-##### isThrottled
-
-###### Get Signature
-
-```ts
-get isThrottled(): boolean;
-```
-
-Utility method that returns whether our connection to the Protect controller is currently throttled or not.
-
-###### Returns
-
-`boolean`
-
-Returns `true` if the API has returned too many errors and is now throttled for a period of time, `false` otherwise.
-
-##### name
-
-###### Get Signature
-
-```ts
-get name(): string;
-```
-
-Utility method that returns a nicely formatted version of the Protect controller name.
-
-###### Returns
-
-`string`
-
-Returns the Protect controller name in the following format:
-  <code>*Protect controller name* [*Protect controller type*]</code>.
-
-##### enableRtsp()
-
-```ts
-enableRtsp(device): Promise<Nullable<ProtectCameraConfigInterface>>;
-```
-
-Utility method that enables all RTSP channels on a given Protect camera.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `device` | [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface) | Protect camera to modify. |
-
-###### Returns
-
-`Promise`\<`Nullable`\<[`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)\>\>
-
-Returns a promise that will resolve to the updated [ProtectCameraConfig](ProtectTypes.md#protectcameraconfig) if successful, and `null` otherwise.
-
-##### getDeviceName()
-
-```ts
-getDeviceName(
-   device, 
-   name, 
-   deviceInfo): string;
-```
-
-Utility method that generates a nicely formatted device information string.
-
-###### Parameters
-
-| Parameter | Type | Default value | Description |
-| ------ | ------ | ------ | ------ |
-| `device` | [`ProtectKnownDeviceTypes`](#protectknowndevicetypes) | `undefined` | Protect device. |
-| `name` | `string` | `device.name` | Optional name for the device. Defaults to the device type (e.g. `G4 Pro`). |
-| `deviceInfo` | `boolean` | `false` | Optionally specify whether or not to include the IP address and MAC address in the returned string. Defaults to `false`. |
-
-###### Returns
-
-`string`
-
-Returns the Protect device name in the following format: <code>*Protect device name* [*Protect device type*] (address: *IP address*
-         mac: *MAC address*)</code>.
-
-###### Remarks
-
-The example above assumed the `deviceInfo` parameter is set to `true`.
-
-##### getFullName()
-
-```ts
-getFullName(device): string;
-```
-
-Utility method that generates a combined, nicely formatted device and NVR string.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `device` | [`ProtectKnownDeviceTypes`](#protectknowndevicetypes) | Protect device. |
-
-###### Returns
-
-`string`
-
-Returns the Protect device name in the following format:
-  <code>*Protect controller name* [*Protect controller type*] *Protect device name* [*Protect device type*]</code>.
-
-##### reset()
-
-```ts
-reset(): void;
-```
-
-Terminate any open connection to the UniFi Protect API.
-
-###### Returns
-
-`void`
-
-##### responseOk()
-
-```ts
-responseOk(code?): boolean;
-```
-
-Determines whether a given HTTP status code represents a successful response.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `code?` | `number` | The HTTP status code returned by a request. If `undefined`, the response is considered not okay. |
-
-###### Returns
-
-`boolean`
-
-`true` if `code` is between 200 (inclusive) and 300 (exclusive); otherwise returns `false`.
-
-#### Authentication
-
-##### login()
-
-```ts
-login(
-   nvrAddress, 
-   username, 
-password): Promise<boolean>;
-```
-
-Execute a login attempt to the UniFi Protect API.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `nvrAddress` | `string` | Address of the UniFi Protect controller, expressed as an FQDN or IP address. |
-| `username` | `string` | Username to use when logging into the controller. |
-| `password` | `string` | Password to use when logging into the controller. |
-
-###### Returns
-
-`Promise`\<`boolean`\>
-
-Returns a promise that will resolve to `true` if successful and `false` otherwise.
-
-###### Remarks
-
-A `login` event will be emitted each time this method is called, with the result of the attempt as an argument. If there are any existing logins from prior
-         calls to login, they will be terminated.
-
-###### Example
-
-Login to the Protect controller. You can selectively choose to either `await` the promise that is returned by `login`, or subscribe to the `login` event.
-
-```ts
+```typescript
 import { ProtectApi } from "unifi-protect";
 
-// Create a new Protect API instance.
-const ufp = new ProtectApi();
+// Create an API instance
+const protect = new ProtectApi();
 
-// Set a listener to wait for the login event to occur.
-ufp.once("login", (successfulLogin: boolean) => {
+// Login to your Protect controller
+await protect.login("192.168.1.1", "username", "password");
 
-  // Indicate if we are successful.
-  if(successfulLogin) {
+// Bootstrap to get the current state
+await protect.getBootstrap();
 
-    console.log("Logged in successfully.");
-    process.exit(0);
-  }
+// Access your devices
+const cameras = protect.bootstrap?.cameras ?? [];
+console.log(`Found ${cameras.length} cameras`);
+
+// Listen for real-time events
+protect.on("message", (packet) => {
+  console.log("Event received:", packet);
 });
-
-// Login to the Protect controller.
-if(!(await ufp.login("protect-controller.local", "username", "password"))) {
-
-  console.log("Invalid login credentials.");
-  process.exit(0);
-};
 ```
 
-##### logout()
+## Architecture
 
-```ts
-logout(): void;
-```
+The API is built on modern Node.js technologies:
+- **Undici**: High-performance HTTP/1.1 and HTTP/2 client
+- **WebSockets**: Real-time bidirectional communication
+- **EventEmitter**: Node.js event-driven architecture
 
-Clear the login credentials and terminate any open connection to the UniFi Protect API.
+## Authentication
 
-###### Returns
-
-`void`
+The API uses cookie-based authentication with CSRF token protection, mimicking the Protect web interface.
+Administrative privileges are required for configuration changes, while read-only access is available to all users.
 
 ## Interfaces
 
@@ -615,7 +115,7 @@ type RequestOptions = {
 
 Configuration options for HTTP requests executed by `retrieve()`.
 
-#### Type declaration
+#### Type Declaration
 
 | Name | Type | Description |
 | ------ | ------ | ------ |
@@ -626,3 +126,1265 @@ Configuration options for HTTP requests executed by `retrieve()`.
 Extends Undici’s [`Dispatcher.RequestOptions`](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), but omits the `origin` and
 `path` properties, since those are derived from the `url` argument passed to `retrieve()`. You can optionally supply a custom `Dispatcher` instance to control
 connection pooling, timeouts, etc.
+
+## Events
+
+### ProtectApi
+
+This class provides an event-driven API to access the UniFi Protect API.
+
+## Getting Started
+
+To begin using the API, follow these three essential steps:
+
+1. **Login**: Authenticate with the Protect controller using [login](#login)
+2. **Bootstrap**: Retrieve the controller configuration with [getBootstrap](#getbootstrap)
+3. **Listen**: Subscribe to real-time events via the `message` event
+
+## Events
+
+The API emits several events during its lifecycle:
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `login` | `boolean` | Emitted after each login attempt with success status |
+| `bootstrap` | [ProtectNvrBootstrap](ProtectTypes.md#protectnvrbootstrap) | Emitted when bootstrap data is retrieved |
+| `message` | [ProtectApiEvents.ProtectEventPacket](ProtectApiEvents.md#protecteventpacket) | Real-time event packets from the controller |
+
+## Connection Management
+
+The API automatically manages connection pooling and implements intelligent retry logic:
+- Up to 5 concurrent connections
+- Automatic retry with exponential backoff
+- Throttling after repeated failures
+- Graceful WebSocket reconnection
+
+## Error Handling
+
+All API methods implement comprehensive error handling:
+- Network errors are logged and retried
+- Authentication failures trigger re-login attempts
+- Server errors are handled gracefully
+- Detailed logging for debugging
+
+ login     - Emitted after each login attempt with the success status as a boolean value. This event fires whether the login succeeds or fails, allowing
+                   applications to respond appropriately to authentication state changes.
+ bootstrap - Emitted when bootstrap data is successfully retrieved from the controller. The event includes the complete [ProtectNvrBootstrap](ProtectTypes.md#protectnvrbootstrap)
+                   configuration object containing all device states and system settings.
+ message   - Emitted for each real-time event packet received from the controller's WebSocket connection. The event includes a
+                   [ProtectApiEvents.ProtectEventPacket](ProtectApiEvents.md#protecteventpacket) containing device updates, motion events, and other system notifications.
+
+#### Example
+
+Complete example with error handling and event processing:
+
+```typescript
+import { ProtectApi, ProtectCameraConfig } from "unifi-protect";
+
+class ProtectManager {
+  private api: ProtectApi;
+
+  constructor() {
+    this.api = new ProtectApi();
+    this.setupEventHandlers();
+  }
+
+  private setupEventHandlers(): void {
+    // Handle login events
+    this.api.on("login", (success: boolean) => {
+      console.log(success ? "Login successful" : "Login failed");
+    });
+
+    // Process real-time events
+    this.api.on("message", (packet) => {
+      if (packet.header.modelKey === "camera") {
+        console.log("Camera event:", packet);
+      }
+    });
+  }
+
+  async connect(host: string, username: string, password: string): Promise<boolean> {
+    try {
+      // Login to the controller
+      if (!await this.api.login(host, username, password)) {
+        throw new Error("Authentication failed");
+      }
+
+      // Bootstrap the configuration
+      if (!await this.api.getBootstrap()) {
+        throw new Error("Bootstrap failed");
+      }
+
+      console.log(`Connected to ${this.api.name}`);
+      return true;
+
+    } catch (error) {
+      console.error("Connection failed:", error);
+      return false;
+    }
+  }
+
+  async enableAllRtspStreams(): Promise<void> {
+    const cameras = this.api.bootstrap?.cameras ?? [];
+
+    for (const camera of cameras) {
+      const updated = await this.api.enableRtsp(camera);
+      if (updated) {
+        console.log(`RTSP enabled for ${this.api.getDeviceName(camera)}`);
+      }
+    }
+  }
+}
+```
+
+#### Extends
+
+- `EventEmitter`
+
+#### Constructors
+
+##### Constructor
+
+```ts
+new ProtectApi(log?): ProtectApi;
+```
+
+Create an instance of the UniFi Protect API.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `log?` | [`ProtectLogging`](ProtectLogging.md#protectlogging) | Custom logging implementation. |
+
+###### Returns
+
+[`ProtectApi`](#protectapi)
+
+###### Default Value
+
+```ts
+Console logging to stdout/stderr
+```
+
+###### Remarks
+
+The logging interface allows you to integrate the API with your application's logging system.
+By default, errors and warnings are logged to the console, while debug messages are suppressed.
+
+###### Example
+
+Using a custom logger:
+
+```typescript
+import { ProtectApi, ProtectLogging } from "unifi-protect";
+import winston from "winston";
+
+const logger = winston.createLogger({
+  level: "info",
+  format: winston.format.simple(),
+  transports: [new winston.transports.Console()]
+});
+
+const customLog: ProtectLogging = {
+  debug: (message: string, ...args: unknown[]) => logger.debug(message, args),
+  error: (message: string, ...args: unknown[]) => logger.error(message, args),
+  info: (message: string, ...args: unknown[]) => logger.info(message, args),
+  warn: (message: string, ...args: unknown[]) => logger.warn(message, args)
+};
+
+const protect = new ProtectApi(customLog);
+```
+
+###### Overrides
+
+```ts
+EventEmitter.constructor
+```
+
+#### API Access
+
+##### bootstrap
+
+###### Get Signature
+
+```ts
+get bootstrap(): Nullable<ProtectNvrBootstrapInterface>;
+```
+
+Access the Protect controller bootstrap JSON.
+
+###### Remarks
+
+The bootstrap must be retrieved via [getBootstrap](#getbootstrap) before accessing this property. The bootstrap contains the complete system state and is automatically
+updated when configuration changes occur.
+
+###### See
+
+ - [getBootstrap](#getbootstrap) to retrieve the bootstrap configuration
+ - [ProtectNvrBootstrap](ProtectTypes.md#protectnvrbootstrap) for the complete data structure
+
+###### Returns
+
+`Nullable`\<[`ProtectNvrBootstrapInterface`](ProtectTypes.md#protectnvrbootstrapinterface)\>
+
+Bootstrap configuration if available, `null` otherwise.
+
+##### createLivestream()
+
+```ts
+createLivestream(): ProtectLivestream;
+```
+
+Return a new instance of the Protect livestream API.
+
+###### Returns
+
+[`ProtectLivestream`](ProtectLivestream.md#protectlivestream)
+
+New livestream API instance.
+
+###### Remarks
+
+The livestream API provides direct access to camera H.264 fMP4 streams, enabling:
+
+- Real-time video streaming
+- Stream recording and processing
+- Integration with video processing pipelines
+- Low-latency video access
+
+Unlike RTSP streams, livestreams are delivered over WebSockets with minimal latency and don't require additional authentication.
+
+###### Example
+
+Working with livestreams:
+
+```typescript
+import { ProtectApi, ProtectLivestream } from "unifi-protect";
+import { createWriteStream } from "fs";
+
+const protect = new ProtectApi();
+
+async function recordLivestream(cameraId: string, durationMs: number) {
+  await protect.login("192.168.1.1", "admin", "password");
+  await protect.getBootstrap();
+
+  // Create a livestream instance
+  const livestream = protect.createLivestream();
+
+  // Start the livestream
+  const camera = protect.bootstrap?.cameras.find(c => c.id === cameraId);
+  if (!camera) return;
+
+  // The livestream can be piped to a file, processed, or streamed elsewhere
+  const output = createWriteStream(`recording-${Date.now()}.mp4`);
+
+  // Start streaming (implementation depends on ProtectLivestream class)
+  await livestream.start(camera, output);
+
+  // Stop after duration
+  setTimeout(() => {
+    livestream.stop();
+    console.log("Recording complete");
+  }, durationMs);
+}
+```
+
+##### getApiEndpoint()
+
+```ts
+getApiEndpoint(endpoint): string;
+```
+
+Return an API endpoint URL for the requested endpoint type.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `endpoint` | `string` | Endpoint type to retrieve |
+
+###### Returns
+
+`string`
+
+Full URL to the requested endpoint, or empty string if invalid.
+
+###### Remarks
+
+Generates properly formatted URLs for Protect API endpoints:
+
+| Endpoint | Path | Description |
+|----------|------|-------------|
+| `bootstrap` | `/api/bootstrap` | Complete system configuration |
+| `camera` | `/api/cameras` | Camera management |
+| `chime` | `/api/chimes` | Chime device management |
+| `light` | `/api/lights` | Light device management |
+| `login` | `/api/auth/login` | Authentication endpoint |
+| `nvr` | `/api/nvr` | NVR configuration |
+| `self` | `/api/users/self` | Current user information |
+| `sensor` | `/api/sensors` | Sensor device management |
+| `websocket` | `/api/ws` | WebSocket endpoints |
+| `viewer` | `/api/viewers` | Viewport device management |
+
+###### Example
+
+Building custom API URLs:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function customEndpoints() {
+  await protect.login("192.168.1.1", "admin", "password");
+
+  // Get base endpoints
+  const cameraEndpoint = protect.getApiEndpoint("camera");
+  // Returns: "https://192.168.1.1/proxy/protect/api/cameras"
+
+  // Build specific camera URL
+  const cameraId = "abc123";
+  const specificCamera = `${cameraEndpoint}/${cameraId}`;
+
+  // Make custom request
+  const response = await protect.retrieve(specificCamera);
+  if (response) {
+    const camera = await response.body.json();
+    console.log(`Camera: ${camera.name}`);
+  }
+}
+```
+
+##### getBootstrap()
+
+```ts
+getBootstrap(): Promise<boolean>;
+```
+
+Retrieve the bootstrap JSON from a UniFi Protect controller.
+
+###### Returns
+
+`Promise`\<`boolean`\>
+
+Promise resolving to `true` on success, `false` on failure.
+
+ bootstrap - Emitted with the complete [ProtectNvrBootstrap](ProtectTypes.md#protectnvrbootstrap) configuration when successfully retrieved. The bootstrap contains all device configurations,
+                   user accounts, system settings, and current device states.
+ message   - Once the bootstrap is retrieved, the WebSocket connection is established and this event will be emitted for each real-time update packet received
+                   from the controller.
+
+###### Remarks
+
+The bootstrap contains the complete state of the Protect controller, including:
+
+- All device configurations (cameras, lights, sensors, etc.)
+- User accounts and permissions
+- System settings and capabilities
+- Current device states and health
+
+This method automatically:
+
+- Reconnects if the session has expired
+- Establishes WebSocket connections for real-time events
+- Determines administrative privileges
+- Emits a `bootstrap` event with the configuration
+
+###### Example
+
+Working with bootstrap data:
+
+```typescript
+import { ProtectApi, ProtectCameraConfig } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function analyzeSystem() {
+  // Login and bootstrap
+  await protect.login("192.168.1.1", "admin", "password");
+  await protect.getBootstrap();
+
+  // Access the bootstrap data
+  const bootstrap = protect.bootstrap;
+  if (!bootstrap) return;
+
+  // System information
+  console.log(`NVR: ${bootstrap.nvr.name}`);
+  console.log(`Version: ${bootstrap.nvr.version}`);
+  console.log(`Uptime: ${bootstrap.nvr.uptime} seconds`);
+
+  // Device inventory
+  console.log(`Cameras: ${bootstrap.cameras.length}`);
+  console.log(`Lights: ${bootstrap.lights.length}`);
+  console.log(`Sensors: ${bootstrap.sensors.length}`);
+
+  // Find specific devices
+  const doorbells = bootstrap.cameras.filter(cam =>
+    cam.featureFlags.isDoorbell
+  );
+
+  const motionSensors = bootstrap.sensors.filter(sensor =>
+    sensor.type === "motion"
+  );
+
+  // Check recording status
+  const recording = bootstrap.cameras.filter(cam =>
+    cam.isRecording && cam.isConnected
+  );
+
+  console.log(`${recording.length} cameras actively recording`);
+}
+```
+
+##### getSnapshot()
+
+```ts
+getSnapshot(device, options): Promise<Nullable<Buffer<ArrayBufferLike>>>;
+```
+
+Retrieve a snapshot image from a Protect camera.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `device` | [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface) | Protect camera device |
+| `options` | `Partial`\<\{ `height`: `number`; `usePackageCamera`: `boolean`; `width`: `number`; \}\> | Snapshot configuration options |
+
+###### Returns
+
+`Promise`\<`Nullable`\<`Buffer`\<`ArrayBufferLike`\>\>\>
+
+Promise resolving to a Buffer containing the JPEG image, or `null` on failure.
+
+###### Remarks
+
+Snapshots are generated on-demand by the Protect controller. The image quality and resolution depend on the camera's capabilities and current settings. Package
+camera snapshots are only available on devices with dual cameras (e.g., G4 Doorbell Pro).
+
+The `options` parameter accepts:
+
+| Property | Type | Description | Default |
+|----------|------|-------------|---------|
+| `width` | `number` | Requested image width in pixels | Camera default |
+| `height` | `number` | Requested image height in pixels | Camera default |
+| `usePackageCamera` | `boolean` | Use package camera if available | `false` |
+
+###### Example
+
+Capturing and saving snapshots:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+import { writeFile } from "fs/promises";
+
+const protect = new ProtectApi();
+
+async function captureSnapshots() {
+  await protect.login("192.168.1.1", "admin", "password");
+  await protect.getBootstrap();
+
+  const cameras = protect.bootstrap?.cameras ?? [];
+
+  for (const camera of cameras) {
+    // Full resolution snapshot
+    const fullRes = await protect.getSnapshot(camera);
+
+    // Thumbnail snapshot
+    const thumbnail = await protect.getSnapshot(camera, {
+      width: 640,
+      height: 360
+    });
+
+    // Package camera snapshot (if available)
+    if (camera.featureFlags.hasPackageCamera) {
+      const packageSnap = await protect.getSnapshot(camera, {
+        usePackageCamera: true
+      });
+
+      if (packageSnap) {
+        await writeFile(`${camera.name}-package.jpg`, packageSnap);
+      }
+    }
+
+    if (fullRes && thumbnail) {
+      await writeFile(`${camera.name}-full.jpg`, fullRes);
+      await writeFile(`${camera.name}-thumb.jpg`, thumbnail);
+      console.log(`Saved snapshots for ${camera.name}`);
+    }
+  }
+}
+```
+
+##### getWsEndpoint()
+
+```ts
+getWsEndpoint(endpoint, params?): Promise<Nullable<string>>;
+```
+
+Return a websocket API endpoint for the requested endpoint type.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `endpoint` | `"livestream"` \| `"talkback"` | Endpoint type (`livestream` or `talkback`) |
+| `params?` | `URLSearchParams` | URL parameters for the endpoint |
+
+###### Returns
+
+`Promise`\<`Nullable`\<`string`\>\>
+
+Promise resolving to the WebSocket URL, or `null` on failure.
+
+###### Remarks
+
+This method provides access to real-time WebSocket endpoints:
+
+### Livestream Endpoint
+Returns a WebSocket URL for H.264 fMP4 video streams. **Do not use directly** - use [createLivestream](#createlivestream) instead for proper stream handling.
+
+### Talkback Endpoint
+Creates a two-way audio connection to cameras with speakers (doorbells, two-way audio cameras). The WebSocket accepts AAC-encoded ADTS audio streams.
+
+Required parameter:
+
+- `camera`: The camera ID to connect to
+
+###### Example
+
+Setting up two-way audio:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+import { WebSocket } from "ws";
+
+const protect = new ProtectApi();
+
+async function setupTalkback(cameraId: string) {
+  await protect.login("192.168.1.1", "admin", "password");
+
+  // Get the talkback endpoint
+  const params = new URLSearchParams({ camera: cameraId });
+  const wsUrl = await protect.getWsEndpoint("talkback", params);
+
+  if (!wsUrl) {
+    console.error("Failed to get talkback endpoint");
+    return;
+  }
+
+  // Connect to the WebSocket
+  const ws = new WebSocket(wsUrl);
+
+  ws.on("open", () => {
+    console.log("Talkback connection established");
+    // Send AAC-encoded audio data
+    // ws.send(aacAudioBuffer);
+  });
+
+  ws.on("error", (error) => {
+    console.error("Talkback error:", error);
+  });
+}
+```
+
+##### retrieve()
+
+```ts
+retrieve(
+   url, 
+   options, 
+retrieveOptions): Promise<Nullable<ResponseData<unknown>>>;
+```
+
+Execute an HTTP request to the Protect controller.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `url` | `string` | Full URL to request (e.g., `https://192.168.1.1/proxy/protect/api/cameras`) |
+| `options` | [`RequestOptions`](#requestoptions) | Undici-compatible request options |
+| `retrieveOptions` | [`RetrieveOptions`](#retrieveoptions) | Additional options for error handling and timeouts |
+
+###### Returns
+
+`Promise`\<`Nullable`\<`ResponseData`\<`unknown`\>\>\>
+
+Promise resolving to the Response object, or `null` on failure.
+
+###### Remarks
+
+This method provides direct access to the Protect controller API for advanced use cases
+not covered by the built-in methods. It handles:
+
+- Authentication and session management
+- Automatic retry with exponential backoff
+- Error logging and throttling
+- CSRF token management
+
+The `options` parameter extends [Undici's RequestOptions](https://undici.nodejs.org/#/docs/api/Dispatcher.md?id=parameter-requestoptions), providing full control
+over the HTTP request.
+
+###### Example
+
+Making custom API calls:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function customApiCalls() {
+  await protect.login("192.168.1.1", "admin", "password");
+
+  // Get events from the last hour
+  const end = Date.now();
+  const start = end - (60 * 60 * 1000);
+
+  const response = await protect.retrieve(
+    `https://192.168.1.1/proxy/protect/api/events?start=${start}&end=${end}`,
+    { method: "GET" }
+  );
+
+  if (response) {
+    const events = await response.body.json();
+    console.log(`Found ${events.length} events`);
+  }
+
+  // Download a video clip
+  const videoResponse = await protect.retrieve(
+    `https://192.168.1.1/proxy/protect/api/video/export`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        camera: "camera-id",
+        start: start,
+        end: end,
+        type: "timelapse"
+      })
+    },
+    {
+      timeout: 30000 // 30 second timeout for video export
+    }
+  );
+
+  if (videoResponse) {
+    const videoBuffer = Buffer.from(await videoResponse.body.arrayBuffer());
+    // Save or process the video
+  }
+}
+```
+
+##### updateDevice()
+
+```ts
+updateDevice<DeviceType>(device, payload): Promise<Nullable<DeviceType>>;
+```
+
+Update a Protect device's configuration on the UniFi Protect controller.
+
+###### Type Parameters
+
+| Type Parameter | Description |
+| ------ | ------ |
+| `DeviceType` *extends* [`ProtectKnownDeviceTypes`](#protectknowndevicetypes) | Generic for any known Protect device type |
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `device` | `DeviceType` | Protect device to update |
+| `payload` | [`ProtectKnownDevicePayloads`](#protectknowndevicepayloads) | Configuration changes to apply |
+
+###### Returns
+
+`Promise`\<`Nullable`\<`DeviceType`\>\>
+
+Promise resolving to the updated device configuration, or `null` on failure.
+
+###### Remarks
+
+This method applies configuration changes to any Protect device. Common modifications include:
+
+- Camera settings (name, recording modes, motion zones)
+- Light settings (brightness, motion activation)
+- Sensor settings (sensitivity, mount type)
+- Chime settings (volume, ringtones)
+
+**Important**: Most configuration changes require administrative privileges. The user account must have the Super Admin role assigned in UniFi Protect.
+
+Changes are applied immediately and persist across device reboots. The method returns the complete updated device configuration, reflecting any server-side
+adjustments.
+
+###### Example
+
+Common device configuration scenarios:
+
+```typescript
+import { ProtectApi, ProtectCameraConfig } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function configureDevices() {
+  await protect.login("192.168.1.1", "admin", "password");
+  await protect.getBootstrap();
+
+  const camera = protect.bootstrap?.cameras[0];
+  if (!camera) return;
+
+  // Update camera name and recording settings
+  const updatedCamera = await protect.updateDevice(camera, {
+    name: "Front Door Camera",
+    recordingSettings: {
+      mode: "always",
+      prePaddingSecs: 3,
+      postPaddingSecs: 3,
+      retentionDurationMs: 7 * 24 * 60 * 60 * 1000 // 7 days
+    }
+  });
+
+  // Configure motion detection
+  await protect.updateDevice(camera, {
+    motionSettings: {
+      mode: "always",
+      sensitivity: 80
+    },
+    smartDetectSettings: {
+      objectTypes: ["person", "vehicle"],
+      autoTrackingEnabled: true
+    }
+  });
+
+  // Update light device
+  const light = protect.bootstrap?.lights[0];
+  if (light) {
+    await protect.updateDevice(light, {
+      lightSettings: {
+        mode: "motion",
+        brightness: 100,
+        durationMs: 15000 // 15 seconds
+      }
+    });
+  }
+
+  // Configure doorbell chime
+  const chime = protect.bootstrap?.chimes[0];
+  if (chime) {
+    await protect.updateDevice(chime, {
+      volume: 75,
+      ringtones: ["traditional"]
+    });
+  }
+}
+```
+
+#### Utilities
+
+##### isAdminUser
+
+###### Get Signature
+
+```ts
+get isAdminUser(): boolean;
+```
+
+Check if the current user has administrative privileges.
+
+###### Remarks
+
+Administrative privileges are required for:
+
+- Modifying device configurations
+- Enabling/disabling RTSP streams
+- Changing system settings
+- Managing user accounts
+
+The privilege level is determined during login and updated on each bootstrap.
+
+###### Returns
+
+`boolean`
+
+`true` if the user has Super Admin role, `false` otherwise.
+
+##### isThrottled
+
+###### Get Signature
+
+```ts
+get isThrottled(): boolean;
+```
+
+Check if API calls are currently throttled due to errors.
+
+###### Remarks
+
+The API implements automatic throttling after repeated errors to prevent overwhelming the controller. During throttling:
+
+- API calls return `null` immediately
+- No network requests are made
+- Throttling automatically clears after the retry interval
+
+Default throttling occurs after 10 consecutive errors for 5 minutes.
+
+###### Returns
+
+`boolean`
+
+`true` if throttled, `false` otherwise.
+
+##### name
+
+###### Get Signature
+
+```ts
+get name(): string;
+```
+
+Get a formatted name for the Protect controller.
+
+###### Remarks
+
+Returns a human-readable controller identifier. After bootstrap, includes the controller's configured name and model type. Before bootstrap, returns the network
+address used for connection.
+
+###### Example
+
+```typescript
+// Before bootstrap: "192.168.1.1"
+// After bootstrap: "Dream Machine Pro [UDMP]"
+console.log(protect.name);
+```
+
+###### Returns
+
+`string`
+
+Controller name in format: `Name [Type]` or just the address if not bootstrapped.
+
+##### enableRtsp()
+
+```ts
+enableRtsp(device): Promise<Nullable<ProtectCameraConfigInterface>>;
+```
+
+Utility method that enables all RTSP channels on a given Protect camera.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `device` | [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface) | Protect camera to modify |
+
+###### Returns
+
+`Promise`\<`Nullable`\<[`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)\>\>
+
+Promise resolving to the updated camera configuration, or `null` on failure.
+
+###### Remarks
+
+RTSP (Real Time Streaming Protocol) streams allow third-party applications to access camera feeds directly. This method enables RTSP on all available
+channels (resolutions) for a camera, making them accessible at:
+
+- High: `rtsp://[NVR_IP]:7447/[CAMERA_GUID]_0`
+- Medium: `rtsp://[NVR_IP]:7447/[CAMERA_GUID]_1`
+- Low: `rtsp://[NVR_IP]:7447/[CAMERA_GUID]_2`
+
+**Note**: Enabling RTSP requires Super Admin privileges in UniFi Protect.
+
+###### Example
+
+Enabling RTSP streams for integration:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function setupRtspStreams() {
+  await protect.login("192.168.1.1", "admin", "password");
+  await protect.getBootstrap();
+
+  const cameras = protect.bootstrap?.cameras ?? [];
+
+  for (const camera of cameras) {
+    const updated = await protect.enableRtsp(camera);
+
+    if (updated) {
+      console.log(`RTSP enabled for ${camera.name}`);
+
+      // Display RTSP URLs
+      updated.channels.forEach((channel, index) => {
+        if (channel.isRtspEnabled) {
+          const rtspUrl = `rtsp://192.168.1.1:7447/${channel.rtspAlias}`;
+          console.log(`  Channel ${index}: ${rtspUrl}`);
+        }
+      });
+    } else {
+      console.log(`Failed to enable RTSP for ${camera.name}`);
+    }
+  }
+}
+```
+
+##### getDeviceName()
+
+```ts
+getDeviceName(
+   device, 
+   name, 
+   deviceInfo): string;
+```
+
+Utility method that generates a nicely formatted device information string.
+
+###### Parameters
+
+| Parameter | Type | Default value | Description |
+| ------ | ------ | ------ | ------ |
+| `device` | [`ProtectKnownDeviceTypes`](#protectknowndevicetypes) | `undefined` | Protect device |
+| `name` | `undefined` \| `string` | `device.name` | Custom name to use (defaults to device name) |
+| `deviceInfo` | `boolean` | `false` | Include IP and MAC address information |
+
+###### Returns
+
+`string`
+
+Formatted device string.
+
+###### Remarks
+
+Returns device information in a consistent, readable format:
+
+- Basic: `Device Name [Device Type]`
+- With info: `Device Name [Device Type] (address: IP mac: MAC)`
+
+This method handles all Protect device types and gracefully handles missing information.
+
+###### Example
+
+Formatting device information:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function listDevices() {
+  await protect.login("192.168.1.1", "admin", "password");
+  await protect.getBootstrap();
+
+  // List all devices with full information
+  const allDevices = [
+    ...(protect.bootstrap?.cameras ?? []),
+    ...(protect.bootstrap?.lights ?? []),
+    ...(protect.bootstrap?.sensors ?? []),
+    ...(protect.bootstrap?.chimes ?? []),
+    ...(protect.bootstrap?.viewers ?? [])
+  ];
+
+  allDevices.forEach(device => {
+    // Basic format
+    console.log(protect.getDeviceName(device));
+    // Output: "Front Door [G4 Doorbell Pro]"
+
+    // With network info
+    console.log(protect.getDeviceName(device, device.name, true));
+    // Output: "Front Door [G4 Doorbell Pro] (address: 192.168.1.50 mac: 00:00:00:00:00:00)"
+
+    // Custom name
+    console.log(protect.getDeviceName(device, "Custom Name"));
+    // Output: "Custom Name [G4 Doorbell Pro]"
+  });
+}
+```
+
+##### getFullName()
+
+```ts
+getFullName(device): string;
+```
+
+Utility method that generates a combined device and controller information string.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `device` | [`ProtectKnownDeviceTypes`](#protectknowndevicetypes) | Protect device |
+
+###### Returns
+
+`string`
+
+Formatted string including both controller and device information.
+
+###### Remarks
+
+Combines controller and device information for complete context: `Controller Name [Controller Type] Device Name [Device Type]`
+
+Useful for logging and multi-controller environments where device context is important.
+
+###### Example
+
+Logging with full context:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function monitorDevices() {
+  await protect.login("192.168.1.1", "admin", "password");
+  await protect.getBootstrap();
+
+  protect.on("message", (packet) => {
+    const device = protect.bootstrap?.cameras.find(
+      c => c.id === packet.header.id
+    );
+
+    if (device) {
+      // Logs: "Dream Machine Pro [UDMP] Front Door [G4 Doorbell Pro]"
+      console.log(`${protect.getFullName(device)}: ${packet.header.action}`);
+    }
+  });
+}
+```
+
+##### reset()
+
+```ts
+reset(): void;
+```
+
+Terminate any open connection to the UniFi Protect API.
+
+###### Returns
+
+`void`
+
+###### Remarks
+
+Performs a clean shutdown of all API connections:
+
+- Closes WebSocket connections
+- Destroys the HTTP connection pool
+- Clears cached bootstrap data
+- Resets authentication state
+
+Call this method when shutting down your application or switching controllers. The API can be reused after reset by calling [login](#login) again.
+
+###### Example
+
+Proper cleanup:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function main() {
+  try {
+    await protect.login("192.168.1.1", "admin", "password");
+    await protect.getBootstrap();
+
+    // Do work...
+
+  } finally {
+    // Always clean up connections
+    protect.reset();
+  }
+}
+
+// Handle process termination
+process.on("SIGINT", () => {
+  protect.reset();
+  process.exit(0);
+});
+```
+
+##### responseOk()
+
+```ts
+responseOk(code?): boolean;
+```
+
+Determines whether an HTTP status code represents a successful response.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `code?` | `number` | HTTP status code to check |
+
+###### Returns
+
+`boolean`
+
+`true` if code is 2xx, `false` otherwise.
+
+###### Remarks
+
+Validates HTTP response codes according to standard conventions:
+
+- 2xx codes (200-299) indicate success
+- All other codes indicate failure
+- `undefined` is treated as failure
+
+###### Example
+
+Response validation:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function validateResponses() {
+  const response = await protect.retrieve(
+    "https://192.168.1.1/proxy/protect/api/cameras"
+  );
+
+  if (response && protect.responseOk(response.statusCode)) {
+    console.log("Request successful");
+    const data = await response.body.json();
+    // Process data...
+  } else {
+    console.error(`Request failed: ${response?.statusCode}`);
+  }
+}
+```
+
+#### Authentication
+
+##### login()
+
+```ts
+login(
+   nvrAddress, 
+   username, 
+password): Promise<boolean>;
+```
+
+Execute a login attempt to the UniFi Protect API.
+
+###### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `nvrAddress` | `string` | Address of the UniFi Protect controller (FQDN or IP address) |
+| `username` | `string` | Username for authentication |
+| `password` | `string` | Password for authentication |
+
+###### Returns
+
+`Promise`\<`boolean`\>
+
+Promise resolving to `true` on success, `false` on failure.
+
+ login      - Emitted with `true` if authentication succeeds, `false` if it fails. The event fires after every login attempt, regardless of outcome.
+
+###### Remarks
+
+This method performs the following actions:
+
+- Terminates any existing sessions
+- Acquires CSRF tokens for API security
+- Establishes cookie-based authentication
+- Emits a `login` event with the result
+
+The method automatically handles UniFi OS CSRF protection and maintains session state for subsequent API calls. Administrative privileges are determined during
+login and cached for the session duration.
+
+###### Example
+
+Multiple authentication patterns:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+// Pattern 1: Using async/await
+async function connectWithAwait() {
+  const success = await protect.login("192.168.1.1", "admin", "password");
+  if (success) {
+    console.log("Connected successfully");
+  }
+}
+
+// Pattern 2: Using event listeners
+function connectWithEvents() {
+  protect.once("login", (success: boolean) => {
+    if (success) {
+      console.log("Connected successfully");
+      // Continue with bootstrap
+      protect.getBootstrap();
+    }
+  });
+
+  protect.login("192.168.1.1", "admin", "password");
+}
+
+// Pattern 3: With retry logic
+async function connectWithRetry(maxAttempts = 3) {
+  for (let i = 0; i < maxAttempts; i++) {
+    if (await protect.login("192.168.1.1", "admin", "password")) {
+      return true;
+    }
+    console.log(`Login attempt ${i + 1} failed, retrying...`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  return false;
+}
+```
+
+##### logout()
+
+```ts
+logout(): void;
+```
+
+Clear login credentials and terminate all API connections.
+
+###### Returns
+
+`void`
+
+###### Remarks
+
+Performs a complete logout:
+
+- Clears authentication tokens and cookies
+- Terminates all active connections
+- Resets user privilege status
+- Preserves CSRF token for future logins
+
+After logout, a new [login](#login) call is required to use the API again.
+
+###### Example
+
+Switching between controllers:
+
+```typescript
+import { ProtectApi } from "unifi-protect";
+
+const protect = new ProtectApi();
+
+async function switchControllers() {
+  // Connect to first controller
+  await protect.login("192.168.1.1", "admin", "password1");
+  await protect.getBootstrap();
+  console.log(`Connected to ${protect.name}`);
+
+  // Switch to second controller
+  protect.logout();
+
+  await protect.login("192.168.2.1", "admin", "password2");
+  await protect.getBootstrap();
+  console.log(`Connected to ${protect.name}`);
+}
+```

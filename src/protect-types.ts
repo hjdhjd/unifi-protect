@@ -32,23 +32,23 @@ export type Nullable<T> = T | null;
  */
 export interface ProtectNvrBootstrapInterface {
 
-  accessKey: string,
-  authUserId: string,
-  bridges: unknown[],
-  cameras: ProtectCameraConfig[],
-  chimes: ProtectChimeConfig[],
-  cloudPortalUrl: string,
-  groups: unknown[],
-  lastUpdateId: string,
-  lights: ProtectLightConfig[],
-  liveviews: ProtectNvrLiveviewConfig[],
-  nvr: ProtectNvrConfig,
-  ringtones: ProtectRingtoneConfigInterface[],
-  sensors: ProtectSensorConfig[],
-  users: ProtectNvrUserConfig[],
-  viewers: ProtectViewerConfig[],
+  accessKey: string;
+  authUserId: string;
+  bridges: unknown[];
+  cameras: ProtectCameraConfig[];
+  chimes: ProtectChimeConfig[];
+  cloudPortalUrl: string;
+  groups: unknown[];
+  lastUpdateId: string;
+  lights: ProtectLightConfig[];
+  liveviews: ProtectNvrLiveviewConfig[];
+  nvr: ProtectNvrConfig;
+  ringtones: ProtectRingtoneConfigInterface[];
+  sensors: ProtectSensorConfig[];
+  users: ProtectNvrUserConfig[];
+  viewers: ProtectViewerConfig[];
   [key: string]: ProtectCameraConfig[] | ProtectChimeConfig[] | ProtectLightConfig[] | ProtectNvrConfig | ProtectNvrLiveviewConfig[] | ProtectNvrUserConfig[] |
-    ProtectSensorConfig[] | ProtectViewerConfig[] | string | unknown[]
+    ProtectSensorConfig[] | ProtectViewerConfig[] | string | unknown[];
 }
 
 /**
@@ -56,196 +56,196 @@ export interface ProtectNvrBootstrapInterface {
  */
 export interface ProtectNvrConfigInterface {
 
-  analyticsData: string,
-  anonymouseDeviceId: string,
-  availableUpdate: string,
-  avgMotions: number[],
+  analyticsData: string;
+  anonymouseDeviceId: string;
+  availableUpdate: string;
+  avgMotions: number[];
   cameraCapacity: {
 
     qualities: {
 
-      count: number,
-      fraction: number,
-      type: string
-    }[],
-    state: string
-  },
-  cameraUtilization: number,
-  canAutoUpdate: boolean,
-  consoleEnv: string,
-  corruptionState: string,
-  countryCode: string,
+      count: number;
+      fraction: number;
+      type: string;
+    }[];
+    state: string;
+  };
+  cameraUtilization: number;
+  canAutoUpdate: boolean;
+  consoleEnv: string;
+  corruptionState: string;
+  countryCode: string;
   deviceFirmwareSettings: {
 
-    configuredBy: string,
-    isAutoUpdateEnabled: boolean,
-    schedule: { hour: number }
-  },
-  disableAudio: boolean,
-  disableAutoLink: boolean,
-  doorbellSettings: {
+    configuredBy: string;
+    isAutoUpdateEnabled: boolean;
+    schedule: { hour: number };
+  };
+  disableAudio: boolean;
+  disableAutoLink: boolean;
+  doorbellSettings?: {
 
     allMessages: {
 
-      text: string,
-      type: string
-    }[],
-    customImages: string[],
-    customMessages: string[],
-    defaultMessageResetTimeoutMs: number,
-    defaultMessageText: string
-  },
-  enableAutomaticBackups: boolean,
-  enableBridgeAutoAdoption: boolean,
-  enableCrashReporting: boolean,
-  enableStatsReporting: boolean,
-  errorCode: Nullable<string>,
+      text: string;
+      type: string;
+    }[];
+    customImages: string[];
+    customMessages: string[];
+    defaultMessageResetTimeoutMs: number;
+    defaultMessageText: string;
+  };
+  enableAutomaticBackups: boolean;
+  enableBridgeAutoAdoption: boolean;
+  enableCrashReporting: boolean;
+  enableStatsReporting: boolean;
+  errorCode: Nullable<string>;
   featureFlags: {
 
-    beta: boolean,
-    detectionLabels: boolean,
-    dev: boolean,
-    hasTwoWayAudioMediaStreams: boolean,
-    homekitPaired: boolean,
-    notificationsV2: boolean,
-    ulpRoleManagement: boolean
-  },
-  firmwareVersion: string,
-  hardwareId: string,
-  hardwarePlatform: string,
-  hardwareRevision: string,
-  hasGateway: boolean,
-  host: string,
-  hostShortname: string,
-  hostType: string,
-  hosts: string[],
-  id: string,
-  isAccessInstalled: boolean,
-  isAiReportingEnabled: boolean,
-  isAway: boolean,
-  isHardware: boolean,
-  isInsightsEnabled: boolean,
-  isNetworkInstalled: boolean,
-  isPrimary: boolean,
-  isProtectUpdatable: boolean,
-  isRecordingDisabled: boolean,
-  isRecordingMotionOnly: boolean,
-  isRecycling: boolean,
-  isRemoteAccessEnabled: boolean,
-  isSetup: boolean,
-  isSshEnabled: boolean,
-  isStacked: boolean,
-  isStation: boolean,
-  isStatsGatheringEnabled: boolean,
-  isUCoreSetup: boolean,
-  isUCoreStacked: boolean,
-  isUcoreUpdatable: boolean,
-  isUpdating: boolean,
-  isWirelessUplinkEnabled: boolean,
-  lastSeen: number,
-  lastUpdateAt: Nullable<number>,
+    beta: boolean;
+    detectionLabels: boolean;
+    dev: boolean;
+    hasTwoWayAudioMediaStreams: boolean;
+    homekitPaired: boolean;
+    notificationsV2: boolean;
+    ulpRoleManagement: boolean;
+  };
+  firmwareVersion: string;
+  hardwareId: string;
+  hardwarePlatform: string;
+  hardwareRevision: string;
+  hasGateway: boolean;
+  host: string;
+  hostShortname: string;
+  hostType: string;
+  hosts: string[];
+  id: string;
+  isAccessInstalled: boolean;
+  isAiReportingEnabled: boolean;
+  isAway: boolean;
+  isHardware: boolean;
+  isInsightsEnabled: boolean;
+  isNetworkInstalled: boolean;
+  isPrimary: boolean;
+  isProtectUpdatable: boolean;
+  isRecordingDisabled: boolean;
+  isRecordingMotionOnly: boolean;
+  isRecycling: boolean;
+  isRemoteAccessEnabled: boolean;
+  isSetup: boolean;
+  isSshEnabled: boolean;
+  isStacked: boolean;
+  isStation: boolean;
+  isStatsGatheringEnabled: boolean;
+  isUCoreSetup: boolean;
+  isUCoreStacked: boolean;
+  isUcoreUpdatable: boolean;
+  isUpdating: boolean;
+  isWirelessUplinkEnabled: boolean;
+  lastSeen: number;
+  lastUpdateAt: Nullable<number>;
   locationSettings: {
 
-    isAway: boolean,
-    isGeofencingEnabled: boolean,
-    latitude: number,
-    longitude: number,
-    radius: number
-  },
-  mac: string,
-  marketName: string,
-  maxCameraCapacity: Record<string, number>,
-  modelKey: string,
-  name: string,
-  network: string,
+    isAway: boolean;
+    isGeofencingEnabled: boolean;
+    latitude: number;
+    longitude: number;
+    radius: number;
+  };
+  mac: string;
+  marketName: string;
+  maxCameraCapacity: Record<string, number>;
+  modelKey: string;
+  name?: string;
+  network: string;
   ports: {
 
-    aiFeatureConsole: number,
-    cameraEvents: number,
-    cameraHttps: number,
-    cameraTcp: number,
-    devicesWss: number,
-    discoveryClient: number,
-    emsCLI: number,
-    emsJsonCLI: number,
-    emsLiveFLV: number,
-    http: number,
-    https: number,
-    liveWs: number,
-    liveWss: number,
-    piongw: number,
-    playback: number,
-    rtmp: number,
-    rtsp: number,
-    rtsps: number,
-    stacking: number,
-    tcpBridge: number,
-    tcpStreams: number,
-    ucore: number,
-    ump: number
-  },
-  publicIp: string,
-  recordingRetentionDurationMs: string,
-  releaseChannel: string,
-  skipFirmwareUpdate: boolean,
+    aiFeatureConsole: number;
+    cameraEvents: number;
+    cameraHttps: number;
+    cameraTcp: number;
+    devicesWss: number;
+    discoveryClient: number;
+    emsCLI: number;
+    emsJsonCLI: number;
+    emsLiveFLV: number;
+    http: number;
+    https: number;
+    liveWs: number;
+    liveWss: number;
+    piongw: number;
+    playback: number;
+    rtmp: number;
+    rtsp: number;
+    rtsps: number;
+    stacking: number;
+    tcpBridge: number;
+    tcpStreams: number;
+    ucore: number;
+    ump: number;
+  };
+  publicIp: string;
+  recordingRetentionDurationMs: string;
+  releaseChannel: string;
+  skipFirmwareUpdate: boolean;
   smartDetectAgreement: {
 
-    lastUpdateAt: Nullable<number>,
-    status: string
-  },
+    lastUpdateAt: Nullable<number>;
+    status: string;
+  };
   smartDetection: {
 
-    enable: boolean,
-    faceRecognition: boolean,
-    licensePlateRecognition: boolean
-  },
-  ssoChannel: Nullable<string>,
+    enable: boolean;
+    faceRecognition: boolean;
+    licensePlateRecognition: boolean;
+  };
+  ssoChannel: Nullable<string>;
   storageStats: {
 
-    capacity: number,
+    capacity: number;
     recordingSpace: {
 
-      available: number,
-      total: number,
-      used: number
-    },
-    remainingCapacity: number,
+      available: number;
+      total: number;
+      used: number;
+    };
+    remainingCapacity: number;
     storageDistribution: {
 
       recordingTypeDistributions: {
 
-        percentage: number,
-        recordingType: string,
-        size: number
-      }[],
+        percentage: number;
+        recordingType: string;
+        size: number;
+      }[];
 
       resolutionDistributions: {
 
-        percentage: number,
-        recordingType: string,
-        size: number
-      }[]
-    }
-    utilization: number
-  },
-  streamSharingAvailable: boolean,
-  systemInfo: ProtectNvrSystemInfoInterface,
-  temperatureUnit: string,
-  timeFormat: string,
-  timezone: string,
-  type: string,
-  ucoreVersion: string,
-  uiVersion: string,
-  upSince: number,
-  uptime: number,
-  version: string,
-  wanIp: string,
+        percentage: number;
+        recordingType: string;
+        size: number;
+      }[];
+    };
+    utilization: number;
+  };
+  streamSharingAvailable: boolean;
+  systemInfo: ProtectNvrSystemInfoInterface;
+  temperatureUnit: string;
+  timeFormat: string;
+  timezone: string;
+  type: string;
+  ucoreVersion: string;
+  uiVersion: string;
+  upSince: number;
+  uptime: number;
+  version: string;
+  wanIp: string;
   wifiSettings: {
 
-    password: Nullable<string>,
-    ssid: Nullable<string>,
-    useThirdPartyWifi: boolean
-  }
+    password: Nullable<string>;
+    ssid: Nullable<string>;
+    useThirdPartyWifi: boolean;
+  };
 }
 
 /**
@@ -255,36 +255,36 @@ export interface ProtectNvrSystemInfoInterface {
 
   cpu: {
 
-    averageLoad: number,
-    temperature: number
-  },
+    averageLoad: number;
+    temperature: number;
+  };
   memory: {
 
-    available: number,
-    free: number,
-    total: number
-  },
+    available: number;
+    free: number;
+    total: number;
+  };
   storage: {
 
-    available: number,
+    available: number;
     devices: {
 
-      healthy: boolean,
-      model: string,
-      size: number
-    }[],
-    isRecycling: boolean,
-    size: number,
-    type: string,
-    used: number
-  },
+      healthy: boolean;
+      model: string;
+      size: number;
+    }[];
+    isRecycling: boolean;
+    size: number;
+    type: string;
+    used: number;
+  };
   tmpfs: {
 
-    available: number,
-    path: string,
-    total: number,
-    used: number
-  }
+    available: number;
+    path: string;
+    total: number;
+    used: number;
+  };
 }
 
 /**
@@ -292,413 +292,413 @@ export interface ProtectNvrSystemInfoInterface {
  */
 export interface ProtectCameraConfigInterface {
 
-  accessDeviceMetadata: {
+  accessDeviceMetadata?: {
 
     channels: {
 
-      bitrate: number,
-      fps: number,
-      fpsValues: number[],
-      height: number,
-      id: number,
-      localStreamName: string,
-      quality: string,
-      width: number
-    }[],
+      bitrate: number;
+      fps: number;
+      fpsValues: number[];
+      height: number;
+      id: number;
+      localStreamName: string;
+      quality: string;
+      width: number;
+    }[];
 
-    connectedSince: number,
-    disableRecordingByDefault: boolean,
+    connectedSince: number;
+    disableRecordingByDefault: boolean;
     doorInfo: {
 
-      canLock: boolean,
-      lockState: string
-    },
+      canLock: boolean;
+      lockState: string;
+    };
     featureFlags: {
 
-      supportLivestream: boolean,
-      supportUnlock: boolean
-    },
+      supportLivestream: boolean;
+      supportUnlock: boolean;
+    };
     ledSettings: {
 
-      isEnabled: boolean
-    },
-    micVolume: number,
+      isEnabled: boolean;
+    };
+    micVolume: number;
     pairedInfo: {
 
-      name: string,
-      uri: string
-    },
+      name: string;
+      uri: string;
+    };
     speakerSettings: {
 
-      areSystemSoundsEnabled: boolean
-    },
+      areSystemSoundsEnabled: boolean;
+    };
 
-    talkbackSettings: ProtectCameraTalkbackConfigInterface[]
-  },
-  apMac: string,
-  apRssi: string,
-  audioBitrate: number,
-  canManage: boolean,
-  channels: ProtectCameraChannelConfigInterface[],
-  chimeDuration: number,
-  connectedSince: number,
-  connectionHost: string,
-  currentResolution: string,
-  displayName: string,
-  elementInfo: null,
-  enableNfc: boolean,
+    talkbackSettings: ProtectCameraTalkbackConfigInterface[];
+  };
+  apMac: string;
+  apRssi: string;
+  audioBitrate: number;
+  canManage: boolean;
+  channels: ProtectCameraChannelConfigInterface[];
+  chimeDuration: number;
+  connectedSince: number;
+  connectionHost: string;
+  currentResolution: string;
+  displayName: string;
+  elementInfo: null;
+  enableNfc: boolean;
   featureFlags: {
 
-    audio: string[],
-    audioCodecs: string[],
-    audioStyle: string[],
-    canAdjustIrLedLevel: boolean,
-    canMagicZoom: boolean,
-    canOpticalZoom: boolean,
-    canTouchFocus: boolean,
-    hasAccelerometer: boolean,
-    hasAec: boolean,
-    hasAutoICROnly: boolean,
-    hasBattery: boolean,
-    hasBluetooth: boolean,
-    hasChime: boolean,
-    hasColorLcdScreen: boolean,
-    hasExternalIr: boolean,
-    hasFingerprintSensor: boolean,
-    hasFlash: boolean,
-    hasHdr: boolean,
-    hasIcrSensitivity: boolean,
-    hasInfrared: boolean,
-    hasLcdScreen: boolean,
-    hasLdc: boolean,
-    hasLedIr: boolean,
-    hasLedStatus: boolean,
-    hasLineCrossing: boolean,
-    hasLineCrossingCounting: boolean,
-    hasLineIn: boolean,
-    hasLiveviewTracking: boolean,
-    hasLuxCheck: boolean,
-    hasMic: boolean,
-    hasMotionZones: boolean,
-    hasNewMotionAlgorithm: boolean,
-    hasPackageCamera: boolean,
-    hasPrivacyMask: boolean,
-    hasRtc: boolean,
-    hasSdCard: boolean,
-    hasSmartDetect: boolean,
-    hasSpeaker: boolean,
-    hasSquareEventThumbnail: boolean,
-    hasVerticalFlip: boolean,
-    hasWifi: boolean,
-    isDoorbell: boolean,
-    isPtz: boolean,
-    maxScaleDownLevel: number,
-    motionAlgorithms: string[],
+    audio: string[];
+    audioCodecs: string[];
+    audioStyle: string[];
+    canAdjustIrLedLevel: boolean;
+    canMagicZoom: boolean;
+    canOpticalZoom: boolean;
+    canTouchFocus: boolean;
+    hasAccelerometer: boolean;
+    hasAec: boolean;
+    hasAutoICROnly: boolean;
+    hasBattery: boolean;
+    hasBluetooth: boolean;
+    hasChime: boolean;
+    hasColorLcdScreen: boolean;
+    hasExternalIr: boolean;
+    hasFingerprintSensor: boolean;
+    hasFlash: boolean;
+    hasHdr: boolean;
+    hasIcrSensitivity: boolean;
+    hasInfrared: boolean;
+    hasLcdScreen: boolean;
+    hasLdc: boolean;
+    hasLedIr: boolean;
+    hasLedStatus: boolean;
+    hasLineCrossing: boolean;
+    hasLineCrossingCounting: boolean;
+    hasLineIn: boolean;
+    hasLiveviewTracking: boolean;
+    hasLuxCheck: boolean;
+    hasMic: boolean;
+    hasMotionZones: boolean;
+    hasNewMotionAlgorithm: boolean;
+    hasPackageCamera: boolean;
+    hasPrivacyMask: boolean;
+    hasRtc: boolean;
+    hasSdCard: boolean;
+    hasSmartDetect: boolean;
+    hasSpeaker: boolean;
+    hasSquareEventThumbnail: boolean;
+    hasVerticalFlip: boolean;
+    hasWifi: boolean;
+    isDoorbell: boolean;
+    isPtz: boolean;
+    maxScaleDownLevel: number;
+    motionAlgorithms: string[];
     privacyMaskCapability: {
-      maxMasks: number,
-      rectangleOnly: boolean
-    },
-    smartDetectAudioTypes: string[],
-    smartDetectTypes: string[],
-    supportDoorAccessConfig: boolean,
-    supportLpDetectionWithoutVehicle: boolean,
-    supportNfc: boolean,
-    videoCodecs: string[],
-    videoModeMaxFps: number[],
-    videoModes: string[]
-  },
+      maxMasks: number;
+      rectangleOnly: boolean;
+    };
+    smartDetectAudioTypes: string[];
+    smartDetectTypes: string[];
+    supportDoorAccessConfig: boolean;
+    supportLpDetectionWithoutVehicle: boolean;
+    supportNfc: boolean;
+    videoCodecs: string[];
+    videoModeMaxFps: number[];
+    videoModes: string[];
+  };
   fingerprintSettings: {
 
-    enable: boolean,
-    enablePrintLatency: boolean,
-    mode: string,
-    reportCaptureComplete: boolean,
-    reportFingerTouch: boolean
-  },
+    enable: boolean;
+    enablePrintLatency: boolean;
+    mode: string;
+    reportCaptureComplete: boolean;
+    reportFingerTouch: boolean;
+  };
   fingerprintState: {
 
-    fingerprintId: string,
-    free: number,
-    progress: string,
-    status: string,
-    total: number
-  },
-  firmwareBuild: string,
-  firmwareVersion: string,
-  fwUpdateState: string,
-  guid: string,
-  hardwareRevision: string,
-  hasRecordings: boolean,
-  hasSpeaker: boolean,
-  hasWifi: boolean,
-  hdrMode: boolean,
+    fingerprintId: string;
+    free: number;
+    progress: string;
+    status: string;
+    total: number;
+  };
+  firmwareBuild: string;
+  firmwareVersion?: string;
+  fwUpdateState: string;
+  guid: string;
+  hardwareRevision?: string;
+  hasRecordings: boolean;
+  hasSpeaker: boolean;
+  hasWifi: boolean;
+  hdrMode: boolean;
   homekitSettings: {
 
-    microphoneMuted: boolean,
-    speakerMuted: boolean,
-    streamInProgress: boolean,
-    talkbackSettingsActive: boolean
-  },
-  host: string,
-  hubMac: string,
-  id: string,
-  is2K: boolean,
-  is4K: boolean,
-  isAdopted: boolean,
-  isAdoptedByAccessApp: boolean,
-  isAdoptedByOther: boolean,
-  isAdopting: boolean,
-  isAttemptingToConnect: boolean,
-  isConnected: boolean,
-  isDark: boolean,
-  isDeleting: boolean,
-  isDownloadingFW: boolean,
-  isExtenderInstalledEver: boolean,
-  isHidden: boolean,
-  isLiveHeatmapEnabled: boolean,
-  isManaged: boolean,
-  isMicEnabled: boolean,
-  isMissingRecordingDetected: boolean,
-  isMotionDetected: boolean,
-  isPairedWithAiPort: boolean,
-  isPoorNetwork: boolean,
-  isProbingForWifi: boolean,
-  isProvisioned: boolean,
-  isRebooting: boolean,
-  isRecording: boolean,
-  isRestoring: boolean,
-  isSmartDetected: boolean,
-  isSshEnabled: boolean,
-  isThirdPartyCamera: boolean,
-  isUpdating: boolean,
-  isWaterproofCaseAttached: boolean,
-  isWirelessUplinkEnabled: boolean,
+    microphoneMuted: boolean;
+    speakerMuted: boolean;
+    streamInProgress: boolean;
+    talkbackSettingsActive: boolean;
+  };
+  host: string;
+  hubMac: string;
+  id: string;
+  is2K: boolean;
+  is4K: boolean;
+  isAdopted: boolean;
+  isAdoptedByAccessApp: boolean;
+  isAdoptedByOther: boolean;
+  isAdopting: boolean;
+  isAttemptingToConnect: boolean;
+  isConnected: boolean;
+  isDark: boolean;
+  isDeleting: boolean;
+  isDownloadingFW: boolean;
+  isExtenderInstalledEver: boolean;
+  isHidden: boolean;
+  isLiveHeatmapEnabled: boolean;
+  isManaged: boolean;
+  isMicEnabled: boolean;
+  isMissingRecordingDetected: boolean;
+  isMotionDetected: boolean;
+  isPairedWithAiPort: boolean;
+  isPoorNetwork: boolean;
+  isProbingForWifi: boolean;
+  isProvisioned: boolean;
+  isRebooting: boolean;
+  isRecording: boolean;
+  isRestoring: boolean;
+  isSmartDetected: boolean;
+  isSshEnabled: boolean;
+  isThirdPartyCamera: boolean;
+  isUpdating: boolean;
+  isWaterproofCaseAttached: boolean;
+  isWirelessUplinkEnabled: boolean;
   ispSettings: {
 
-    aeMode: string,
-    brightness: number,
-    contrast: number,
-    dZoomCenterX: number,
-    dZoomCenterY: number,
-    dZoomScale: number,
-    dZoomStreamId: number,
-    denoise: number,
-    focusMode: string,
-    focusPosition: number,
-    hue: number,
+    aeMode: string;
+    brightness: number;
+    contrast: number;
+    dZoomCenterX: number;
+    dZoomCenterY: number;
+    dZoomScale: number;
+    dZoomStreamId: number;
+    denoise: number;
+    focusMode: string;
+    focusPosition: number;
+    hue: number;
     hotplug: {
 
-      audio: Nullable<string>,
+      audio: Nullable<string>;
       extender: {
 
-        flashRange: number,
-        hasFlash: boolean,
-        hasIR: boolean,
-        hasRadar: boolean,
-        isAttached: boolean,
-        radarRangeMax: number,
-        radarRangeMin: number
-      }
-      standaloneAdoption: boolean,
-      video: Nullable<string>
-    },
-    icrCustomValue: number,
-    icrSensitivity: number,
-    irLedLevel: number,
-    irLedMode: string,
-    is3dnrEnabled: boolean,
-    isAggressiveAntiFlickerEnabled: boolean,
-    isAutoRotateEnabled: boolean,
-    isExternalIrEnabled: boolean,
-    isFlippedHorizontal: boolean,
-    isFlippedVertical: boolean,
-    isLdcEnabled: boolean,
-    isPauseMotionEnabled: boolean,
-    saturation: number,
-    sharpness: number,
-    touchFocusX: number,
-    touchFocusY: number,
-    wdr: number,
-    zoomPosition: number
-  },
-  lastMotion: number,
-  lastRing: Nullable<number>,
-  lastSeen: number,
-  latestFirmwareVersion: string,
-  lcdMessage: ProtectCameraLcdMessageConfigInterface,
+        flashRange: number;
+        hasFlash: boolean;
+        hasIR: boolean;
+        hasRadar: boolean;
+        isAttached: boolean;
+        radarRangeMax: number;
+        radarRangeMin: number;
+      };
+      standaloneAdoption: boolean;
+      video: Nullable<string>;
+    };
+    icrCustomValue: number;
+    icrSensitivity: number;
+    irLedLevel: number;
+    irLedMode: string;
+    is3dnrEnabled: boolean;
+    isAggressiveAntiFlickerEnabled: boolean;
+    isAutoRotateEnabled: boolean;
+    isExternalIrEnabled: boolean;
+    isFlippedHorizontal: boolean;
+    isFlippedVertical: boolean;
+    isLdcEnabled: boolean;
+    isPauseMotionEnabled: boolean;
+    saturation: number;
+    sharpness: number;
+    touchFocusX: number;
+    touchFocusY: number;
+    wdr: number;
+    zoomPosition: number;
+  };
+  lastMotion: number;
+  lastRing: Nullable<number>;
+  lastSeen: number;
+  latestFirmwareVersion: string;
+  lcdMessage?: DeepPartial<ProtectCameraLcdMessageConfigInterface>;
   ledSettings: {
 
-    blinkRate: number,
-    isEnabled: boolean
-  },
+    blinkRate: number;
+    isEnabled: boolean;
+  };
   lenses: {
 
-    id: number,
+    id: number;
     video: {
-      recordingEnd: Nullable<number>,
-      recordingEndLQ: Nullable<number>,
-      recordingStart: Nullable<number>,
-      recordingStartLQ: Nullable<number>,
-      timelapseEnd: Nullable<number>,
-      timelapseEndLQ: Nullable<number>,
-      timelapseStart: Nullable<number>,
-      timelapseStartLQ: Nullable<number>
-    }
-  }[],
-  mac: string,
-  marketName: string,
-  micVolume: number,
-  modelKey: string
-  name: string,
+      recordingEnd: Nullable<number>;
+      recordingEndLQ: Nullable<number>;
+      recordingStart: Nullable<number>;
+      recordingStartLQ: Nullable<number>;
+      timelapseEnd: Nullable<number>;
+      timelapseEndLQ: Nullable<number>;
+      timelapseStart: Nullable<number>;
+      timelapseStartLQ: Nullable<number>;
+    };
+  }[];
+  mac: string;
+  marketName: string;
+  micVolume: number;
+  modelKey: string;
+  name?: string;
   nfcSettings: {
 
-    enableNfc: boolean,
-    supportThirdPartyCard: boolean
-  },
+    enableNfc: boolean;
+    supportThirdPartyCard: boolean;
+  };
   nfcState: {
 
-    cardId: string,
-    isUACard: boolean,
-    lastSeen: number,
-    mode: string
-  },
-  nvrMac: string,
+    cardId: string;
+    isUACard: boolean;
+    lastSeen: number;
+    mode: string;
+  };
+  nvrMac: string;
   osdSettings: {
 
-    isDateEnabled: boolean,
-    isDebugEnabled: boolean,
-    isLogoEnabled: boolean,
-    isNameEnabled: boolean
-  },
-  phyRate: number,
+    isDateEnabled: boolean;
+    isDebugEnabled: boolean;
+    isLogoEnabled: boolean;
+    isNameEnabled: boolean;
+  };
+  phyRate: number;
   pirSettings: {
 
-    pirMotionClipLength: number,
-    pirSensitivity: number,
-    timelapseFrameInterval: number,
-    timelapseTransferInterval: number
-  },
-  platform: string,
-  recordingSchedule: null,
+    pirMotionClipLength: number;
+    pirSensitivity: number;
+    timelapseFrameInterval: number;
+    timelapseTransferInterval: number;
+  };
+  platform: string;
+  recordingSchedule: null;
   recordingSettings: {
 
-    enablePirTimelapse: boolean,
-    endMotionEventDelay: number,
-    geofencing: string,
-    minMotionEventTrigger: number,
-    mode: string,
-    postPaddingSecs: number,
-    prePaddingSecs: number,
-    retentionDurationMs: Nullable<number>,
-    suppressIlluminationSurge: boolean,
-    useNewMotionAlgorithm: boolean
-  },
-  smartDetectLines: [],
+    enablePirTimelapse: boolean;
+    endMotionEventDelay: number;
+    geofencing: string;
+    minMotionEventTrigger: number;
+    mode: string;
+    postPaddingSecs: number;
+    prePaddingSecs: number;
+    retentionDurationMs: Nullable<number>;
+    suppressIlluminationSurge: boolean;
+    useNewMotionAlgorithm: boolean;
+  };
+  smartDetectLines: [];
   smartDetectSettings: {
 
-    audioTypes: string[],
-    autoTrackingObjectTypes: string[],
-    detectionRange: [max: number, min: number],
-    objectTypes: string[]
-  },
+    audioTypes: string[];
+    autoTrackingObjectTypes: string[];
+    detectionRange: [max: number, min: number];
+    objectTypes: string[];
+  };
   smartDetectZones: {
 
-    color: string,
-    name: string,
-    objectTypes: string[],
-    points: [number, number][],
-    sensitivity: number
-  }[],
+    color: string;
+    name: string;
+    objectTypes: string[];
+    points: [number, number][];
+    sensitivity: number;
+  }[];
   speakerSettings: {
 
-    areSystemSoundsEnabled: boolean,
-    isEnabled: boolean,
-    volume: number
-  },
-  state: string,
+    areSystemSoundsEnabled: boolean;
+    isEnabled: boolean;
+    volume: number;
+  };
+  state: string;
   stats: {
 
     battery: {
 
-      isCharging: boolean,
-      percentage: Nullable<number>,
-      sleepState: string
-    },
-    rxBytes: number,
+      isCharging: boolean;
+      percentage: Nullable<number>;
+      sleepState: string;
+    };
+    rxBytes: number;
     storage: {
 
-      rate: number,
-      used: number
-    },
-    txBytes: number,
+      rate: number;
+      used: number;
+    };
+    txBytes: number;
     video: {
 
-      recordingEnd: number,
-      recordingEndLQ: number,
-      recordingStart: number,
-      recordingStartLQ: number,
-      timelapseEnd: number,
-      timelapseEndLQ: number,
-      timelapseStart: number,
-      timelapseStartLQ: number
-    },
+      recordingEnd: number;
+      recordingEndLQ: number;
+      recordingStart: number;
+      recordingStartLQ: number;
+      timelapseEnd: number;
+      timelapseEndLQ: number;
+      timelapseStart: number;
+      timelapseStartLQ: number;
+    };
     wifi: {
 
-      channel: Nullable<number>,
-      frequency: Nullable<number>,
-      linkSpeedMbps: Nullable<number>,
-      signalQuality: number,
-      signalStrength: number
-    },
-    wifiQuality: number,
-    wifiStrength: number
-  },
+      channel: Nullable<number>;
+      frequency: Nullable<number>;
+      linkSpeedMbps: Nullable<number>;
+      signalQuality: number;
+      signalStrength: number;
+    };
+    wifiQuality: number;
+    wifiStrength: number;
+  };
   streamSharing: {
 
-    enabled: boolean,
-    token: Nullable<string>,
-    shareLink: Nullable<string>,
-    expires: Nullable<number>,
-    sharedByUserId: Nullable<string>,
-    sharedByUser: Nullable<string>,
-    maxStreams: Nullable<number>
-  },
-  supportedScalingResolutions: string[],
-  talkbackSettings: ProtectCameraTalkbackConfigInterface,
+    enabled: boolean;
+    token: Nullable<string>;
+    shareLink: Nullable<string>;
+    expires: Nullable<number>;
+    sharedByUserId: Nullable<string>;
+    sharedByUser: Nullable<string>;
+    maxStreams: Nullable<number>;
+  };
+  supportedScalingResolutions: string[];
+  talkbackSettings: ProtectCameraTalkbackConfigInterface;
   thirdPartyCameraInfo: {
 
-    port: number,
-    rtspUrl: string,
-    rtspUrlLQ: string,
-    snapshotUrl: string
-  },
+    port: number;
+    rtspUrl: string;
+    rtspUrlLQ: string;
+    snapshotUrl: string;
+  };
   tiltLimitsOfPrivacyZones: {
 
-    limit: number,
-    side: string
-  },
-  type: string,
-  upSince: number,
-  uptime: number,
-  useGlobal: boolean,
-  videoCodec: string,
-  videoCodecState: number,
-  videoCodecSwitchingSince: number,
-  videoMode: string,
-  videoReconfigurationInProgress: boolean,
-  voltage: number,
+    limit: number;
+    side: string;
+  };
+  type: string;
+  upSince: number;
+  uptime: number;
+  useGlobal: boolean;
+  videoCodec: string;
+  videoCodecState: number;
+  videoCodecSwitchingSince: number;
+  videoMode: string;
+  videoReconfigurationInProgress: boolean;
+  voltage: number;
   wifiConnectionState: {
 
-    channel: number,
-    frequency: number,
-    phyRate: number,
-    signalQuality: number,
-    signalStrength: number
-  },
+    channel: number;
+    frequency: number;
+    phyRate: number;
+    signalQuality: number;
+    signalStrength: number;
+  };
   wiredConnectionState: {
 
-    phyRate: number
-  }
+    phyRate: number;
+  };
 }
 
 /**
@@ -706,24 +706,24 @@ export interface ProtectCameraConfigInterface {
  */
 export interface ProtectCameraChannelConfigInterface {
 
-  autoBitrate: boolean,
-  autoFps: boolean,
-  bitrate: number,
-  enabled: boolean,
-  fps: number,
-  fpsValues: number[],
-  height: number,
-  id: number,
-  idrInterval: number,
-  isRtspEnabled: boolean,
-  maxBitrate: number,
-  minBitrate: number,
-  minClientAdaptiveBitRate: number,
-  minMotionAdaptiveBitRate: number,
-  name: string,
-  rtspAlias: string,
-  videoId: string,
-  width: number
+  autoBitrate: boolean;
+  autoFps: boolean;
+  bitrate: number;
+  enabled: boolean;
+  fps: number;
+  fpsValues: number[];
+  height: number;
+  id: number;
+  idrInterval: number;
+  isRtspEnabled: boolean;
+  maxBitrate: number;
+  minBitrate: number;
+  minClientAdaptiveBitRate: number;
+  minMotionAdaptiveBitRate: number;
+  name: string;
+  rtspAlias: string;
+  videoId: string;
+  width: number;
 }
 
 /**
@@ -731,10 +731,10 @@ export interface ProtectCameraChannelConfigInterface {
  */
 export interface ProtectCameraLcdMessageConfigInterface {
 
-  duration: number,
-  resetAt: Nullable<number>,
-  text: string,
-  type: string
+  duration: number;
+  resetAt: Nullable<number>;
+  text: string;
+  type: string;
 }
 
 /**
@@ -742,17 +742,17 @@ export interface ProtectCameraLcdMessageConfigInterface {
  */
 export interface ProtectCameraTalkbackConfigInterface {
 
-  bindAddr: string,
-  bindPort: number,
-  bitsPerSample: number,
-  channels: number,
-  filterAddr: string,
-  filterPort: number,
-  quality: number,
-  samplingRate: number,
-  typeFmt: string,
-  typeIn: string,
-  url: string
+  bindAddr: string;
+  bindPort: number;
+  bitsPerSample: number;
+  channels: number;
+  filterAddr: string;
+  filterPort: number;
+  quality: number;
+  samplingRate: number;
+  typeFmt: string;
+  typeIn: string;
+  url: string;
 }
 
 /**
@@ -760,89 +760,89 @@ export interface ProtectCameraTalkbackConfigInterface {
  */
 export interface ProtectChimeConfigInterface {
 
-  apMac: string,
-  apMgmtIp: string,
-  apRssi: string,
-  cameraIds: string[],
-  canAdopt: boolean,
-  connectedSince: number,
-  connectionHost: string,
-  elementInfo: string,
+  apMac: string;
+  apMgmtIp: string;
+  apRssi: string;
+  cameraIds: string[];
+  canAdopt: boolean;
+  connectedSince: number;
+  connectionHost: string;
+  elementInfo: string;
   featureFlags: {
 
-    hasHttpsClientOTA: boolean,
-    hasWifi: boolean,
-    supportCustomRingtone: boolean
-  },
-  firmwareBuild: string,
-  firmwareVersion: string,
-  fwUpdateState: string,
-  hardwareRevision: string,
-  host: string,
-  id: string,
-  isAdopted: boolean,
-  isAdoptedByOther: boolean,
-  isAdopting: boolean,
-  isAttemptingToConnect: boolean,
-  isConnected: boolean,
-  isDownloadingFW: boolean,
-  isProbingForWifi: boolean,
-  isProvisioned: boolean,
-  isRebooting: boolean,
-  isSshEnabled: boolean,
-  isUpdating: boolean,
-  isWirelessUplinkEnabled: boolean,
-  lastRing: number,
-  lastSeen: number,
-  latestFirmwareVersion: string,
-  mac: string,
-  marketName: string,
-  modelKey: string,
-  name: string,
-  nvrMac: string,
-  platform: string,
-  repeatTimes: number,
+    hasHttpsClientOTA: boolean;
+    hasWifi: boolean;
+    supportCustomRingtone: boolean;
+  };
+  firmwareBuild: string;
+  firmwareVersion: string;
+  fwUpdateState: string;
+  hardwareRevision: string;
+  host: string;
+  id: string;
+  isAdopted: boolean;
+  isAdoptedByOther: boolean;
+  isAdopting: boolean;
+  isAttemptingToConnect: boolean;
+  isConnected: boolean;
+  isDownloadingFW: boolean;
+  isProbingForWifi: boolean;
+  isProvisioned: boolean;
+  isRebooting: boolean;
+  isSshEnabled: boolean;
+  isUpdating: boolean;
+  isWirelessUplinkEnabled: boolean;
+  lastRing: number;
+  lastSeen: number;
+  latestFirmwareVersion: string;
+  mac: string;
+  marketName: string;
+  modelKey: string;
+  name?: string;
+  nvrMac: string;
+  platform: string;
+  repeatTimes: number;
   ringSettings: {
 
-    cameraId: string,
-    repeatTimes: number,
-    ringtoneId: string,
-    volume: number
-  }[],
+    cameraId: string;
+    repeatTimes: number;
+    ringtoneId: string;
+    volume: number;
+  }[];
   speakerTrackList: {
 
-    md5: string,
-    name: string,
-    size: number,
-    state: string,
-    track_no: number,
-    volume: number
-  }[],
-  state: string,
-  sysId: string,
-  type: string,
-  upSince: number,
-  uptime: number,
-  userConfiguredAp: boolean,
-  volume: number,
+    md5: string;
+    name: string;
+    size: number;
+    state: string;
+    track_no: number;
+    volume: number;
+  }[];
+  state: string;
+  sysId: string;
+  type: string;
+  upSince: number;
+  uptime: number;
+  userConfiguredAp: boolean;
+  volume: number;
   wifiConnectionState: {
 
-    apName: Nullable<string>,
-    bssid: Nullable<string>,
-    channel: Nullable<string>,
-    connectivity: string,
-    experience: null,
-    frequency: null,
-    phyRate: number,
-    signalQuality: number,
-    signalStrength: number,
-    ssid: Nullable<string>,
-    txRate: null
-  },
+    apName: Nullable<string>;
+    bssid: Nullable<string>;
+    channel: Nullable<string>;
+    connectivity: string;
+    experience: null;
+    frequency: null;
+    phyRate: number;
+    signalQuality: number;
+    signalStrength: number;
+    ssid: Nullable<string>;
+    txRate: null;
+  };
   wiredConnectionState: {
 
-    phyRate: number
-  }
+    phyRate: number;
+  };
 }
 
 /**
@@ -850,62 +850,62 @@ export interface ProtectChimeConfigInterface {
  */
 export interface ProtectLightConfigInterface {
 
-  camera: string,
-  canAdopt: boolean,
-  connectedSince: number,
-  connectionHost: string,
-  firmwareBuild: string,
-  firmwareVersion: string,
-  hardwareRevision: string,
-  host: string,
-  id: string,
-  isAdopted: boolean,
-  isAdoptedByOther: boolean,
-  isAdopting: boolean,
-  isAttemptingToConnect: boolean,
-  isCameraPaired: boolean,
-  isConnected: boolean,
-  isDark: boolean,
-  isLightOn: boolean,
-  isLocating: boolean,
-  isPirMotionDetected: boolean,
-  isProvisioned: boolean,
-  isRebooting: boolean,
-  isSshEnabled: boolean,
-  isUpdating: boolean,
-  lastMotion: number,
-  lastSeen: number,
-  latestFirmwareVersion: string,
+  camera: string;
+  canAdopt: boolean;
+  connectedSince: number;
+  connectionHost: string;
+  firmwareBuild: string;
+  firmwareVersion: string;
+  hardwareRevision: string;
+  host: string;
+  id: string;
+  isAdopted: boolean;
+  isAdoptedByOther: boolean;
+  isAdopting: boolean;
+  isAttemptingToConnect: boolean;
+  isCameraPaired: boolean;
+  isConnected: boolean;
+  isDark: boolean;
+  isLightOn: boolean;
+  isLocating: boolean;
+  isPirMotionDetected: boolean;
+  isProvisioned: boolean;
+  isRebooting: boolean;
+  isSshEnabled: boolean;
+  isUpdating: boolean;
+  lastMotion: number;
+  lastSeen: number;
+  latestFirmwareVersion: string;
   lightDeviceSettings: {
 
-    isIndicatorEnabled: boolean,
-    ledLevel: number,
-    luxSensitivity: string,
-    pirDuration: number,
-    pirSensitivity: number
-  },
+    isIndicatorEnabled: boolean;
+    ledLevel: number;
+    luxSensitivity: string;
+    pirDuration: number;
+    pirSensitivity: number;
+  };
   lightModeSettings: {
 
-    enableAt: string,
-    mode: string
-  },
+    enableAt: string;
+    mode: string;
+  };
   lightOnSettings: {
 
-    isLedForceOn: boolean
-  },
-  mac: string,
-  marketName: string,
-  modelKey: string,
-  name: string,
-  nvrMac: string,
-  state: string,
-  type: string,
-  upSince: number,
-  uptime: number,
+    isLedForceOn: boolean;
+  };
+  mac: string;
+  marketName: string;
+  modelKey: string;
+  name?: string;
+  nvrMac: string;
+  state: string;
+  type: string;
+  upSince: number;
+  uptime: number;
   wiredConnectionState: {
 
-    phyRate: number
-  }
+    phyRate: number;
+  };
 }
 
 /**
@@ -913,19 +913,19 @@ export interface ProtectLightConfigInterface {
  */
 export interface ProtectNvrLiveviewConfigInterface {
 
-  id: string,
-  isDefault: boolean,
-  isGlobal: boolean,
-  layout: number,
-  modelKey: string,
-  name: string,
-  owner: string,
+  id: string;
+  isDefault: boolean;
+  isGlobal: boolean;
+  layout: number;
+  modelKey: string;
+  name: string;
+  owner: string;
   slots: {
 
-    cameras: string[],
-    cycleInterval: number,
-    cycleMode: string
-  } []
+    cameras: string[];
+    cycleInterval: number;
+    cycleMode: string;
+  } [];
 }
 
 /**
@@ -933,46 +933,46 @@ export interface ProtectNvrLiveviewConfigInterface {
  */
 export interface ProtectNvrUserConfigInterface {
 
-  alertRules: unknown[],
-  allPermissions: string[],
+  alertRules: unknown[];
+  allPermissions: string[];
   cloudAccount: {
 
-    firstName: string,
-    lastName: string,
-    email: string,
-    profileImg: string,
-    user: string,
-    id: string,
-    cloudId: string,
-    name: string,
-    modelKey: string
-  },
-  email: string,
-  enableNotifications: boolean,
-  firstName: string,
-  groups: string[],
-  hasAcceptedInvite: boolean,
-  id: string,
-  isOwner: boolean,
-  lastLoginIp: string,
-  lastLoginTime: number,
-  lastName: string,
-  localUsername: string,
+    firstName: string;
+    lastName: string;
+    email: string;
+    profileImg: string;
+    user: string;
+    id: string;
+    cloudId: string;
+    name: string;
+    modelKey: string;
+  };
+  email: string;
+  enableNotifications: boolean;
+  firstName: string;
+  groups: string[];
+  hasAcceptedInvite: boolean;
+  id: string;
+  isOwner: boolean;
+  lastLoginIp: string;
+  lastLoginTime: number;
+  lastName: string;
+  localUsername: string;
   location: {
 
-    isAway: boolean,
-    latitude: string,
-    longitude: string
-  },
-  modelKey: string,
-  name: string,
-  permissions: string[],
-  role: string,
+    isAway: boolean;
+    latitude: string;
+    longitude: string;
+  };
+  modelKey: string;
+  name: string;
+  permissions: string[];
+  role: string;
   settings: {
 
-    flags: string[]
-  },
-  syncSso: boolean
+    flags: string[];
+  };
+  syncSso: boolean;
 }
 
 /**
@@ -982,11 +982,11 @@ export interface ProtectNvrSystemEventInterface {
 
   apps: {
 
-    apps: unknown[],
-    controllers: ProtectNvrSystemEventController[]
-  },
-  system: unknown,
-  type: string
+    apps: unknown[];
+    controllers: ProtectNvrSystemEventController[];
+  };
+  system: unknown;
+  type: string;
 }
 
 /**
@@ -994,58 +994,58 @@ export interface ProtectNvrSystemEventInterface {
  */
 export interface ProtectNvrSystemEventControllerInterface {
 
-  harddriveRequired: boolean,
+  harddriveRequired: boolean;
   info: {
 
-    events: number[],
-    isAdopted: boolean,
-    isConnectedToCloud: boolean,
-    isSetup: boolean,
-    lastMotion: number,
-    lastMotionCamera: string,
-    lastMotionCameraAddress: string,
-    lastMotionCameraModel: string,
-    managedCameras: number,
-    offlineCameras: number,
-    oldestRecording: number,
-    onlineCameras: number,
-    recordingSpaceTotal: number,
-    recordingSpaceUsed: number,
-    retentionTime: number,
-    startedAt: number,
-    throughput: number,
-    timeFormat: string,
-    updateAvailable: boolean,
-    updateVersion: string
-  },
-  installState: string,
-  isConfigured: boolean,
-  isInstalled: boolean,
-  isRunning: boolean,
-  name: string,
-  port: number,
-  required: boolean,
-  state: string,
-  status: string,
-  statusMessage: string,
-  swaiVersion: number,
-  type: string,
+    events: number[];
+    isAdopted: boolean;
+    isConnectedToCloud: boolean;
+    isSetup: boolean;
+    lastMotion: number;
+    lastMotionCamera: string;
+    lastMotionCameraAddress: string;
+    lastMotionCameraModel: string;
+    managedCameras: number;
+    offlineCameras: number;
+    oldestRecording: number;
+    onlineCameras: number;
+    recordingSpaceTotal: number;
+    recordingSpaceUsed: number;
+    retentionTime: number;
+    startedAt: number;
+    throughput: number;
+    timeFormat: string;
+    updateAvailable: boolean;
+    updateVersion: string;
+  };
+  installState: string;
+  isConfigured: boolean;
+  isInstalled: boolean;
+  isRunning: boolean;
+  name: string;
+  port: number;
+  required: boolean;
+  state: string;
+  status: string;
+  statusMessage: string;
+  swaiVersion: number;
+  type: string;
   ui: {
 
-    apiPrefix: string,
-    baseUrl: string,
-    cdnPublicPaths: string[],
-    entrypoint: string,
-    hotkey: string,
-    icon: string,
-    publicPath: string,
-    swaiVersion: number
-  },
-  uiNpmPackageName: string,
-  uiVersion: string,
-  unadoptedDevices: unknown[],
-  updateAvailable: string,
-  version: string
+    apiPrefix: string;
+    baseUrl: string;
+    cdnPublicPaths: string[];
+    entrypoint: string;
+    hotkey: string;
+    icon: string;
+    publicPath: string;
+    swaiVersion: number;
+  };
+  uiNpmPackageName: string;
+  uiVersion: string;
+  unadoptedDevices: unknown[];
+  updateAvailable: string;
+  version: string;
 }
 
 /**
@@ -1053,12 +1053,12 @@ export interface ProtectNvrSystemEventControllerInterface {
  */
 export interface ProtectRingtoneConfigInterface {
 
-  id: string,
-  isDefault: boolean,
-  modelKey: string,
-  name: string,
-  nvrMac: string,
-  size: number
+  id: string;
+  isDefault: boolean;
+  modelKey: string;
+  name: string;
+  nvrMac: string;
+  size: number;
 }
 
 /**
@@ -1068,128 +1068,128 @@ export interface ProtectSensorConfigInterface {
 
   alarmSettings: {
 
-    isEnabled: boolean
-  },
-  alarmTriggeredAt: Nullable<number>,
+    isEnabled: boolean;
+  };
+  alarmTriggeredAt: Nullable<number>;
   batteryStatus: {
 
-    isLow: boolean,
-    percentage: number
-  },
+    isLow: boolean;
+    percentage: number;
+  };
   bluetoothConnectionState: {
 
-    signalQuality: number,
-    signalStrength: number
-  },
-  bridge: string,
-  bridgeCandidates: [],
-  camera: string,
-  canAdopt: boolean,
-  connectedSince: number,
-  connectionHost: string,
-  displayName: string,
-  firmwareBuild: string,
-  firmwareVersion: string,
-  fwUpdateState: string,
-  hardwareRevision: string,
-  host: string,
+    signalQuality: number;
+    signalStrength: number;
+  };
+  bridge: string;
+  bridgeCandidates: [];
+  camera: string;
+  canAdopt: boolean;
+  connectedSince: number;
+  connectionHost: string;
+  displayName: string;
+  firmwareBuild: string;
+  firmwareVersion: string;
+  fwUpdateState: string;
+  hardwareRevision: string;
+  host: string;
   humiditySettings: {
 
-    highThreshold: number,
-    isEnabled: boolean,
-    lowThreshold: number,
-    margin: number
-  },
-  id: string,
-  isAdopted: boolean,
-  isAdoptedByOther: boolean,
-  isAdopting: boolean,
-  isAttemptingToConnect: boolean,
-  isConnected: boolean,
-  isDownloadingFW: boolean,
-  isMotionDetected: boolean,
-  isOpened: boolean,
-  isProvisioned: boolean,
-  isRebooting: boolean,
-  isRestoring: boolean,
-  isSshEnabled: boolean,
-  isUpdating: boolean,
-  lastDisconnect: number,
-  lastSeen: number,
-  latestFirmwareVersion: string,
-  leakDetectedAt: number,
+    highThreshold: number;
+    isEnabled: boolean;
+    lowThreshold: number;
+    margin: number;
+  };
+  id: string;
+  isAdopted: boolean;
+  isAdoptedByOther: boolean;
+  isAdopting: boolean;
+  isAttemptingToConnect: boolean;
+  isConnected: boolean;
+  isDownloadingFW: boolean;
+  isMotionDetected: boolean;
+  isOpened: boolean;
+  isProvisioned: boolean;
+  isRebooting: boolean;
+  isRestoring: boolean;
+  isSshEnabled: boolean;
+  isUpdating: boolean;
+  lastDisconnect: number;
+  lastSeen: number;
+  latestFirmwareVersion: string;
+  leakDetectedAt: Nullable<number>;
   ledSettings: {
 
-    isEnabled: boolean
-  },
+    isEnabled: boolean;
+  };
   lightSettings: {
 
-    highThreshold: number,
-    isEnabled: boolean,
-    lowThreshold: number,
-    margin: number
-  },
-  mac: string,
-  marketName: string,
-  modelKey: string,
-  motionDetectedAt: number,
+    highThreshold: number;
+    isEnabled: boolean;
+    lowThreshold: number;
+    margin: number;
+  };
+  mac: string;
+  marketName: string;
+  modelKey: string;
+  motionDetectedAt: number;
   motionSettings: {
 
-    isEnabled: boolean,
-    sensitivity: number
-  },
-  mountType: string,
-  name: string,
-  nvrMac: string,
-  openStatusChangedAt: number,
-  state: string,
-  stats: {
+    isEnabled: boolean;
+    sensitivity: number;
+  };
+  mountType: string;
+  name?: string;
+  nvrMac: string;
+  openStatusChangedAt: number;
+  state: string;
+  stats?: {
 
-    humidity: {
+    humidity?: {
 
-      status: string,
-      value: Nullable<number>
-    },
-    light: {
+      status: string;
+      value: Nullable<number>;
+    };
+    light?: {
 
-      status: string,
-      value: Nullable<number>
-    },
-    temperature: {
+      status: string;
+      value: Nullable<number>;
+    };
+    temperature?: {
 
-      status: string,
-      value: Nullable<number>
-    }
-  },
-  tamperingDetectedAt: Nullable<number>,
+      status: string;
+      value: Nullable<number>;
+    };
+  };
+  tamperingDetectedAt: Nullable<number>;
   temperatureSettings: {
 
-    highThreshold: number,
-    isEnabled: boolean,
-    lowThreshold: number,
-    margin: number
-  },
-  type: string,
-  upSince: number,
-  uptime: number,
+    highThreshold: number;
+    isEnabled: boolean;
+    lowThreshold: number;
+    margin: number;
+  };
+  type: string;
+  upSince: number;
+  uptime: number;
   wifiConnectionState: {
 
-    apName: Nullable<string>,
-    bssid: Nullable<string>,
-    channel: Nullable<string>,
-    connectivity: string,
-    experience: null,
-    frequency: null,
-    phyRate: number,
-    signalQuality: number,
-    signalStrength: number,
-    ssid: Nullable<string>,
-    txRate: null
-  },
+    apName: Nullable<string>;
+    bssid: Nullable<string>;
+    channel: Nullable<string>;
+    connectivity: string;
+    experience: null;
+    frequency: null;
+    phyRate: number;
+    signalQuality: number;
+    signalStrength: number;
+    ssid: Nullable<string>;
+    txRate: null;
+  };
   wiredConnectionState: {
 
-    phyRate: number
-  }
+    phyRate: number;
+  };
 }
 
 /**
@@ -1197,41 +1197,41 @@ export interface ProtectSensorConfigInterface {
  */
 export interface ProtectViewerConfigInterface {
 
-  canAdopt: boolean,
-  connectedSince: number,
-  connectionHost: string,
-  firmwareBuild: string,
-  firmwareVersion: string,
-  hardwareRevision: string,
-  host: string,
-  id: string,
-  isAdopted: boolean,
-  isAdoptedByOther: boolean,
-  isAdopting: boolean,
-  isAttemptingToConnect: boolean,
-  isConnected: boolean,
-  isProvisioned: boolean,
-  isRebooting: boolean,
-  isSshEnabled: boolean,
-  isUpdating: boolean,
-  lastSeen: number,
-  latestFirmwareVersion: string,
-  liveview: Nullable<string>,
-  mac: string,
-  marketName: string,
-  modelKey: string,
-  name: string,
-  nvrMac: string,
-  softwareVersion: string,
-  state: string,
-  streamLimit: number,
-  type: string,
-  upSince: number,
-  uptime: number,
+  canAdopt: boolean;
+  connectedSince: number;
+  connectionHost: string;
+  firmwareBuild: string;
+  firmwareVersion: string;
+  hardwareRevision: string;
+  host: string;
+  id: string;
+  isAdopted: boolean;
+  isAdoptedByOther: boolean;
+  isAdopting: boolean;
+  isAttemptingToConnect: boolean;
+  isConnected: boolean;
+  isProvisioned: boolean;
+  isRebooting: boolean;
+  isSshEnabled: boolean;
+  isUpdating: boolean;
+  lastSeen: number;
+  latestFirmwareVersion: string;
+  liveview: Nullable<string>;
+  mac: string;
+  marketName: string;
+  modelKey: string;
+  name?: string;
+  nvrMac: string;
+  softwareVersion: string;
+  state: string;
+  streamLimit: number;
+  type: string;
+  upSince: number;
+  uptime: number;
   wiredConnectionState: {
 
-    phyRate: number
-  }
+    phyRate: number;
+  };
 }
 
 /**
@@ -1239,23 +1239,23 @@ export interface ProtectViewerConfigInterface {
  */
 export interface ProtectEventAddInterface {
 
-  camera: string,
-  cameraId: string,
-  detectedAt: number,
-  end: number,
-  eventId: string,
-  id: string,
-  locked: boolean,
-  metadata: ProtectEventMetadata,
-  modelKey: string,
-  partition: string,
-  score: number,
-  smartDetectEvents: string[],
-  smartDetectTypes: string[],
-  start: number,
-  thumbnailId: string,
-  type: string,
-  user: string
+  camera?: string;
+  cameraId: string;
+  detectedAt: number;
+  end: number;
+  eventId: string;
+  id: string;
+  locked: boolean;
+  metadata?: ProtectEventMetadata;
+  modelKey: string;
+  partition: string;
+  score: number;
+  smartDetectEvents: string[];
+  smartDetectTypes?: string[];
+  start: number;
+  thumbnailId: string;
+  type: string;
+  user: string;
 }
 
 /**
@@ -1267,29 +1267,29 @@ export interface ProtectEventMetadataDetectedThumbnailInterface {
 
     color: {
 
-      confidence: number,
-      val: string
-    },
+      confidence: number;
+      val: string;
+    };
     faceMask: {
 
-      confidence: number,
-      val: string
-    },
-    trackerId: string,
+      confidence: number;
+      val: string;
+    };
+    trackerId: string;
     vehicleType: {
 
-      confidence: number,
-      val: string
-    },
-    zone: number[]
-  },
-  clockBestWall: number,
-  confidence: number,
-  coord: [ number, number, number, number ],
-  croppedId: string,
-  name: string,
-  objectId: string,
-  type: string
+      confidence: number;
+      val: string;
+    };
+    zone: number[];
+  };
+  clockBestWall: number;
+  confidence: number;
+  coord: [ number, number, number, number ];
+  croppedId: string;
+  name: string;
+  objectId: string;
+  type: string;
 }
 
 /**
@@ -1297,49 +1297,49 @@ export interface ProtectEventMetadataDetectedThumbnailInterface {
  */
 export interface ProtectEventMetadataInterface {
 
-  accessEventId: string,
-  action: string,
+  accessEventId: string;
+  action: string;
   detectedAreas: {
 
-    areaIndexes: number[],
-    smartDetectObject: string,
-  }[],
-  detectedThumbnails: ProtectEventMetadataDetectedThumbnail[],
+    areaIndexes: number[];
+    smartDetectObject: string;
+  }[];
+  detectedThumbnails: ProtectEventMetadataDetectedThumbnail[];
   deviceId: {
 
-    text: string
-  },
-  direction: string,
-  doorName: string,
+    text: string;
+  };
+  direction: string;
+  doorName: string;
   fingerprint: {
 
-    ulpId: string
-  },
-  firstName: string,
-  hallwayMode: string,
-  isLowBattery: boolean,
-  isWireless: boolean,
-  lastName: string,
+    ulpId: string;
+  };
+  firstName: string;
+  hallwayMode: string;
+  isLowBattery: boolean;
+  isWireless: boolean;
+  lastName: string;
   licensePlate: {
 
-    confidenceLevel: number,
-    name: string
-  },
+    confidenceLevel: number;
+    name: string;
+  };
   name: {
 
-    text: string
-  },
+    text: string;
+  };
   nfc: {
 
-    nfcId: string,
-    ulpId: string
-  },
-  openMethod: string,
-  openSuccess: boolean,
-  reason: string,
-  uniqueId: string,
-  userType: string,
-  zonesStatus: Record<string, { level: number, status: string }>
+    nfcId: string;
+    ulpId: string;
+  };
+  openMethod: string;
+  openSuccess: boolean;
+  reason: string;
+  uniqueId: string;
+  userType: string;
+  zonesStatus: Record<string, { level: number; status: string }>;
 }
 
 /** @see {@link ProtectEventAddInterface} */
