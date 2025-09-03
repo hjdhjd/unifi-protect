@@ -643,22 +643,6 @@ A semi-complete description of the UniFi Protect light JSON.
 
 An semi-complete description of the UniFi Protect NVR bootstrap JSON.
 
-#### Indexable
-
-```ts
-[key: string]: 
-  | string
-  | unknown[]
-  | ProtectCameraConfigInterface[]
-  | ProtectChimeConfigInterface[]
-  | ProtectLightConfigInterface[]
-  | ProtectNvrConfigInterface
-  | ProtectNvrLiveviewConfigInterface[]
-  | ProtectNvrUserConfigInterface[]
-  | ProtectSensorConfigInterface[]
-  | ProtectViewerConfigInterface[]
-```
-
 #### Properties
 
 | Property | Type |
@@ -1036,9 +1020,9 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | <a id="alarmsettings"></a> `alarmSettings` | \{ `isEnabled`: `boolean`; \} |
 | `alarmSettings.isEnabled` | `boolean` |
 | <a id="alarmtriggeredat"></a> `alarmTriggeredAt` | `Nullable`\<`number`\> |
-| <a id="batterystatus"></a> `batteryStatus` | \{ `isLow`: `boolean`; `percentage`: `number`; \} |
+| <a id="batterystatus"></a> `batteryStatus` | \{ `isLow`: `boolean`; `percentage`: `Nullable`\<`number`\>; \} |
 | `batteryStatus.isLow` | `boolean` |
-| `batteryStatus.percentage` | `number` |
+| `batteryStatus.percentage` | `Nullable`\<`number`\> |
 | <a id="bluetoothconnectionstate"></a> `bluetoothConnectionState` | \{ `signalQuality`: `number`; `signalStrength`: `number`; \} |
 | `bluetoothConnectionState.signalQuality` | `number` |
 | `bluetoothConnectionState.signalStrength` | `number` |
@@ -1077,6 +1061,9 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | <a id="lastseen-4"></a> `lastSeen` | `number` |
 | <a id="latestfirmwareversion-3"></a> `latestFirmwareVersion` | `string` |
 | <a id="leakdetectedat"></a> `leakDetectedAt` | `Nullable`\<`number`\> |
+| <a id="leaksettings"></a> `leakSettings` | \{ `isExternalEnabled`: `boolean`; `isInternalEnabled`: `boolean`; \} |
+| `leakSettings.isExternalEnabled` | `boolean` |
+| `leakSettings.isInternalEnabled` | `boolean` |
 | <a id="ledsettings-1"></a> `ledSettings` | \{ `isEnabled`: `boolean`; \} |
 | `ledSettings.isEnabled` | `boolean` |
 | <a id="lightsettings"></a> `lightSettings` | \{ `highThreshold`: `number`; `isEnabled`: `boolean`; `lowThreshold`: `number`; `margin`: `number`; \} |

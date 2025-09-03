@@ -309,7 +309,1038 @@ EventEmitter.constructor
 ###### Get Signature
 
 ```ts
-get bootstrap(): Nullable<ProtectNvrBootstrapInterface>;
+get bootstrap(): Nullable<{
+  accessKey: string;
+  authUserId: string;
+  bridges: unknown[];
+  cameras: ProtectCameraConfigInterface[];
+  chimes: ProtectChimeConfigInterface[];
+  cloudPortalUrl: string;
+  groups: unknown[];
+  lastUpdateId: string;
+  lights: ProtectLightConfigInterface[];
+  liveviews: ProtectNvrLiveviewConfigInterface[];
+  nvr: {
+     analyticsData: string;
+     anonymouseDeviceId: string;
+     availableUpdate: string;
+     avgMotions: number[];
+     cameraCapacity: {
+        qualities: {
+           count: number;
+           fraction: number;
+           type: string;
+        }[];
+        state: string;
+      } & {
+      [key: string]: 
+        | string
+        | {
+        count: number;
+        fraction: number;
+        type: string;
+      }[];
+     };
+     cameraUtilization: number;
+     canAutoUpdate: boolean;
+     consoleEnv: string;
+     corruptionState: string;
+     countryCode: string;
+     deviceFirmwareSettings: {
+        configuredBy: string;
+        isAutoUpdateEnabled: boolean;
+        schedule: {
+           hour: number;
+         } & {
+         [key: string]: number;
+        };
+      } & {
+      [key: string]: 
+        | string
+        | boolean
+        | {
+        hour: number;
+      } & {
+      [key: string]: number;
+      };
+     };
+     disableAudio: boolean;
+     disableAutoLink: boolean;
+     doorbellSettings?: {
+        allMessages: {
+           text: string;
+           type: string;
+        }[];
+        customImages: string[];
+        customMessages: string[];
+        defaultMessageResetTimeoutMs: number;
+        defaultMessageText: string;
+      } & {
+      [key: string]: 
+        | string
+        | number
+        | string[]
+        | {
+        text: ...;
+        type: ...;
+      }[];
+     };
+     enableAutomaticBackups: boolean;
+     enableBridgeAutoAdoption: boolean;
+     enableCrashReporting: boolean;
+     enableStatsReporting: boolean;
+     errorCode: Nullable<string>;
+     featureFlags: {
+        beta: boolean;
+        detectionLabels: boolean;
+        dev: boolean;
+        hasTwoWayAudioMediaStreams: boolean;
+        homekitPaired: boolean;
+        notificationsV2: boolean;
+        ulpRoleManagement: boolean;
+      } & {
+      [key: string]: boolean;
+     };
+     firmwareVersion: string;
+     hardwareId: string;
+     hardwarePlatform: string;
+     hardwareRevision: string;
+     hasGateway: boolean;
+     host: string;
+     hosts: string[];
+     hostShortname: string;
+     hostType: string;
+     id: string;
+     isAccessInstalled: boolean;
+     isAiReportingEnabled: boolean;
+     isAway: boolean;
+     isHardware: boolean;
+     isInsightsEnabled: boolean;
+     isNetworkInstalled: boolean;
+     isPrimary: boolean;
+     isProtectUpdatable: boolean;
+     isRecordingDisabled: boolean;
+     isRecordingMotionOnly: boolean;
+     isRecycling: boolean;
+     isRemoteAccessEnabled: boolean;
+     isSetup: boolean;
+     isSshEnabled: boolean;
+     isStacked: boolean;
+     isStation: boolean;
+     isStatsGatheringEnabled: boolean;
+     isUCoreSetup: boolean;
+     isUCoreStacked: boolean;
+     isUcoreUpdatable: boolean;
+     isUpdating: boolean;
+     isWirelessUplinkEnabled: boolean;
+     lastSeen: number;
+     lastUpdateAt: Nullable<number>;
+     locationSettings: {
+        isAway: boolean;
+        isGeofencingEnabled: boolean;
+        latitude: number;
+        longitude: number;
+        radius: number;
+      } & {
+      [key: string]: number | boolean;
+     };
+     mac: string;
+     marketName: string;
+     maxCameraCapacity: {
+      [key: string]: number;
+      } & {
+      [key: string]: number;
+     };
+     modelKey: string;
+     name?: string;
+     network: string;
+     ports: {
+        aiFeatureConsole: number;
+        cameraEvents: number;
+        cameraHttps: number;
+        cameraTcp: number;
+        devicesWss: number;
+        discoveryClient: number;
+        emsCLI: number;
+        emsJsonCLI: number;
+        emsLiveFLV: number;
+        http: number;
+        https: number;
+        liveWs: number;
+        liveWss: number;
+        piongw: number;
+        playback: number;
+        rtmp: number;
+        rtsp: number;
+        rtsps: number;
+        stacking: number;
+        tcpBridge: number;
+        tcpStreams: number;
+        ucore: number;
+        ump: number;
+      } & {
+      [key: string]: number;
+     };
+     publicIp: string;
+     recordingRetentionDurationMs: string;
+     releaseChannel: string;
+     skipFirmwareUpdate: boolean;
+     smartDetectAgreement: {
+        lastUpdateAt: Nullable<number>;
+        status: string;
+      } & {
+      [key: string]: string | Nullable<number>;
+     };
+     smartDetection: {
+        enable: boolean;
+        faceRecognition: boolean;
+        licensePlateRecognition: boolean;
+      } & {
+      [key: string]: boolean;
+     };
+     ssoChannel: Nullable<string>;
+     storageStats: {
+        capacity: number;
+        recordingSpace: {
+           available: number;
+           total: number;
+           used: number;
+         } & {
+         [key: string]: number;
+        };
+        remainingCapacity: number;
+        storageDistribution: {
+           recordingTypeDistributions: {
+              percentage: ...;
+              recordingType: ...;
+              size: ...;
+           }[];
+           resolutionDistributions: {
+              percentage: ...;
+              recordingType: ...;
+              size: ...;
+           }[];
+         } & {
+         [key: string]: ...[] | ...[];
+        };
+        utilization: number;
+      } & {
+      [key: string]: 
+        | number
+        | {
+        available: number;
+        total: number;
+        used: number;
+      } & {
+      [key: string]: number;
+      }
+        | {
+        recordingTypeDistributions: ...[];
+        resolutionDistributions: ...[];
+      } & {
+      [key: string]: ... | ...;
+      };
+     };
+     streamSharingAvailable: boolean;
+     systemInfo: {
+        cpu: {
+           averageLoad: number;
+           temperature: number;
+         } & {
+         [key: string]: number;
+        };
+        memory: {
+           available: number;
+           free: number;
+           total: number;
+         } & {
+         [key: string]: number;
+        };
+        storage: {
+           available: number;
+           devices: {
+              healthy: ...;
+              model: ...;
+              size: ...;
+           }[];
+           isRecycling: boolean;
+           size: number;
+           type: string;
+           used: number;
+         } & {
+         [key: string]: string | number | boolean | ...[];
+        };
+        tmpfs: {
+           available: number;
+           path: string;
+           total: number;
+           used: number;
+         } & {
+         [key: string]: string | number;
+        };
+      } & {
+      [key: string]: 
+        | {
+        averageLoad: number;
+        temperature: number;
+      } & {
+      [key: string]: number;
+      }
+        | {
+        available: number;
+        free: number;
+        total: number;
+      } & {
+      [key: string]: number;
+      }
+        | {
+        available: number;
+        devices: ...[];
+        isRecycling: boolean;
+        size: number;
+        type: string;
+        used: number;
+      } & {
+      [key: string]: ... | ... | ... | ... | ...;
+      }
+        | {
+        available: number;
+        path: string;
+        total: number;
+        used: number;
+      } & {
+      [key: string]: ... | ...;
+      };
+     };
+     temperatureUnit: string;
+     timeFormat: string;
+     timezone: string;
+     type: string;
+     ucoreVersion: string;
+     uiVersion: string;
+     upSince: number;
+     uptime: number;
+     version: string;
+     wanIp: string;
+     wifiSettings: {
+        password: Nullable<string>;
+        ssid: Nullable<string>;
+        useThirdPartyWifi: boolean;
+      } & {
+      [key: string]: boolean | Nullable<string>;
+     };
+   } & {
+   [key: string]: 
+     | undefined
+     | null
+     | string
+     | number
+     | boolean
+     | string[]
+     | number[]
+     | {
+   [key: string]: number;
+   } & {
+   [key: string]: number;
+   }
+     | {
+     qualities: {
+        count: number;
+        fraction: number;
+        type: string;
+     }[];
+     state: string;
+   } & {
+   [key: string]: 
+     | string
+     | {
+     count: ...;
+     fraction: ...;
+     type: ...;
+   }[];
+   }
+     | {
+     configuredBy: string;
+     isAutoUpdateEnabled: boolean;
+     schedule: {
+        hour: number;
+      } & {
+      [key: string]: number;
+     };
+   } & {
+   [key: string]: 
+     | string
+     | boolean
+     | {
+     hour: ...;
+   } & {
+   [key: ...]: ...;
+   };
+   }
+     | {
+     allMessages: {
+        text: string;
+        type: string;
+     }[];
+     customImages: string[];
+     customMessages: string[];
+     defaultMessageResetTimeoutMs: number;
+     defaultMessageText: string;
+   } & {
+   [key: string]: 
+     | string
+     | number
+     | string[]
+     | {
+     text: ...;
+     type: ...;
+   }[];
+   }
+     | {
+     beta: boolean;
+     detectionLabels: boolean;
+     dev: boolean;
+     hasTwoWayAudioMediaStreams: boolean;
+     homekitPaired: boolean;
+     notificationsV2: boolean;
+     ulpRoleManagement: boolean;
+   } & {
+   [key: string]: boolean;
+   }
+     | {
+     isAway: boolean;
+     isGeofencingEnabled: boolean;
+     latitude: number;
+     longitude: number;
+     radius: number;
+   } & {
+   [key: string]: number | boolean;
+   }
+     | {
+     aiFeatureConsole: number;
+     cameraEvents: number;
+     cameraHttps: number;
+     cameraTcp: number;
+     devicesWss: number;
+     discoveryClient: number;
+     emsCLI: number;
+     emsJsonCLI: number;
+     emsLiveFLV: number;
+     http: number;
+     https: number;
+     liveWs: number;
+     liveWss: number;
+     piongw: number;
+     playback: number;
+     rtmp: number;
+     rtsp: number;
+     rtsps: number;
+     stacking: number;
+     tcpBridge: number;
+     tcpStreams: number;
+     ucore: number;
+     ump: number;
+   } & {
+   [key: string]: number;
+   }
+     | {
+     lastUpdateAt: Nullable<number>;
+     status: string;
+   } & {
+   [key: string]: string | Nullable<number>;
+   }
+     | {
+     enable: boolean;
+     faceRecognition: boolean;
+     licensePlateRecognition: boolean;
+   } & {
+   [key: string]: boolean;
+   }
+     | {
+     capacity: number;
+     recordingSpace: {
+        available: number;
+        total: number;
+        used: number;
+      } & {
+      [key: string]: number;
+     };
+     remainingCapacity: number;
+     storageDistribution: {
+        recordingTypeDistributions: ...[];
+        resolutionDistributions: ...[];
+      } & {
+      [key: string]: ... | ...;
+     };
+     utilization: number;
+   } & {
+   [key: string]: 
+     | number
+     | {
+     available: ...;
+     total: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+   }
+     | {
+     recordingTypeDistributions: ...;
+     resolutionDistributions: ...;
+   } & {
+   [key: ...]: ...;
+   };
+   }
+     | {
+     cpu: {
+        averageLoad: number;
+        temperature: number;
+      } & {
+      [key: string]: number;
+     };
+     memory: {
+        available: number;
+        free: number;
+        total: number;
+      } & {
+      [key: string]: number;
+     };
+     storage: {
+        available: number;
+        devices: ...[];
+        isRecycling: boolean;
+        size: number;
+        type: string;
+        used: number;
+      } & {
+      [key: string]: ... | ... | ... | ... | ...;
+     };
+     tmpfs: {
+        available: number;
+        path: string;
+        total: number;
+        used: number;
+      } & {
+      [key: string]: ... | ...;
+     };
+   } & {
+   [key: string]: 
+     | {
+     averageLoad: ...;
+     temperature: ...;
+   } & {
+   [key: ...]: ...;
+   }
+     | {
+     available: ...;
+     free: ...;
+     total: ...;
+   } & {
+   [key: ...]: ...;
+   }
+     | {
+     available: ...;
+     devices: ...;
+     isRecycling: ...;
+     size: ...;
+     type: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+   }
+     | {
+     available: ...;
+     path: ...;
+     total: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+   };
+   }
+     | {
+     password: Nullable<string>;
+     ssid: Nullable<string>;
+     useThirdPartyWifi: boolean;
+   } & {
+   [key: string]: boolean | Nullable<string>;
+   };
+  };
+  ringtones: ProtectRingtoneConfigInterface[];
+  sensors: ProtectSensorConfigInterface[];
+  users: ProtectNvrUserConfigInterface[];
+  viewers: ProtectViewerConfigInterface[];
+} & {
+[key: string]: 
+  | string
+  | unknown[]
+  | ProtectCameraConfigInterface[]
+  | ProtectChimeConfigInterface[]
+  | ProtectLightConfigInterface[]
+  | ProtectNvrLiveviewConfigInterface[]
+  | ProtectRingtoneConfigInterface[]
+  | ProtectSensorConfigInterface[]
+  | ProtectNvrUserConfigInterface[]
+  | ProtectViewerConfigInterface[]
+  | {
+  analyticsData: string;
+  anonymouseDeviceId: string;
+  availableUpdate: string;
+  avgMotions: number[];
+  cameraCapacity: {
+     qualities: {
+        count: number;
+        fraction: number;
+        type: string;
+     }[];
+     state: string;
+   } & {
+   [key: string]: 
+     | string
+     | {
+     count: ...;
+     fraction: ...;
+     type: ...;
+   }[];
+  };
+  cameraUtilization: number;
+  canAutoUpdate: boolean;
+  consoleEnv: string;
+  corruptionState: string;
+  countryCode: string;
+  deviceFirmwareSettings: {
+     configuredBy: string;
+     isAutoUpdateEnabled: boolean;
+     schedule: {
+        hour: number;
+      } & {
+      [key: string]: number;
+     };
+   } & {
+   [key: string]: 
+     | string
+     | boolean
+     | {
+     hour: ...;
+   } & {
+   [key: ...]: ...;
+   };
+  };
+  disableAudio: boolean;
+  disableAutoLink: boolean;
+  doorbellSettings?: {
+     allMessages: {
+        text: ...;
+        type: ...;
+     }[];
+     customImages: string[];
+     customMessages: string[];
+     defaultMessageResetTimeoutMs: number;
+     defaultMessageText: string;
+   } & {
+   [key: string]: string | number | ...[] | ...[];
+  };
+  enableAutomaticBackups: boolean;
+  enableBridgeAutoAdoption: boolean;
+  enableCrashReporting: boolean;
+  enableStatsReporting: boolean;
+  errorCode: Nullable<string>;
+  featureFlags: {
+     beta: boolean;
+     detectionLabels: boolean;
+     dev: boolean;
+     hasTwoWayAudioMediaStreams: boolean;
+     homekitPaired: boolean;
+     notificationsV2: boolean;
+     ulpRoleManagement: boolean;
+   } & {
+   [key: string]: boolean;
+  };
+  firmwareVersion: string;
+  hardwareId: string;
+  hardwarePlatform: string;
+  hardwareRevision: string;
+  hasGateway: boolean;
+  host: string;
+  hosts: string[];
+  hostShortname: string;
+  hostType: string;
+  id: string;
+  isAccessInstalled: boolean;
+  isAiReportingEnabled: boolean;
+  isAway: boolean;
+  isHardware: boolean;
+  isInsightsEnabled: boolean;
+  isNetworkInstalled: boolean;
+  isPrimary: boolean;
+  isProtectUpdatable: boolean;
+  isRecordingDisabled: boolean;
+  isRecordingMotionOnly: boolean;
+  isRecycling: boolean;
+  isRemoteAccessEnabled: boolean;
+  isSetup: boolean;
+  isSshEnabled: boolean;
+  isStacked: boolean;
+  isStation: boolean;
+  isStatsGatheringEnabled: boolean;
+  isUCoreSetup: boolean;
+  isUCoreStacked: boolean;
+  isUcoreUpdatable: boolean;
+  isUpdating: boolean;
+  isWirelessUplinkEnabled: boolean;
+  lastSeen: number;
+  lastUpdateAt: Nullable<number>;
+  locationSettings: {
+     isAway: boolean;
+     isGeofencingEnabled: boolean;
+     latitude: number;
+     longitude: number;
+     radius: number;
+   } & {
+   [key: string]: number | boolean;
+  };
+  mac: string;
+  marketName: string;
+  maxCameraCapacity: {
+   [key: string]: number;
+   } & {
+   [key: string]: number;
+  };
+  modelKey: string;
+  name?: string;
+  network: string;
+  ports: {
+     aiFeatureConsole: number;
+     cameraEvents: number;
+     cameraHttps: number;
+     cameraTcp: number;
+     devicesWss: number;
+     discoveryClient: number;
+     emsCLI: number;
+     emsJsonCLI: number;
+     emsLiveFLV: number;
+     http: number;
+     https: number;
+     liveWs: number;
+     liveWss: number;
+     piongw: number;
+     playback: number;
+     rtmp: number;
+     rtsp: number;
+     rtsps: number;
+     stacking: number;
+     tcpBridge: number;
+     tcpStreams: number;
+     ucore: number;
+     ump: number;
+   } & {
+   [key: string]: number;
+  };
+  publicIp: string;
+  recordingRetentionDurationMs: string;
+  releaseChannel: string;
+  skipFirmwareUpdate: boolean;
+  smartDetectAgreement: {
+     lastUpdateAt: Nullable<number>;
+     status: string;
+   } & {
+   [key: string]: string | Nullable<number>;
+  };
+  smartDetection: {
+     enable: boolean;
+     faceRecognition: boolean;
+     licensePlateRecognition: boolean;
+   } & {
+   [key: string]: boolean;
+  };
+  ssoChannel: Nullable<string>;
+  storageStats: {
+     capacity: number;
+     recordingSpace: {
+        available: number;
+        total: number;
+        used: number;
+      } & {
+      [key: string]: number;
+     };
+     remainingCapacity: number;
+     storageDistribution: {
+        recordingTypeDistributions: ...[];
+        resolutionDistributions: ...[];
+      } & {
+      [key: string]: ... | ...;
+     };
+     utilization: number;
+   } & {
+   [key: string]: 
+     | number
+     | {
+     available: ...;
+     total: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+   }
+     | {
+     recordingTypeDistributions: ...;
+     resolutionDistributions: ...;
+   } & {
+   [key: ...]: ...;
+   };
+  };
+  streamSharingAvailable: boolean;
+  systemInfo: {
+     cpu: {
+        averageLoad: number;
+        temperature: number;
+      } & {
+      [key: string]: number;
+     };
+     memory: {
+        available: number;
+        free: number;
+        total: number;
+      } & {
+      [key: string]: number;
+     };
+     storage: {
+        available: number;
+        devices: ...[];
+        isRecycling: boolean;
+        size: number;
+        type: string;
+        used: number;
+      } & {
+      [key: string]: ... | ... | ... | ... | ...;
+     };
+     tmpfs: {
+        available: number;
+        path: string;
+        total: number;
+        used: number;
+      } & {
+      [key: string]: ... | ...;
+     };
+   } & {
+   [key: string]: 
+     | {
+     averageLoad: ...;
+     temperature: ...;
+   } & {
+   [key: ...]: ...;
+   }
+     | {
+     available: ...;
+     free: ...;
+     total: ...;
+   } & {
+   [key: ...]: ...;
+   }
+     | {
+     available: ...;
+     devices: ...;
+     isRecycling: ...;
+     size: ...;
+     type: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+   }
+     | {
+     available: ...;
+     path: ...;
+     total: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+   };
+  };
+  temperatureUnit: string;
+  timeFormat: string;
+  timezone: string;
+  type: string;
+  ucoreVersion: string;
+  uiVersion: string;
+  upSince: number;
+  uptime: number;
+  version: string;
+  wanIp: string;
+  wifiSettings: {
+     password: Nullable<string>;
+     ssid: Nullable<string>;
+     useThirdPartyWifi: boolean;
+   } & {
+   [key: string]: boolean | Nullable<string>;
+  };
+} & {
+[key: string]: 
+  | undefined
+  | null
+  | string
+  | number
+  | boolean
+  | string[]
+  | number[]
+  | {
+[key: string]: number;
+} & {
+[key: string]: number;
+}
+  | {
+  qualities: {
+     count: ...;
+     fraction: ...;
+     type: ...;
+  }[];
+  state: string;
+} & {
+[key: string]: string | ...[];
+}
+  | {
+  configuredBy: string;
+  isAutoUpdateEnabled: boolean;
+  schedule: {
+     hour: ...;
+   } & {
+   [key: ...]: ...;
+  };
+} & {
+[key: string]: string | boolean | ... & ...;
+}
+  | {
+  allMessages: {
+     text: ...;
+     type: ...;
+  }[];
+  customImages: string[];
+  customMessages: string[];
+  defaultMessageResetTimeoutMs: number;
+  defaultMessageText: string;
+} & {
+[key: string]: string | number | ...[] | ...[];
+}
+  | {
+  beta: boolean;
+  detectionLabels: boolean;
+  dev: boolean;
+  hasTwoWayAudioMediaStreams: boolean;
+  homekitPaired: boolean;
+  notificationsV2: boolean;
+  ulpRoleManagement: boolean;
+} & {
+[key: string]: boolean;
+}
+  | {
+  isAway: boolean;
+  isGeofencingEnabled: boolean;
+  latitude: number;
+  longitude: number;
+  radius: number;
+} & {
+[key: string]: number | boolean;
+}
+  | {
+  aiFeatureConsole: number;
+  cameraEvents: number;
+  cameraHttps: number;
+  cameraTcp: number;
+  devicesWss: number;
+  discoveryClient: number;
+  emsCLI: number;
+  emsJsonCLI: number;
+  emsLiveFLV: number;
+  http: number;
+  https: number;
+  liveWs: number;
+  liveWss: number;
+  piongw: number;
+  playback: number;
+  rtmp: number;
+  rtsp: number;
+  rtsps: number;
+  stacking: number;
+  tcpBridge: number;
+  tcpStreams: number;
+  ucore: number;
+  ump: number;
+} & {
+[key: string]: number;
+}
+  | {
+  lastUpdateAt: Nullable<number>;
+  status: string;
+} & {
+[key: string]: string | Nullable<...>;
+}
+  | {
+  enable: boolean;
+  faceRecognition: boolean;
+  licensePlateRecognition: boolean;
+} & {
+[key: string]: boolean;
+}
+  | {
+  capacity: number;
+  recordingSpace: {
+     available: ...;
+     total: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+  };
+  remainingCapacity: number;
+  storageDistribution: {
+     recordingTypeDistributions: ...;
+     resolutionDistributions: ...;
+   } & {
+   [key: ...]: ...;
+  };
+  utilization: number;
+} & {
+[key: string]: number | ... & ... | ... & ...;
+}
+  | {
+  cpu: {
+     averageLoad: ...;
+     temperature: ...;
+   } & {
+   [key: ...]: ...;
+  };
+  memory: {
+     available: ...;
+     free: ...;
+     total: ...;
+   } & {
+   [key: ...]: ...;
+  };
+  storage: {
+     available: ...;
+     devices: ...;
+     isRecycling: ...;
+     size: ...;
+     type: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+  };
+  tmpfs: {
+     available: ...;
+     path: ...;
+     total: ...;
+     used: ...;
+   } & {
+   [key: ...]: ...;
+  };
+} & {
+[key: string]: ... & ... | ... & ... | ... & ... | ... & ...;
+}
+  | {
+  password: Nullable<string>;
+  ssid: Nullable<string>;
+  useThirdPartyWifi: boolean;
+} & {
+[key: string]: boolean | Nullable<...>;
+};
+};
+}>;
 ```
 
 Access the Protect controller bootstrap JSON.
@@ -326,7 +1357,1038 @@ updated when configuration changes occur.
 
 ###### Returns
 
-`Nullable`\<[`ProtectNvrBootstrapInterface`](ProtectTypes.md#protectnvrbootstrapinterface)\>
+`Nullable`\<\{
+  `accessKey`: `string`;
+  `authUserId`: `string`;
+  `bridges`: `unknown`[];
+  `cameras`: [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)[];
+  `chimes`: [`ProtectChimeConfigInterface`](ProtectTypes.md#protectchimeconfiginterface)[];
+  `cloudPortalUrl`: `string`;
+  `groups`: `unknown`[];
+  `lastUpdateId`: `string`;
+  `lights`: [`ProtectLightConfigInterface`](ProtectTypes.md#protectlightconfiginterface)[];
+  `liveviews`: [`ProtectNvrLiveviewConfigInterface`](ProtectTypes.md#protectnvrliveviewconfiginterface)[];
+  `nvr`: \{
+     `analyticsData`: `string`;
+     `anonymouseDeviceId`: `string`;
+     `availableUpdate`: `string`;
+     `avgMotions`: `number`[];
+     `cameraCapacity`: \{
+        `qualities`: \{
+           `count`: `number`;
+           `fraction`: `number`;
+           `type`: `string`;
+        \}[];
+        `state`: `string`;
+      \} & \{
+      \[`key`: `string`\]: 
+        \| `string`
+        \| \{
+        `count`: `number`;
+        `fraction`: `number`;
+        `type`: `string`;
+      \}[];
+     \};
+     `cameraUtilization`: `number`;
+     `canAutoUpdate`: `boolean`;
+     `consoleEnv`: `string`;
+     `corruptionState`: `string`;
+     `countryCode`: `string`;
+     `deviceFirmwareSettings`: \{
+        `configuredBy`: `string`;
+        `isAutoUpdateEnabled`: `boolean`;
+        `schedule`: \{
+           `hour`: `number`;
+         \} & \{
+         \[`key`: `string`\]: `number`;
+        \};
+      \} & \{
+      \[`key`: `string`\]: 
+        \| `string`
+        \| `boolean`
+        \| \{
+        `hour`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+      \};
+     \};
+     `disableAudio`: `boolean`;
+     `disableAutoLink`: `boolean`;
+     `doorbellSettings?`: \{
+        `allMessages`: \{
+           `text`: `string`;
+           `type`: `string`;
+        \}[];
+        `customImages`: `string`[];
+        `customMessages`: `string`[];
+        `defaultMessageResetTimeoutMs`: `number`;
+        `defaultMessageText`: `string`;
+      \} & \{
+      \[`key`: `string`\]: 
+        \| `string`
+        \| `number`
+        \| `string`[]
+        \| \{
+        `text`: ...;
+        `type`: ...;
+      \}[];
+     \};
+     `enableAutomaticBackups`: `boolean`;
+     `enableBridgeAutoAdoption`: `boolean`;
+     `enableCrashReporting`: `boolean`;
+     `enableStatsReporting`: `boolean`;
+     `errorCode`: `Nullable`\<`string`\>;
+     `featureFlags`: \{
+        `beta`: `boolean`;
+        `detectionLabels`: `boolean`;
+        `dev`: `boolean`;
+        `hasTwoWayAudioMediaStreams`: `boolean`;
+        `homekitPaired`: `boolean`;
+        `notificationsV2`: `boolean`;
+        `ulpRoleManagement`: `boolean`;
+      \} & \{
+      \[`key`: `string`\]: `boolean`;
+     \};
+     `firmwareVersion`: `string`;
+     `hardwareId`: `string`;
+     `hardwarePlatform`: `string`;
+     `hardwareRevision`: `string`;
+     `hasGateway`: `boolean`;
+     `host`: `string`;
+     `hosts`: `string`[];
+     `hostShortname`: `string`;
+     `hostType`: `string`;
+     `id`: `string`;
+     `isAccessInstalled`: `boolean`;
+     `isAiReportingEnabled`: `boolean`;
+     `isAway`: `boolean`;
+     `isHardware`: `boolean`;
+     `isInsightsEnabled`: `boolean`;
+     `isNetworkInstalled`: `boolean`;
+     `isPrimary`: `boolean`;
+     `isProtectUpdatable`: `boolean`;
+     `isRecordingDisabled`: `boolean`;
+     `isRecordingMotionOnly`: `boolean`;
+     `isRecycling`: `boolean`;
+     `isRemoteAccessEnabled`: `boolean`;
+     `isSetup`: `boolean`;
+     `isSshEnabled`: `boolean`;
+     `isStacked`: `boolean`;
+     `isStation`: `boolean`;
+     `isStatsGatheringEnabled`: `boolean`;
+     `isUCoreSetup`: `boolean`;
+     `isUCoreStacked`: `boolean`;
+     `isUcoreUpdatable`: `boolean`;
+     `isUpdating`: `boolean`;
+     `isWirelessUplinkEnabled`: `boolean`;
+     `lastSeen`: `number`;
+     `lastUpdateAt`: `Nullable`\<`number`\>;
+     `locationSettings`: \{
+        `isAway`: `boolean`;
+        `isGeofencingEnabled`: `boolean`;
+        `latitude`: `number`;
+        `longitude`: `number`;
+        `radius`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number` \| `boolean`;
+     \};
+     `mac`: `string`;
+     `marketName`: `string`;
+     `maxCameraCapacity`: \{
+      \[`key`: `string`\]: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+     `modelKey`: `string`;
+     `name?`: `string`;
+     `network`: `string`;
+     `ports`: \{
+        `aiFeatureConsole`: `number`;
+        `cameraEvents`: `number`;
+        `cameraHttps`: `number`;
+        `cameraTcp`: `number`;
+        `devicesWss`: `number`;
+        `discoveryClient`: `number`;
+        `emsCLI`: `number`;
+        `emsJsonCLI`: `number`;
+        `emsLiveFLV`: `number`;
+        `http`: `number`;
+        `https`: `number`;
+        `liveWs`: `number`;
+        `liveWss`: `number`;
+        `piongw`: `number`;
+        `playback`: `number`;
+        `rtmp`: `number`;
+        `rtsp`: `number`;
+        `rtsps`: `number`;
+        `stacking`: `number`;
+        `tcpBridge`: `number`;
+        `tcpStreams`: `number`;
+        `ucore`: `number`;
+        `ump`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+     `publicIp`: `string`;
+     `recordingRetentionDurationMs`: `string`;
+     `releaseChannel`: `string`;
+     `skipFirmwareUpdate`: `boolean`;
+     `smartDetectAgreement`: \{
+        `lastUpdateAt`: `Nullable`\<`number`\>;
+        `status`: `string`;
+      \} & \{
+      \[`key`: `string`\]: `string` \| `Nullable`\<`number`\>;
+     \};
+     `smartDetection`: \{
+        `enable`: `boolean`;
+        `faceRecognition`: `boolean`;
+        `licensePlateRecognition`: `boolean`;
+      \} & \{
+      \[`key`: `string`\]: `boolean`;
+     \};
+     `ssoChannel`: `Nullable`\<`string`\>;
+     `storageStats`: \{
+        `capacity`: `number`;
+        `recordingSpace`: \{
+           `available`: `number`;
+           `total`: `number`;
+           `used`: `number`;
+         \} & \{
+         \[`key`: `string`\]: `number`;
+        \};
+        `remainingCapacity`: `number`;
+        `storageDistribution`: \{
+           `recordingTypeDistributions`: \{
+              `percentage`: ...;
+              `recordingType`: ...;
+              `size`: ...;
+           \}[];
+           `resolutionDistributions`: \{
+              `percentage`: ...;
+              `recordingType`: ...;
+              `size`: ...;
+           \}[];
+         \} & \{
+         \[`key`: `string`\]: ...[] \| ...[];
+        \};
+        `utilization`: `number`;
+      \} & \{
+      \[`key`: `string`\]: 
+        \| `number`
+        \| \{
+        `available`: `number`;
+        `total`: `number`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+      \}
+        \| \{
+        `recordingTypeDistributions`: ...[];
+        `resolutionDistributions`: ...[];
+      \} & \{
+      \[`key`: `string`\]: ... \| ...;
+      \};
+     \};
+     `streamSharingAvailable`: `boolean`;
+     `systemInfo`: \{
+        `cpu`: \{
+           `averageLoad`: `number`;
+           `temperature`: `number`;
+         \} & \{
+         \[`key`: `string`\]: `number`;
+        \};
+        `memory`: \{
+           `available`: `number`;
+           `free`: `number`;
+           `total`: `number`;
+         \} & \{
+         \[`key`: `string`\]: `number`;
+        \};
+        `storage`: \{
+           `available`: `number`;
+           `devices`: \{
+              `healthy`: ...;
+              `model`: ...;
+              `size`: ...;
+           \}[];
+           `isRecycling`: `boolean`;
+           `size`: `number`;
+           `type`: `string`;
+           `used`: `number`;
+         \} & \{
+         \[`key`: `string`\]: `string` \| `number` \| `boolean` \| ...[];
+        \};
+        `tmpfs`: \{
+           `available`: `number`;
+           `path`: `string`;
+           `total`: `number`;
+           `used`: `number`;
+         \} & \{
+         \[`key`: `string`\]: `string` \| `number`;
+        \};
+      \} & \{
+      \[`key`: `string`\]: 
+        \| \{
+        `averageLoad`: `number`;
+        `temperature`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+      \}
+        \| \{
+        `available`: `number`;
+        `free`: `number`;
+        `total`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+      \}
+        \| \{
+        `available`: `number`;
+        `devices`: ...[];
+        `isRecycling`: `boolean`;
+        `size`: `number`;
+        `type`: `string`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: ... \| ... \| ... \| ... \| ...;
+      \}
+        \| \{
+        `available`: `number`;
+        `path`: `string`;
+        `total`: `number`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: ... \| ...;
+      \};
+     \};
+     `temperatureUnit`: `string`;
+     `timeFormat`: `string`;
+     `timezone`: `string`;
+     `type`: `string`;
+     `ucoreVersion`: `string`;
+     `uiVersion`: `string`;
+     `upSince`: `number`;
+     `uptime`: `number`;
+     `version`: `string`;
+     `wanIp`: `string`;
+     `wifiSettings`: \{
+        `password`: `Nullable`\<`string`\>;
+        `ssid`: `Nullable`\<`string`\>;
+        `useThirdPartyWifi`: `boolean`;
+      \} & \{
+      \[`key`: `string`\]: `boolean` \| `Nullable`\<`string`\>;
+     \};
+   \} & \{
+   \[`key`: `string`\]: 
+     \| `undefined`
+     \| `null`
+     \| `string`
+     \| `number`
+     \| `boolean`
+     \| `string`[]
+     \| `number`[]
+     \| \{
+   \[`key`: `string`\]: `number`;
+   \} & \{
+   \[`key`: `string`\]: `number`;
+   \}
+     \| \{
+     `qualities`: \{
+        `count`: `number`;
+        `fraction`: `number`;
+        `type`: `string`;
+     \}[];
+     `state`: `string`;
+   \} & \{
+   \[`key`: `string`\]: 
+     \| `string`
+     \| \{
+     `count`: ...;
+     `fraction`: ...;
+     `type`: ...;
+   \}[];
+   \}
+     \| \{
+     `configuredBy`: `string`;
+     `isAutoUpdateEnabled`: `boolean`;
+     `schedule`: \{
+        `hour`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+   \} & \{
+   \[`key`: `string`\]: 
+     \| `string`
+     \| `boolean`
+     \| \{
+     `hour`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \};
+   \}
+     \| \{
+     `allMessages`: \{
+        `text`: `string`;
+        `type`: `string`;
+     \}[];
+     `customImages`: `string`[];
+     `customMessages`: `string`[];
+     `defaultMessageResetTimeoutMs`: `number`;
+     `defaultMessageText`: `string`;
+   \} & \{
+   \[`key`: `string`\]: 
+     \| `string`
+     \| `number`
+     \| `string`[]
+     \| \{
+     `text`: ...;
+     `type`: ...;
+   \}[];
+   \}
+     \| \{
+     `beta`: `boolean`;
+     `detectionLabels`: `boolean`;
+     `dev`: `boolean`;
+     `hasTwoWayAudioMediaStreams`: `boolean`;
+     `homekitPaired`: `boolean`;
+     `notificationsV2`: `boolean`;
+     `ulpRoleManagement`: `boolean`;
+   \} & \{
+   \[`key`: `string`\]: `boolean`;
+   \}
+     \| \{
+     `isAway`: `boolean`;
+     `isGeofencingEnabled`: `boolean`;
+     `latitude`: `number`;
+     `longitude`: `number`;
+     `radius`: `number`;
+   \} & \{
+   \[`key`: `string`\]: `number` \| `boolean`;
+   \}
+     \| \{
+     `aiFeatureConsole`: `number`;
+     `cameraEvents`: `number`;
+     `cameraHttps`: `number`;
+     `cameraTcp`: `number`;
+     `devicesWss`: `number`;
+     `discoveryClient`: `number`;
+     `emsCLI`: `number`;
+     `emsJsonCLI`: `number`;
+     `emsLiveFLV`: `number`;
+     `http`: `number`;
+     `https`: `number`;
+     `liveWs`: `number`;
+     `liveWss`: `number`;
+     `piongw`: `number`;
+     `playback`: `number`;
+     `rtmp`: `number`;
+     `rtsp`: `number`;
+     `rtsps`: `number`;
+     `stacking`: `number`;
+     `tcpBridge`: `number`;
+     `tcpStreams`: `number`;
+     `ucore`: `number`;
+     `ump`: `number`;
+   \} & \{
+   \[`key`: `string`\]: `number`;
+   \}
+     \| \{
+     `lastUpdateAt`: `Nullable`\<`number`\>;
+     `status`: `string`;
+   \} & \{
+   \[`key`: `string`\]: `string` \| `Nullable`\<`number`\>;
+   \}
+     \| \{
+     `enable`: `boolean`;
+     `faceRecognition`: `boolean`;
+     `licensePlateRecognition`: `boolean`;
+   \} & \{
+   \[`key`: `string`\]: `boolean`;
+   \}
+     \| \{
+     `capacity`: `number`;
+     `recordingSpace`: \{
+        `available`: `number`;
+        `total`: `number`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+     `remainingCapacity`: `number`;
+     `storageDistribution`: \{
+        `recordingTypeDistributions`: ...[];
+        `resolutionDistributions`: ...[];
+      \} & \{
+      \[`key`: `string`\]: ... \| ...;
+     \};
+     `utilization`: `number`;
+   \} & \{
+   \[`key`: `string`\]: 
+     \| `number`
+     \| \{
+     `available`: ...;
+     `total`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \}
+     \| \{
+     `recordingTypeDistributions`: ...;
+     `resolutionDistributions`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \};
+   \}
+     \| \{
+     `cpu`: \{
+        `averageLoad`: `number`;
+        `temperature`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+     `memory`: \{
+        `available`: `number`;
+        `free`: `number`;
+        `total`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+     `storage`: \{
+        `available`: `number`;
+        `devices`: ...[];
+        `isRecycling`: `boolean`;
+        `size`: `number`;
+        `type`: `string`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: ... \| ... \| ... \| ... \| ...;
+     \};
+     `tmpfs`: \{
+        `available`: `number`;
+        `path`: `string`;
+        `total`: `number`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: ... \| ...;
+     \};
+   \} & \{
+   \[`key`: `string`\]: 
+     \| \{
+     `averageLoad`: ...;
+     `temperature`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \}
+     \| \{
+     `available`: ...;
+     `free`: ...;
+     `total`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \}
+     \| \{
+     `available`: ...;
+     `devices`: ...;
+     `isRecycling`: ...;
+     `size`: ...;
+     `type`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \}
+     \| \{
+     `available`: ...;
+     `path`: ...;
+     `total`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \};
+   \}
+     \| \{
+     `password`: `Nullable`\<`string`\>;
+     `ssid`: `Nullable`\<`string`\>;
+     `useThirdPartyWifi`: `boolean`;
+   \} & \{
+   \[`key`: `string`\]: `boolean` \| `Nullable`\<`string`\>;
+   \};
+  \};
+  `ringtones`: [`ProtectRingtoneConfigInterface`](ProtectTypes.md#protectringtoneconfiginterface)[];
+  `sensors`: [`ProtectSensorConfigInterface`](ProtectTypes.md#protectsensorconfiginterface)[];
+  `users`: [`ProtectNvrUserConfigInterface`](ProtectTypes.md#protectnvruserconfiginterface)[];
+  `viewers`: [`ProtectViewerConfigInterface`](ProtectTypes.md#protectviewerconfiginterface)[];
+\} & \{
+\[`key`: `string`\]: 
+  \| `string`
+  \| `unknown`[]
+  \| [`ProtectCameraConfigInterface`](ProtectTypes.md#protectcameraconfiginterface)[]
+  \| [`ProtectChimeConfigInterface`](ProtectTypes.md#protectchimeconfiginterface)[]
+  \| [`ProtectLightConfigInterface`](ProtectTypes.md#protectlightconfiginterface)[]
+  \| [`ProtectNvrLiveviewConfigInterface`](ProtectTypes.md#protectnvrliveviewconfiginterface)[]
+  \| [`ProtectRingtoneConfigInterface`](ProtectTypes.md#protectringtoneconfiginterface)[]
+  \| [`ProtectSensorConfigInterface`](ProtectTypes.md#protectsensorconfiginterface)[]
+  \| [`ProtectNvrUserConfigInterface`](ProtectTypes.md#protectnvruserconfiginterface)[]
+  \| [`ProtectViewerConfigInterface`](ProtectTypes.md#protectviewerconfiginterface)[]
+  \| \{
+  `analyticsData`: `string`;
+  `anonymouseDeviceId`: `string`;
+  `availableUpdate`: `string`;
+  `avgMotions`: `number`[];
+  `cameraCapacity`: \{
+     `qualities`: \{
+        `count`: `number`;
+        `fraction`: `number`;
+        `type`: `string`;
+     \}[];
+     `state`: `string`;
+   \} & \{
+   \[`key`: `string`\]: 
+     \| `string`
+     \| \{
+     `count`: ...;
+     `fraction`: ...;
+     `type`: ...;
+   \}[];
+  \};
+  `cameraUtilization`: `number`;
+  `canAutoUpdate`: `boolean`;
+  `consoleEnv`: `string`;
+  `corruptionState`: `string`;
+  `countryCode`: `string`;
+  `deviceFirmwareSettings`: \{
+     `configuredBy`: `string`;
+     `isAutoUpdateEnabled`: `boolean`;
+     `schedule`: \{
+        `hour`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+   \} & \{
+   \[`key`: `string`\]: 
+     \| `string`
+     \| `boolean`
+     \| \{
+     `hour`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \};
+  \};
+  `disableAudio`: `boolean`;
+  `disableAutoLink`: `boolean`;
+  `doorbellSettings?`: \{
+     `allMessages`: \{
+        `text`: ...;
+        `type`: ...;
+     \}[];
+     `customImages`: `string`[];
+     `customMessages`: `string`[];
+     `defaultMessageResetTimeoutMs`: `number`;
+     `defaultMessageText`: `string`;
+   \} & \{
+   \[`key`: `string`\]: `string` \| `number` \| ...[] \| ...[];
+  \};
+  `enableAutomaticBackups`: `boolean`;
+  `enableBridgeAutoAdoption`: `boolean`;
+  `enableCrashReporting`: `boolean`;
+  `enableStatsReporting`: `boolean`;
+  `errorCode`: `Nullable`\<`string`\>;
+  `featureFlags`: \{
+     `beta`: `boolean`;
+     `detectionLabels`: `boolean`;
+     `dev`: `boolean`;
+     `hasTwoWayAudioMediaStreams`: `boolean`;
+     `homekitPaired`: `boolean`;
+     `notificationsV2`: `boolean`;
+     `ulpRoleManagement`: `boolean`;
+   \} & \{
+   \[`key`: `string`\]: `boolean`;
+  \};
+  `firmwareVersion`: `string`;
+  `hardwareId`: `string`;
+  `hardwarePlatform`: `string`;
+  `hardwareRevision`: `string`;
+  `hasGateway`: `boolean`;
+  `host`: `string`;
+  `hosts`: `string`[];
+  `hostShortname`: `string`;
+  `hostType`: `string`;
+  `id`: `string`;
+  `isAccessInstalled`: `boolean`;
+  `isAiReportingEnabled`: `boolean`;
+  `isAway`: `boolean`;
+  `isHardware`: `boolean`;
+  `isInsightsEnabled`: `boolean`;
+  `isNetworkInstalled`: `boolean`;
+  `isPrimary`: `boolean`;
+  `isProtectUpdatable`: `boolean`;
+  `isRecordingDisabled`: `boolean`;
+  `isRecordingMotionOnly`: `boolean`;
+  `isRecycling`: `boolean`;
+  `isRemoteAccessEnabled`: `boolean`;
+  `isSetup`: `boolean`;
+  `isSshEnabled`: `boolean`;
+  `isStacked`: `boolean`;
+  `isStation`: `boolean`;
+  `isStatsGatheringEnabled`: `boolean`;
+  `isUCoreSetup`: `boolean`;
+  `isUCoreStacked`: `boolean`;
+  `isUcoreUpdatable`: `boolean`;
+  `isUpdating`: `boolean`;
+  `isWirelessUplinkEnabled`: `boolean`;
+  `lastSeen`: `number`;
+  `lastUpdateAt`: `Nullable`\<`number`\>;
+  `locationSettings`: \{
+     `isAway`: `boolean`;
+     `isGeofencingEnabled`: `boolean`;
+     `latitude`: `number`;
+     `longitude`: `number`;
+     `radius`: `number`;
+   \} & \{
+   \[`key`: `string`\]: `number` \| `boolean`;
+  \};
+  `mac`: `string`;
+  `marketName`: `string`;
+  `maxCameraCapacity`: \{
+   \[`key`: `string`\]: `number`;
+   \} & \{
+   \[`key`: `string`\]: `number`;
+  \};
+  `modelKey`: `string`;
+  `name?`: `string`;
+  `network`: `string`;
+  `ports`: \{
+     `aiFeatureConsole`: `number`;
+     `cameraEvents`: `number`;
+     `cameraHttps`: `number`;
+     `cameraTcp`: `number`;
+     `devicesWss`: `number`;
+     `discoveryClient`: `number`;
+     `emsCLI`: `number`;
+     `emsJsonCLI`: `number`;
+     `emsLiveFLV`: `number`;
+     `http`: `number`;
+     `https`: `number`;
+     `liveWs`: `number`;
+     `liveWss`: `number`;
+     `piongw`: `number`;
+     `playback`: `number`;
+     `rtmp`: `number`;
+     `rtsp`: `number`;
+     `rtsps`: `number`;
+     `stacking`: `number`;
+     `tcpBridge`: `number`;
+     `tcpStreams`: `number`;
+     `ucore`: `number`;
+     `ump`: `number`;
+   \} & \{
+   \[`key`: `string`\]: `number`;
+  \};
+  `publicIp`: `string`;
+  `recordingRetentionDurationMs`: `string`;
+  `releaseChannel`: `string`;
+  `skipFirmwareUpdate`: `boolean`;
+  `smartDetectAgreement`: \{
+     `lastUpdateAt`: `Nullable`\<`number`\>;
+     `status`: `string`;
+   \} & \{
+   \[`key`: `string`\]: `string` \| `Nullable`\<`number`\>;
+  \};
+  `smartDetection`: \{
+     `enable`: `boolean`;
+     `faceRecognition`: `boolean`;
+     `licensePlateRecognition`: `boolean`;
+   \} & \{
+   \[`key`: `string`\]: `boolean`;
+  \};
+  `ssoChannel`: `Nullable`\<`string`\>;
+  `storageStats`: \{
+     `capacity`: `number`;
+     `recordingSpace`: \{
+        `available`: `number`;
+        `total`: `number`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+     `remainingCapacity`: `number`;
+     `storageDistribution`: \{
+        `recordingTypeDistributions`: ...[];
+        `resolutionDistributions`: ...[];
+      \} & \{
+      \[`key`: `string`\]: ... \| ...;
+     \};
+     `utilization`: `number`;
+   \} & \{
+   \[`key`: `string`\]: 
+     \| `number`
+     \| \{
+     `available`: ...;
+     `total`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \}
+     \| \{
+     `recordingTypeDistributions`: ...;
+     `resolutionDistributions`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \};
+  \};
+  `streamSharingAvailable`: `boolean`;
+  `systemInfo`: \{
+     `cpu`: \{
+        `averageLoad`: `number`;
+        `temperature`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+     `memory`: \{
+        `available`: `number`;
+        `free`: `number`;
+        `total`: `number`;
+      \} & \{
+      \[`key`: `string`\]: `number`;
+     \};
+     `storage`: \{
+        `available`: `number`;
+        `devices`: ...[];
+        `isRecycling`: `boolean`;
+        `size`: `number`;
+        `type`: `string`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: ... \| ... \| ... \| ... \| ...;
+     \};
+     `tmpfs`: \{
+        `available`: `number`;
+        `path`: `string`;
+        `total`: `number`;
+        `used`: `number`;
+      \} & \{
+      \[`key`: `string`\]: ... \| ...;
+     \};
+   \} & \{
+   \[`key`: `string`\]: 
+     \| \{
+     `averageLoad`: ...;
+     `temperature`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \}
+     \| \{
+     `available`: ...;
+     `free`: ...;
+     `total`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \}
+     \| \{
+     `available`: ...;
+     `devices`: ...;
+     `isRecycling`: ...;
+     `size`: ...;
+     `type`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \}
+     \| \{
+     `available`: ...;
+     `path`: ...;
+     `total`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+   \};
+  \};
+  `temperatureUnit`: `string`;
+  `timeFormat`: `string`;
+  `timezone`: `string`;
+  `type`: `string`;
+  `ucoreVersion`: `string`;
+  `uiVersion`: `string`;
+  `upSince`: `number`;
+  `uptime`: `number`;
+  `version`: `string`;
+  `wanIp`: `string`;
+  `wifiSettings`: \{
+     `password`: `Nullable`\<`string`\>;
+     `ssid`: `Nullable`\<`string`\>;
+     `useThirdPartyWifi`: `boolean`;
+   \} & \{
+   \[`key`: `string`\]: `boolean` \| `Nullable`\<`string`\>;
+  \};
+\} & \{
+\[`key`: `string`\]: 
+  \| `undefined`
+  \| `null`
+  \| `string`
+  \| `number`
+  \| `boolean`
+  \| `string`[]
+  \| `number`[]
+  \| \{
+\[`key`: `string`\]: `number`;
+\} & \{
+\[`key`: `string`\]: `number`;
+\}
+  \| \{
+  `qualities`: \{
+     `count`: ...;
+     `fraction`: ...;
+     `type`: ...;
+  \}[];
+  `state`: `string`;
+\} & \{
+\[`key`: `string`\]: `string` \| ...[];
+\}
+  \| \{
+  `configuredBy`: `string`;
+  `isAutoUpdateEnabled`: `boolean`;
+  `schedule`: \{
+     `hour`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+  \};
+\} & \{
+\[`key`: `string`\]: `string` \| `boolean` \| ... & ...;
+\}
+  \| \{
+  `allMessages`: \{
+     `text`: ...;
+     `type`: ...;
+  \}[];
+  `customImages`: `string`[];
+  `customMessages`: `string`[];
+  `defaultMessageResetTimeoutMs`: `number`;
+  `defaultMessageText`: `string`;
+\} & \{
+\[`key`: `string`\]: `string` \| `number` \| ...[] \| ...[];
+\}
+  \| \{
+  `beta`: `boolean`;
+  `detectionLabels`: `boolean`;
+  `dev`: `boolean`;
+  `hasTwoWayAudioMediaStreams`: `boolean`;
+  `homekitPaired`: `boolean`;
+  `notificationsV2`: `boolean`;
+  `ulpRoleManagement`: `boolean`;
+\} & \{
+\[`key`: `string`\]: `boolean`;
+\}
+  \| \{
+  `isAway`: `boolean`;
+  `isGeofencingEnabled`: `boolean`;
+  `latitude`: `number`;
+  `longitude`: `number`;
+  `radius`: `number`;
+\} & \{
+\[`key`: `string`\]: `number` \| `boolean`;
+\}
+  \| \{
+  `aiFeatureConsole`: `number`;
+  `cameraEvents`: `number`;
+  `cameraHttps`: `number`;
+  `cameraTcp`: `number`;
+  `devicesWss`: `number`;
+  `discoveryClient`: `number`;
+  `emsCLI`: `number`;
+  `emsJsonCLI`: `number`;
+  `emsLiveFLV`: `number`;
+  `http`: `number`;
+  `https`: `number`;
+  `liveWs`: `number`;
+  `liveWss`: `number`;
+  `piongw`: `number`;
+  `playback`: `number`;
+  `rtmp`: `number`;
+  `rtsp`: `number`;
+  `rtsps`: `number`;
+  `stacking`: `number`;
+  `tcpBridge`: `number`;
+  `tcpStreams`: `number`;
+  `ucore`: `number`;
+  `ump`: `number`;
+\} & \{
+\[`key`: `string`\]: `number`;
+\}
+  \| \{
+  `lastUpdateAt`: `Nullable`\<`number`\>;
+  `status`: `string`;
+\} & \{
+\[`key`: `string`\]: `string` \| `Nullable`\<...\>;
+\}
+  \| \{
+  `enable`: `boolean`;
+  `faceRecognition`: `boolean`;
+  `licensePlateRecognition`: `boolean`;
+\} & \{
+\[`key`: `string`\]: `boolean`;
+\}
+  \| \{
+  `capacity`: `number`;
+  `recordingSpace`: \{
+     `available`: ...;
+     `total`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+  \};
+  `remainingCapacity`: `number`;
+  `storageDistribution`: \{
+     `recordingTypeDistributions`: ...;
+     `resolutionDistributions`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+  \};
+  `utilization`: `number`;
+\} & \{
+\[`key`: `string`\]: `number` \| ... & ... \| ... & ...;
+\}
+  \| \{
+  `cpu`: \{
+     `averageLoad`: ...;
+     `temperature`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+  \};
+  `memory`: \{
+     `available`: ...;
+     `free`: ...;
+     `total`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+  \};
+  `storage`: \{
+     `available`: ...;
+     `devices`: ...;
+     `isRecycling`: ...;
+     `size`: ...;
+     `type`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+  \};
+  `tmpfs`: \{
+     `available`: ...;
+     `path`: ...;
+     `total`: ...;
+     `used`: ...;
+   \} & \{
+   \[`key`: ...\]: ...;
+  \};
+\} & \{
+\[`key`: `string`\]: ... & ... \| ... & ... \| ... & ... \| ... & ...;
+\}
+  \| \{
+  `password`: `Nullable`\<`string`\>;
+  `ssid`: `Nullable`\<`string`\>;
+  `useThirdPartyWifi`: `boolean`;
+\} & \{
+\[`key`: `string`\]: `boolean` \| `Nullable`\<...\>;
+\};
+\};
+\}\>
 
 Bootstrap configuration if available, `null` otherwise.
 
