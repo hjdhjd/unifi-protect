@@ -59,9 +59,9 @@
  * @module ProtectApi
  */
 import { Agent, type Dispatcher, type ErrorEvent, type MessageEvent, Pool, WebSocket, errors, interceptors, request } from "undici";
-import type { Nullable, ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectCameraConfigPayload, ProtectChimeConfig,
-  ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload, ProtectNvrUserConfig,
-  ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
+import type { DeepIndexable, Nullable, ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectCameraConfigPayload,
+  ProtectChimeConfig, ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload,
+  ProtectNvrUserConfig, ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "./settings.js";
 import { EventEmitter } from "node:events";
 import { ProtectApiEvents } from "./protect-api-events.js";
@@ -2086,9 +2086,9 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  public get bootstrap(): Nullable<ProtectNvrBootstrap> {
+  public get bootstrap(): Nullable<DeepIndexable<ProtectNvrBootstrap>> {
 
-    return this._bootstrap;
+    return this._bootstrap as Nullable<DeepIndexable<ProtectNvrBootstrap>>;
   }
 
   /**

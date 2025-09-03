@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.27.1 (2025-09-04)
+  * Improvement: additional typing refinements.
+  * Improvement: support for SuperLink sensors.
+  * Housekeeping.
+
 ## 4.27.0 (2025-09-01)
   * Improvement: the livestream API semantics have been expanded to provide additional options that can be tailored.
   * Housekeeping.

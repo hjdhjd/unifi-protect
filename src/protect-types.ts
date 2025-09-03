@@ -26,6 +26,21 @@ export type DeepPartial<T> = {
 /** @ignore */
 export type Nullable<T> = T | null;
 
+// We want to make interfces indexable without losing type safety. To do that, we create a type template that makes every object indexable, recursively. We exclude
+// arrays and functions to maintain their existing natural behavior.
+/** @ignore */
+export type DeepIndexable<T> = T extends object ?
+  T extends readonly unknown[] ? T :
+    T extends (...args: never[]) => unknown ? T : {
+
+      // Recurse to all properties.
+      [K in keyof T]: DeepIndexable<T[K]>;
+    } & {
+
+      // Add the index signature using a union of all known property types.
+      [key: string]: DeepIndexable<T[keyof T]>;
+    } : T;
+
 /**
  * An semi-complete description of the UniFi Protect NVR bootstrap JSON.
  *
@@ -47,8 +62,6 @@ export interface ProtectNvrBootstrapInterface {
   sensors: ProtectSensorConfig[];
   users: ProtectNvrUserConfig[];
   viewers: ProtectViewerConfig[];
-  [key: string]: ProtectCameraConfig[] | ProtectChimeConfig[] | ProtectLightConfig[] | ProtectNvrConfig | ProtectNvrLiveviewConfig[] | ProtectNvrUserConfig[] |
-    ProtectSensorConfig[] | ProtectViewerConfig[] | string | unknown[];
 }
 
 /**
@@ -1074,7 +1087,7 @@ export interface ProtectSensorConfigInterface {
   batteryStatus: {
 
     isLow: boolean;
-    percentage: number;
+    percentage: Nullable<number>;
   };
   bluetoothConnectionState: {
 
@@ -1118,6 +1131,11 @@ export interface ProtectSensorConfigInterface {
   lastSeen: number;
   latestFirmwareVersion: string;
   leakDetectedAt: Nullable<number>;
+  leakSettings: {
+
+    isExternalEnabled: boolean;
+    isInternalEnabled: boolean;
+  };
   ledSettings: {
 
     isEnabled: boolean;
