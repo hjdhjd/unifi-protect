@@ -82,7 +82,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="channels"></a> `channels` | [`ProtectCameraChannelConfigInterface`](#protectcamerachannelconfiginterface)[] |
 | <a id="chimeduration"></a> `chimeDuration` | `number` |
 | <a id="connectedsince"></a> `connectedSince` | `number` |
-| <a id="connectionhost"></a> `connectionHost` | `string` |
+| <a id="connectionhost"></a> `connectionHost` | `Nullable`\<`string`\> |
 | <a id="currentresolution"></a> `currentResolution` | `string` |
 | <a id="displayname"></a> `displayName` | `string` |
 | <a id="elementinfo"></a> `elementInfo` | `null` |

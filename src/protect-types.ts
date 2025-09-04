@@ -355,7 +355,7 @@ export interface ProtectCameraConfigInterface {
   channels: ProtectCameraChannelConfigInterface[];
   chimeDuration: number;
   connectedSince: number;
-  connectionHost: string;
+  connectionHost: Nullable<string>;
   currentResolution: string;
   displayName: string;
   elementInfo: null;
