@@ -87,7 +87,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="displayname"></a> `displayName` | `string` |
 | <a id="elementinfo"></a> `elementInfo` | `null` |
 | <a id="enablenfc"></a> `enableNfc` | `boolean` |
-| <a id="featureflags"></a> `featureFlags` | \{ `audio`: `string`[]; `audioCodecs`: `string`[]; `audioStyle`: `string`[]; `canAdjustIrLedLevel`: `boolean`; `canMagicZoom`: `boolean`; `canOpticalZoom`: `boolean`; `canTouchFocus`: `boolean`; `hasAccelerometer`: `boolean`; `hasAec`: `boolean`; `hasAutoICROnly`: `boolean`; `hasBattery`: `boolean`; `hasBluetooth`: `boolean`; `hasChime`: `boolean`; `hasColorLcdScreen`: `boolean`; `hasExternalIr`: `boolean`; `hasFingerprintSensor`: `boolean`; `hasFlash`: `boolean`; `hasHdr`: `boolean`; `hasIcrSensitivity`: `boolean`; `hasInfrared`: `boolean`; `hasLcdScreen`: `boolean`; `hasLdc`: `boolean`; `hasLedIr`: `boolean`; `hasLedStatus`: `boolean`; `hasLineCrossing`: `boolean`; `hasLineCrossingCounting`: `boolean`; `hasLineIn`: `boolean`; `hasLiveviewTracking`: `boolean`; `hasLuxCheck`: `boolean`; `hasMic`: `boolean`; `hasMotionZones`: `boolean`; `hasNewMotionAlgorithm`: `boolean`; `hasPackageCamera`: `boolean`; `hasPrivacyMask`: `boolean`; `hasRtc`: `boolean`; `hasSdCard`: `boolean`; `hasSmartDetect`: `boolean`; `hasSpeaker`: `boolean`; `hasSquareEventThumbnail`: `boolean`; `hasVerticalFlip`: `boolean`; `hasWifi`: `boolean`; `isDoorbell`: `boolean`; `isPtz`: `boolean`; `maxScaleDownLevel`: `number`; `motionAlgorithms`: `string`[]; `privacyMaskCapability`: \{ `maxMasks`: `number`; `rectangleOnly`: `boolean`; \}; `smartDetectAudioTypes`: `string`[]; `smartDetectTypes`: `string`[]; `supportDoorAccessConfig`: `boolean`; `supportLpDetectionWithoutVehicle`: `boolean`; `supportNfc`: `boolean`; `videoCodecs`: `string`[]; `videoModeMaxFps`: `number`[]; `videoModes`: `string`[]; \} |
+| <a id="featureflags"></a> `featureFlags` | \{ `audio`: `string`[]; `audioCodecs`: `string`[]; `audioStyle`: `string`[]; `canAdjustIrLedLevel`: `boolean`; `canMagicZoom`: `boolean`; `canOpticalZoom`: `boolean`; `canTouchFocus`: `boolean`; `hasAccelerometer`: `boolean`; `hasAec`: `boolean`; `hasAutoICROnly`: `boolean`; `hasBattery`: `boolean`; `hasBluetooth`: `boolean`; `hasChime`: `boolean`; `hasColorLcdScreen`: `boolean`; `hasEdgeRecording`: `boolean`; `hasExternalIr`: `boolean`; `hasFingerprintSensor`: `boolean`; `hasFisheye`: `boolean`; `hasFlash`: `boolean`; `hasHallwayMode`: `boolean`; `hasHallwayModeHdrOnRequired`: `boolean`; `hasHdr`: `boolean`; `hasIcrSensitivity`: `boolean`; `hasInfrared`: `boolean`; `hasLcdScreen`: `boolean`; `hasLdc`: `boolean`; `hasLedIr`: `boolean`; `hasLedStatus`: `boolean`; `hasLineCrossing`: `boolean`; `hasLineCrossingCounting`: `boolean`; `hasLineIn`: `boolean`; `hasLiveviewTracking`: `boolean`; `hasLuxCheck`: `boolean`; `hasManualPersonOfInterest`: `boolean`; `hasMic`: `boolean`; `hasMotionZones`: `boolean`; `hasNewMotionAlgorithm`: `boolean`; `hasOptimizeIr`: `boolean`; `hasPackageCamera`: `boolean`; `hasPackageZoneSupportForPrimaryLens`: `boolean`; `hasPackageZoneSupportForSecondaryLens`: `boolean`; `hasPrivacyMask`: `boolean`; `hasRtc`: `boolean`; `hasSdCard`: `boolean`; `hasSmartDetect`: `boolean`; `hasSmartZoom`: `boolean`; `hasSmokeCover`: `boolean`; `hasSpeaker`: `boolean`; `hasSquareEventThumbnail`: `boolean`; `hasTamperDetection`: `boolean`; `hasVerticalFlip`: `boolean`; `hasWifi`: `boolean`; `isDoorbell`: `boolean`; `isPtz`: `boolean`; `maxScaleDownLevel`: `number`; `motionAlgorithms`: `string`[]; `privacyMaskCapability`: \{ `maxMasks`: `number`; `rectangleOnly`: `boolean`; \}; `smartDetectAudioTypes`: `string`[]; `smartDetectTypes`: `string`[]; `streamEncryptable`: `boolean`; `supportCustomRingtone`: `boolean`; `supportDoorAccessConfig`: `boolean`; `supportFullHdSnapshot`: `boolean`; `supportLpDetectionWithoutVehicle`: `boolean`; `supportMinMotionAdaptiveBitrate`: `boolean`; `supportNfc`: `boolean`; `videoCodecs`: `string`[]; `videoModeMaxFps`: `number`[]; `videoModes`: `string`[]; \} |
 | `featureFlags.audio` | `string`[] |
 | `featureFlags.audioCodecs` | `string`[] |
 | `featureFlags.audioStyle` | `string`[] |
@@ -102,9 +102,13 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.hasBluetooth` | `boolean` |
 | `featureFlags.hasChime` | `boolean` |
 | `featureFlags.hasColorLcdScreen` | `boolean` |
+| `featureFlags.hasEdgeRecording` | `boolean` |
 | `featureFlags.hasExternalIr` | `boolean` |
 | `featureFlags.hasFingerprintSensor` | `boolean` |
+| `featureFlags.hasFisheye` | `boolean` |
 | `featureFlags.hasFlash` | `boolean` |
+| `featureFlags.hasHallwayMode` | `boolean` |
+| `featureFlags.hasHallwayModeHdrOnRequired` | `boolean` |
 | `featureFlags.hasHdr` | `boolean` |
 | `featureFlags.hasIcrSensitivity` | `boolean` |
 | `featureFlags.hasInfrared` | `boolean` |
@@ -117,16 +121,23 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.hasLineIn` | `boolean` |
 | `featureFlags.hasLiveviewTracking` | `boolean` |
 | `featureFlags.hasLuxCheck` | `boolean` |
+| `featureFlags.hasManualPersonOfInterest` | `boolean` |
 | `featureFlags.hasMic` | `boolean` |
 | `featureFlags.hasMotionZones` | `boolean` |
 | `featureFlags.hasNewMotionAlgorithm` | `boolean` |
+| `featureFlags.hasOptimizeIr` | `boolean` |
 | `featureFlags.hasPackageCamera` | `boolean` |
+| `featureFlags.hasPackageZoneSupportForPrimaryLens` | `boolean` |
+| `featureFlags.hasPackageZoneSupportForSecondaryLens` | `boolean` |
 | `featureFlags.hasPrivacyMask` | `boolean` |
 | `featureFlags.hasRtc` | `boolean` |
 | `featureFlags.hasSdCard` | `boolean` |
 | `featureFlags.hasSmartDetect` | `boolean` |
+| `featureFlags.hasSmartZoom` | `boolean` |
+| `featureFlags.hasSmokeCover` | `boolean` |
 | `featureFlags.hasSpeaker` | `boolean` |
 | `featureFlags.hasSquareEventThumbnail` | `boolean` |
+| `featureFlags.hasTamperDetection` | `boolean` |
 | `featureFlags.hasVerticalFlip` | `boolean` |
 | `featureFlags.hasWifi` | `boolean` |
 | `featureFlags.isDoorbell` | `boolean` |
@@ -138,8 +149,12 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.privacyMaskCapability.rectangleOnly` | `boolean` |
 | `featureFlags.smartDetectAudioTypes` | `string`[] |
 | `featureFlags.smartDetectTypes` | `string`[] |
+| `featureFlags.streamEncryptable` | `boolean` |
+| `featureFlags.supportCustomRingtone` | `boolean` |
 | `featureFlags.supportDoorAccessConfig` | `boolean` |
+| `featureFlags.supportFullHdSnapshot` | `boolean` |
 | `featureFlags.supportLpDetectionWithoutVehicle` | `boolean` |
+| `featureFlags.supportMinMotionAdaptiveBitrate` | `boolean` |
 | `featureFlags.supportNfc` | `boolean` |
 | `featureFlags.videoCodecs` | `string`[] |
 | `featureFlags.videoModeMaxFps` | `number`[] |
@@ -294,10 +309,11 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `recordingSettings.suppressIlluminationSurge` | `boolean` |
 | `recordingSettings.useNewMotionAlgorithm` | `boolean` |
 | <a id="smartdetectlines"></a> `smartDetectLines` | \[\] |
-| <a id="smartdetectsettings"></a> `smartDetectSettings` | \{ `audioTypes`: `string`[]; `autoTrackingObjectTypes`: `string`[]; `detectionRange`: \[`number`, `number`\]; `objectTypes`: `string`[]; \} |
+| <a id="smartdetectsettings"></a> `smartDetectSettings` | \{ `audioTypes`: `string`[]; `autoTrackingObjectTypes`: `string`[]; `detectionRange`: \[`number`, `number`\]; `enableTamperDetection`: `boolean`; `objectTypes`: `string`[]; \} |
 | `smartDetectSettings.audioTypes` | `string`[] |
 | `smartDetectSettings.autoTrackingObjectTypes` | `string`[] |
 | `smartDetectSettings.detectionRange` | \[`number`, `number`\] |
+| `smartDetectSettings.enableTamperDetection` | `boolean` |
 | `smartDetectSettings.objectTypes` | `string`[] |
 | <a id="smartdetectzones"></a> `smartDetectZones` | \{ `color`: `string`; `name`: `string`; `objectTypes`: `string`[]; `points`: \[`number`, `number`\][]; `sensitivity`: `number`; \}[] |
 | <a id="speakersettings"></a> `speakerSettings` | \{ `areSystemSoundsEnabled`: `boolean`; `isEnabled`: `boolean`; `volume`: `number`; \} |

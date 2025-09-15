@@ -376,9 +376,13 @@ export interface ProtectCameraConfigInterface {
     hasBluetooth: boolean;
     hasChime: boolean;
     hasColorLcdScreen: boolean;
+    hasEdgeRecording: boolean;
     hasExternalIr: boolean;
     hasFingerprintSensor: boolean;
+    hasFisheye: boolean;
     hasFlash: boolean;
+    hasHallwayMode: boolean;
+    hasHallwayModeHdrOnRequired: boolean;
     hasHdr: boolean;
     hasIcrSensitivity: boolean;
     hasInfrared: boolean;
@@ -391,16 +395,23 @@ export interface ProtectCameraConfigInterface {
     hasLineIn: boolean;
     hasLiveviewTracking: boolean;
     hasLuxCheck: boolean;
+    hasManualPersonOfInterest: boolean;
     hasMic: boolean;
     hasMotionZones: boolean;
     hasNewMotionAlgorithm: boolean;
+    hasOptimizeIr: boolean;
     hasPackageCamera: boolean;
+    hasPackageZoneSupportForPrimaryLens: boolean;
+    hasPackageZoneSupportForSecondaryLens: boolean;
     hasPrivacyMask: boolean;
     hasRtc: boolean;
     hasSdCard: boolean;
     hasSmartDetect: boolean;
+    hasSmartZoom: boolean;
+    hasSmokeCover: boolean;
     hasSpeaker: boolean;
     hasSquareEventThumbnail: boolean;
+    hasTamperDetection: boolean;
     hasVerticalFlip: boolean;
     hasWifi: boolean;
     isDoorbell: boolean;
@@ -413,8 +424,12 @@ export interface ProtectCameraConfigInterface {
     };
     smartDetectAudioTypes: string[];
     smartDetectTypes: string[];
+    streamEncryptable: boolean;
+    supportCustomRingtone: boolean;
     supportDoorAccessConfig: boolean;
+    supportFullHdSnapshot: boolean;
     supportLpDetectionWithoutVehicle: boolean;
+    supportMinMotionAdaptiveBitrate: boolean;
     supportNfc: boolean;
     videoCodecs: string[];
     videoModeMaxFps: number[];
@@ -612,6 +627,7 @@ export interface ProtectCameraConfigInterface {
     audioTypes: string[];
     autoTrackingObjectTypes: string[];
     detectionRange: [max: number, min: number];
+    enableTamperDetection: boolean;
     objectTypes: string[];
   };
   smartDetectZones: {

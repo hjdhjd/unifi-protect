@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
 
+## 4.27.3 (2025-09-15)
+  * Improvement: additional typing refinements.
+  * Housekeeping.
+
 ## 4.27.2 (2025-09-04)
   * Improvement: additional typing refinements.
   * Housekeeping.
