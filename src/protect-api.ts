@@ -71,16 +71,22 @@ import { STATUS_CODES } from "node:http";
 import util from "node:util";
 
 /**
- * Define our known Protect device types.
+ * The Protect device types we know about and are available to us.
  */
 export type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectChimeConfig | ProtectLightConfig | ProtectNvrConfig |
   ProtectSensorConfig | ProtectViewerConfig;
 
 /**
- * Define our known Protect device payload types.
+ * The Protect device payload types we know about and are available to us.
  */
 export type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChimeConfigPayload | ProtectLightConfigPayload | ProtectNvrConfigPayload |
   ProtectSensorConfigPayload | ProtectViewerConfigPayload;
+
+/**
+ * A deep-indexable version of the Protect NVR bootstrap data. We need this if you want to be able to reference the bootstrap data through indexing
+ * (e.g. bootstrap["something"]) with strong typing.
+ */
+export type ProtectNvrBootstrapData = Nullable<DeepIndexable<ProtectNvrBootstrap>>;
 
 /**
  * Configuration options for HTTP requests executed by `retrieve()`.
@@ -2086,9 +2092,9 @@ export class ProtectApi extends EventEmitter {
    *
    * @category API Access
    */
-  public get bootstrap(): Nullable<DeepIndexable<ProtectNvrBootstrap>> {
+  public get bootstrap(): ProtectNvrBootstrapData {
 
-    return this._bootstrap as Nullable<DeepIndexable<ProtectNvrBootstrap>>;
+    return this._bootstrap as ProtectNvrBootstrapData;
   }
 
   /**

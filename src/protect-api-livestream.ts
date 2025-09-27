@@ -359,7 +359,7 @@ export class ProtectLivestream extends EventEmitter {
         const error = event.error as NodeJS.ErrnoException;
 
         // Ignore timeout errors, but notify the user about anything else.
-        if(error.code !== "ETIMEDOUT") {
+        if(!(error instanceof TypeError) && (error.code !== "ETIMEDOUT")) {
 
           logError("error while communicating with the livestream websocket API: %s", error);
           logError(util.inspect(error, { colors: true, depth: null, sorted: true }));

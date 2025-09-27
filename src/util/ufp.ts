@@ -110,7 +110,8 @@ switch(process.argv.length) {
 
           if(process.argv.length === 5) {
 
-            if((packet.header as Record<string, string>)[process.argv[3]].toLowerCase() !== process.argv[4]?.toLowerCase()) {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            if((packet.header as Record<string, string>)[process.argv[3]]?.toLowerCase() !== process.argv[4]?.toLowerCase()) {
 
               return;
             }
