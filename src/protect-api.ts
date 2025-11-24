@@ -578,8 +578,12 @@ export class ProtectApi extends EventEmitter {
       // Handle any WebSocket errors.
       ws.addEventListener("error", (event: ErrorEvent): void => {
 
-        this.log.error("Events API error: %s", event.error.cause);
-        this.log.error(util.inspect(event.error, { colors: true, depth: null, sorted: true }));
+        // Check if this is a TypeError from undici's internal WebSocket handling. They're expected in certain disconnection scenarios.
+        if(!(event.error instanceof TypeError)) {
+
+          this.log.error("Events API error: %s", event.error.cause);
+          this.log.error(util.inspect(event.error, { colors: true, depth: null, sorted: true }));
+        }
 
         ws.close();
       }, { once: true });
@@ -1531,8 +1535,7 @@ export class ProtectApi extends EventEmitter {
    * @returns Promise resolving to the Response object, or `null` on failure.
    *
    * @remarks
-   * This method provides direct access to the Protect controller API for advanced use cases
-   * not covered by the built-in methods. It handles:
+   * This method provides direct access to the Protect controller API for advanced use cases not covered by the built-in methods. It handles:
    *
    * - Authentication and session management
    * - Automatic retry with exponential backoff
