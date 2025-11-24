@@ -727,8 +727,7 @@ Promise resolving to the Response object, or `null` on failure.
 
 ###### Remarks
 
-This method provides direct access to the Protect controller API for advanced use cases
-not covered by the built-in methods. It handles:
+This method provides direct access to the Protect controller API for advanced use cases not covered by the built-in methods. It handles:
 
 - Authentication and session management
 - Automatic retry with exponential backoff
@@ -1057,7 +1056,7 @@ Utility method that generates a nicely formatted device information string.
 | Parameter | Type | Default value | Description |
 | ------ | ------ | ------ | ------ |
 | `device` | [`ProtectKnownDeviceTypes`](#protectknowndevicetypes) | `undefined` | Protect device |
-| `name` | `undefined` \| `string` | `device.name` | Custom name to use (defaults to device name) |
+| `name` | `string` \| `undefined` | `device.name` | Custom name to use (defaults to device name) |
 | `deviceInfo` | `boolean` | `false` | Include IP and MAC address information |
 
 ###### Returns
