@@ -67,7 +67,7 @@ if(!(await ufp.getBootstrap())) {
 // Silently exit on pipe errors but still process other errors.
 process.stdout.on("error", (err) => {
 
-  if(err.code === "EPIPE") {
+  if((err instanceof Error) && ("code" in err) && (typeof (err as NodeJS.ErrnoException).code === "string") && (err.code === "EPIPE")) {
 
     process.exit(0);
   } else {

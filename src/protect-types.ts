@@ -1116,6 +1116,7 @@ export interface ProtectSensorConfigInterface {
   canAdopt: boolean;
   connectedSince: number;
   connectionHost: string;
+  connectionType: string;
   displayName: string;
   firmwareBuild: string;
   firmwareVersion: string;
