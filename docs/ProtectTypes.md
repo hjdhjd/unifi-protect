@@ -1048,6 +1048,7 @@ A semi-complete description of the UniFi Protect sensor JSON.
 | <a id="canadopt-2"></a> `canAdopt` | `boolean` |
 | <a id="connectedsince-3"></a> `connectedSince` | `number` |
 | <a id="connectionhost-3"></a> `connectionHost` | `string` |
+| <a id="connectiontype"></a> `connectionType` | `string` |
 | <a id="displayname-1"></a> `displayName` | `string` |
 | <a id="firmwarebuild-3"></a> `firmwareBuild` | `string` |
 | <a id="firmwareversion-4"></a> `firmwareVersion` | `string` |
