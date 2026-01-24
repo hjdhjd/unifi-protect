@@ -154,7 +154,7 @@ switch(process.argv.length) {
         }
 
         // Restart every camera.
-        for(const device of ufp.bootstrap?.cameras.filter(camera => !camera.isRebooting && camera.state === "CONNECTED") ?? []) {
+        for(const device of ufp.bootstrap?.cameras.filter(camera => !camera.isRebooting && (camera.state === "CONNECTED")) ?? []) {
 
           //eslint-disable-next-line no-await-in-loop
           const response = await ufp.retrieve(ufp.getApiEndpoint(device.modelKey) + "/" + device.id + "/reboot", { body: JSON.stringify({}), method: "POST" });
