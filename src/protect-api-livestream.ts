@@ -237,7 +237,7 @@ export class ProtectLivestream extends EventEmitter {
    */
   private async launchLivestream(cameraId: string, channel: number, options: LivestreamOptions): Promise<boolean> {
 
-    const logError = (message: string, ...parameters: unknown[]): void => this.log.error(options.requestId + ": " + message, ...parameters);
+    const logError = (message: string, ...parameters: unknown[]): void => { this.log.error(options.requestId + ": " + message, ...parameters); };
 
     // To ensure there are minimal performance implications to the Protect NVR, enforce a 100ms floor for segment length. Protect happens to default to a 100ms segment
     // length as well, so we do too.
@@ -299,8 +299,7 @@ export class ProtectLivestream extends EventEmitter {
 
         this._stream = new Readable({
 
-          // This is intentionally a no-op, since we're going to push complete fMP4 segments as soon as they're available.
-          read:(): void => {}
+          read:(): void => { /* Intentionally a no-op, since we're going to push complete fMP4 segments as soon as they're available. */ }
         });
       }
 
@@ -413,7 +412,8 @@ export class ProtectLivestream extends EventEmitter {
     // Keep any tail bytes that didn't form a full packet yet.
     let packetRemaining: Buffer = Buffer.alloc(0);
 
-    // Process data coming in from the websocket.
+    // Process data coming in from the websocket. The handler is async because Blob data requires an await to convert to an ArrayBuffer.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.ws.addEventListener("message", this.messageHandler = async (event: MessageEvent): Promise<void> => {
 
       // Update our heartbeat.
@@ -641,6 +641,7 @@ export class ProtectLivestream extends EventEmitter {
     }
 
     // Cache a promise that resolves when the initsegment event is emitted. We need to wait until the initialization segment is seen and then return it.
+    // eslint-disable-next-line @typescript-eslint/non-nullable-type-assertion-style
     return this.initSegmentPromise ??= events.once(this, "initsegment").then(() => this.initSegment as Buffer);
   }
 

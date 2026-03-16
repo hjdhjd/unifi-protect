@@ -63,7 +63,7 @@ import type { DeepIndexable, Nullable, ProtectCameraChannelConfigInterface, Prot
   ProtectChimeConfig, ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload,
   ProtectNvrUserConfig, ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "./settings.js";
-import { ProtectApiEvents, type ProtectEventPacket } from "./protect-api-events.js";
+import { type ProtectEventPacket, decodePacket } from "./protect-api-events.js";
 import { EventEmitter } from "node:events";
 import { ProtectLivestream } from "./protect-api-livestream.js";
 import type { ProtectLogging } from "./protect-logging.js";
@@ -141,7 +141,7 @@ interface InternalRetrieveOptions extends RetrieveOptions {
  * |-------|---------|-------------|
  * | `login` | `boolean` | Emitted after each login attempt with success status |
  * | `bootstrap` | {@link ProtectNvrBootstrap} | Emitted when bootstrap data is retrieved |
- * | `message` | {@link ProtectApiEvents.ProtectEventPacket} | Real-time event packets from the controller |
+ * | `message` | {@link ProtectEventPacket} | Real-time event packets from the controller |
  *
  * ## Connection Management
  *
@@ -164,7 +164,7 @@ interface InternalRetrieveOptions extends RetrieveOptions {
  * @event bootstrap - Emitted when bootstrap data is successfully retrieved from the controller. The event includes the complete {@link ProtectNvrBootstrap}
  *                    configuration object containing all device states and system settings.
  * @event message   - Emitted for each real-time event packet received from the controller's WebSocket connection. The event includes a
- *                    {@link ProtectApiEvents.ProtectEventPacket} containing device updates, motion events, and other system notifications.
+ *                    {@link ProtectEventPacket} containing device updates, motion events, and other system notifications.
  *
  * @example
  * Complete example with error handling and event processing:
@@ -291,9 +291,9 @@ export class ProtectApi extends EventEmitter {
 
       /* eslint-disable no-console */
       debug: (): void => { /* No debug logging by default. */ },
-      error: (message: string, ...parameters: unknown[]): void => console.error(message, ...parameters),
-      info: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters),
-      warn: (message: string, ...parameters: unknown[]): void => console.log(message, ...parameters)
+      error: (message: string, ...parameters: unknown[]): void => { console.error(message, ...parameters); },
+      info: (message: string, ...parameters: unknown[]): void => { console.log(message, ...parameters); },
+      warn: (message: string, ...parameters: unknown[]): void => { console.log(message, ...parameters); }
       /* eslint-enable no-console */
     };
 
@@ -304,10 +304,10 @@ export class ProtectApi extends EventEmitter {
 
     this.log = {
 
-      debug: (message: string, ...parameters: unknown[]): void => log.debug(this.name + ": " + message, ...parameters),
-      error: (message: string, ...parameters: unknown[]): void => log.error(this.name + ": API error: " + message, ...parameters),
-      info: (message: string, ...parameters: unknown[]): void => log.info(this.name + ": " + message, ...parameters),
-      warn: (message: string, ...parameters: unknown[]): void => log.warn(this.name + ": " + message, ...parameters)
+      debug: (message: string, ...parameters: unknown[]): void => { log.debug(this.name + ": " + message, ...parameters); },
+      error: (message: string, ...parameters: unknown[]): void => { log.error(this.name + ": API error: " + message, ...parameters); },
+      info: (message: string, ...parameters: unknown[]): void => { log.info(this.name + ": " + message, ...parameters); },
+      warn: (message: string, ...parameters: unknown[]): void => { log.warn(this.name + ": " + message, ...parameters); }
     };
 
     this.apiErrorCount = 0;
@@ -544,7 +544,7 @@ export class ProtectApi extends EventEmitter {
    * Connect to the realtime update events API.
    *
    * @event message - Emitted for each WebSocket message received from the controller after successful decoding. Each message contains a
-   *                  {@link ProtectApiEvents.ProtectEventPacket} with real-time device updates and system events.
+   *                  {@link ProtectEventPacket} with real-time device updates and system events.
    *
    * @internal
    */
@@ -676,7 +676,7 @@ export class ProtectApi extends EventEmitter {
           if(event.data instanceof Blob) {
 
             // Blob.arrayBuffer() is async, so we need to handle this path through the emit queue to maintain ordering.
-            enqueuePacket(event.data.arrayBuffer().then(async (ab) => ProtectApiEvents.decodePacket(this.log, Buffer.from(ab))));
+            enqueuePacket(event.data.arrayBuffer().then(async (ab) => decodePacket(this.log, Buffer.from(ab))));
 
             return;
           } else if(event.data instanceof ArrayBuffer) {
@@ -701,7 +701,7 @@ export class ProtectApi extends EventEmitter {
         }
 
         // Start decoding immediately. The inflate runs on the libuv threadpool in parallel with any other in-flight decodes.
-        enqueuePacket(ProtectApiEvents.decodePacket(this.log, buffer));
+        enqueuePacket(decodePacket(this.log, buffer));
       });
     } catch(error) {
 
@@ -1550,7 +1550,7 @@ export class ProtectApi extends EventEmitter {
 
     // Ask Protect to give us a URL for this websocket.
     const response = await this.retrieve(this.getApiEndpoint("websocket") + "/" + endpoint +
-      ((params && params.toString().length) ? "?" + params.toString() : ""));
+      ((params?.toString().length) ? "?" + params.toString() : ""));
 
     // Something went wrong, we're done here.
     if(!response || !this.responseOk(response.statusCode)) {
@@ -1558,7 +1558,7 @@ export class ProtectApi extends EventEmitter {
       // Only inform users if we have a response if we have something to say.
       if(response) {
 
-        this.log.error("API endpoint access error: " + response.statusCode.toString() + " - " + STATUS_CODES[response.statusCode] + ".");
+        this.log.error("API endpoint access error: " + response.statusCode.toString() + " - " + (STATUS_CODES[response.statusCode] ?? "") + ".");
       }
 
       return null;
@@ -1714,7 +1714,7 @@ export class ProtectApi extends EventEmitter {
 
     // Create a signal handler to deliver the abort operation.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), retrieveOptions.timeout);
+    const timer = setTimeout(() => { controller.abort(); }, retrieveOptions.timeout);
 
     options.dispatcher = this.dispatcher;
     options.headers = this.headers;

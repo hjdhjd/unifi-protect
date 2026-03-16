@@ -114,13 +114,13 @@ class PropertyFilter implements EventFilter {
 
       if(resolvedId) {
 
-        const actualValue = String(packet.header.id);
+        const actualValue = packet.header.id;
 
         return this.negate ? actualValue.toLowerCase() !== resolvedId.toLowerCase() : actualValue.toLowerCase() === resolvedId.toLowerCase();
       }
 
       // If we can't resolve the name, try matching against the ID directly.
-      const actualValue = String(packet.header.id);
+      const actualValue = packet.header.id;
       const matches = actualValue.toLowerCase() === this.value.toLowerCase();
 
       return this.negate ? !matches : matches;
@@ -134,6 +134,7 @@ class PropertyFilter implements EventFilter {
       return this.negate;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     return this.compareValues(String(actualValue));
   }
 
@@ -235,7 +236,7 @@ class ModelKeyFilter implements EventFilter {
   private readonly modelKey: string;
   private readonly negate: boolean;
 
-  constructor(modelKey: string, negate: boolean = false) {
+  constructor(modelKey: string, negate = false) {
 
     this.modelKey = modelKey;
     this.negate = negate;
@@ -487,9 +488,9 @@ const log = {
       console.error("[DEBUG] " + util.format(message, ...parameters));
     }
   },
-  error: (message: string, ...parameters: unknown[]): void => console.error(util.format(message, ...parameters)),
-  info: (message: string, ...parameters: unknown[]): void => console.log(util.format(message, ...parameters)),
-  warn: (message: string, ...parameters: unknown[]): void => console.log(util.format(message, ...parameters))
+  error: (message: string, ...parameters: unknown[]): void => { console.error(util.format(message, ...parameters)); },
+  info: (message: string, ...parameters: unknown[]): void => { console.log(util.format(message, ...parameters)); },
+  warn: (message: string, ...parameters: unknown[]): void => { console.log(util.format(message, ...parameters)); }
   /* eslint-enable no-console */
 };
 
@@ -680,7 +681,7 @@ function parseArguments(argv: string[]): ParsedOptions {
     }
 
     // Property filters in the form property=value, property!=value, property~value, etc.
-    const filterMatch = arg.match(/^([a-zA-Z0-9_.]+)(==|!=|~|!~|>=|<=|>|<|=)(.+)$/);
+    const filterMatch = /^([a-zA-Z0-9_.]+)(==|!=|~|!~|>=|<=|>|<|=)(.+)$/.exec(arg);
 
     if(filterMatch) {
 
@@ -1046,12 +1047,19 @@ async function handleRestart(options: ParsedOptions): Promise<void> {
     process.exit(1);
   }
 
+  if(!ufp.bootstrap) {
+
+    log.error("Unable to retrieve the controller bootstrap.");
+
+    process.exit(1);
+  }
+
   const target = options.args[0];
 
   // Reboot the UniFi OS console.
   if(target === "console") {
 
-    const response = await ufp.retrieve("https://" + ufp.bootstrap?.nvr.host + "/api/system/reboot", { method: "POST" });
+    const response = await ufp.retrieve("https://" + ufp.bootstrap.nvr.host + "/api/system/reboot", { method: "POST" });
 
     if(!ufp.responseOk(response?.statusCode)) {
 
@@ -1074,14 +1082,14 @@ async function handleRestart(options: ParsedOptions): Promise<void> {
     // Collect all devices from the requested classes.
     for(const deviceClass of classes) {
 
-      devices.push(...(ufp.bootstrap?.[deviceClass as keyof typeof ufp.bootstrap] as ProtectDeviceTypes[]));
+      devices.push(...(ufp.bootstrap[deviceClass as keyof typeof ufp.bootstrap] as ProtectDeviceTypes[]));
     }
   } else {
 
     // Match devices by name or ID across all classes.
     for(const deviceClass of deviceClasses) {
 
-      for(const device of (ufp.bootstrap?.[deviceClass as keyof typeof ufp.bootstrap] as ProtectDeviceTypes[])) {
+      for(const device of (ufp.bootstrap[deviceClass as keyof typeof ufp.bootstrap] as ProtectDeviceTypes[])) {
 
         if((device.id === target) || (device.name?.toLowerCase() === target.toLowerCase())) {
 
@@ -1283,7 +1291,7 @@ function listDevices(filterType?: string): void {
     return;
   }
 
-  const deviceTypes: Array<{ devices: Array<{ id: string; marketName?: string; name?: string }>; label: string; type: string }> = [
+  const deviceTypes: { devices: { id: string; marketName?: string; name?: string }[]; label: string; type: string }[] = [
     { devices: ufp.bootstrap.cameras, label: "Cameras", type: "cameras" },
     { devices: ufp.bootstrap.chimes, label: "Chimes", type: "chimes" },
     { devices: ufp.bootstrap.lights, label: "Lights", type: "lights" },
@@ -1441,7 +1449,7 @@ async function main(): Promise<void> {
 }
 
 // Run main.
-main().catch((error) => {
+main().catch((error: unknown) => {
 
   log.error("Fatal error: %s", error);
 

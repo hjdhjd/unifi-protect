@@ -61,7 +61,7 @@
  * - With the exception of update actions with a modelKey of event, JSONs are always a subset of the bootstrap JSON, indexed off of modelKey. So for a modelKey of camera,
  *   the data payload is always a subset of {@link ProtectTypes.ProtectCameraConfigInterface | ProtectCameraConfigInterface}.
  *
- * @module ProtectApiEvents
+ * @module ProtectEvents
  */
 import type { Nullable } from "./protect-types.js";
 import type { ProtectLogging } from "./protect-logging.js";
@@ -121,11 +121,11 @@ enum ProtectEventPacketHeader {
  *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
  *   related to the device and action specified in the header.
  */
-export type ProtectEventPacket = {
+export interface ProtectEventPacket {
 
   header: ProtectEventHeader;
   payload: unknown;
-};
+}
 
 /**
  * UniFi Protect event header.
@@ -138,134 +138,123 @@ export type ProtectEventPacket = {
  *   a few properties that are always present (`action`, `id`, `modelKey`, and `newUpdateId`). The `payload` contains the detailed information related to the device and
  *   action specified in the header.
  */
-export type ProtectEventHeader = {
+export interface ProtectEventHeader {
 
   action: string;
   id: string;
   modelKey: string;
   newUpdateId: string;
   [key: string]: boolean | number | object | string;
-};
+}
 
 /**
- * UniFi Protect event utility class that provides functions for decoding realtime event API packet frames.
+ * Decode a UniFi Protect event packet.
+ *
+ * @param log     - Logging functions to use.
+ * @param packet  - Input packet to decode.
+ *
+ * @returns Promise resolving to a decoded event packet, or `null` if decoding fails.
+ *
+ * @remarks A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
+ * encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of it's use is in {@link ProtectApi} where, once
+ * successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
+ * {@link ProtectApi}.
  */
-export class ProtectApiEvents {
+export async function decodePacket(log: ProtectLogging, packet: Buffer): Promise<Nullable<ProtectEventPacket>> {
 
-  /** @internal */
-  constructor() {
+  // What we need to do here is to split this packet into the header and payload, and decode them.
 
+  let dataOffset;
+
+  try {
+
+    // The fourth byte holds our payload size. When you add the payload size to our header frame size, you get the location of the
+    // data header frame.
+    dataOffset = packet.readUInt32BE(ProtectEventPacketHeader.PAYLOAD_SIZE) + EVENT_PACKET_HEADER_SIZE;
+
+    // Validate our packet size, just in case we have more or less data than we expect. If we do, we're done for now.
+    if(packet.length !== (dataOffset + EVENT_PACKET_HEADER_SIZE + packet.readUInt32BE(dataOffset + ProtectEventPacketHeader.PAYLOAD_SIZE))) {
+
+      throw new Error("Packet length doesn't match header information.");
+    }
+
+  } catch(error) {
+
+    log.error("Realtime events API: error decoding update packet: %s.", error);
+
+    return null;
   }
 
-  /**
-   * Decode a UniFi Protect event packet.
-   *
-   * @param log     - Logging functions to use.
-   * @param packet  - Input packet to decode.
-   *
-   * @returns Promise resolving to a decoded event packet, or `null` if decoding fails.
-   *
-   * @remarks A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
-   * encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of it's use is in {@link ProtectApi} where, once
-   * successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
-   * {@link ProtectApi}.
-   */
-  public static async decodePacket(log: ProtectLogging, packet: Buffer): Promise<Nullable<ProtectEventPacket>> {
+  // Decode the action and payload frames in parallel. Both frames are independent and may require zlib decompression, so inflating them concurrently maximizes
+  // throughput on the libuv threadpool.
+  try {
 
-    // What we need to do here is to split this packet into the header and payload, and decode them.
+    const [ headerFrame, payloadFrame ] = await Promise.all([
 
-    let dataOffset;
+      decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.HEADER),
+      decodeFrame(log, packet.subarray(dataOffset), ProtectEventPacketType.PAYLOAD)
+    ]);
 
-    try {
-
-      // The fourth byte holds our payload size. When you add the payload size to our header frame size, you get the location of the
-      // data header frame.
-      dataOffset = packet.readUInt32BE(ProtectEventPacketHeader.PAYLOAD_SIZE) + EVENT_PACKET_HEADER_SIZE;
-
-      // Validate our packet size, just in case we have more or less data than we expect. If we do, we're done for now.
-      if(packet.length !== (dataOffset + EVENT_PACKET_HEADER_SIZE + packet.readUInt32BE(dataOffset + ProtectEventPacketHeader.PAYLOAD_SIZE))) {
-
-        throw new Error("Packet length doesn't match header information.");
-      }
-
-    } catch(error) {
-
-      log.error("Realtime events API: error decoding update packet: %s.", error);
+    if(!headerFrame || !payloadFrame) {
 
       return null;
     }
 
-    // Decode the action and payload frames in parallel. Both frames are independent and may require zlib decompression, so inflating them concurrently maximizes
-    // throughput on the libuv threadpool.
-    try {
+    return ({ header: headerFrame as ProtectEventHeader, payload: payloadFrame });
+  } catch(error) {
 
-      const [ headerFrame, payloadFrame ] = await Promise.all([
+    log.error("Realtime events API: error decoding update packet: %s.", error);
 
-        this.decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.HEADER),
-        this.decodeFrame(log, packet.subarray(dataOffset), ProtectEventPacketType.PAYLOAD)
-      ]);
+    return null;
+  }
+}
 
-      if(!headerFrame || !payloadFrame) {
+// Decode a frame, composed of a header and payload, received through the update events API.
+async function decodeFrame(log: ProtectLogging, packet: Buffer, packetType: ProtectEventPacketType):
+Promise<Nullable<Buffer | JSON | ProtectEventHeader | string>> {
 
-        return null;
-      }
+  // Read the packet frame type.
+  const frameType = packet.readUInt8(ProtectEventPacketHeader.TYPE) as ProtectEventPacketType;
 
-      return ({ header: headerFrame as ProtectEventHeader, payload: payloadFrame });
-    } catch(error) {
+  // This isn't the frame type we were expecting - we're done.
+  if(packetType !== frameType) {
 
-      log.error("Realtime events API: error decoding update packet: %s.", error);
-
-      return null;
-    }
+    return null;
   }
 
-  // Decode a frame, composed of a header and payload, received through the update events API.
-  private static async decodeFrame(log: ProtectLogging, packet: Buffer, packetType: ProtectEventPacketType):
-  Promise<Nullable<Buffer | JSON | ProtectEventHeader | string>> {
+  // Read the payload format.
+  const payloadFormat = packet.readUInt8(ProtectEventPacketHeader.PAYLOAD_FORMAT) as EventPayloadType;
 
-    // Read the packet frame type.
-    const frameType = packet.readUInt8(ProtectEventPacketHeader.TYPE) as ProtectEventPacketType;
+  // Decompress the payload if the deflated flag is set, using async inflate to avoid blocking the event loop. For uncompressed payloads, we just slice past the header.
+  const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ?
+    await inflateAsync(packet.subarray(EVENT_PACKET_HEADER_SIZE)) : packet.subarray(EVENT_PACKET_HEADER_SIZE);
 
-    // This isn't the frame type we were expecting - we're done.
-    if(packetType !== frameType) {
+  // If it's a header, it can only have one format.
+  if(frameType === ProtectEventPacketType.HEADER) {
+
+    return (payloadFormat === EventPayloadType.JSON) ? JSON.parse(payload.toString()) as ProtectEventHeader : null;
+  }
+
+  // Process the payload format accordingly.
+  switch(payloadFormat) {
+
+    case EventPayloadType.JSON:
+
+      // If it's data payload, it can be anything.
+      return JSON.parse(payload.toString()) as JSON;
+
+    case EventPayloadType.STRING:
+
+      return payload.toString("utf8");
+
+    case EventPayloadType.BUFFER:
+
+      return payload;
+
+    default:
+
+      log.error("Unknown payload packet type received in the realtime events API: %s.", payloadFormat);
 
       return null;
-    }
-
-    // Read the payload format.
-    const payloadFormat = packet.readUInt8(ProtectEventPacketHeader.PAYLOAD_FORMAT) as EventPayloadType;
-
-    // Decompress the payload if the deflated flag is set, using async inflate to avoid blocking the event loop. For uncompressed payloads, we just slice past the header.
-    const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ?
-      await inflateAsync(packet.subarray(EVENT_PACKET_HEADER_SIZE)) : packet.subarray(EVENT_PACKET_HEADER_SIZE);
-
-    // If it's a header, it can only have one format.
-    if(frameType === ProtectEventPacketType.HEADER) {
-
-      return (payloadFormat === EventPayloadType.JSON) ? JSON.parse(payload.toString()) as ProtectEventHeader : null;
-    }
-
-    // Process the payload format accordingly.
-    switch(payloadFormat) {
-
-      case EventPayloadType.JSON:
-
-        // If it's data payload, it can be anything.
-        return JSON.parse(payload.toString()) as JSON;
-
-      case EventPayloadType.STRING:
-
-        return payload.toString("utf8");
-
-      case EventPayloadType.BUFFER:
-
-        return payload;
-
-      default:
-
-        log.error("Unknown payload packet type received in the realtime events API: %s.", payloadFormat);
-
-        return null;
-    }
   }
 }
