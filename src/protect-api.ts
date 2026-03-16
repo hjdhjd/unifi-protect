@@ -63,8 +63,8 @@ import type { DeepIndexable, Nullable, ProtectCameraChannelConfigInterface, Prot
   ProtectChimeConfig, ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload,
   ProtectNvrUserConfig, ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "./settings.js";
+import { ProtectApiEvents, type ProtectEventPacket } from "./protect-api-events.js";
 import { EventEmitter } from "node:events";
-import { ProtectApiEvents } from "./protect-api-events.js";
 import { ProtectLivestream } from "./protect-api-livestream.js";
 import type { ProtectLogging } from "./protect-logging.js";
 import { STATUS_CODES } from "node:http";
@@ -243,6 +243,7 @@ export class ProtectApi extends EventEmitter {
   private nvrAddress: string;
   private password: string;
   private username: string;
+  private wsAgent: Nullable<Agent>;
 
   /**
    * Create an instance of the UniFi Protect API.
@@ -313,8 +314,9 @@ export class ProtectApi extends EventEmitter {
     this.apiLastSuccess = 0;
     this.headers = {};
     this.nvrAddress = "";
-    this.username = "";
     this.password = "";
+    this.username = "";
+    this.wsAgent = null;
   }
 
   /**
@@ -424,31 +426,35 @@ export class ProtectApi extends EventEmitter {
       return Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
     };
 
-    // Acquire a CSRF token, if needed. We only need to do this if we aren't already logged in, or we don't already have a token.
-    if(!this.headers["x-csrf-token"]) {
+    // Attempt to log in directly. If we already have a CSRF token (from a prior session or a previous login attempt), we skip the CSRF pre-fetch entirely and go
+    // straight to the login endpoint. The login response provides an updated CSRF token, so the pre-fetch is only needed if we have no token at all and the controller
+    // rejects our login without one.
+    const loginBody = JSON.stringify({ password: this.password, rememberMe: true, token: "", username: this.username });
 
-      // UniFi OS has cross-site request forgery protection built into it's web management UI. We retrieve the CSRF token, if available, by connecting to the Protect
-      // controller and checking the headers for it.
-      const response = await this.retrieve("https://" + this.nvrAddress, { method: "GET" }, { logErrors: false });
+    let response = await this.retrieve(this.getApiEndpoint("login"), { body: loginBody, method: "POST" });
 
-      if(this.responseOk(response?.statusCode)) {
+    // If the login failed and we don't have a CSRF token, acquire one and retry. UniFi OS has cross-site request forgery protection built into its web management UI.
+    // Some controllers require a valid CSRF token on the login request itself.
+    if(!this.responseOk(response?.statusCode) && !this.headers["x-csrf-token"]) {
 
-        const csrfToken = getHeader("X-CSRF-Token", response?.headers);
+      // Consume the failed response body so the underlying pool connection can be reused.
+      await response?.body.dump();
 
-        // Preserve the CSRF token, if found, for future API calls.
+      const csrfResponse = await this.retrieve("https://" + this.nvrAddress, { method: "GET" }, { logErrors: false });
+
+      if(this.responseOk(csrfResponse?.statusCode)) {
+
+        const csrfToken = getHeader("X-CSRF-Token", csrfResponse?.headers);
+
+        // Preserve the CSRF token, if found, and retry the login.
         if(csrfToken) {
 
           this.headers["x-csrf-token"] = csrfToken;
+
+          response = await this.retrieve(this.getApiEndpoint("login"), { body: loginBody, method: "POST" });
         }
       }
     }
-
-    // Log us in.
-    const response = await this.retrieve(this.getApiEndpoint("login"), {
-
-      body: JSON.stringify({ password: this.password, rememberMe: true, token: "", username: this.username }),
-      method: "POST"
-    });
 
     // Something went wrong with the login call, possibly a controller reboot or failure.
     if(!this.responseOk(response?.statusCode)) {
@@ -562,20 +568,14 @@ export class ProtectApi extends EventEmitter {
 
     try {
 
-      // Let's open the WebSocket connection.
+      // Let's open the WebSocket connection using the shared WebSocket agent for TLS session reuse and connection efficiency.
       const ws = new WebSocket("wss://" + this.nvrAddress + "/proxy/protect/ws/updates?" + params.toString(),
-        { dispatcher: new Agent({ connect: { rejectUnauthorized: false } }), headers: { Cookie: this.headers.cookie ?? "" } });
+        { dispatcher: this.wsAgent ?? undefined, headers: { Cookie: this.headers.cookie ?? "" } });
 
       let messageHandler: Nullable<(event: MessageEvent) => void>;
 
-      // Fired when the handshake completes
-      ws.addEventListener("open", (): void => {
-
-        // Make the WebSocket available.
-        this._eventsWs = ws;
-      }, { once: true });
-
-      // Handle any WebSocket errors.
+      // Handle any WebSocket errors. A single { once: true } handler covers both the connection phase and the post-connection lifetime...the first error on the WebSocket
+      // triggers logging, closes the connection, and the close event handles cleanup.
       ws.addEventListener("error", (event: ErrorEvent): void => {
 
         // Check if this is a TypeError from undici's internal WebSocket handling. They're expected in certain disconnection scenarios.
@@ -588,7 +588,40 @@ export class ProtectApi extends EventEmitter {
         ws.close();
       }, { once: true });
 
-      // Cleanup after ourselves if our WebSocket closes for some resaon.
+      // Wait for the WebSocket to actually connect before reporting success. This ensures bootstrapController() only signals success when both the HTTP bootstrap and
+      // the realtime events channel are fully established. We use named handlers so that whichever fires first can remove the other, preventing stale listeners from
+      // interfering with post-connection event handling.
+      const connected = await new Promise<boolean>((resolve) => {
+
+        const onOpen = (): void => {
+
+          ws.removeEventListener("close", onClose);
+
+          // Make the WebSocket available.
+          this._eventsWs = ws;
+
+          resolve(true);
+        };
+
+        // If the connection fails, the error handler above will close the WebSocket. We listen for close to detect that the connection was never established.
+        const onClose = (): void => {
+
+          ws.removeEventListener("open", onOpen);
+
+          resolve(false);
+        };
+
+        ws.addEventListener("open", onOpen, { once: true });
+        ws.addEventListener("close", onClose, { once: true });
+      });
+
+      // The WebSocket connection failed to establish.
+      if(!connected) {
+
+        return false;
+      }
+
+      // Cleanup after ourselves if our WebSocket closes for some reason.
       ws.addEventListener("close", (): void => {
 
         this._eventsWs = null;
@@ -600,33 +633,20 @@ export class ProtectApi extends EventEmitter {
         }
       }, { once: true });
 
-      // Process messages as they come in.
-      ws.addEventListener("message", messageHandler = async (event: MessageEvent): Promise<void> => {
+      // Emit queue for ordered event delivery. Packet decoding is async (zlib inflate runs on the libuv threadpool), so multiple packets can be inflating
+      // concurrently. We use .then() here deliberately - it's the right primitive for this pattern. Each message handler starts its decode immediately (parallel
+      // inflate), then chains the emit onto the queue so packets are always emitted in arrival order. We can't use async/await for the chaining because
+      // addEventListener doesn't await handlers, and we want decodes to start immediately rather than waiting for prior packets to complete.
+      let emitQueue: Promise<void> = Promise.resolve();
 
-        try {
+      // Chain a decoded packet onto the emit queue. The .then() ensures packets are emitted in arrival order even if later packets finish inflating before earlier
+      // ones. The .catch() prevents a single decode failure from poisoning the queue - without it, a rejected promise would cause all subsequent .then() calls to
+      // also reject.
+      const enqueuePacket = (decoded: Promise<Nullable<ProtectEventPacket>>): void => {
 
-          // We need to normalize event.data into an ArrayBuffer so we can process it.
-          let ab: ArrayBuffer;
+        emitQueue = emitQueue.then(async () => {
 
-          if(event.data instanceof Blob) {
-
-            ab = await event.data.arrayBuffer();
-          } else if(event.data instanceof ArrayBuffer) {
-
-            ab = event.data;
-          } else if(typeof event.data === "string") {
-
-            ab = new TextEncoder().encode(event.data).buffer;
-          } else {
-
-            this.log.error("Unsupported WebSocket message type: %s", typeof event.data);
-            ws.close();
-
-            return;
-          }
-
-          // Now we decode our packet.
-          const packet = ProtectApiEvents.decodePacket(this.log, Buffer.from(ab));
+          const packet = await decoded;
 
           if(!packet) {
 
@@ -636,17 +656,58 @@ export class ProtectApi extends EventEmitter {
             return;
           }
 
-          // Emit the decoded packet for users.
           this.emit("message", packet);
+        }).catch((error: unknown) => {
+
+          this.log.error("Error processing events WebSocket message: %s.", error);
+          ws.close();
+        });
+      };
+
+      // Process messages as they come in.
+      ws.addEventListener("message", messageHandler = (event: MessageEvent): void => {
+
+        // Normalize event.data into a Buffer synchronously so we can start decoding immediately. This must happen before we yield to the event loop to preserve the
+        // relationship between arrival order and decode initiation. The type check order matches the original: Blob, ArrayBuffer, string.
+        let buffer: Buffer;
+
+        try {
+
+          if(event.data instanceof Blob) {
+
+            // Blob.arrayBuffer() is async, so we need to handle this path through the emit queue to maintain ordering.
+            enqueuePacket(event.data.arrayBuffer().then(async (ab) => ProtectApiEvents.decodePacket(this.log, Buffer.from(ab))));
+
+            return;
+          } else if(event.data instanceof ArrayBuffer) {
+
+            buffer = Buffer.from(event.data);
+          } else if(typeof event.data === "string") {
+
+            buffer = Buffer.from(event.data);
+          } else {
+
+            this.log.error("Unsupported WebSocket message type: %s.", typeof event.data);
+            ws.close();
+
+            return;
+          }
         } catch(error) {
 
-          this.log.error("Error processing events WebSocket message: ", error);
+          this.log.error("Error processing events WebSocket message: %s.", error);
           ws.close();
+
+          return;
         }
+
+        // Start decoding immediately. The inflate runs on the libuv threadpool in parallel with any other in-flight decodes.
+        enqueuePacket(ProtectApiEvents.decodePacket(this.log, buffer));
       });
     } catch(error) {
 
-      this.log.error("Error connecting to the realtime update events API: %s", error);
+      this.log.error("Error connecting to the realtime update events API: %s.", error);
+
+      return false;
     }
 
     return true;
@@ -1290,6 +1351,10 @@ export class ProtectApi extends EventEmitter {
     this._eventsWs?.close();
     this._eventsWs = null;
 
+    // Tear down the shared WebSocket agent.
+    void this.wsAgent?.destroy();
+    this.wsAgent = null;
+
     if(this.nvrAddress) {
 
       // Cleanup any prior pool.
@@ -1305,11 +1370,24 @@ export class ProtectApi extends EventEmitter {
       };
 
       // Create a dispatcher using a new pool. We want to explicitly allow self-signed SSL certificates, enabled HTTP2 connections, and allow up to five connections at a
-      // time and provide some robust retry handling - we retry each request up to three times, with backoff. We allow for up to five retries, with a maximum wait time of
-      // 1500ms per retry, in factors of 2 starting from a 100ms delay.
+      // time and provide some robust retry handling. We allow for up to five retries, with a maximum wait time of 1500ms per retry, in factors of 2 starting from a 100ms
+      // delay.
       this.dispatcher = new Pool("https://" + this.nvrAddress, { allowH2: true, clientTtl: 60 * 1000, connect: { rejectUnauthorized: false }, connections: 5 })
         .compose(ua, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
           statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ], timeoutFactor: 2 }));
+
+      // Create a shared agent for WebSocket connections. We use a dedicated HTTP/1.1 agent because WebSocket upgrades cannot use HTTP/2. Keepalive is enabled to allow
+      // TLS session reuse across WebSocket reconnections and to detect dead connections via TCP keepalive probes. Pipelining is disabled because WebSocket upgrades
+      // cannot be pipelined.
+      this.wsAgent = new Agent({
+
+        connect: {
+
+          keepAlive: true,
+          rejectUnauthorized: false
+        },
+        pipelining: 0
+      });
     }
   }
 
@@ -2141,6 +2219,22 @@ export class ProtectApi extends EventEmitter {
   public get isThrottled(): boolean {
 
     return this._isThrottled;
+  }
+
+  /**
+   * Access the shared WebSocket agent used for all WebSocket connections to the Protect controller.
+   *
+   * @returns The shared Agent instance if available, `null` otherwise.
+   *
+   * @remarks
+   * This agent is shared across the events WebSocket and all livestream instances. It uses HTTP/1.1 (required for WebSocket upgrades) with TCP keepalive enabled for
+   * TLS session reuse and dead connection detection.
+   *
+   * @internal
+   */
+  public get wsDispatcher(): Nullable<Agent> {
+
+    return this.wsAgent;
   }
 
   /**

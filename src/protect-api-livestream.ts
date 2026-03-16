@@ -42,7 +42,7 @@
  * @module ProtectLivestream
  */
 /* eslint-enable @stylistic/max-len */
-import { Agent, type ErrorEvent, type MessageEvent, WebSocket } from "undici";
+import { type ErrorEvent, type MessageEvent, WebSocket } from "undici";
 import events, { EventEmitter } from "node:events";
 import type { Nullable } from "./protect-types.js";
 import { PROTECT_API_TIMEOUT } from "./settings.js";
@@ -123,7 +123,6 @@ export class ProtectLivestream extends EventEmitter {
   private _initSegment: Nullable<Buffer>;
   private _codec: Nullable<string>;
   private _stream: Nullable<Readable>;
-  private agent: Nullable<Agent>;
   private api: ProtectApi;
   private errorHandler: Nullable<(event: ErrorEvent) => void>;
   private heartbeat: Nullable<NodeJS.Timeout>;
@@ -142,7 +141,6 @@ export class ProtectLivestream extends EventEmitter {
     this._codec = null;
     this._initSegment = null;
     this._stream = null;
-    this.agent = null;
     this.api = api;
     this.errorHandler = null;
     this.heartbeat = null;
@@ -291,20 +289,10 @@ export class ProtectLivestream extends EventEmitter {
 
     try {
 
-      // Configure our agent to ensure we don't enable keepalive or HTTP pipelining so we can quickly tear down the connection when needed.
-      this.agent = new Agent({
-
-        connect: {
-
-          keepAlive: false,
-          rejectUnauthorized: false
-        },
-        pipelining: 0
-      });
-
-      // Open the livestream WebSocket. We create a new dispatcher here because WebSocket upgrades can only happen over HTTP/1.1 and we've asked for HTTP/2 whenever
-      // possible in our global pool.
-      this.ws = new WebSocket(wsUrl, { dispatcher: this.agent });
+      // Open the livestream WebSocket using the shared WebSocket agent for TLS session reuse and connection efficiency. We read the agent from the API at connection time
+      // rather than caching it, so we always use the current agent even if reset() has cycled it. WebSocket upgrades can only happen over HTTP/1.1, so we use a dedicated
+      // agent rather than the main HTTP/2 pool.
+      this.ws = new WebSocket(wsUrl, { dispatcher: this.api.wsDispatcher ?? undefined });
 
       // The user's requested that we use a stream interface instead of an event interface to push complete fMP4 segments.
       if(options.useStream) {
@@ -368,7 +356,7 @@ export class ProtectLivestream extends EventEmitter {
         this.stop();
       }, { once: true });
 
-      this.ws.addEventListener("close", async () => {
+      this.ws.addEventListener("close", () => {
 
         // Clear out our heartbeat since we're closing.
         if(this.heartbeat) {
@@ -378,9 +366,6 @@ export class ProtectLivestream extends EventEmitter {
         }
 
         this.stop();
-
-        await this.agent?.destroy();
-        this.agent = null;
 
         this.emit("close");
       }, { once: true });
@@ -415,17 +400,18 @@ export class ProtectLivestream extends EventEmitter {
       return;
     }
 
-    // Track the segment under construction.
+    // Track the segment under construction. We collect chunks in arrays and perform a single Buffer.concat at segment end to avoid repeated allocations and copies
+    // during accumulation.
     let currentSegment = {
 
-      audio: Buffer.alloc(0),
-      mdat: Buffer.alloc(0),
-      moof: Buffer.alloc(0),
-      video: Buffer.alloc(0)
+      audio: [] as Buffer[],
+      mdat: [] as Buffer[],
+      moof: [] as Buffer[],
+      video: [] as Buffer[]
     };
 
     // Keep any tail bytes that didn't form a full packet yet.
-    let packetRemaining = Buffer.alloc(0);
+    let packetRemaining: Buffer = Buffer.alloc(0);
 
     // Process data coming in from the websocket.
     this.ws.addEventListener("message", this.messageHandler = async (event: MessageEvent): Promise<void> => {
@@ -433,40 +419,40 @@ export class ProtectLivestream extends EventEmitter {
       // Update our heartbeat.
       this.lastMessage = Date.now();
 
-      // We need to normalize event.data into an ArrayBuffer so we can process it.
-      let ab: ArrayBuffer | undefined;
+      // Normalize event.data into a Buffer so we can process it.
+      let buffer: Buffer | undefined;
 
       try {
 
         if(event.data instanceof Blob) {
 
-          ab = await event.data.arrayBuffer();
+          buffer = Buffer.from(await event.data.arrayBuffer());
         } else if(event.data instanceof ArrayBuffer) {
 
-          ab = event.data;
+          buffer = Buffer.from(event.data);
         } else if(typeof event.data === "string") {
 
-          ab = new TextEncoder().encode(event.data).buffer;
+          buffer = Buffer.from(event.data);
         } else {
 
-          this.log.error("Unsupported WebSocket message type: %s", typeof event.data);
+          this.log.error("Unsupported WebSocket message type: %s.", typeof event.data);
           this.ws?.close();
 
           return;
         }
       } catch(error) {
 
-        this.log.error("Error processing livestream WebSocket message: ", error);
+        this.log.error("Error processing livestream WebSocket message: %s.", error);
         this.ws?.close();
       }
 
-      if(!ab) {
+      if(!buffer) {
 
         return;
       }
 
       // Prepend any leftover partial packet.
-      let packet = Buffer.from(ab);
+      let packet = buffer;
 
       // If we have anything left from the last packet we processed, prepend it to this packet.
       if(packetRemaining.length > 0) {
@@ -524,14 +510,19 @@ export class ProtectLivestream extends EventEmitter {
           // We've got audio data. Add it to our current segment.
           case ProtectLiveFrame.AUDIO:
 
-            currentSegment.audio = Buffer.concat([ currentSegment.audio, data ]);
+            currentSegment.audio.push(data);
 
             break;
 
-          // End of segment. Build the entire segment, and emit our events.
-          case ProtectLiveFrame.ENDSEGMENT:
+          // End of segment. Concatenate all accumulated chunks for each box type and build the complete segment.
+          case ProtectLiveFrame.ENDSEGMENT: {
 
-            completeSegment = Buffer.concat([ currentSegment.moof, currentSegment.mdat, currentSegment.video, currentSegment.audio ]);
+            const moof = Buffer.concat(currentSegment.moof);
+            const mdat = Buffer.concat(currentSegment.mdat);
+            const video = Buffer.concat(currentSegment.video);
+            const audio = Buffer.concat(currentSegment.audio);
+
+            completeSegment = Buffer.concat([ moof, mdat, video, audio ]);
 
             if(this._stream) {
 
@@ -540,11 +531,12 @@ export class ProtectLivestream extends EventEmitter {
 
               this.emit("segment", completeSegment);
               this.emit("message", completeSegment);
-              this.emit("moof", currentSegment.moof);
-              this.emit("mdat", currentSegment.mdat);
+              this.emit("moof", moof);
+              this.emit("mdat", mdat);
             }
 
             break;
+          }
 
           // Codec information.
           case ProtectLiveFrame.CODECINFORMATION:
@@ -566,10 +558,10 @@ export class ProtectLivestream extends EventEmitter {
 
             currentSegment = {
 
-              audio: Buffer.alloc(0),
-              mdat: Buffer.alloc(0),
-              moof: Buffer.alloc(0),
-              video: Buffer.alloc(0)
+              audio: [],
+              mdat: [],
+              moof: [],
+              video: []
             };
 
             break;
@@ -605,21 +597,21 @@ export class ProtectLivestream extends EventEmitter {
           // MDAT box. Add it to the MDAT portion of our segment.
           case ProtectLiveFrame.MDAT:
 
-            currentSegment.mdat = Buffer.concat([ currentSegment.mdat, data ]);
+            currentSegment.mdat.push(data);
 
             break;
 
           // MOOF box. Add it to the MOOF portion of our segment.
           case ProtectLiveFrame.MOOF:
 
-            currentSegment.moof = Buffer.concat([ currentSegment.moof, data ]);
+            currentSegment.moof.push(data);
 
             break;
 
           // We've got video data. Add it to our current segment.
           case ProtectLiveFrame.VIDEO:
 
-            currentSegment.video = Buffer.concat([ currentSegment.video, data ]);
+            currentSegment.video.push(data);
 
             break;
 

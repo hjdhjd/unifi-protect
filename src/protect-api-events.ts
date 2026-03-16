@@ -65,7 +65,11 @@
  */
 import type { Nullable } from "./protect-types.js";
 import type { ProtectLogging } from "./protect-logging.js";
+import { promisify } from "node:util";
 import zlib from "node:zlib";
+
+// Async zlib inflate for non-blocking decompression on the libuv threadpool.
+const inflateAsync = promisify(zlib.inflate);
 
 // UniFi Protect events API packet header size, in bytes.
 const EVENT_PACKET_HEADER_SIZE = 8;
@@ -159,12 +163,14 @@ export class ProtectApiEvents {
    * @param log     - Logging functions to use.
    * @param packet  - Input packet to decode.
    *
+   * @returns Promise resolving to a decoded event packet, or `null` if decoding fails.
+   *
    * @remarks A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
    * encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of it's use is in {@link ProtectApi} where, once
    * successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
    * {@link ProtectApi}.
    */
-  public static decodePacket(log: ProtectLogging, packet: Buffer): Nullable<ProtectEventPacket> {
+  public static async decodePacket(log: ProtectLogging, packet: Buffer): Promise<Nullable<ProtectEventPacket>> {
 
     // What we need to do here is to split this packet into the header and payload, and decode them.
 
@@ -189,20 +195,33 @@ export class ProtectApiEvents {
       return null;
     }
 
-    // Decode the action and payload frames now that we know where everything is.
-    const headerFrame = this.decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.HEADER);
-    const payloadFrame = this.decodeFrame(log, packet.subarray(dataOffset), ProtectEventPacketType.PAYLOAD);
+    // Decode the action and payload frames in parallel. Both frames are independent and may require zlib decompression, so inflating them concurrently maximizes
+    // throughput on the libuv threadpool.
+    try {
 
-    if(!headerFrame || !payloadFrame) {
+      const [ headerFrame, payloadFrame ] = await Promise.all([
+
+        this.decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.HEADER),
+        this.decodeFrame(log, packet.subarray(dataOffset), ProtectEventPacketType.PAYLOAD)
+      ]);
+
+      if(!headerFrame || !payloadFrame) {
+
+        return null;
+      }
+
+      return ({ header: headerFrame as ProtectEventHeader, payload: payloadFrame });
+    } catch(error) {
+
+      log.error("Realtime events API: error decoding update packet: %s.", error);
 
       return null;
     }
-
-    return ({ header: headerFrame as ProtectEventHeader, payload: payloadFrame });
   }
 
   // Decode a frame, composed of a header and payload, received through the update events API.
-  private static decodeFrame(log: ProtectLogging, packet: Buffer, packetType: ProtectEventPacketType): Nullable<Buffer | JSON | ProtectEventHeader | string> {
+  private static async decodeFrame(log: ProtectLogging, packet: Buffer, packetType: ProtectEventPacketType):
+  Promise<Nullable<Buffer | JSON | ProtectEventHeader | string>> {
 
     // Read the packet frame type.
     const frameType = packet.readUInt8(ProtectEventPacketHeader.TYPE) as ProtectEventPacketType;
@@ -216,9 +235,9 @@ export class ProtectApiEvents {
     // Read the payload format.
     const payloadFormat = packet.readUInt8(ProtectEventPacketHeader.PAYLOAD_FORMAT) as EventPayloadType;
 
-    // Check to see if we're compressed or not, and inflate if needed after skipping past the 8-byte header.
+    // Decompress the payload if the deflated flag is set, using async inflate to avoid blocking the event loop. For uncompressed payloads, we just slice past the header.
     const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ?
-      zlib.inflateSync(packet.subarray(EVENT_PACKET_HEADER_SIZE)) : packet.subarray(EVENT_PACKET_HEADER_SIZE);
+      await inflateAsync(packet.subarray(EVENT_PACKET_HEADER_SIZE)) : packet.subarray(EVENT_PACKET_HEADER_SIZE);
 
     // If it's a header, it can only have one format.
     if(frameType === ProtectEventPacketType.HEADER) {
