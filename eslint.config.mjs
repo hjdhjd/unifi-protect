@@ -2,70 +2,11 @@
  *
  * eslint.config.mjs: Linting defaults for Homebridge plugins.
  */
-import eslintJs from "@eslint/js";
 import hbPluginUtils from "homebridge-plugin-utils/build/eslint-rules.mjs";
-import ts from "typescript-eslint";
-import tsParser from "@typescript-eslint/parser";
 
-export default ts.config(
+export default hbPluginUtils({
 
-  eslintJs.configs.recommended,
-
-  {
-
-    files: [ "src/**.ts", "src/util/**.ts" ],
-    rules: {
-
-      ...hbPluginUtils.rules.ts
-    }
-  },
-
-  {
-
-    files: ["eslint.config.mjs"],
-    rules: {
-
-      ...hbPluginUtils.rules.js
-    }
-  },
-
-  {
-
-    files: [ "eslint.config.mjs", "src/**.ts", "src/util/**.ts" ],
-
-    ignores: ["dist"],
-
-    languageOptions: {
-
-      ecmaVersion: "latest",
-      parser: tsParser,
-      parserOptions: {
-
-        ecmaVersion: "latest",
-
-        projectService: {
-
-          allowDefaultProject: ["eslint.config.mjs"],
-          defaultProject: "./tsconfig.json"
-        }
-      },
-
-      sourceType: "module"
-    },
-
-    linterOptions: {
-
-      reportUnusedDisableDirectives: "error"
-    },
-
-    plugins: {
-
-      ...hbPluginUtils.plugins
-    },
-
-    rules: {
-
-      ...hbPluginUtils.rules.common
-    }
-  }
-);
+  allowDefaultProject: ["eslint.config.mjs"],
+  js: ["eslint.config.mjs"],
+  ts: [ "src/**.ts", "src/util/**.ts" ]
+});
