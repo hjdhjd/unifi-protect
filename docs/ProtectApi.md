@@ -160,7 +160,7 @@ The API emits several events during its lifecycle:
 |-------|---------|-------------|
 | `login` | `boolean` | Emitted after each login attempt with success status |
 | `bootstrap` | [ProtectNvrBootstrap](ProtectTypes.md#protectnvrbootstrap) | Emitted when bootstrap data is retrieved |
-| `message` | [ProtectApiEvents.ProtectEventPacket](ProtectApiEvents.md#protecteventpacket) | Real-time event packets from the controller |
+| `message` | [ProtectEventPacket](ProtectEvents.md#protecteventpacket) | Real-time event packets from the controller |
 
 ## Connection Management
 
@@ -183,7 +183,7 @@ All API methods implement comprehensive error handling:
  bootstrap - Emitted when bootstrap data is successfully retrieved from the controller. The event includes the complete [ProtectNvrBootstrap](ProtectTypes.md#protectnvrbootstrap)
                    configuration object containing all device states and system settings.
  message   - Emitted for each real-time event packet received from the controller's WebSocket connection. The event includes a
-                   [ProtectApiEvents.ProtectEventPacket](ProtectApiEvents.md#protecteventpacket) containing device updates, motion events, and other system notifications.
+                   [ProtectEventPacket](ProtectEvents.md#protecteventpacket) containing device updates, motion events, and other system notifications.
 
 #### Example
 
@@ -551,7 +551,7 @@ async function analyzeSystem() {
 ##### getSnapshot()
 
 ```ts
-getSnapshot(device, options): Promise<Nullable<Buffer<ArrayBufferLike>>>;
+getSnapshot(device, options?): Promise<Nullable<Buffer<ArrayBufferLike>>>;
 ```
 
 Retrieve a snapshot image from a Protect camera.
@@ -705,8 +705,8 @@ async function setupTalkback(cameraId: string) {
 ```ts
 retrieve(
    url, 
-   options, 
-retrieveOptions): Promise<Nullable<ResponseData<unknown>>>;
+   options?, 
+retrieveOptions?): Promise<Nullable<ResponseData<unknown>>>;
 ```
 
 Execute an HTTP request to the Protect controller.
@@ -1045,8 +1045,8 @@ async function setupRtspStreams() {
 ```ts
 getDeviceName(
    device, 
-   name, 
-   deviceInfo): string;
+   name?, 
+   deviceInfo?): string;
 ```
 
 Utility method that generates a nicely formatted device information string.

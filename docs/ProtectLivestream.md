@@ -216,7 +216,7 @@ Stop an fMP4 livestream session from the Protect controller.
 start(
    cameraId, 
    channel, 
-options): Promise<boolean>;
+options?): Promise<boolean>;
 ```
 
 Start an fMP4 livestream session from the Protect controller.

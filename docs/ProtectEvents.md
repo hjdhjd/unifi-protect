@@ -2,9 +2,9 @@
 
 ***
 
-[Home](README.md) / ProtectApiEvents
+[Home](README.md) / ProtectEvents
 
-# ProtectApiEvents
+# ProtectEvents
 
 Utilities to help decode packets from the UniFi Protect realtime events API.
 
@@ -63,53 +63,9 @@ Some tips:
 - With the exception of update actions with a modelKey of event, JSONs are always a subset of the bootstrap JSON, indexed off of modelKey. So for a modelKey of camera,
   the data payload is always a subset of [ProtectCameraConfigInterface](ProtectTypes.md#protectcameraconfiginterface).
 
-## Classes
-
-### ProtectApiEvents
-
-UniFi Protect event utility class that provides functions for decoding realtime event API packet frames.
-
-#### Methods
-
-##### decodePacket()
-
-```ts
-static decodePacket(log, packet): Nullable<ProtectEventPacket>;
-```
-
-Decode a UniFi Protect event packet.
-
-###### Parameters
-
-| Parameter | Type | Description |
-| ------ | ------ | ------ |
-| `log` | [`ProtectLogging`](ProtectLogging.md#protectlogging) | Logging functions to use. |
-| `packet` | `Buffer` | Input packet to decode. |
-
-###### Returns
-
-`Nullable`\<[`ProtectEventPacket`](#protecteventpacket)\>
-
-###### Remarks
-
-A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
-encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of it's use is in [ProtectApi](ProtectApi.md) where, once
-successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
-[ProtectApi](ProtectApi.md).
-
-## Type Aliases
+## Interfaces
 
 ### ProtectEventHeader
-
-```ts
-type ProtectEventHeader = {
-[key: string]: string | number | boolean | object;
-  action: string;
-  id: string;
-  modelKey: string;
-  newUpdateId: string;
-};
-```
 
 UniFi Protect event header.
 
@@ -147,13 +103,6 @@ A UniFi Protect event packet represents a realtime event update from a UniFi Pro
 
 ### ProtectEventPacket
 
-```ts
-type ProtectEventPacket = {
-  header: ProtectEventHeader;
-  payload: unknown;
-};
-```
-
 UniFi Protect event packet.
 
 #### Param
@@ -176,3 +125,33 @@ A UniFi Protect event packet represents a realtime event update from a UniFi Pro
 | ------ | ------ |
 | <a id="header"></a> `header` | [`ProtectEventHeader`](#protecteventheader) |
 | <a id="payload"></a> `payload` | `unknown` |
+
+## Functions
+
+### decodePacket()
+
+```ts
+function decodePacket(log, packet): Promise<Nullable<ProtectEventPacket>>;
+```
+
+Decode a UniFi Protect event packet.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `log` | [`ProtectLogging`](ProtectLogging.md#protectlogging) | Logging functions to use. |
+| `packet` | `Buffer` | Input packet to decode. |
+
+#### Returns
+
+`Promise`\<`Nullable`\<[`ProtectEventPacket`](#protecteventpacket)\>\>
+
+Promise resolving to a decoded event packet, or `null` if decoding fails.
+
+#### Remarks
+
+A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
+encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of it's use is in [ProtectApi](ProtectApi.md) where, once
+successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
+[ProtectApi](ProtectApi.md).

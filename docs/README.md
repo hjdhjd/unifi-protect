@@ -35,7 +35,7 @@ The UniFi Protect API is undocumented and implementing a library like this one i
 | Module | Description |
 | ------ | ------ |
 | [ProtectApi](ProtectApi.md) | A complete implementation of the UniFi Protect API, providing comprehensive access to UniFi Protect controllers. |
-| [ProtectApiEvents](ProtectApiEvents.md) | Utilities to help decode packets from the UniFi Protect realtime events API. |
+| [ProtectEvents](ProtectEvents.md) | Utilities to help decode packets from the UniFi Protect realtime events API. |
 | [ProtectLivestream](ProtectLivestream.md) | Access a direct MP4 livestream for a UniFi Protect camera. |
 | [ProtectLogging](ProtectLogging.md) | Logging interface for this library that you can optionally specify. |
 | [ProtectTypes](ProtectTypes.md) | A semi-complete description of all the object types used by the UniFi Protect API. |

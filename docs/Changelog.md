@@ -1,6 +1,13 @@
 # Changelog
 
-All notable changes to this project will be documented in this file. This project uses [semantic versioning](https://semver.org/).
+All notable changes to this project will be documented in this file.
+
+## 4.28.0 (2026-03-17)
+  * Breaking change: `decodePacket` is now an async standalone export rather than a static method on the `ProtectApiEvents` class. Consumers should update imports accordingly.
+  * New feature: ufp CLI event filtering, output formatting, device management, and command registry.
+  * Improvement: connection efficiency and non-blocking event processing.
+  * Improvement: dedicated livestream heartbeat timeout.
+  * Housekeeping.
 
 ## 4.27.7 (2026-01-24)
   * Housekeeping.
