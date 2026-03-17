@@ -45,7 +45,7 @@
 import { type ErrorEvent, type MessageEvent, WebSocket } from "undici";
 import events, { EventEmitter } from "node:events";
 import type { Nullable } from "./protect-types.js";
-import { PROTECT_API_TIMEOUT } from "./settings.js";
+import { PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT } from "./settings.js";
 import type { ProtectApi } from "./protect-api.js";
 import type { ProtectLogging } from "./protect-logging.js";
 import { Readable } from "node:stream";
@@ -325,7 +325,7 @@ export class ProtectLivestream extends EventEmitter {
             return;
           }
 
-          if((Date.now() - this.lastMessage) > PROTECT_API_TIMEOUT) {
+          if((Date.now() - this.lastMessage) > PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT) {
 
             logError("the livestream API is not responding.");
 
@@ -334,7 +334,7 @@ export class ProtectLivestream extends EventEmitter {
               this.ws.close();
             }
           }
-        }, PROTECT_API_TIMEOUT);
+        }, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
 
         // Process packets coming to our websocket.
         this.processLivestream();
