@@ -7,6 +7,6 @@
 // Export our API.
 export * from "./protect-api.js";
 export type { ProtectLivestream } from "./protect-api-livestream.js";
-export { ProtectEventPacket, decodePacket } from "./protect-api-events.js";
+export { ProtectEventHeader, ProtectEventPacket, decodePacket } from "./protect-api-events.js";
 export * from "./protect-logging.js";
 export * from "./protect-types.js";

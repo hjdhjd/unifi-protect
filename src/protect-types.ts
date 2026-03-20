@@ -7,7 +7,7 @@
  * A semi-complete description of all the object types used by the UniFi Protect API.
  *
  * The UniFi Protect API is largely undocumented - these interfaces and types have been gleaned through a lot of experimentation and observation. Protect is always
- * evolving and U will attempt to keep up with the changes over time.
+ * evolving and I will attempt to keep up with the changes over time.
  *
  * We use types instead of interfaces because we have a need to provide two versions of each interface: one that represents the interface and one that is recursively
  * partial, for patching the configuration objects and receiving event updates related to them.
@@ -42,7 +42,7 @@ export type DeepIndexable<T> = T extends object ?
     } : T;
 
 /**
- * An semi-complete description of the UniFi Protect NVR bootstrap JSON.
+ * A semi-complete description of the UniFi Protect NVR bootstrap JSON.
  *
  */
 export interface ProtectNvrBootstrapInterface {

@@ -25,7 +25,7 @@
  * ----------------
  * ```
  *
- * The header frame is required overhead since websockets provide only a transport medium. It's purpose is to tell us what's coming in the frame that follows.
+ * The header frame is required overhead since websockets provide only a transport medium. Its purpose is to tell us what's coming in the frame that follows.
  *
  * The action frame identifies what the action and category that the update contains:
  *
@@ -47,14 +47,16 @@
  *
  * Some tips:
  *
- * - `update` actions are always tied to the following modelKeys: camera, event, nvr, and user.
+ * - `update` actions are always tied to any valid modelKey that exists in the bootstrap JSON. The exception is `event` which is tied to the Protect events history list
+ *   that it maintains. The supported modelKeys from the bootstrap JSON are: `bridge`, `camera`, `chime`, `group`, `light`, `liveview`, `nvr`, `sensor`, `user`, and
+ *   `viewer`.
  *
  * - `add` actions are always tied to the `event` modelKey and indicate the beginning of an event item in the Protect events list. A subsequent `update` action is sent
- *   signaling the end of the event capture, and it's confidence score for motion detection.
+ *   signaling the end of the event capture, and its confidence score for motion detection.
  *
  * - The above is NOT the same thing as motion detection. If you want to detect motion, you should watch the `update` action for `camera` modelKeys, and look for a JSON
  *   that updates lastMotion. For doorbell rings, lastRing. The Protect events list is useful for the Protect app, but it's of limited utility to HomeKit, and it's slow
- *   = relative to looking for lastMotion that is. If you want true realtime updates, you want to look at the `update` action.
+ *   relative to just looking for the lastMotion update. If you want true realtime updates, you want to look at the `update` action.
  *
  * - JSONs are only payload type that seems to be sent, although the protocol is designed to accept all three.
  *
@@ -77,8 +79,8 @@ const EVENT_PACKET_HEADER_SIZE = 8;
 // Update realtime API packet types.
 enum ProtectEventPacketType {
 
-  HEADER = 1,
-  PAYLOAD = 2
+  ACTION = 1,
+  DATA = 2
 }
 
 // Update realtime API payload types.
@@ -96,7 +98,7 @@ enum EventPayloadType {
  *
  * | Byte Offset | Description    | Bits | Values                                                                |
  * |-------------|----------------|------|-----------------------------------------------------------------------|
- * | 0           | Packet Type    | 8    | 1 - header frame, 2 - payload frame.                                  |
+ * | 0           | Packet Type    | 8    | 1 - action frame, 2 - data frame.                                     |
  * | 1           | Payload Format | 8    | 1 - JSON object, 2 - UTF8-encoded string, 3 - Node Buffer.            |
  * | 2           | Deflated       | 8    | 0 - uncompressed, 1 - compressed / deflated (zlib-based compression). |
  * | 3           | Unknown        | 8    | Always 0. Possibly reserved for future use by Ubiquiti?               |
@@ -114,9 +116,6 @@ enum ProtectEventPacketHeader {
 /**
  * UniFi Protect event packet.
  *
- * @param header   - Protect event header.
- * @param payload  - Protect event payload.
- *
  * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
  *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to. The `payload` contains the detailed information
  *   related to the device and action specified in the header.
@@ -129,9 +128,6 @@ export interface ProtectEventPacket {
 
 /**
  * UniFi Protect event header.
- *
- * @param header   - Protect event header.
- * @param payload  - Protect event payload.
  *
  * @remarks A UniFi Protect event packet represents a realtime event update from a UniFi Protect controller. There are two components to each packet, a `header` and
  *   a `payload`. The `header` contains information about which Protect device and what action category it belongs to and can contain arbitrary information, though has
@@ -156,7 +152,7 @@ export interface ProtectEventHeader {
  * @returns Promise resolving to a decoded event packet, or `null` if decoding fails.
  *
  * @remarks A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
- * encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of it's use is in {@link ProtectApi} where, once
+ * encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of its use is in {@link ProtectApi} where, once
  * successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
  * {@link ProtectApi}.
  */
@@ -189,18 +185,18 @@ export async function decodePacket(log: ProtectLogging, packet: Buffer): Promise
   // throughput on the libuv threadpool.
   try {
 
-    const [ headerFrame, payloadFrame ] = await Promise.all([
+    const [ actionFrame, dataFrame ] = await Promise.all([
 
-      decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.HEADER),
-      decodeFrame(log, packet.subarray(dataOffset), ProtectEventPacketType.PAYLOAD)
+      decodeFrame(log, packet.subarray(0, dataOffset), ProtectEventPacketType.ACTION),
+      decodeFrame(log, packet.subarray(dataOffset), ProtectEventPacketType.DATA)
     ]);
 
-    if(!headerFrame || !payloadFrame) {
+    if(!actionFrame || !dataFrame) {
 
       return null;
     }
 
-    return ({ header: headerFrame as ProtectEventHeader, payload: payloadFrame });
+    return ({ header: actionFrame as ProtectEventHeader, payload: dataFrame });
   } catch(error) {
 
     log.error("Realtime events API: error decoding update packet: %s.", error);
@@ -229,8 +225,8 @@ Promise<Nullable<Buffer | JSON | ProtectEventHeader | string>> {
   const payload = packet.readUInt8(ProtectEventPacketHeader.DEFLATED) ?
     await inflateAsync(packet.subarray(EVENT_PACKET_HEADER_SIZE)) : packet.subarray(EVENT_PACKET_HEADER_SIZE);
 
-  // If it's a header, it can only have one format.
-  if(frameType === ProtectEventPacketType.HEADER) {
+  // If it's an action frame, it can only have one format.
+  if(frameType === ProtectEventPacketType.ACTION) {
 
     return (payloadFormat === EventPayloadType.JSON) ? JSON.parse(payload.toString()) as ProtectEventHeader : null;
   }

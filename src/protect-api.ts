@@ -70,6 +70,18 @@ import type { ProtectLogging } from "./protect-logging.js";
 import { STATUS_CODES } from "node:http";
 import util from "node:util";
 
+// Protect controller status codes that indicate transient server-side issues. These should be kept in sync with the Undici retry interceptor's statusCodes list in
+// reset(), which retries on the same set of codes before _retrieve ever sees them.
+//
+// 400: Bad request.
+// 404: Not found.
+// 429: Too many requests.
+// 500: Internal server error.
+// 502: Bad gateway.
+// 503: Service temporarily unavailable.
+// 504: Gateway timeout.
+const PROTECT_SERVER_ERRORS: ReadonlySet<number> = new Set([ 400, 404, 429, 500, 502, 503, 504 ]);
+
 /**
  * The Protect device types we know about and are available to us.
  */
@@ -988,15 +1000,11 @@ export class ProtectApi extends EventEmitter {
    *     }
    *   });
    *
-   *   // Configure motion detection
+   *   // Configure smart detection
    *   await protect.updateDevice(camera, {
-   *     motionSettings: {
-   *       mode: "always",
-   *       sensitivity: 80
-   *     },
    *     smartDetectSettings: {
    *       objectTypes: ["person", "vehicle"],
-   *       autoTrackingEnabled: true
+   *       autoTrackingObjectTypes: ["person"]
    *     }
    *   });
    *
@@ -1004,20 +1012,22 @@ export class ProtectApi extends EventEmitter {
    *   const light = protect.bootstrap?.lights[0];
    *   if (light) {
    *     await protect.updateDevice(light, {
-   *       lightSettings: {
-   *         mode: "motion",
-   *         brightness: 100,
-   *         durationMs: 15000 // 15 seconds
+   *       lightDeviceSettings: {
+   *         ledLevel: 6,
+   *         pirDuration: 15000,
+   *         pirSensitivity: 50
+   *       },
+   *       lightModeSettings: {
+   *         mode: "motion"
    *       }
    *     });
    *   }
    *
-   *   // Configure doorbell chime
+   *   // Configure doorbell chime volume
    *   const chime = protect.bootstrap?.chimes[0];
    *   if (chime) {
    *     await protect.updateDevice(chime, {
-   *       volume: 75,
-   *       ringtones: ["traditional"]
+   *       volume: 75
    *     });
    *   }
    * }
@@ -1700,15 +1710,7 @@ export class ProtectApi extends EventEmitter {
       this.log.error(message, ...parameters);
     };
 
-    // Catch Protect controller server-side issues:
-    //
-    // 400: Bad request.
-    // 404: Not found.
-    // 429: Too many requests.
-    // 500: Internal server error.
-    // 502: Bad gateway.
-    // 503: Service temporarily unavailable.
-    const serverErrors = new Set([ 400, 404, 429, 500, 502, 503 ]);
+    // Catch Protect controller server-side issues.
 
     let response: Dispatcher.ResponseData<unknown>;
 
@@ -1790,7 +1792,7 @@ export class ProtectApi extends EventEmitter {
 
       if(!this.responseOk(response.statusCode)) {
 
-        if(serverErrors.has(response.statusCode)) {
+        if(PROTECT_SERVER_ERRORS.has(response.statusCode)) {
 
           logError("Unable to connect to the Protect controller. This is temporary and may occur during device reboots.");
 
@@ -1985,10 +1987,10 @@ export class ProtectApi extends EventEmitter {
    * Unlike RTSP streams, livestreams are delivered over WebSockets with minimal latency and don't require additional authentication.
    *
    * @example
-   * Working with livestreams:
+   * Recording a livestream to a file using the Readable stream interface:
    *
    * ```typescript
-   * import { ProtectApi, ProtectLivestream } from "unifi-protect";
+   * import { ProtectApi } from "unifi-protect";
    * import { createWriteStream } from "fs";
    *
    * const protect = new ProtectApi();
@@ -1997,22 +1999,26 @@ export class ProtectApi extends EventEmitter {
    *   await protect.login("192.168.1.1", "admin", "password");
    *   await protect.getBootstrap();
    *
-   *   // Create a livestream instance
-   *   const livestream = protect.createLivestream();
-   *
-   *   // Start the livestream
    *   const camera = protect.bootstrap?.cameras.find(c => c.id === cameraId);
    *   if (!camera) return;
    *
-   *   // The livestream can be piped to a file, processed, or streamed elsewhere
+   *   // Create a livestream instance and start streaming on channel 0 (highest quality)
+   *   // with the Readable stream interface enabled.
+   *   const livestream = protect.createLivestream();
+   *
+   *   if (!await livestream.start(camera.id, 0, { useStream: true })) {
+   *     console.error("Failed to start livestream");
+   *     return;
+   *   }
+   *
+   *   // Pipe the fMP4 stream to a file.
    *   const output = createWriteStream(`recording-${Date.now()}.mp4`);
+   *   livestream.stream?.pipe(output);
    *
-   *   // Start streaming (implementation depends on ProtectLivestream class)
-   *   await livestream.start(camera, output);
-   *
-   *   // Stop after duration
+   *   // Stop after the requested duration.
    *   setTimeout(() => {
    *     livestream.stop();
+   *     output.end();
    *     console.log("Recording complete");
    *   }, durationMs);
    * }

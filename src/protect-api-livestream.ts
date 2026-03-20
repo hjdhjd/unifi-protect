@@ -19,7 +19,7 @@
  *
  * | Box   | Description                                                                                                                                   |
  * |-------|-----------------------------------------------------------------------------------------------------------------------------------------------|
- * | FTYP  | File type box. This contains codec and file information for the stream that follows it. It must be at the beginning of any stream, and preceded by the FTYP box.      |
+ * | FTYP  | File type box. This contains codec and file information for the stream. It must be at the very beginning of any stream.      |
  * | MDAT  | Media data box. This contains a segment of the actual audio and video data in the MP4 stream. It is always paired with an MOOF box, which contains the metadata describing this payload in an MDAT box.        |
  * | MOOF  | Movie fragment box. This defines the metadata for a specific segment of audio and video. It is always paired with an MDAT box, which contains the actual data.        |
  * | MOOV  | Movie metadata box. This contains all the metadata information about the stream that follows. It must be at the beginning of any stream, and preceded by the FTYP box. The Protect livestream API actually combines the FTYP and MOOV boxes, conveniently giving us a complete initialization segment.        |
@@ -65,6 +65,9 @@ enum ProtectLiveFrame {
   ENDSEGMENT = 255
 }
 
+// Pre-computed set of valid livestream frame types for O(1) validation on the hot path.
+const VALID_LIVE_FRAMES: ReadonlySet<number> = new Set(Object.values(ProtectLiveFrame).filter((v): v is number => typeof v === "number"));
+
 /**
  * Options for configuring a livestream session.
  *
@@ -96,7 +99,7 @@ export interface LivestreamOptions {
  *
  * 3. Start a livestream using {@link start}, stop it with {@link stop}, and listen for events.
  *
- * 3. Listen for `message` events emitted by {@link ProtectLivestream} which provides Buffers containing the raw fMP4 segment data as it's produced by Protect. You can
+ * 4. Listen for `message` events emitted by {@link ProtectLivestream} which provides Buffers containing the raw fMP4 segment data as it's produced by Protect. You can
  *    alternatively listen individually for the initialization segment or regular fMP4 segments if you'd like to distinguish between the two types of segments.
  *
  * Those are the basics that gets us up and running.
@@ -164,7 +167,7 @@ export class ProtectLivestream extends EventEmitter {
    * @event initsegment - Emitted with the initialization segment Buffer containing FTYP and MOOV boxes (stream mode disabled only).
    * @event message     - Emitted with each complete fMP4 segment Buffer, both initialization and regular segments (stream mode disabled only).
    * @event segment     - Emitted with each complete non-initialization segment Buffer containing MOOF/MDAT pairs (stream mode disabled only).
-   * @event timestamps  - Emitted with decode timestamp arrays when extendedVideoMetadata is enabled in options.
+   * @event timestamps  - Emitted with decode timestamp arrays when emitTimestamps is enabled in options.
    *
    * @remarks Once a livestream session has started, the following events can be listened for (unless you've specified `useStream` in `options`, in which case only the
    *          `close` event is available):
@@ -478,7 +481,7 @@ export class ProtectLivestream extends EventEmitter {
         const header = packet.readUInt8(offset);
 
         // Validate our header before we do anything else.
-        if(!Object.values(ProtectLiveFrame).includes(header as ProtectLiveFrame)) {
+        if(!VALID_LIVE_FRAMES.has(header)) {
 
           this.log.error("Invalid header found while decoding the livestream: %s", header);
 
@@ -658,7 +661,7 @@ export class ProtectLivestream extends EventEmitter {
   /**
    * The codecs in use for this livestream session.
    *
-   * @returns Returns a string containing the codec information,if it exists, or `null` otherwise.
+   * @returns Returns a string containing the codec information, if it exists, or `null` otherwise.
    *
    * @remarks Codec information is provided as `codec,container` where codec is either `avc` (H.264) or `hev` (H.265). The container format is always `mp4`.
    *
