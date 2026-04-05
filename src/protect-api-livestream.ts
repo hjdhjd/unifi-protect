@@ -3,45 +3,39 @@
  * protect-api-livestream.ts: Our UniFi Protect livestream API implementation.
  */
 
-/* eslint-disable @stylistic/max-len */
 /**
  * Access a direct MP4 livestream for a UniFi Protect camera.
  *
- * The UniFi Protect livestream API is largely undocumented and has been reverse engineered mostly through
- * trial and error, as well as observing the Protect controller in action. It builds on the works of others in the
- * community - particularly https://github.com/XciD - who have experimented and successfully gotten parts of this API decoded.
- * As always, this work stands on the contributions of others and the work that's come before it, and I want to acknowledge those
- * that paved the way.
+ * The UniFi Protect livestream API is largely undocumented and has been reverse engineered mostly through trial and error, as well as observing the Protect
+ * controller in action. It builds on the works of others in the community - particularly https://github.com/XciD - who have experimented and successfully
+ * gotten parts of this API decoded. As always, this work stands on the contributions of others and the work that's come before it, and I want to acknowledge
+ * those that paved the way.
  *
- * Let's start by defining some terms. In the MP4 world, an MP4 file (or stream) is composed of multiple atoms or segments.
- * Think of these as packet types that contain specific pieces of information that are needed to put together a valid MP4 file.
- * For our purposes, we're primarily interested in four types of MP4 boxes:
+ * Let's start by defining some terms. In the MP4 world, an MP4 file (or stream) is composed of multiple atoms or segments. Think of these as packet types
+ * that contain specific pieces of information that are needed to put together a valid MP4 file. For our purposes, we're primarily interested in four types of
+ * MP4 boxes:
  *
- * | Box   | Description                                                                                                                                   |
- * |-------|-----------------------------------------------------------------------------------------------------------------------------------------------|
- * | FTYP  | File type box. This contains codec and file information for the stream. It must be at the very beginning of any stream.      |
- * | MDAT  | Media data box. This contains a segment of the actual audio and video data in the MP4 stream. It is always paired with an MOOF box, which contains the metadata describing this payload in an MDAT box.        |
- * | MOOF  | Movie fragment box. This defines the metadata for a specific segment of audio and video. It is always paired with an MDAT box, which contains the actual data.        |
- * | MOOV  | Movie metadata box. This contains all the metadata information about the stream that follows. It must be at the beginning of any stream, and preceded by the FTYP box. The Protect livestream API actually combines the FTYP and MOOV boxes, conveniently giving us a complete initialization segment.        |
+ * - **FTYP** - File type box. Contains codec and file information. It must be at the very beginning of any stream.
+ * - **MOOV** - Movie metadata box. Contains all the metadata about the stream that follows. It must be preceded by the FTYP box. The Protect livestream API
+ *   combines the FTYP and MOOV boxes, conveniently giving us a complete initialization segment.
+ * - **MOOF** - Movie fragment box. Defines the metadata for a specific segment of audio and video. Always paired with an MDAT box containing the actual data.
+ * - **MDAT** - Media data box. Contains a segment of the actual audio and video data. Always paired with an MOOF box containing the metadata.
  *
- * Every fMP4 stream begins with an initialization segment comprised of the FTYP and MOOV boxes. It defines the file type,
- * what the movie metadata is, and other characteristics. Think of it as the header for the entire stream.
+ * Every fMP4 stream begins with an initialization segment comprised of the FTYP and MOOV boxes. It defines the file type, what the movie metadata is, and
+ * other characteristics. Think of it as the header for the entire stream.
  *
- * After the header, every fMP4 stream has a series of segments (sometimes called fragments, hence the term fMP4),
- * that consist of a pair of moof / mdat boxes that includes all the audio and video for that segment. You end up with something
- * that looks like:
+ * After the header, every fMP4 stream has a series of segments (sometimes called fragments, hence the term fMP4), that consist of a pair of MOOF/MDAT boxes
+ * that includes all the audio and video for that segment. You end up with something that looks like:
  *
  * ```
  *  |ftyp|moov|moof|mdat|moof|mdat...
  * ```
  *
- * The UniFi Protect livestream API provides a straightforward interface to generate bespoke fMP4 streams that
- * can be tailored depending on your needs. This implementation of the API allows you to access those streams, retrieve all the relevant boxes/atoms you need to
- * manipulate them for your application.
+ * The UniFi Protect livestream API provides a straightforward interface to generate bespoke fMP4 streams that can be tailored depending on your needs. This
+ * implementation of the API allows you to access those streams and retrieve all the relevant boxes/atoms you need to manipulate them for your application.
  *
  * @module ProtectLivestream
  */
-/* eslint-enable @stylistic/max-len */
 import { type ErrorEvent, type MessageEvent, WebSocket } from "undici";
 import events, { EventEmitter } from "node:events";
 import type { Nullable } from "./protect-types.js";
@@ -67,6 +61,9 @@ enum ProtectLiveFrame {
 
 // Pre-computed set of valid livestream frame types for O(1) validation on the hot path.
 const VALID_LIVE_FRAMES: ReadonlySet<number> = new Set(Object.values(ProtectLiveFrame).filter((v): v is number => typeof v === "number"));
+
+// Reusable empty buffer to avoid allocating a new zero-length buffer each time partial packet data is consumed.
+const EMPTY_BUFFER: Buffer = Buffer.alloc(0);
 
 /**
  * Options for configuring a livestream session.
@@ -416,7 +413,7 @@ export class ProtectLivestream extends EventEmitter {
     };
 
     // Keep any tail bytes that didn't form a full packet yet.
-    let packetRemaining: Buffer = Buffer.alloc(0);
+    let packetRemaining: Buffer = EMPTY_BUFFER;
 
     // Process data coming in from the websocket. The handler is async because Blob data requires an await to convert to an ArrayBuffer.
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
@@ -464,7 +461,7 @@ export class ProtectLivestream extends EventEmitter {
       if(packetRemaining.length > 0) {
 
         packet = Buffer.concat([ packetRemaining, packet ]);
-        packetRemaining = Buffer.alloc(0);
+        packetRemaining = EMPTY_BUFFER;
       }
 
       let offset = 0;
@@ -491,8 +488,8 @@ export class ProtectLivestream extends EventEmitter {
           break;
         }
 
-        // Protect encodes the length of the entire fMP4 segment in the first three bytes (big-endian) of the header.
-        const length = ((packet.readUInt8(offset + 1) << 8) | packet.readUInt8(offset + 2)) << 8 | packet.readUInt8(offset + 3);
+        // Protect encodes the length of the entire fMP4 segment in the three bytes following the header byte, as a big-endian 24-bit unsigned integer.
+        const length = packet.readUIntBE(offset + 1, 3);
 
         // Once we know our length, if we don't have the complete packet, we save it and punt until we see more data come across.
         if(packet.length < offset + 4 + length) {
@@ -591,9 +588,9 @@ export class ProtectLivestream extends EventEmitter {
           // We've got a timestamp packet. Protect sends over decode timestamps identical to what's in the tfdt box in the segment.
           case ProtectLiveFrame.TIMESTAMP:
 
-            for(let offset = 0; offset < data.length; offset += 8) {
+            for(let tsOffset = 0; tsOffset < data.length; tsOffset += 8) {
 
-              timestamps.push(Number(data.readBigUInt64BE(offset)));
+              timestamps.push(Number(data.readBigUInt64BE(tsOffset)));
             }
 
             this.emit("timestamps", timestamps);
