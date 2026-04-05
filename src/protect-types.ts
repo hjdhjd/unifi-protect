@@ -17,29 +17,22 @@
  *
  * @module ProtectTypes
  */
+// The `as P extends string ? P : never` key filter excludes the string index signature from the DeepPartial mapping. Without it, DeepPartial would recurse into
+// the ProtectKnownJsonValue index signature (`[key: string]: ProtectKnownJsonValue`), causing infinite type instantiation. This allows device interfaces to have both
+// explicit properties and a `[key: string]` index signature while still being usable with DeepPartial for payload types.
 /** @ignore */
 export type DeepPartial<T> = {
 
-  [P in keyof T]?: T[P] extends (infer I)[] ? DeepPartial<I>[] : DeepPartial<T[P]>
+  [P in keyof T as P extends string ? P : never]?: T[P] extends (infer I)[] ? DeepPartial<I>[] : DeepPartial<T[P]>
 };
 
 /** @ignore */
 export type Nullable<T> = T | null;
 
-// We want to make interfces indexable without losing type safety. To do that, we create a type template that makes every object indexable, recursively. We exclude
-// arrays and functions to maintain their existing natural behavior.
+// Recursive JSON value type representing any valid JSON-compatible value. Used as the index signature type on device interfaces so that untyped fields flowing through
+// from the Protect API are accessible without casting.
 /** @ignore */
-export type DeepIndexable<T> = T extends object ?
-  T extends readonly unknown[] ? T :
-    T extends (...args: never[]) => unknown ? T : {
-
-      // Recurse to all properties.
-      [K in keyof T]: DeepIndexable<T[K]>;
-    } & {
-
-      // Add the index signature using a union of all known property types.
-      [key: string]: DeepIndexable<T[keyof T]>;
-    } : T;
+export type ProtectKnownJsonValue = boolean | null | number | string | undefined | ProtectKnownJsonValue[] | { [key: string]: ProtectKnownJsonValue };
 
 /**
  * A semi-complete description of the UniFi Protect NVR bootstrap JSON.
@@ -48,20 +41,32 @@ export type DeepIndexable<T> = T extends object ?
 export interface ProtectNvrBootstrapInterface {
 
   accessKey: string;
+  aiports: ProtectKnownJsonValue[];
+  aiprocessors: ProtectKnownJsonValue[];
   authUserId: string;
-  bridges: unknown[];
+  bridges: ProtectKnownJsonValue[];
+  cameraGroups: ProtectKnownJsonValue[];
   cameras: ProtectCameraConfig[];
   chimes: ProtectChimeConfig[];
-  cloudPortalUrl: string;
-  groups: unknown[];
+  deviceGroups: ProtectKnownJsonValue[];
+  fobs: ProtectKnownJsonValue[];
+  groups: ProtectKnownJsonValue[];
+  hubs: ProtectKnownJsonValue[];
   lastUpdateId: string;
   lights: ProtectLightConfig[];
+  linkstations: ProtectKnownJsonValue[];
   liveviews: ProtectNvrLiveviewConfig[];
   nvr: ProtectNvrConfig;
+  readers: ProtectKnownJsonValue[];
+  relays: ProtectKnownJsonValue[];
   ringtones: ProtectRingtoneConfigInterface[];
   sensors: ProtectSensorConfig[];
+  sirens: ProtectKnownJsonValue[];
+  speakers: ProtectKnownJsonValue[];
   users: ProtectNvrUserConfig[];
   viewers: ProtectViewerConfig[];
+
+  [key: string]: ProtectKnownJsonValue;
 }
 
 /**
@@ -70,9 +75,7 @@ export interface ProtectNvrBootstrapInterface {
 export interface ProtectNvrConfigInterface {
 
   analyticsData: string;
-  anonymouseDeviceId: string;
-  availableUpdate: string;
-  avgMotions: number[];
+  anonymousDeviceId: string;
   cameraCapacity: {
 
     qualities: {
@@ -111,7 +114,6 @@ export interface ProtectNvrConfigInterface {
   enableAutomaticBackups: boolean;
   enableBridgeAutoAdoption: boolean;
   enableCrashReporting: boolean;
-  enableStatsReporting: boolean;
   errorCode: Nullable<string>;
   featureFlags: {
 
@@ -125,18 +127,16 @@ export interface ProtectNvrConfigInterface {
   };
   firmwareVersion: string;
   hardwareId: string;
-  hardwarePlatform: string;
   hardwareRevision: string;
   hasGateway: boolean;
   host: string;
   hostShortname: string;
-  hostType: string;
+  hostType: number;
   hosts: string[];
   id: string;
   isAccessInstalled: boolean;
   isAiReportingEnabled: boolean;
   isAway: boolean;
-  isHardware: boolean;
   isInsightsEnabled: boolean;
   isNetworkInstalled: boolean;
   isPrimary: boolean;
@@ -148,13 +148,11 @@ export interface ProtectNvrConfigInterface {
   isSetup: boolean;
   isSshEnabled: boolean;
   isStacked: boolean;
-  isStation: boolean;
-  isStatsGatheringEnabled: boolean;
   isUCoreSetup: boolean;
   isUCoreStacked: boolean;
   isUcoreUpdatable: boolean;
   isUpdating: boolean;
-  isWirelessUplinkEnabled: boolean;
+  isWirelessUplinkEnabled: Nullable<boolean>;
   lastSeen: number;
   lastUpdateAt: Nullable<number>;
   locationSettings: {
@@ -168,15 +166,13 @@ export interface ProtectNvrConfigInterface {
   mac: string;
   marketName: string;
   maxCameraCapacity: Record<string, number>;
-  modelKey: string;
+  modelKey: "nvr";
   name?: string;
-  network: string;
   ports: {
 
     aiFeatureConsole: number;
     cameraEvents: number;
     cameraHttps: number;
-    cameraTcp: number;
     devicesWss: number;
     discoveryClient: number;
     emsCLI: number;
@@ -186,7 +182,6 @@ export interface ProtectNvrConfigInterface {
     https: number;
     liveWs: number;
     liveWss: number;
-    piongw: number;
     playback: number;
     rtmp: number;
     rtsp: number;
@@ -198,7 +193,7 @@ export interface ProtectNvrConfigInterface {
     ump: number;
   };
   publicIp: string;
-  recordingRetentionDurationMs: string;
+  recordingRetentionDurationMs: Nullable<string>;
   releaseChannel: string;
   skipFirmwareUpdate: boolean;
   smartDetectAgreement: {
@@ -212,7 +207,6 @@ export interface ProtectNvrConfigInterface {
     faceRecognition: boolean;
     licensePlateRecognition: boolean;
   };
-  ssoChannel: Nullable<string>;
   storageStats: {
 
     capacity: number;
@@ -248,17 +242,11 @@ export interface ProtectNvrConfigInterface {
   timezone: string;
   type: string;
   ucoreVersion: string;
-  uiVersion: string;
   upSince: number;
-  uptime: number;
   version: string;
   wanIp: string;
-  wifiSettings: {
 
-    password: Nullable<string>;
-    ssid: Nullable<string>;
-    useThirdPartyWifi: boolean;
-  };
+  [key: string]: ProtectKnownJsonValue;
 }
 
 /**
@@ -298,12 +286,168 @@ export interface ProtectNvrSystemInfoInterface {
     total: number;
     used: number;
   };
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * A description of the UniFi Protect device WiFi connection state JSON.
+ */
+export interface ProtectWifiConnectionStateInterface {
+
+  apName: Nullable<string>;
+  bssid: Nullable<string>;
+  channel: Nullable<number>;
+  connectivity: Nullable<string>;
+  experience: Nullable<number>;
+  frequency: Nullable<number>;
+  phyRate: Nullable<number>;
+  signalQuality: Nullable<number>;
+  signalStrength: Nullable<number>;
+  ssid: Nullable<string>;
+  txRate: Nullable<number>;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * A description of the UniFi Protect device wired connection state JSON.
+ */
+export interface ProtectWiredConnectionStateInterface {
+
+  phyRate: number;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * The common properties shared by all UniFi Protect device configuration objects.
+ */
+export interface ProtectDeviceBaseInterface {
+
+  anonymousDeviceId: Nullable<string>;
+  canAdopt: boolean;
+  connectedSince: number;
+  connectionHost: Nullable<string>;
+  displayName: string;
+  firmwareBuild: string;
+  firmwareVersion: Nullable<string>;
+  fwUpdateState: Nullable<string>;
+  globalAlarmManagerScopeNames: string[];
+  guid: Nullable<string>;
+  hardwareRevision: Nullable<string>;
+  host: string;
+  id: string;
+  isAdopted: boolean;
+  isAdoptedByOther: boolean;
+  isAdopting: boolean;
+  isAttemptingToConnect: boolean;
+  isBlockedByArmMode: boolean;
+  isConnected: boolean;
+  isDownloadingFW: boolean;
+  isProvisioned: boolean;
+  isRebooting: boolean;
+  isRestoring: boolean;
+  isSshEnabled: boolean;
+  isUpdating: boolean;
+  lastDisconnect: Nullable<number>;
+  lastSeen: number;
+  latestFirmwareSizeBytes: Nullable<number>;
+  latestFirmwareVersion: string;
+  mac: string;
+  marketName: string;
+  name?: string;
+  nvrMac: string;
+  state: string;
+  supportFileCreatedAt: Nullable<number>;
+  supportFileName: Nullable<string>;
+  supportFileState: Nullable<string>;
+  sysid: Nullable<string>;
+  type: string;
+  upSince: number;
+  uplinkDevice: Nullable<string>;
+  uptime: number;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * The common properties shared by all UniFi Protect smart detection and motion zone objects.
+ */
+export interface ProtectSmartZoneInterface {
+
+  color: string;
+  id: number;
+  isTriggerLightEnabled: boolean;
+  mergeId: Nullable<string>;
+  name: string;
+  points: [number, number][];
+  sensitivity: number;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * A description of a PTZ axis range for UniFi Protect camera feature flags.
+ */
+export interface ProtectPtzAxisRangeInterface {
+
+  degrees: {
+
+    max: Nullable<number>;
+    min: Nullable<number>;
+    step: Nullable<number>;
+  };
+  steps: {
+
+    max: Nullable<number>;
+    min: Nullable<number>;
+    step: Nullable<number>;
+  };
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * A description of a single air quality metric reading from a UniFi Protect sensor.
+ */
+export interface ProtectAirQualityMetricInterface {
+
+  status: string;
+  value: Nullable<number>;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * A description of threshold settings for a single air quality metric on a UniFi Protect sensor.
+ */
+export interface ProtectAirQualityThresholdSettingsInterface {
+
+  highThreshold: Nullable<number>;
+  isEnabled: boolean;
+  lowThreshold: Nullable<number>;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * A description of threshold settings for environmental metrics (humidity, light, temperature) on a UniFi Protect sensor.
+ */
+export interface ProtectThresholdSettingsInterface {
+
+  highThreshold: number;
+  isEnabled: boolean;
+  lowThreshold: number;
+  margin: number;
+
+  [key: string]: ProtectKnownJsonValue;
 }
 
 /**
  * A semi-complete description of the UniFi Protect camera JSON.
  */
-export interface ProtectCameraConfigInterface {
+export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface {
 
   accessDeviceMetadata?: {
 
@@ -329,6 +473,7 @@ export interface ProtectCameraConfigInterface {
     featureFlags: {
 
       supportLivestream: boolean;
+      supportMicManagement: boolean;
       supportUnlock: boolean;
     };
     ledSettings: {
@@ -338,6 +483,7 @@ export interface ProtectCameraConfigInterface {
     micVolume: number;
     pairedInfo: {
 
+      guid: Nullable<string>;
       name: string;
       uri: string;
     };
@@ -348,31 +494,91 @@ export interface ProtectCameraConfigInterface {
 
     talkbackSettings: ProtectCameraTalkbackConfigInterface[];
   };
+  accessMethodSettings: {
+
+    methods: string[];
+  };
+  activePatrolSlot: Nullable<string>;
+  aiPortCapacityPoints: number;
+  aiPortCompatibleResolutions: string[];
+  aiPortCompatibleResolutionsInHallway: string[];
+  alarms: {
+
+    autoTrackingThermalThresholdReached: boolean;
+    lensThermal: number;
+    lensThermalThresholdReached: boolean;
+    motorOverheated: boolean;
+    panTiltMotorFaults: string[];
+    tiltThermal: number;
+  };
   apMac: string;
+  apMgmtIp: Nullable<string>;
   apRssi: string;
   audioBitrate: number;
+  audioSettings: {
+
+    style: string[];
+  };
+  autoRetentionLqMs: Nullable<number>;
+  autoRetentionMs: Nullable<number>;
+  brightnessSettings: {
+
+    autoBrightness: boolean;
+    brightness: number;
+  };
+  canCreateAccessEvent: boolean;
   canManage: boolean;
   channels: ProtectCameraChannelConfigInterface[];
   chimeDuration: number;
-  connectedSince: number;
-  connectionHost: Nullable<string>;
+  clarityZones: ProtectKnownJsonValue[];
   currentResolution: string;
-  displayName: string;
+  doorbellSession: {
+
+    sessionId: Nullable<string>;
+    status: Nullable<string>;
+  };
+  downScaleMode: number;
   elementInfo: null;
   enableNfc: boolean;
+  excludeZones: ProtectKnownJsonValue[];
+  extendedAiFeatures: {
+
+    smartDetectTypes: string[];
+  };
+  faceUnlockSettings: {
+
+    faceDetectionSensitive: string;
+    lastUpdateTime: number;
+    licenseConfigured: boolean;
+  };
   featureFlags: {
 
     audio: string[];
     audioCodecs: string[];
     audioStyle: string[];
     canAdjustIrLedLevel: boolean;
+    canAdjustIspSettings: boolean;
+    canAdjustSpeakerVolume: boolean;
     canMagicZoom: boolean;
     canOpticalZoom: boolean;
     canTouchFocus: boolean;
+    clarityZones: Nullable<{
+
+      maxZones: number;
+      rectangleOnly: boolean;
+    }>;
+    downScaleResolutions: number[][];
+    excludeZones: {
+
+      maxZones: number;
+      rectangleOnly: boolean;
+    };
+    flashRange: Nullable<number>;
+    focus: ProtectPtzAxisRangeInterface;
+    hallwayModeWarningRequired: boolean;
     hasAccelerometer: boolean;
     hasAec: boolean;
     hasAutoICROnly: boolean;
-    hasBattery: boolean;
     hasBluetooth: boolean;
     hasChime: boolean;
     hasColorLcdScreen: boolean;
@@ -384,6 +590,7 @@ export interface ProtectCameraConfigInterface {
     hasHallwayMode: boolean;
     hasHallwayModeHdrOnRequired: boolean;
     hasHdr: boolean;
+    hasHorizontalFlip: boolean;
     hasIcrSensitivity: boolean;
     hasInfrared: boolean;
     hasLcdScreen: boolean;
@@ -394,11 +601,11 @@ export interface ProtectCameraConfigInterface {
     hasLineCrossingCounting: boolean;
     hasLineIn: boolean;
     hasLiveviewTracking: boolean;
+    hasLprReflex: boolean;
     hasLuxCheck: boolean;
     hasManualPersonOfInterest: boolean;
     hasMic: boolean;
     hasMotionZones: boolean;
-    hasNewMotionAlgorithm: boolean;
     hasOptimizeIr: boolean;
     hasPackageCamera: boolean;
     hasPackageZoneSupportForPrimaryLens: boolean;
@@ -413,27 +620,100 @@ export interface ProtectCameraConfigInterface {
     hasSquareEventThumbnail: boolean;
     hasTamperDetection: boolean;
     hasVerticalFlip: boolean;
+    hasWdr: boolean;
     hasWifi: boolean;
+    hotplug: {
+
+      audio: Nullable<string>;
+      extender: {
+
+        flashRange: Nullable<number>;
+        hasFlash: boolean;
+        hasIR: boolean;
+        hasRadar: boolean;
+        isAttached: boolean;
+        radarRangeMax: Nullable<number>;
+        radarRangeMin: Nullable<number>;
+      };
+      sdCardAttached: boolean;
+      standaloneAdoption: boolean;
+      video: Nullable<string>;
+    };
     isDoorbell: boolean;
     isPtz: boolean;
+    lensModel: Nullable<string>;
+    lensType: Nullable<string>;
     maxScaleDownLevel: number;
     motionAlgorithms: string[];
+    mountPositions: string[];
+    pan: ProtectPtzAxisRangeInterface;
+    presetMinDuration: Nullable<number>;
+    presetTour: boolean;
     privacyMaskCapability: {
       maxMasks: number;
       rectangleOnly: boolean;
     };
+    reader: {
+
+      canAdjustBrightness: boolean;
+      support2fa: boolean;
+      supportAccessMethods: string[];
+      supportAdjustSpeakerVolume: boolean;
+      supportAudioCodecs: string[];
+      supportAutoBrightness: boolean;
+      supportAutoTurnOffDisplay: boolean;
+      supportCallerManager: boolean;
+      supportDoorDirection: boolean;
+      supportDoorbellTriggerMethod: boolean;
+      supportFloodLed: boolean;
+      supportGateStop: boolean;
+      supportGreetings: boolean;
+      supportInterfaceDesigner: boolean;
+      supportInterfaceDirectory: boolean;
+      supportInterfaceLayout: boolean;
+      supportLocate: boolean;
+      supportManualDownloadSupportFile: boolean;
+      supportManualFirmwareUpdate: boolean;
+      supportMic: boolean;
+      supportShowHeading: boolean;
+      supportShowInterfaceImage: boolean;
+      supportShowStatusBar: boolean;
+      supportShowUnlockSchedule: boolean;
+      supportSpeaker: boolean;
+      supportSsh: boolean;
+      supportStatusLed: boolean;
+      supportStreamEncryption: boolean;
+      supportTwilioSip: boolean;
+      supportWelcomeLed: boolean;
+    };
     smartDetectAudioTypes: string[];
     smartDetectTypes: string[];
+    stitchDistance: {
+
+      support: boolean;
+    };
+    storage: {
+
+      sdSlotCount: number;
+      ssdSlotCount: number;
+    };
     streamEncryptable: boolean;
     supportCustomRingtone: boolean;
     supportDoorAccessConfig: boolean;
     supportFullHdSnapshot: boolean;
+    supportLocate: boolean;
     supportLpDetectionWithoutVehicle: boolean;
     supportMinMotionAdaptiveBitrate: boolean;
     supportNfc: boolean;
+    supportPtzTrackingTimeout: boolean;
+    tilt: ProtectPtzAxisRangeInterface;
+    verticalFlipWarning: boolean;
     videoCodecs: string[];
+    videoDeviceCount: Nullable<number>;
+    videoInputModes: string[];
     videoModeMaxFps: number[];
     videoModes: string[];
+    zoom: ProtectPtzAxisRangeInterface & { ratio: number };
   };
   fingerprintSettings: {
 
@@ -451,38 +731,51 @@ export interface ProtectCameraConfigInterface {
     status: string;
     total: number;
   };
-  firmwareBuild: string;
-  firmwareVersion?: string;
-  fwUpdateState: string;
-  guid: string;
-  hardwareRevision?: string;
+  greetingSettings: {
+
+    greetingBroadcastName: string;
+    greetingText: string;
+  };
+  hallwayMode: string;
+  hasRecordingStarted: boolean;
   hasRecordings: boolean;
   hasSpeaker: boolean;
   hasWifi: boolean;
   hdrMode: boolean;
+  hdrType: string;
+  homekitAccessoryId: Nullable<string>;
   homekitSettings: {
 
+    doorbellMuted: Nullable<boolean>;
     microphoneMuted: boolean;
+    recordingActive: boolean;
     speakerMuted: boolean;
     streamInProgress: boolean;
     talkbackSettingsActive: boolean;
   };
-  host: string;
+  hqBytesPerDay: number;
   hubMac: string;
-  id: string;
+  interfaceSettings: {
+
+    bgImageId: Nullable<string>;
+    callMethod: string;
+    heading: Nullable<string>;
+    layout: string;
+    logoImageId: Nullable<string>;
+    showLogo: boolean;
+    showTime: boolean;
+    showWeather: boolean;
+    subHeading: Nullable<string>;
+  };
   is2K: boolean;
   is4K: boolean;
-  isAdopted: boolean;
+  isAccessDevice: boolean;
+  isAccessFloodlightTriggerEnabled: boolean;
   isAdoptedByAccessApp: boolean;
-  isAdoptedByOther: boolean;
-  isAdopting: boolean;
-  isAttemptingToConnect: boolean;
-  isConnected: boolean;
   isDark: boolean;
   isDeleting: boolean;
-  isDownloadingFW: boolean;
   isExtenderInstalledEver: boolean;
-  isHidden: boolean;
+  isIntercom: boolean;
   isLiveHeatmapEnabled: boolean;
   isManaged: boolean;
   isMicEnabled: boolean;
@@ -491,14 +784,10 @@ export interface ProtectCameraConfigInterface {
   isPairedWithAiPort: boolean;
   isPoorNetwork: boolean;
   isProbingForWifi: boolean;
-  isProvisioned: boolean;
-  isRebooting: boolean;
+  isReaderPro: boolean;
   isRecording: boolean;
-  isRestoring: boolean;
   isSmartDetected: boolean;
-  isSshEnabled: boolean;
   isThirdPartyCamera: boolean;
-  isUpdating: boolean;
   isWaterproofCaseAttached: boolean;
   isWirelessUplinkEnabled: boolean;
   ispSettings: {
@@ -513,37 +802,28 @@ export interface ProtectCameraConfigInterface {
     denoise: number;
     focusMode: string;
     focusPosition: number;
+    hdrMode: string;
     hue: number;
-    hotplug: {
-
-      audio: Nullable<string>;
-      extender: {
-
-        flashRange: number;
-        hasFlash: boolean;
-        hasIR: boolean;
-        hasRadar: boolean;
-        isAttached: boolean;
-        radarRangeMax: number;
-        radarRangeMin: number;
-      };
-      standaloneAdoption: boolean;
-      video: Nullable<string>;
-    };
     icrCustomValue: number;
     icrSensitivity: number;
+    icrSwitchMode: string;
     irLedLevel: number;
     irLedMode: string;
     is3dnrEnabled: boolean;
     isAggressiveAntiFlickerEnabled: boolean;
     isAutoRotateEnabled: boolean;
+    isColorNightVisionEnabled: boolean;
     isExternalIrEnabled: boolean;
     isFlippedHorizontal: boolean;
     isFlippedVertical: boolean;
     isLdcEnabled: boolean;
     isPauseMotionEnabled: boolean;
+    isSmokeCoverModeEnabled: boolean;
+    mountPosition: string;
     saturation: number;
+    sceneMode: string;
     sharpness: number;
+    spotlightDuration: number;
     touchFocusX: number;
     touchFocusY: number;
     wdr: number;
@@ -551,13 +831,12 @@ export interface ProtectCameraConfigInterface {
   };
   lastMotion: number;
   lastRing: Nullable<number>;
-  lastSeen: number;
-  latestFirmwareVersion: string;
   lcdMessage?: DeepPartial<ProtectCameraLcdMessageConfigInterface>;
   ledSettings: {
 
-    blinkRate: number;
+    floodLed: boolean;
     isEnabled: boolean;
+    welcomeLed: boolean;
   };
   lenses: {
 
@@ -573,11 +852,11 @@ export interface ProtectCameraConfigInterface {
       timelapseStartLQ: Nullable<number>;
     };
   }[];
-  mac: string;
-  marketName: string;
+  lqBytesPerDay: number;
   micVolume: number;
-  modelKey: string;
-  name?: string;
+  modelKey: "camera";
+  motionZones: ProtectSmartZoneInterface[];
+  needUpdateBeforeAdoption: boolean;
   nfcSettings: {
 
     enableNfc: boolean;
@@ -590,76 +869,131 @@ export interface ProtectCameraConfigInterface {
     lastSeen: number;
     mode: string;
   };
-  nvrMac: string;
+  optimizeIrSettings: {
+
+    irZones: ProtectKnownJsonValue[];
+    mode: string;
+  };
   osdSettings: {
 
     isDateEnabled: boolean;
     isDebugEnabled: boolean;
     isLogoEnabled: boolean;
     isNameEnabled: boolean;
+    overlayLocation: string;
   };
+  parentCameraGroupId: Nullable<string>;
   phyRate: number;
-  pirSettings: {
+  pinCodeSettings: {
 
-    pirMotionClipLength: number;
-    pirSensitivity: number;
-    timelapseFrameInterval: number;
-    timelapseTransferInterval: number;
+    pinCodeLengthRange: string;
+    pinCodeShuffle: boolean;
   };
   platform: string;
-  recordingSchedule: null;
+  privacyZones: ProtectKnownJsonValue[];
+  ptz: {
+
+    pauseAutoTrackingUntilTs: Nullable<number>;
+    recentAutoHomeReturnAt: Nullable<number>;
+    recentMoveAutoTrackResumeAtTs: Nullable<number>;
+    returnHomeAfterInactivityMs: Nullable<number>;
+  };
+  ptzControlEnabled: boolean;
+  readerSettings: {
+
+    allowThirdPartyNfcCards: boolean;
+    doorEntryMethod: string;
+    doorId: Nullable<string>;
+    doorName: Nullable<string>;
+    language: string;
+    screenOffTimeout: string;
+    unlockDuration: number;
+  };
+  receiverGroups: ProtectKnownJsonValue[];
+  recordingPath: Nullable<string>;
+  recordingSchedulesV2: ProtectKnownJsonValue[];
   recordingSettings: {
 
-    enablePirTimelapse: boolean;
+    accessEventPostPaddingSecs: number;
+    accessEventPrePaddingSecs: number;
+    createAccessEvent: boolean;
+    enableMotionDetection: boolean;
     endMotionEventDelay: number;
     geofencing: string;
+    inScheduleMode: string;
     minMotionEventTrigger: number;
     mode: string;
+    motionAlgorithm: string;
+    outScheduleMode: string;
     postPaddingSecs: number;
     prePaddingSecs: number;
+    recordAudio: boolean;
+    recordVideo: boolean;
+    retentionDurationLQMs: Nullable<number>;
     retentionDurationMs: Nullable<number>;
+    smartDetectPostPaddingSecs: number;
+    smartDetectPrePaddingSecs: number;
     suppressIlluminationSurge: boolean;
     useNewMotionAlgorithm: boolean;
   };
+  rtspClient: Nullable<ProtectKnownJsonValue>;
+  secondLensSmartDetectZones: ProtectKnownJsonValue[];
+  shortcuts: ProtectKnownJsonValue[];
+  skipCameraUpdateDecalListener: boolean;
   smartDetectLines: [];
+  smartDetectLoiterZones: (ProtectSmartZoneInterface & { loiterTriggers: { loiterTriggerTime: number; objectType: string }[]; triggerAccessTypes: string[] })[];
   smartDetectSettings: {
 
     audioTypes: string[];
     autoTrackingObjectTypes: string[];
-    detectionRange: [max: number, min: number];
+    autoTrackingTimeoutSec: number;
+    autoTrackingWithZoom: boolean;
+    detectionRange: { max: Nullable<number>; min: Nullable<number> };
     enableTamperDetection: boolean;
     objectTypes: string[];
   };
-  smartDetectZones: {
-
-    color: string;
-    name: string;
-    objectTypes: string[];
-    points: [number, number][];
-    sensitivity: number;
-  }[];
+  smartDetectZones: (ProtectSmartZoneInterface & { objectTypes: string[] })[];
   speakerSettings: {
 
     areSystemSoundsEnabled: boolean;
     isEnabled: boolean;
+    repeatTimes: number;
+    ringtoneId: Nullable<string>;
+    ringVolume: number;
+    speakerVolume: number;
     volume: number;
   };
-  state: string;
   stats: {
 
-    battery: {
+    edgeRecording: {
 
-      isCharging: boolean;
-      percentage: Nullable<number>;
-      sleepState: string;
+      deviceMac: Nullable<string>;
+      recordMode: string;
+      recordStreamNumber: Nullable<number>;
     };
-    rxBytes: number;
+    sdCard: {
+
+      health: Nullable<string>;
+      healthStatus: string;
+      hotPlugCapable: Nullable<boolean>;
+      mounts: ProtectKnownJsonValue[];
+      sdRecordingSupported: Nullable<boolean>;
+      serial: Nullable<string>;
+      size: Nullable<number>;
+      slotId: string;
+      slotIdx: Nullable<number>;
+      state: string;
+      type: Nullable<string>;
+      usedSize: number;
+    };
+    sdCardStorageCapacityMs: Nullable<number>;
     storage: {
 
       rate: number;
       used: number;
     };
-    txBytes: number;
+    storageSlots: ProtectKnownJsonValue[];
+    totalStorageCapacityMs: Nullable<number>;
     video: {
 
       recordingEnd: number;
@@ -682,6 +1016,8 @@ export interface ProtectCameraConfigInterface {
     wifiQuality: number;
     wifiStrength: number;
   };
+  stitchDistance: Nullable<number>;
+  stopStreamLevel: Nullable<number>;
   streamSharing: {
 
     enabled: boolean;
@@ -692,10 +1028,19 @@ export interface ProtectCameraConfigInterface {
     sharedByUser: Nullable<string>;
     maxStreams: Nullable<number>;
   };
+  streamingChannels: ProtectKnownJsonValue[];
+  supportAiPortResolution: boolean;
+  supportAiPortResolutionInHallway: boolean;
+  supportUcp4: boolean;
   supportedScalingResolutions: string[];
   talkbackSettings: ProtectCameraTalkbackConfigInterface;
+  template: Nullable<ProtectKnownJsonValue>;
   thirdPartyCameraInfo: {
 
+    enableRtspAudio: Nullable<boolean>;
+    errors: ProtectKnownJsonValue[];
+    forceTcp: Nullable<boolean>;
+    hasAudio: Nullable<boolean>;
     port: number;
     rtspUrl: string;
     rtspUrlLQ: string;
@@ -706,28 +1051,17 @@ export interface ProtectCameraConfigInterface {
     limit: number;
     side: string;
   };
-  type: string;
-  upSince: number;
-  uptime: number;
-  useGlobal: boolean;
+  userConfiguredAp: boolean;
   videoCodec: string;
+  videoCodecLastSwitchAt: Nullable<number>;
   videoCodecState: number;
   videoCodecSwitchingSince: number;
+  videoInputMode: Nullable<string>;
   videoMode: string;
   videoReconfigurationInProgress: boolean;
   voltage: number;
-  wifiConnectionState: {
-
-    channel: number;
-    frequency: number;
-    phyRate: number;
-    signalQuality: number;
-    signalStrength: number;
-  };
-  wiredConnectionState: {
-
-    phyRate: number;
-  };
+  wifiConnectionState: ProtectWifiConnectionStateInterface;
+  wiredConnectionState: ProtectWiredConnectionStateInterface;
 }
 
 /**
@@ -744,6 +1078,8 @@ export interface ProtectCameraChannelConfigInterface {
   height: number;
   id: number;
   idrInterval: number;
+  internalRtspAlias: Nullable<string>;
+  isInternalRtspEnabled: boolean;
   isRtspEnabled: boolean;
   maxBitrate: number;
   minBitrate: number;
@@ -751,8 +1087,11 @@ export interface ProtectCameraChannelConfigInterface {
   minMotionAdaptiveBitRate: number;
   name: string;
   rtspAlias: string;
+  validBitrateRangeMargin: Nullable<number>;
   videoId: string;
   width: number;
+
+  [key: string]: ProtectKnownJsonValue;
 }
 
 /**
@@ -782,53 +1121,31 @@ export interface ProtectCameraTalkbackConfigInterface {
   typeFmt: string;
   typeIn: string;
   url: string;
+
+  [key: string]: ProtectKnownJsonValue;
 }
 
 /**
  * A semi-complete description of the UniFi Protect chime JSON.
  */
-export interface ProtectChimeConfigInterface {
+export interface ProtectChimeConfigInterface extends ProtectDeviceBaseInterface {
 
   apMac: string;
   apMgmtIp: string;
-  apRssi: string;
+  apRssi: Nullable<string>;
   cameraIds: string[];
-  canAdopt: boolean;
-  connectedSince: number;
-  connectionHost: string;
-  elementInfo: string;
+  elementInfo: Nullable<string>;
   featureFlags: {
 
     hasHttpsClientOTA: boolean;
     hasWifi: boolean;
     supportCustomRingtone: boolean;
   };
-  firmwareBuild: string;
-  firmwareVersion: string;
-  fwUpdateState: string;
-  hardwareRevision: string;
-  host: string;
-  id: string;
-  isAdopted: boolean;
-  isAdoptedByOther: boolean;
-  isAdopting: boolean;
-  isAttemptingToConnect: boolean;
-  isConnected: boolean;
-  isDownloadingFW: boolean;
+  hasWifi: boolean;
   isProbingForWifi: boolean;
-  isProvisioned: boolean;
-  isRebooting: boolean;
-  isSshEnabled: boolean;
-  isUpdating: boolean;
   isWirelessUplinkEnabled: boolean;
   lastRing: number;
-  lastSeen: number;
-  latestFirmwareVersion: string;
-  mac: string;
-  marketName: string;
-  modelKey: string;
-  name?: string;
-  nvrMac: string;
+  modelKey: "chime";
   platform: string;
   repeatTimes: number;
   ringSettings: {
@@ -847,64 +1164,24 @@ export interface ProtectChimeConfigInterface {
     track_no: number;
     volume: number;
   }[];
-  state: string;
-  sysId: string;
-  type: string;
-  upSince: number;
-  uptime: number;
   userConfiguredAp: boolean;
   volume: number;
-  wifiConnectionState: {
-
-    apName: Nullable<string>;
-    bssid: Nullable<string>;
-    channel: Nullable<string>;
-    connectivity: string;
-    experience: null;
-    frequency: null;
-    phyRate: number;
-    signalQuality: number;
-    signalStrength: number;
-    ssid: Nullable<string>;
-    txRate: null;
-  };
-  wiredConnectionState: {
-
-    phyRate: number;
-  };
+  wifiConnectionState: ProtectWifiConnectionStateInterface;
+  wiredConnectionState: ProtectWiredConnectionStateInterface;
 }
 
 /**
  * A semi-complete description of the UniFi Protect light JSON.
  */
-export interface ProtectLightConfigInterface {
+export interface ProtectLightConfigInterface extends ProtectDeviceBaseInterface {
 
-  camera: string;
-  canAdopt: boolean;
-  connectedSince: number;
-  connectionHost: string;
-  firmwareBuild: string;
-  firmwareVersion: string;
-  hardwareRevision: string;
-  host: string;
-  id: string;
-  isAdopted: boolean;
-  isAdoptedByOther: boolean;
-  isAdopting: boolean;
-  isAttemptingToConnect: boolean;
+  camera: Nullable<string>;
   isCameraPaired: boolean;
-  isConnected: boolean;
   isDark: boolean;
   isLightOn: boolean;
   isLocating: boolean;
   isPirMotionDetected: boolean;
-  isProvisioned: boolean;
-  isRebooting: boolean;
-  isSshEnabled: boolean;
-  isUpdating: boolean;
-  lastMotion: number;
-  lastSeen: number;
-  latestFirmwareVersion: string;
+  lastMotion: Nullable<number>;
   lightDeviceSettings: {
 
     isIndicatorEnabled: boolean;
@@ -922,19 +1199,8 @@ export interface ProtectLightConfigInterface {
 
     isLedForceOn: boolean;
   };
-  mac: string;
-  marketName: string;
-  modelKey: string;
-  name?: string;
-  nvrMac: string;
-  state: string;
-  type: string;
-  upSince: number;
-  uptime: number;
-  wiredConnectionState: {
-
-    phyRate: number;
-  };
+  modelKey: "light";
+  wiredConnectionState: ProtectWiredConnectionStateInterface;
 }
 
 /**
@@ -946,7 +1212,7 @@ export interface ProtectNvrLiveviewConfigInterface {
   isDefault: boolean;
   isGlobal: boolean;
   layout: number;
-  modelKey: string;
+  modelKey: "liveview";
   name: string;
   owner: string;
   slots: {
@@ -955,6 +1221,8 @@ export interface ProtectNvrLiveviewConfigInterface {
     cycleInterval: number;
     cycleMode: string;
   } [];
+
+  [key: string]: ProtectKnownJsonValue;
 }
 
 /**
@@ -962,19 +1230,19 @@ export interface ProtectNvrLiveviewConfigInterface {
  */
 export interface ProtectNvrUserConfigInterface {
 
-  alertRules: unknown[];
+  alertRules: ProtectKnownJsonValue[];
   allPermissions: string[];
-  cloudAccount: {
+  cloudAccount?: {
 
-    firstName: string;
-    lastName: string;
+    cloudId: string;
     email: string;
+    firstName: string;
+    id: string;
+    lastName: string;
+    modelKey: string;
+    name: string;
     profileImg: string;
     user: string;
-    id: string;
-    cloudId: string;
-    name: string;
-    modelKey: string;
   };
   email: string;
   enableNotifications: boolean;
@@ -983,25 +1251,21 @@ export interface ProtectNvrUserConfigInterface {
   hasAcceptedInvite: boolean;
   id: string;
   isOwner: boolean;
-  lastLoginIp: string;
-  lastLoginTime: number;
+  lastLoginIp: Nullable<string>;
+  lastLoginTime: Nullable<number>;
   lastName: string;
   localUsername: string;
-  location: {
+  location?: {
 
     isAway: boolean;
-    latitude: string;
-    longitude: string;
+    latitude: Nullable<number>;
+    longitude: Nullable<number>;
   };
-  modelKey: string;
+  modelKey: "user";
   name: string;
   permissions: string[];
-  role: string;
-  settings: {
 
-    flags: string[];
-  };
-  syncSso: boolean;
+  [key: string]: ProtectKnownJsonValue;
 }
 
 /**
@@ -1084,16 +1348,18 @@ export interface ProtectRingtoneConfigInterface {
 
   id: string;
   isDefault: boolean;
-  modelKey: string;
+  modelKey: "ringtone";
   name: string;
   nvrMac: string;
   size: number;
+
+  [key: string]: ProtectKnownJsonValue;
 }
 
 /**
  * A semi-complete description of the UniFi Protect sensor JSON.
  */
-export interface ProtectSensorConfigInterface {
+export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface {
 
   alarmSettings: {
 
@@ -1113,40 +1379,10 @@ export interface ProtectSensorConfigInterface {
   bridge: string;
   bridgeCandidates: [];
   camera: string;
-  canAdopt: boolean;
-  connectedSince: number;
-  connectionHost: string;
   connectionType: string;
-  displayName: string;
-  firmwareBuild: string;
-  firmwareVersion: string;
-  fwUpdateState: string;
-  hardwareRevision: string;
-  host: string;
-  humiditySettings: {
-
-    highThreshold: number;
-    isEnabled: boolean;
-    lowThreshold: number;
-    margin: number;
-  };
-  id: string;
-  isAdopted: boolean;
-  isAdoptedByOther: boolean;
-  isAdopting: boolean;
-  isAttemptingToConnect: boolean;
-  isConnected: boolean;
-  isDownloadingFW: boolean;
+  humiditySettings: ProtectThresholdSettingsInterface;
   isMotionDetected: boolean;
-  isOpened: boolean;
-  isProvisioned: boolean;
-  isRebooting: boolean;
-  isRestoring: boolean;
-  isSshEnabled: boolean;
-  isUpdating: boolean;
-  lastDisconnect: number;
-  lastSeen: number;
-  latestFirmwareVersion: string;
+  isOpened: Nullable<boolean>;
   leakDetectedAt: Nullable<number>;
   leakSettings: {
 
@@ -1157,16 +1393,8 @@ export interface ProtectSensorConfigInterface {
 
     isEnabled: boolean;
   };
-  lightSettings: {
-
-    highThreshold: number;
-    isEnabled: boolean;
-    lowThreshold: number;
-    margin: number;
-  };
-  mac: string;
-  marketName: string;
-  modelKey: string;
+  lightSettings: ProtectThresholdSettingsInterface;
+  modelKey: "sensor";
   motionDetectedAt: number;
   motionSettings: {
 
@@ -1174,99 +1402,44 @@ export interface ProtectSensorConfigInterface {
     sensitivity: number;
   };
   mountType: string;
-  name?: string;
-  nvrMac: string;
   openStatusChangedAt: number;
-  state: string;
   stats?: {
 
-    humidity?: {
-
-      status: string;
-      value: Nullable<number>;
-    };
-    light?: {
-
-      status: string;
-      value: Nullable<number>;
-    };
-    temperature?: {
-
-      status: string;
-      value: Nullable<number>;
-    };
+    humidity?: ProtectAirQualityMetricInterface;
+    light?: ProtectAirQualityMetricInterface;
+    temperature?: ProtectAirQualityMetricInterface;
   };
   tamperingDetectedAt: Nullable<number>;
-  temperatureSettings: {
-
-    highThreshold: number;
-    isEnabled: boolean;
-    lowThreshold: number;
-    margin: number;
-  };
-  type: string;
-  upSince: number;
-  uptime: number;
-  wifiConnectionState: {
-
-    apName: Nullable<string>;
-    bssid: Nullable<string>;
-    channel: Nullable<string>;
-    connectivity: string;
-    experience: null;
-    frequency: null;
-    phyRate: number;
-    signalQuality: number;
-    signalStrength: number;
-    ssid: Nullable<string>;
-    txRate: null;
-  };
-  wiredConnectionState: {
-
-    phyRate: number;
-  };
+  temperatureSettings: ProtectThresholdSettingsInterface;
+  wifiConnectionState: ProtectWifiConnectionStateInterface;
+  wiredConnectionState: ProtectWiredConnectionStateInterface;
 }
 
 /**
  * A semi-complete description of the UniFi Protect viewer JSON.
  */
-export interface ProtectViewerConfigInterface {
+export interface ProtectViewerConfigInterface extends ProtectDeviceBaseInterface {
 
-  canAdopt: boolean;
-  connectedSince: number;
-  connectionHost: string;
-  firmwareBuild: string;
-  firmwareVersion: string;
-  hardwareRevision: string;
-  host: string;
-  id: string;
-  isAdopted: boolean;
-  isAdoptedByOther: boolean;
-  isAdopting: boolean;
-  isAttemptingToConnect: boolean;
-  isConnected: boolean;
-  isProvisioned: boolean;
-  isRebooting: boolean;
-  isSshEnabled: boolean;
-  isUpdating: boolean;
-  lastSeen: number;
-  latestFirmwareVersion: string;
-  liveview: Nullable<string>;
-  mac: string;
-  marketName: string;
-  modelKey: string;
-  name?: string;
-  nvrMac: string;
-  softwareVersion: string;
-  state: string;
-  streamLimit: number;
-  type: string;
-  upSince: number;
-  uptime: number;
-  wiredConnectionState: {
+  enableContinuousMonitoring: boolean;
+  featureFlags: {
 
-    phyRate: number;
+    supportAdjustBrightness: boolean;
+    supportLiveview: boolean;
+    supportLocate: boolean;
+    supportManualDownloadSupportFile: boolean;
+    supportManualFirmwareUpdate: boolean;
+    supportMic: boolean;
+    supportSsh: boolean;
   };
+  isAccessDevice: boolean;
+  liveview: Nullable<string>;
+  modelKey: "viewer";
+  needUpdateBeforeAdoption: boolean;
+  softwareVersion: Nullable<string>;
+  streamLimit: number;
+  supportUcp4: boolean;
+  wifiConnectionState: ProtectWifiConnectionStateInterface;
+  wiredConnectionState: ProtectWiredConnectionStateInterface;
 }
 
 /**
@@ -1282,7 +1455,7 @@ export interface ProtectEventAddInterface {
   id: string;
   locked: boolean;
   metadata?: ProtectEventMetadata;
-  modelKey: string;
+  modelKey: "event";
   partition: string;
   score: number;
   smartDetectEvents: string[];
@@ -1377,14 +1550,7 @@ export interface ProtectEventMetadataInterface {
   zonesStatus: Record<string, { level: number; status: string }>;
 }
 
-/** @see {@link ProtectEventAddInterface} */
-export type ProtectEventAdd = ProtectEventAddInterface;
-
-/** @see {@link ProtectEventMetadataInterface} */
-export type ProtectEventMetadata = DeepPartial<ProtectEventMetadataInterface>;
-
-/** @see {@link ProtectEventMetadataDetectedThumbnailInterface} */
-export type ProtectEventMetadataDetectedThumbnail = DeepPartial<ProtectEventMetadataDetectedThumbnailInterface>;
+// Type aliases ordered to match the interface declaration order above.
 
 /** @see {@link ProtectNvrBootstrapInterface} */
 export type ProtectNvrBootstrap = ProtectNvrBootstrapInterface;
@@ -1392,17 +1558,35 @@ export type ProtectNvrBootstrap = ProtectNvrBootstrapInterface;
 /** @see {@link ProtectNvrConfigInterface} */
 export type ProtectNvrConfig = ProtectNvrConfigInterface;
 
-/** @see {@link ProtectNvrConfigInterface} */
-export type ProtectNvrConfigPayload = DeepPartial<ProtectNvrConfigInterface>;
-
 /** @see {@link ProtectNvrSystemInfoInterface} */
-export type ProtectNvrSystemInfoConfig = ProtectNvrSystemInfoInterface;
+export type ProtectNvrSystemInfo = ProtectNvrSystemInfoInterface;
+
+/** @see {@link ProtectWifiConnectionStateInterface} */
+export type ProtectWifiConnectionState = ProtectWifiConnectionStateInterface;
+
+/** @see {@link ProtectWiredConnectionStateInterface} */
+export type ProtectWiredConnectionState = ProtectWiredConnectionStateInterface;
+
+/** @see {@link ProtectDeviceBaseInterface} */
+export type ProtectDeviceBase = ProtectDeviceBaseInterface;
+
+/** @see {@link ProtectSmartZoneInterface} */
+export type ProtectSmartZone = ProtectSmartZoneInterface;
+
+/** @see {@link ProtectPtzAxisRangeInterface} */
+export type ProtectPtzAxisRange = ProtectPtzAxisRangeInterface;
+
+/** @see {@link ProtectAirQualityMetricInterface} */
+export type ProtectAirQualityMetric = ProtectAirQualityMetricInterface;
+
+/** @see {@link ProtectAirQualityThresholdSettingsInterface} */
+export type ProtectAirQualityThresholdSettings = ProtectAirQualityThresholdSettingsInterface;
+
+/** @see {@link ProtectThresholdSettingsInterface} */
+export type ProtectThresholdSettings = ProtectThresholdSettingsInterface;
 
 /** @see {@link ProtectCameraConfigInterface} */
 export type ProtectCameraConfig = ProtectCameraConfigInterface;
-
-/** @see {@link ProtectCameraConfigInterface} */
-export type ProtectCameraConfigPayload = DeepPartial<ProtectCameraConfigInterface>;
 
 /** @see {@link ProtectCameraChannelConfigInterface} */
 export type ProtectCameraChannelConfig = ProtectCameraChannelConfigInterface;
@@ -1410,32 +1594,26 @@ export type ProtectCameraChannelConfig = ProtectCameraChannelConfigInterface;
 /** @see {@link ProtectCameraLcdMessageConfigInterface} */
 export type ProtectCameraLcdMessageConfig = ProtectCameraLcdMessageConfigInterface;
 
-/** @see {@link ProtectCameraLcdMessageConfigInterface} */
-export type ProtectCameraLcdMessagePayload = DeepPartial<ProtectCameraLcdMessageConfigInterface>;
+/** @see {@link ProtectCameraTalkbackConfigInterface} */
+export type ProtectCameraTalkbackConfig = ProtectCameraTalkbackConfigInterface;
 
 /** @see {@link ProtectChimeConfigInterface} */
 export type ProtectChimeConfig = ProtectChimeConfigInterface;
 
-/** @see {@link ProtectChimeConfigInterface} */
-export type ProtectChimeConfigPayload = DeepPartial<ProtectChimeConfigInterface>;
-
 /** @see {@link ProtectLightConfigInterface} */
 export type ProtectLightConfig = ProtectLightConfigInterface;
-
-/** @see {@link ProtectLightConfigInterface} */
-export type ProtectLightConfigPayload = DeepPartial<ProtectLightConfigInterface>;
 
 /** @see {@link ProtectNvrLiveviewConfigInterface} */
 export type ProtectNvrLiveviewConfig = ProtectNvrLiveviewConfigInterface;
 
+/** @see {@link ProtectNvrUserConfigInterface} */
+export type ProtectNvrUserConfig = ProtectNvrUserConfigInterface;
+
 /** @see {@link ProtectNvrSystemEventInterface} */
 export type ProtectNvrSystemEvent = ProtectNvrSystemEventInterface;
 
-/** @see {@link ProtectNvrSystemEventInterface} */
+/** @see {@link ProtectNvrSystemEventControllerInterface} */
 export type ProtectNvrSystemEventController = ProtectNvrSystemEventControllerInterface;
-
-/** @see {@link ProtectNvrUserConfigInterface} */
-export type ProtectNvrUserConfig = ProtectNvrUserConfigInterface;
 
 /** @see {@link ProtectRingtoneConfigInterface} */
 export type ProtectRingtoneConfig = ProtectRingtoneConfigInterface;
@@ -1443,11 +1621,14 @@ export type ProtectRingtoneConfig = ProtectRingtoneConfigInterface;
 /** @see {@link ProtectSensorConfigInterface} */
 export type ProtectSensorConfig = ProtectSensorConfigInterface;
 
-/** @see {@link ProtectSensorConfigInterface} */
-export type ProtectSensorConfigPayload = DeepPartial<ProtectSensorConfigInterface>;
-
 /** @see {@link ProtectViewerConfigInterface} */
 export type ProtectViewerConfig = ProtectViewerConfigInterface;
 
-/** @see {@link ProtectViewerConfigInterface} */
-export type ProtectViewerConfigPayload = DeepPartial<ProtectViewerConfigInterface>;
+/** @see {@link ProtectEventAddInterface} */
+export type ProtectEventAdd = ProtectEventAddInterface;
+
+/** @see {@link ProtectEventMetadataDetectedThumbnailInterface} */
+export type ProtectEventMetadataDetectedThumbnail = DeepPartial<ProtectEventMetadataDetectedThumbnailInterface>;
+
+/** @see {@link ProtectEventMetadataInterface} */
+export type ProtectEventMetadata = DeepPartial<ProtectEventMetadataInterface>;
