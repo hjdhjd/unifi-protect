@@ -25,11 +25,11 @@ interface ParsedOptions {
   debug: boolean;
   filters: EventFilter[];
   help: boolean;
-  outputFormat: OutputFormat;
+  maxEvents: number;
   outputFields: string[];
+  outputFormat: OutputFormat;
   statsMode: boolean;
   timeout: number;
-  maxEvents: number;
 }
 
 // Output format types.
@@ -44,7 +44,7 @@ interface EventStats {
 }
 
 // Filter operator types.
-type FilterOperator = "==" | "!=" | "~" | "!~" | ">" | "<" | ">=" | "<=";
+type FilterOperator = "!=" | "!~" | "<" | "<=" | "==" | ">" | ">=" | "~";
 
 // Base interface for event filters. This is the extensible foundation for the filtering system.
 interface EventFilter {
@@ -60,13 +60,53 @@ interface EventFilter {
 interface FilterContext {
 
   // Resolve a device name to its ID. Returns the ID if found, null otherwise.
-  resolveDeviceName(name: string): string | null;
+  resolveDeviceName(name: string): Nullable<string>;
 
   // Get device name by ID.
-  getDeviceName(id: string): string | null;
+  getDeviceName(id: string): Nullable<string>;
 
   // Access to the bootstrap data.
   bootstrap: Nullable<ProtectNvrBootstrap>;
+}
+
+// Resolve a dot-path to a value within an event packet. Paths starting with "payload." or "header." resolve within those sub-objects...all other paths default to
+// the header for backward compatibility.
+function getValueAtPath(packet: ProtectEventPacket, path: string): unknown {
+
+  const parts = path.split(".");
+  let current: unknown = packet;
+
+  if(parts[0] === "payload") {
+
+    current = packet.payload;
+    parts.shift();
+  } else if(parts[0] === "header") {
+
+    current = packet.header;
+    parts.shift();
+  } else {
+
+    // Default to header for backward compatibility.
+    current = packet.header;
+  }
+
+  for(const part of parts) {
+
+    if((current === null) || (current === undefined)) {
+
+      return undefined;
+    }
+
+    if(typeof current === "object") {
+
+      current = (current as Record<string, unknown>)[part];
+    } else {
+
+      return undefined;
+    }
+  }
+
+  return current;
 }
 
 // Property filter for matching header or payload properties.
@@ -75,7 +115,7 @@ class PropertyFilter implements EventFilter {
   private readonly negate: boolean;
   private readonly operator: FilterOperator;
   private readonly path: string;
-  private readonly regex: RegExp | null;
+  private readonly regex: Nullable<RegExp>;
   private readonly value: string;
 
   constructor(path: string, operator: FilterOperator, value: string) {
@@ -92,7 +132,13 @@ class PropertyFilter implements EventFilter {
       const pattern = value.substring(1, lastSlash);
       const flags = value.substring(lastSlash + 1);
 
-      this.regex = new RegExp(pattern, flags);
+      try {
+
+        this.regex = new RegExp(pattern, flags);
+      } catch {
+
+        throw new Error("Invalid regular expression: " + value);
+      }
     } else if((operator === "~") || (operator === "!~")) {
 
       // Treat as glob pattern - convert to regex.
@@ -102,6 +148,12 @@ class PropertyFilter implements EventFilter {
     } else {
 
       this.regex = null;
+    }
+
+    // Validate that the filter value is numeric for comparison operators. The event value varies per packet so we can only validate the user's side at construction.
+    if([ ">", "<", ">=", "<=" ].includes(operator) && Number.isNaN(Number(value))) {
+
+      throw new Error("Numeric comparison operator \"" + operator + "\" requires a numeric value, got: " + value);
     }
   }
 
@@ -127,7 +179,7 @@ class PropertyFilter implements EventFilter {
     }
 
     // Get the value at the specified path.
-    const actualValue = this.getValueAtPath(packet, this.path);
+    const actualValue = getValueAtPath(packet, this.path);
 
     if(actualValue === undefined) {
 
@@ -136,45 +188,6 @@ class PropertyFilter implements EventFilter {
 
     // eslint-disable-next-line @typescript-eslint/no-base-to-string
     return this.compareValues(String(actualValue));
-  }
-
-  private getValueAtPath(packet: ProtectEventPacket, path: string): unknown {
-
-    const parts = path.split(".");
-    let current: unknown = packet;
-
-    // Check if path starts with "payload" or "header", otherwise default to header.
-    if(parts[0] === "payload") {
-
-      current = packet.payload;
-      parts.shift();
-    } else if(parts[0] === "header") {
-
-      current = packet.header;
-      parts.shift();
-    } else {
-
-      // Default to header for backward compatibility.
-      current = packet.header;
-    }
-
-    for(const part of parts) {
-
-      if((current === null) || (current === undefined)) {
-
-        return undefined;
-      }
-
-      if(typeof current === "object") {
-
-        current = (current as Record<string, unknown>)[part];
-      } else {
-
-        return undefined;
-      }
-    }
-
-    return current;
   }
 
   private compareValues(actualValue: string): boolean {
@@ -295,7 +308,7 @@ class MotionFilter implements EventFilter {
 
   public matches(packet: ProtectEventPacket): boolean {
 
-    const payload = packet.payload as Record<string, unknown> | null;
+    const payload = packet.payload as Nullable<Record<string, unknown>>;
 
     if(!payload) {
 
@@ -317,7 +330,7 @@ class RingFilter implements EventFilter {
 
   public matches(packet: ProtectEventPacket): boolean {
 
-    const payload = packet.payload as Record<string, unknown> | null;
+    const payload = packet.payload as Nullable<Record<string, unknown>>;
 
     if(!payload) {
 
@@ -336,16 +349,16 @@ class RingFilter implements EventFilter {
 // Smart detection filter - filters for smart detection events (person, vehicle, package, etc.).
 class SmartDetectionFilter implements EventFilter {
 
-  private readonly detectionType: string | null;
+  private readonly detectionType: Nullable<string>;
 
-  constructor(detectionType: string | null = null) {
+  constructor(detectionType: Nullable<string> = null) {
 
     this.detectionType = detectionType;
   }
 
   public matches(packet: ProtectEventPacket): boolean {
 
-    const payload = packet.payload as Record<string, unknown> | null;
+    const payload = packet.payload as Nullable<Record<string, unknown>>;
 
     if(!payload) {
 
@@ -425,7 +438,7 @@ class FieldsFormatter implements OutputFormatter {
 
     for(const field of this.fields) {
 
-      const value = this.getValueAtPath(packet, field);
+      const value = getValueAtPath(packet, field);
 
       if(value !== undefined) {
 
@@ -434,43 +447,6 @@ class FieldsFormatter implements OutputFormatter {
     }
 
     return JSON.stringify(result);
-  }
-
-  private getValueAtPath(packet: ProtectEventPacket, path: string): unknown {
-
-    const parts = path.split(".");
-    let current: unknown = packet;
-
-    if(parts[0] === "payload") {
-
-      current = packet.payload;
-      parts.shift();
-    } else if(parts[0] === "header") {
-
-      current = packet.header;
-      parts.shift();
-    } else {
-
-      current = packet.header;
-    }
-
-    for(const part of parts) {
-
-      if((current === null) || (current === undefined)) {
-
-        return undefined;
-      }
-
-      if(typeof current === "object") {
-
-        current = (current as Record<string, unknown>)[part];
-      } else {
-
-        return undefined;
-      }
-    }
-
-    return current;
   }
 }
 
@@ -567,7 +543,15 @@ function parseArguments(argv: string[]): ParsedOptions {
     // Event control flags.
     if(arg.startsWith("--timeout=")) {
 
-      options.timeout = Number(arg.substring(10)) * 1000;
+      const value = Number(arg.substring(10));
+
+      if(Number.isNaN(value) || (value <= 0)) {
+
+        log.error("Invalid timeout value: %s.", arg.substring(10));
+        process.exit(1);
+      }
+
+      options.timeout = value * 1000;
       i++;
 
       continue;
@@ -575,7 +559,15 @@ function parseArguments(argv: string[]): ParsedOptions {
 
     if(arg.startsWith("--count=")) {
 
-      options.maxEvents = Number(arg.substring(8));
+      const value = Number(arg.substring(8));
+
+      if(Number.isNaN(value) || (value <= 0) || !Number.isInteger(value)) {
+
+        log.error("Invalid count value: %s.", arg.substring(8));
+        process.exit(1);
+      }
+
+      options.maxEvents = value;
       i++;
 
       continue;
@@ -749,9 +741,9 @@ function createFilterContext(): FilterContext {
 
     bootstrap: ufp.bootstrap,
 
-    getDeviceName: (id: string): string | null => deviceIdMap.get(id) ?? null,
+    getDeviceName: (id: string): Nullable<string> => deviceIdMap.get(id) ?? null,
 
-    resolveDeviceName: (name: string): string | null => {
+    resolveDeviceName: (name: string): Nullable<string> => {
 
       // First check if it's already an ID.
       if(deviceIdMap.has(name)) {
@@ -886,7 +878,7 @@ function handleEvents(options: ParsedOptions): void {
   const stats: EventStats = { byAction: {}, byModelKey: {}, total: 0 };
 
   let eventCount = 0;
-  let timeoutHandle: NodeJS.Timeout | null = null;
+  let timeoutHandle: Nullable<NodeJS.Timeout> = null;
 
   // Graceful shutdown handler.
   const shutdown = (): void => {
@@ -1238,29 +1230,12 @@ function handleDevices(options: ParsedOptions): void {
 
     const devices: Record<string, unknown[]> = {};
 
-    if(!deviceType || (deviceType === "cameras")) {
+    for(const deviceClass of deviceClasses) {
 
-      devices.cameras = ufp.bootstrap?.cameras ?? [];
-    }
+      if(!deviceType || (deviceType === deviceClass)) {
 
-    if(!deviceType || (deviceType === "chimes")) {
-
-      devices.chimes = ufp.bootstrap?.chimes ?? [];
-    }
-
-    if(!deviceType || (deviceType === "lights")) {
-
-      devices.lights = ufp.bootstrap?.lights ?? [];
-    }
-
-    if(!deviceType || (deviceType === "sensors")) {
-
-      devices.sensors = ufp.bootstrap?.sensors ?? [];
-    }
-
-    if(!deviceType || (deviceType === "viewers")) {
-
-      devices.viewers = ufp.bootstrap?.viewers ?? [];
+        devices[deviceClass] = (ufp.bootstrap?.[deviceClass] ?? []) as unknown[];
+      }
     }
 
     log.info(JSON.stringify(devices));
@@ -1435,7 +1410,7 @@ async function main(): Promise<void> {
   // Silently exit on pipe errors but still process other errors.
   process.stdout.on("error", (err) => {
 
-    if((err instanceof Error) && ("code" in err) && (typeof (err as NodeJS.ErrnoException).code === "string") && (err.code === "EPIPE")) {
+    if((err as NodeJS.ErrnoException).code === "EPIPE") {
 
       process.exit(0);
     } else {
