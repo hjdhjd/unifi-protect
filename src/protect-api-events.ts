@@ -164,7 +164,7 @@ export async function decodePacket(log: ProtectLogging, packet: Buffer): Promise
 
   try {
 
-    // The fourth byte holds our payload size. When you add the payload size to our header frame size, you get the location of the
+    // The payload size begins at byte offset 4 as a big-endian 32-bit integer. When you add the payload size to our header frame size, you get the location of the
     // data header frame.
     dataOffset = packet.readUInt32BE(ProtectEventPacketHeader.PAYLOAD_SIZE) + EVENT_PACKET_HEADER_SIZE;
 

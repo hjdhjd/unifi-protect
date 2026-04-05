@@ -193,8 +193,9 @@ export class ProtectLivestream extends EventEmitter {
     // Stop any existing stream.
     this.stop();
 
-    // Clear out the initialization segment.
+    // Clear out the initialization segment and any cached promise from a prior session.
     this._initSegment = null;
+    this.initSegmentPromise = undefined;
 
     // Launch the livestream.
     return this.launchLivestream(cameraId, channel, options as LivestreamOptions);
@@ -376,6 +377,8 @@ export class ProtectLivestream extends EventEmitter {
 
       logError("error while connecting to the livestream websocket API: %s", error);
       this.stop();
+
+      return false;
     }
 
     return true;
@@ -632,6 +635,9 @@ export class ProtectLivestream extends EventEmitter {
 
   /**
    * Retrieve the initialization segment that must be at the start of every fMP4 stream.
+   *
+   * @remarks If the stream is stopped or fails before the initialization segment is received, the returned promise will never settle. Callers should race this against
+   *   the `close` event or an external timeout to avoid waiting indefinitely.
    *
    * @returns Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
    */
