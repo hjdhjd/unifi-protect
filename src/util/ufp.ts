@@ -5,9 +5,9 @@
  */
 import type { Nullable, ProtectCameraConfig, ProtectChimeConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectSensorConfig, ProtectViewerConfig } from "../index.js";
 import { ProtectApi, type ProtectEventPacket } from "../index.js";
-import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import util from "util";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import util from "node:util";
 
 // Credentials configuration interface.
 interface UfpConfig {
@@ -59,14 +59,59 @@ interface EventFilter {
 // Context passed to filters, providing access to bootstrap data and utilities.
 interface FilterContext {
 
-  // Resolve a device name to its ID. Returns the ID if found, null otherwise.
-  resolveDeviceName(name: string): Nullable<string>;
+  // Access to the bootstrap data.
+  bootstrap: Nullable<ProtectNvrBootstrap>;
+
+  // Search a packet for a known device ID. Returns the first device ID found anywhere in the packet, or null if no known device is referenced.
+  findDeviceId(packet: ProtectEventPacket): Nullable<string>;
 
   // Get device name by ID.
   getDeviceName(id: string): Nullable<string>;
 
-  // Access to the bootstrap data.
-  bootstrap: Nullable<ProtectNvrBootstrap>;
+  // Resolve a device name to its ID. Returns the ID if found, null otherwise.
+  resolveDeviceName(name: string): Nullable<string>;
+}
+
+// Recursively search all string values in an object tree, returning the first value that satisfies the predicate. This is used for device association - finding a
+// device ID anywhere in an event packet regardless of which field contains it, making the search forward-compatible with new event shapes.
+function findStringValue(obj: unknown, predicate: (value: string) => boolean): Nullable<string> {
+
+  if(typeof obj === "string") {
+
+    return predicate(obj) ? obj : null;
+  }
+
+  if((obj === null) || (obj === undefined) || (typeof obj !== "object")) {
+
+    return null;
+  }
+
+  if(Array.isArray(obj)) {
+
+    for(const item of obj) {
+
+      const result = findStringValue(item, predicate);
+
+      if(result !== null) {
+
+        return result;
+      }
+    }
+
+    return null;
+  }
+
+  for(const value of Object.values(obj as Record<string, unknown>)) {
+
+    const result = findStringValue(value, predicate);
+
+    if(result !== null) {
+
+      return result;
+    }
+  }
+
+  return null;
 }
 
 // Resolve a dot-path to a value within an event packet. Paths starting with "payload." or "header." resolve within those sub-objects...all other paths default to
@@ -159,23 +204,15 @@ class PropertyFilter implements EventFilter {
 
   public matches(packet: ProtectEventPacket, context: FilterContext): boolean {
 
-    // Special handling for "device" filter - resolve name to ID.
+    // Special handling for "device" filter - resolve the device name or ID, then search the entire packet for it. We scan all string values in both the header and
+    // payload rather than checking specific fields, so that any event shape referencing the device (via id, recordId, camera, cameraId, etc.) is matched
+    // forward-compatibly.
     if(this.path === "device") {
 
-      const resolvedId = context.resolveDeviceName(this.value);
+      const targetId = context.resolveDeviceName(this.value) ?? this.value;
+      const found = findStringValue(packet, (value) => value.toLowerCase() === targetId.toLowerCase()) !== null;
 
-      if(resolvedId) {
-
-        const actualValue = packet.header.id;
-
-        return this.negate ? actualValue.toLowerCase() !== resolvedId.toLowerCase() : actualValue.toLowerCase() === resolvedId.toLowerCase();
-      }
-
-      // If we can't resolve the name, try matching against the ID directly.
-      const actualValue = packet.header.id;
-      const matches = actualValue.toLowerCase() === this.value.toLowerCase();
-
-      return this.negate ? !matches : matches;
+      return this.negate ? !found : found;
     }
 
     // Get the value at the specified path.
@@ -416,7 +453,8 @@ class CompactFormatter implements OutputFormatter {
   public format(packet: ProtectEventPacket, context: FilterContext): string {
 
     const header = packet.header;
-    const deviceName = context.getDeviceName(header.id) ?? header.id;
+    const deviceId = context.findDeviceId(packet);
+    const deviceName = deviceId ? (context.getDeviceName(deviceId) ?? deviceId) : header.id;
 
     return "[" + header.modelKey + "] " + deviceName + " - " + header.action;
   }
@@ -493,6 +531,34 @@ function parseArguments(argv: string[]): ParsedOptions {
   const args = argv.slice(2);
   let i = 0;
 
+  // Extract the value for a flag that accepts a value in either `--flag=value` or `--flag value` form. Returns the value and advances the index past the consumed
+  // arguments, or returns null if the current argument doesn't match the flag name. If the flag matches but no value is provided (end of args or next arg is another
+  // flag), exits with an error message.
+  const consumeFlagValue = (flag: string): Nullable<string> => {
+
+    if(args[i] === flag) {
+
+      if(((i + 1) >= args.length) || args[i + 1].startsWith("--")) {
+
+        log.error("Missing value for %s.", flag);
+        process.exit(1);
+      }
+
+      i += 2;
+
+      return args[i - 1];
+    }
+
+    if(args[i].startsWith(flag + "=")) {
+
+      i++;
+
+      return args[i - 1].substring(flag.length + 1);
+    }
+
+    return null;
+  };
+
   while(i < args.length) {
 
     const arg = args[i];
@@ -531,44 +597,47 @@ function parseArguments(argv: string[]): ParsedOptions {
       continue;
     }
 
-    if(arg.startsWith("--fields=")) {
+    const fieldsValue = consumeFlagValue("--fields");
+
+    if(fieldsValue !== null) {
 
       options.outputFormat = "default";
-      options.outputFields = arg.substring(9).split(",").map(f => f.trim());
-      i++;
+      options.outputFields = fieldsValue.split(",").map((f) => f.trim());
 
       continue;
     }
 
     // Event control flags.
-    if(arg.startsWith("--timeout=")) {
+    const timeoutValue = consumeFlagValue("--timeout");
 
-      const value = Number(arg.substring(10));
+    if(timeoutValue !== null) {
 
-      if(Number.isNaN(value) || (value <= 0)) {
+      const parsed = Number(timeoutValue);
 
-        log.error("Invalid timeout value: %s.", arg.substring(10));
+      if(Number.isNaN(parsed) || (parsed <= 0)) {
+
+        log.error("Invalid timeout value: %s.", timeoutValue);
         process.exit(1);
       }
 
-      options.timeout = value * 1000;
-      i++;
+      options.timeout = parsed * 1000;
 
       continue;
     }
 
-    if(arg.startsWith("--count=")) {
+    const countValue = consumeFlagValue("--count");
 
-      const value = Number(arg.substring(8));
+    if(countValue !== null) {
 
-      if(Number.isNaN(value) || (value <= 0) || !Number.isInteger(value)) {
+      const parsed = Number(countValue);
 
-        log.error("Invalid count value: %s.", arg.substring(8));
+      if(Number.isNaN(parsed) || (parsed <= 0) || !Number.isInteger(parsed)) {
+
+        log.error("Invalid count value: %s.", countValue);
         process.exit(1);
       }
 
-      options.maxEvents = value;
-      i++;
+      options.maxEvents = parsed;
 
       continue;
     }
@@ -655,19 +724,21 @@ function parseArguments(argv: string[]): ParsedOptions {
       continue;
     }
 
-    if(arg.startsWith("--smart=")) {
+    const smartValue = consumeFlagValue("--smart");
 
-      options.filters.push(new SmartDetectionFilter(arg.substring(8)));
-      i++;
+    if(smartValue !== null) {
+
+      options.filters.push(new SmartDetectionFilter(smartValue));
 
       continue;
     }
 
     // Device filter shortcut.
-    if(arg.startsWith("--device=")) {
+    const deviceValue = consumeFlagValue("--device");
 
-      options.filters.push(new PropertyFilter("device", "==", arg.substring(9)));
-      i++;
+    if(deviceValue !== null) {
+
+      options.filters.push(new PropertyFilter("device", "==", deviceValue));
 
       continue;
     }
@@ -731,7 +802,7 @@ function createFilterContext(): FilterContext {
         if(name) {
 
           deviceNameMap.set(name.toLowerCase(), device.id);
-          deviceIdMap.set(device.id, name);
+          deviceIdMap.set(device.id.toLowerCase(), name);
         }
       }
     }
@@ -741,12 +812,14 @@ function createFilterContext(): FilterContext {
 
     bootstrap: ufp.bootstrap,
 
-    getDeviceName: (id: string): Nullable<string> => deviceIdMap.get(id) ?? null,
+    findDeviceId: (packet: ProtectEventPacket): Nullable<string> => findStringValue(packet, (value) => deviceIdMap.has(value.toLowerCase())),
+
+    getDeviceName: (id: string): Nullable<string> => deviceIdMap.get(id.toLowerCase()) ?? null,
 
     resolveDeviceName: (name: string): Nullable<string> => {
 
-      // First check if it's already an ID.
-      if(deviceIdMap.has(name)) {
+      // First check if it's already an ID (case-insensitive).
+      if(deviceIdMap.has(name.toLowerCase())) {
 
         return name;
       }
@@ -829,8 +902,8 @@ function handleEvents(options: ParsedOptions): void {
     log.error("    - Header properties: action, id, modelKey, or header.action");
     log.error("    - Payload properties: payload.isMotionDetected, payload.lastMotion.start");
     log.error("");
-    log.error("Device Shortcuts:");
-    log.error("  --device=NAME       Filter by device name (resolved to ID)");
+    log.error("Device Shortcuts (flags that take a value accept both --flag VALUE and --flag=VALUE):");
+    log.error("  --device NAME       Filter by device name (resolved to ID)");
     log.error("  --cameras           Filter for camera events only");
     log.error("  --lights            Filter for light events only");
     log.error("  --sensors           Filter for sensor events only");
@@ -842,26 +915,26 @@ function handleEvents(options: ParsedOptions): void {
     log.error("  --motion            Filter for motion detection events");
     log.error("  --ring              Filter for doorbell ring events");
     log.error("  --smart             Filter for any smart detection events");
-    log.error("  --smart=TYPE        Filter for specific smart detection (person, vehicle, package, animal, etc.)");
+    log.error("  --smart TYPE        Filter for specific smart detection (person, vehicle, package, animal, etc.)");
     log.error("");
     log.error("Output Options:");
     log.error("  --json              Output as JSON (one event per line, no colors)");
     log.error("  --compact           Output compact format (header summary only)");
-    log.error("  --fields=a,b,c      Output specific fields only as JSON");
+    log.error("  --fields a,b,c      Output specific fields only as JSON");
     log.error("");
     log.error("Control Options:");
-    log.error("  --timeout=SECONDS   Exit after specified seconds");
-    log.error("  --count=N           Exit after N events");
+    log.error("  --timeout SECONDS   Exit after specified seconds");
+    log.error("  --count N           Exit after N events");
     log.error("  --stats             Show event statistics instead of raw events");
     log.error("");
     log.error("Examples:");
     log.error("  ufp events                                    # All events");
     log.error("  ufp events --cameras                          # Camera events only");
-    log.error("  ufp events --device=\"Front Door\"              # Events for specific device");
+    log.error("  ufp events --device \"Front Door\"              # Events for specific device");
     log.error("  ufp events modelKey=camera action=update      # Multiple filters (AND)");
     log.error("  ufp events --motion --cameras                 # Motion events from cameras");
     log.error("  ufp events action~\"/^(add|update)$/\"          # Regex filter");
-    log.error("  ufp events --json --count=10                  # 10 events as JSON");
+    log.error("  ufp events --json --count 10                  # 10 events as JSON");
 
     process.exit(0);
   }
@@ -995,7 +1068,7 @@ async function handleIdr(options: ParsedOptions): Promise<void> {
   for(const device of ufp.bootstrap?.cameras.filter(camera => !camera.isThirdPartyCamera) ?? []) {
 
     // eslint-disable-next-line no-await-in-loop
-    await ufp.updateDevice(device, { channels: device.channels.map(x => Object.assign(x, { idrInterval: idrValue })) });
+    await ufp.updateDevice(device, { channels: device.channels.map((x) => ({ ...x, idrInterval: idrValue })) });
 
     log.info("%s: IDR set to %d.", ufp.getDeviceName(device), idrValue);
   }
@@ -1266,27 +1339,21 @@ function listDevices(filterType?: string): void {
     return;
   }
 
-  const deviceTypes: { devices: { id: string; marketName?: string; name?: string }[]; label: string; type: string }[] = [
-    { devices: ufp.bootstrap.cameras, label: "Cameras", type: "cameras" },
-    { devices: ufp.bootstrap.chimes, label: "Chimes", type: "chimes" },
-    { devices: ufp.bootstrap.lights, label: "Lights", type: "lights" },
-    { devices: ufp.bootstrap.sensors, label: "Sensors", type: "sensors" },
-    { devices: ufp.bootstrap.viewers, label: "Viewers", type: "viewers" }
-  ];
+  for(const deviceClass of deviceClasses) {
 
-  for(const { devices, label, type } of deviceTypes) {
-
-    if(filterType && (type !== filterType)) {
+    if(filterType && (deviceClass !== filterType)) {
 
       continue;
     }
+
+    const devices = ufp.bootstrap[deviceClass] as { id: string; marketName?: string; name?: string }[];
 
     if(devices.length === 0) {
 
       continue;
     }
 
-    log.error("%s:", label);
+    log.error("%s:", deviceClass.charAt(0).toUpperCase() + deviceClass.slice(1));
 
     for(const device of devices) {
 
