@@ -25,20 +25,20 @@
  * ```typescript
  * import { ProtectApi } from "unifi-protect";
  *
- * // Create an API instance
+ * // Create an API instance.
  * const protect = new ProtectApi();
  *
- * // Login to your Protect controller
+ * // Login to your Protect controller.
  * await protect.login("192.168.1.1", "username", "password");
  *
- * // Bootstrap to get the current state
+ * // Bootstrap to get the current state.
  * await protect.getBootstrap();
  *
- * // Access your devices
+ * // Access your devices.
  * const cameras = protect.bootstrap?.cameras ?? [];
- * console.log(`Found ${cameras.length} cameras`);
+ * console.log("Found " + cameras.length.toString() + " cameras.");
  *
- * // Listen for real-time events
+ * // Listen for real-time events.
  * protect.on("message", (packet) => {
  *   console.log("Event received:", packet);
  * });
@@ -59,9 +59,8 @@
  * @module ProtectApi
  */
 import { Agent, type Dispatcher, type ErrorEvent, type MessageEvent, Pool, WebSocket, errors, interceptors, request } from "undici";
-import type { DeepIndexable, Nullable, ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectCameraConfigPayload,
-  ProtectChimeConfig, ProtectChimeConfigPayload, ProtectLightConfig, ProtectLightConfigPayload, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrConfigPayload,
-  ProtectNvrUserConfig, ProtectSensorConfig, ProtectSensorConfigPayload, ProtectViewerConfig, ProtectViewerConfigPayload } from "./protect-types.js";
+import type { DeepPartial, Nullable, ProtectCameraChannelConfigInterface, ProtectCameraConfig, ProtectCameraConfigInterface, ProtectChimeConfig,
+  ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrUserConfig, ProtectSensorConfig, ProtectViewerConfig } from "./protect-types.js";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "./settings.js";
 import { type ProtectEventPacket, decodePacket } from "./protect-api-events.js";
 import { EventEmitter } from "node:events";
@@ -89,16 +88,26 @@ export type ProtectKnownDeviceTypes = ProtectCameraConfig | ProtectChimeConfig |
   ProtectSensorConfig | ProtectViewerConfig;
 
 /**
- * The Protect device payload types we know about and are available to us.
+ * The model key identifiers for known Protect device categories, derived from the device type interfaces.
  */
-export type ProtectKnownDevicePayloads = ProtectCameraConfigPayload | ProtectChimeConfigPayload | ProtectLightConfigPayload | ProtectNvrConfigPayload |
-  ProtectSensorConfigPayload | ProtectViewerConfigPayload;
+export type ProtectKnownDeviceModelKey = ProtectKnownDeviceTypes["modelKey"];
 
 /**
- * A deep-indexable version of the Protect NVR bootstrap data. We need this if you want to be able to reference the bootstrap data through indexing
- * (e.g. bootstrap["something"]) with strong typing.
+ * Known Protect API endpoint identifiers accepted by {@link ProtectApi.getApiEndpoint}. Device endpoints correspond to {@link ProtectKnownDeviceModelKey} values.
  */
-export type ProtectNvrBootstrapData = Nullable<DeepIndexable<ProtectNvrBootstrap>>;
+export type ProtectApiEndpoint = ProtectKnownDeviceModelKey | "bootstrap" | "login" | "self" | "websocket";
+
+/**
+ * The Protect device payload types we know about and are available to us.
+ */
+export type ProtectKnownDevicePayloads = DeepPartial<ProtectCameraConfig> | DeepPartial<ProtectChimeConfig> | DeepPartial<ProtectLightConfig> |
+  DeepPartial<ProtectNvrConfig> | DeepPartial<ProtectSensorConfig> | DeepPartial<ProtectViewerConfig>;
+
+/**
+ * The Protect NVR bootstrap data type used by the {@link ProtectApi.bootstrap | bootstrap} getter. Device interfaces include index signatures for accessing untyped API
+ * fields without casting.
+ */
+export type ProtectNvrBootstrapData = Nullable<ProtectNvrBootstrap>;
 
 /**
  * Configuration options for HTTP requests executed by `retrieve()`.
@@ -193,14 +202,14 @@ interface InternalRetrieveOptions extends RetrieveOptions {
  *   }
  *
  *   private setupEventHandlers(): void {
- *     // Handle login events
+ *     // Handle login events.
  *     this.api.on("login", (success: boolean) => {
- *       console.log(success ? "Login successful" : "Login failed");
+ *       console.log(success ? "Login successful." : "Login failed.");
  *     });
  *
- *     // Process real-time events
+ *     // Process real-time events.
  *     this.api.on("message", (packet) => {
- *       if (packet.header.modelKey === "camera") {
+ *       if(packet.header.modelKey === "camera") {
  *         console.log("Camera event:", packet);
  *       }
  *     });
@@ -208,20 +217,20 @@ interface InternalRetrieveOptions extends RetrieveOptions {
  *
  *   async connect(host: string, username: string, password: string): Promise<boolean> {
  *     try {
- *       // Login to the controller
- *       if (!await this.api.login(host, username, password)) {
- *         throw new Error("Authentication failed");
+ *       // Login to the controller.
+ *       if(!await this.api.login(host, username, password)) {
+ *         throw new Error("Authentication failed.");
  *       }
  *
- *       // Bootstrap the configuration
- *       if (!await this.api.getBootstrap()) {
- *         throw new Error("Bootstrap failed");
+ *       // Bootstrap the configuration.
+ *       if(!await this.api.getBootstrap()) {
+ *         throw new Error("Bootstrap failed.");
  *       }
  *
- *       console.log(`Connected to ${this.api.name}`);
+ *       console.log("Connected to " + this.api.name + ".");
  *       return true;
  *
- *     } catch (error) {
+ *     } catch(error) {
  *       console.error("Connection failed:", error);
  *       return false;
  *     }
@@ -230,10 +239,10 @@ interface InternalRetrieveOptions extends RetrieveOptions {
  *   async enableAllRtspStreams(): Promise<void> {
  *     const cameras = this.api.bootstrap?.cameras ?? [];
  *
- *     for (const camera of cameras) {
+ *     for(const camera of cameras) {
  *       const updated = await this.api.enableRtsp(camera);
- *       if (updated) {
- *         console.log(`RTSP enabled for ${this.api.getDeviceName(camera)}`);
+ *       if(updated) {
+ *         console.log("RTSP enabled for " + this.api.getDeviceName(camera) + ".");
  *       }
  *     }
  *   }
@@ -246,7 +255,7 @@ export class ProtectApi extends EventEmitter {
   private _eventsWs: Nullable<WebSocket>;
 
   private apiErrorCount: number;
-  private apiLastSuccess: number;
+  private apiThrottleStart: number;
   private dispatcher?: Dispatcher;
   private headers: Partial<Record<string, string>>;
   private _isAdminUser: boolean;
@@ -323,7 +332,7 @@ export class ProtectApi extends EventEmitter {
     };
 
     this.apiErrorCount = 0;
-    this.apiLastSuccess = 0;
+    this.apiThrottleStart = 0;
     this.headers = {};
     this.nvrAddress = "";
     this.password = "";
@@ -361,20 +370,20 @@ export class ProtectApi extends EventEmitter {
    *
    * const protect = new ProtectApi();
    *
-   * // Pattern 1: Using async/await
+   * // Pattern 1: Using async/await.
    * async function connectWithAwait() {
    *   const success = await protect.login("192.168.1.1", "admin", "password");
-   *   if (success) {
-   *     console.log("Connected successfully");
+   *   if(success) {
+   *     console.log("Connected successfully.");
    *   }
    * }
    *
-   * // Pattern 2: Using event listeners
+   * // Pattern 2: Using event listeners.
    * function connectWithEvents() {
    *   protect.once("login", (success: boolean) => {
-   *     if (success) {
-   *       console.log("Connected successfully");
-   *       // Continue with bootstrap
+   *     if(success) {
+   *       console.log("Connected successfully.");
+   *       // Continue with bootstrap.
    *       protect.getBootstrap();
    *     }
    *   });
@@ -382,13 +391,13 @@ export class ProtectApi extends EventEmitter {
    *   protect.login("192.168.1.1", "admin", "password");
    * }
    *
-   * // Pattern 3: With retry logic
+   * // Pattern 3: With retry logic.
    * async function connectWithRetry(maxAttempts = 3) {
-   *   for (let i = 0; i < maxAttempts; i++) {
-   *     if (await protect.login("192.168.1.1", "admin", "password")) {
+   *   for(let i = 0; i < maxAttempts; i++) {
+   *     if(await protect.login("192.168.1.1", "admin", "password")) {
    *       return true;
    *     }
-   *     console.log(`Login attempt ${i + 1} failed, retrying...`);
+   *     console.log("Login attempt " + (i + 1).toString() + " failed, retrying...");
    *     await new Promise(resolve => setTimeout(resolve, 2000));
    *   }
    *   return false;
@@ -526,12 +535,13 @@ export class ProtectApi extends EventEmitter {
 
     } catch(error) {
 
-      data = null;
       this.log.error("Unable to parse response from UniFi Protect. Will retry again later.");
+
+      return retry ? this.bootstrapController(false) : false;
     }
 
     // Is this the first time we're bootstrapping?
-    const isFirstRun = this._bootstrap ? false : true;
+    const isFirstRun = !this._bootstrap;
 
     // Set the new bootstrap.
     this._bootstrap = data;
@@ -759,39 +769,32 @@ export class ProtectApi extends EventEmitter {
    * const protect = new ProtectApi();
    *
    * async function analyzeSystem() {
-   *   // Login and bootstrap
+   *   // Login and bootstrap.
    *   await protect.login("192.168.1.1", "admin", "password");
    *   await protect.getBootstrap();
    *
-   *   // Access the bootstrap data
+   *   // Access the bootstrap data.
    *   const bootstrap = protect.bootstrap;
-   *   if (!bootstrap) return;
+   *   if(!bootstrap) return;
    *
-   *   // System information
-   *   console.log(`NVR: ${bootstrap.nvr.name}`);
-   *   console.log(`Version: ${bootstrap.nvr.version}`);
-   *   console.log(`Uptime: ${bootstrap.nvr.uptime} seconds`);
+   *   // System information.
+   *   console.log("NVR: " + bootstrap.nvr.name);
+   *   console.log("Version: " + bootstrap.nvr.version);
+   *   console.log("Up since: " + new Date(bootstrap.nvr.upSince).toString());
    *
-   *   // Device inventory
-   *   console.log(`Cameras: ${bootstrap.cameras.length}`);
-   *   console.log(`Lights: ${bootstrap.lights.length}`);
-   *   console.log(`Sensors: ${bootstrap.sensors.length}`);
+   *   // Device inventory.
+   *   console.log("Cameras: " + bootstrap.cameras.length.toString());
+   *   console.log("Lights: " + bootstrap.lights.length.toString());
+   *   console.log("Sensors: " + bootstrap.sensors.length.toString());
    *
-   *   // Find specific devices
-   *   const doorbells = bootstrap.cameras.filter(cam =>
-   *     cam.featureFlags.isDoorbell
-   *   );
+   *   // Find specific devices.
+   *   const doorbells = bootstrap.cameras.filter((cam) => cam.featureFlags.isDoorbell);
+   *   const motionSensors = bootstrap.sensors.filter((sensor) => sensor.type === "motion");
    *
-   *   const motionSensors = bootstrap.sensors.filter(sensor =>
-   *     sensor.type === "motion"
-   *   );
+   *   // Check recording status.
+   *   const recording = bootstrap.cameras.filter((cam) => cam.isRecording && cam.isConnected);
    *
-   *   // Check recording status
-   *   const recording = bootstrap.cameras.filter(cam =>
-   *     cam.isRecording && cam.isConnected
-   *   );
-   *
-   *   console.log(`${recording.length} cameras actively recording`);
+   *   console.log(recording.length.toString() + " cameras actively recording.");
    * }
    * ```
    *
@@ -871,31 +874,31 @@ export class ProtectApi extends EventEmitter {
    *
    *   const cameras = protect.bootstrap?.cameras ?? [];
    *
-   *   for (const camera of cameras) {
-   *     // Full resolution snapshot
+   *   for(const camera of cameras) {
+   *     // Full resolution snapshot.
    *     const fullRes = await protect.getSnapshot(camera);
    *
-   *     // Thumbnail snapshot
+   *     // Thumbnail snapshot.
    *     const thumbnail = await protect.getSnapshot(camera, {
-   *       width: 640,
-   *       height: 360
+   *       height: 360,
+   *       width: 640
    *     });
    *
-   *     // Package camera snapshot (if available)
-   *     if (camera.featureFlags.hasPackageCamera) {
+   *     // Package camera snapshot (if available).
+   *     if(camera.featureFlags.hasPackageCamera) {
    *       const packageSnap = await protect.getSnapshot(camera, {
    *         usePackageCamera: true
    *       });
    *
-   *       if (packageSnap) {
-   *         await writeFile(`${camera.name}-package.jpg`, packageSnap);
+   *       if(packageSnap) {
+   *         await writeFile(camera.name + "-package.jpg", packageSnap);
    *       }
    *     }
    *
-   *     if (fullRes && thumbnail) {
-   *       await writeFile(`${camera.name}-full.jpg`, fullRes);
-   *       await writeFile(`${camera.name}-thumb.jpg`, thumbnail);
-   *       console.log(`Saved snapshots for ${camera.name}`);
+   *     if(fullRes && thumbnail) {
+   *       await writeFile(camera.name + "-full.jpg", fullRes);
+   *       await writeFile(camera.name + "-thumb.jpg", thumbnail);
+   *       console.log("Saved snapshots for " + camera.name + ".");
    *     }
    *   }
    * }
@@ -905,8 +908,8 @@ export class ProtectApi extends EventEmitter {
    */
   public async getSnapshot(device: ProtectCameraConfig, options: Partial<{ width: number; height: number; usePackageCamera: boolean }> = {}): Promise<Nullable<Buffer>> {
 
-    // It's not a camera, or we're requesting a package camera snapshot on a camera without one - we're done.
-    if((device.modelKey !== "camera") || (options.usePackageCamera && !device.featureFlags.hasPackageCamera)) {
+    // We're requesting a package camera snapshot on a camera without one - we're done.
+    if(options.usePackageCamera && !device.featureFlags.hasPackageCamera) {
 
       return null;
     }
@@ -987,30 +990,30 @@ export class ProtectApi extends EventEmitter {
    *   await protect.getBootstrap();
    *
    *   const camera = protect.bootstrap?.cameras[0];
-   *   if (!camera) return;
+   *   if(!camera) return;
    *
-   *   // Update camera name and recording settings
+   *   // Update camera name and recording settings.
    *   const updatedCamera = await protect.updateDevice(camera, {
    *     name: "Front Door Camera",
    *     recordingSettings: {
    *       mode: "always",
-   *       prePaddingSecs: 3,
    *       postPaddingSecs: 3,
-   *       retentionDurationMs: 7 * 24 * 60 * 60 * 1000 // 7 days
+   *       prePaddingSecs: 3,
+   *       retentionDurationMs: 7 * 24 * 60 * 60 * 1000
    *     }
    *   });
    *
-   *   // Configure smart detection
+   *   // Configure smart detection.
    *   await protect.updateDevice(camera, {
    *     smartDetectSettings: {
-   *       objectTypes: ["person", "vehicle"],
-   *       autoTrackingObjectTypes: ["person"]
+   *       autoTrackingObjectTypes: ["person"],
+   *       objectTypes: [ "person", "vehicle" ]
    *     }
    *   });
    *
-   *   // Update light device
+   *   // Update light device.
    *   const light = protect.bootstrap?.lights[0];
-   *   if (light) {
+   *   if(light) {
    *     await protect.updateDevice(light, {
    *       lightDeviceSettings: {
    *         ledLevel: 6,
@@ -1023,9 +1026,9 @@ export class ProtectApi extends EventEmitter {
    *     });
    *   }
    *
-   *   // Configure doorbell chime volume
+   *   // Configure doorbell chime volume.
    *   const chime = protect.bootstrap?.chimes[0];
-   *   if (chime) {
+   *   if(chime) {
    *     await protect.updateDevice(chime, {
    *       volume: 75
    *     });
@@ -1071,15 +1074,24 @@ export class ProtectApi extends EventEmitter {
       return null;
     }
 
-    // We successfully set the message, return the updated device object.
-    return await response.body.json() as DeviceType;
+    // We successfully updated the device configuration, return the updated device object.
+    try {
+
+      return await response.body.json() as DeviceType;
+    } catch(error) {
+
+      this.log.error("%s: Unable to parse the response from the Protect controller.", this.getFullName(device));
+
+      return null;
+    }
   }
 
   // Update camera channels on a supported Protect device.
-  private async updateCameraChannels(device: ProtectCameraConfigInterface): Promise<Nullable<ProtectCameraConfig>> {
+  private async updateCameraChannels(device: ProtectCameraConfigInterface,
+    channels: ProtectCameraChannelConfigInterface[]): Promise<Nullable<ProtectCameraConfig>> {
 
     // Make sure we have the permissions to modify the camera JSON.
-    if(!(await this.canModifyCamera(device))) {
+    if(!(await this.canModifyCamera())) {
 
       return null;
     }
@@ -1087,7 +1099,7 @@ export class ProtectApi extends EventEmitter {
     // Update Protect with the new configuration.
     const response = await this._retrieve(this.getApiEndpoint(device.modelKey) + "/" + device.id, {
 
-      body: JSON.stringify({ channels: device.channels }),
+      body: JSON.stringify({ channels }),
       method: "PATCH"
     }, { decodeResponse: false });
 
@@ -1111,10 +1123,17 @@ export class ProtectApi extends EventEmitter {
 
     // Since we have taken responsibility for decoding response types, we need to reset our API backoff count.
     this.apiErrorCount = 0;
-    this.apiLastSuccess = Date.now();
 
     // Everything worked, save the new channel array.
-    return await response.body.json() as ProtectCameraConfig;
+    try {
+
+      return await response.body.json() as ProtectCameraConfig;
+    } catch(error) {
+
+      this.log.error("%s: Unable to parse the response from the Protect controller.", this.getFullName(device));
+
+      return device;
+    }
   }
 
   /**
@@ -1148,21 +1167,21 @@ export class ProtectApi extends EventEmitter {
    *
    *   const cameras = protect.bootstrap?.cameras ?? [];
    *
-   *   for (const camera of cameras) {
+   *   for(const camera of cameras) {
    *     const updated = await protect.enableRtsp(camera);
    *
-   *     if (updated) {
-   *       console.log(`RTSP enabled for ${camera.name}`);
+   *     if(updated) {
+   *       console.log("RTSP enabled for " + camera.name + ".");
    *
-   *       // Display RTSP URLs
-   *       updated.channels.forEach((channel, index) => {
-   *         if (channel.isRtspEnabled) {
-   *           const rtspUrl = `rtsp://192.168.1.1:7447/${channel.rtspAlias}`;
-   *           console.log(`  Channel ${index}: ${rtspUrl}`);
+   *       // Display RTSP URLs.
+   *       for(const [index, channel] of updated.channels.entries()) {
+   *         if(channel.isRtspEnabled) {
+   *           const rtspUrl = "rtsp://192.168.1.1:7447/" + channel.rtspAlias;
+   *           console.log("  Channel " + index.toString() + ": " + rtspUrl);
    *         }
-   *       });
+   *       }
    *     } else {
-   *       console.log(`Failed to enable RTSP for ${camera.name}`);
+   *       console.log("Failed to enable RTSP for " + camera.name + ".");
    *     }
    *   }
    * }
@@ -1173,27 +1192,23 @@ export class ProtectApi extends EventEmitter {
   public async enableRtsp(device: ProtectCameraConfigInterface): Promise<Nullable<ProtectCameraConfig>> {
 
     // Make sure we have the permissions to modify the camera JSON.
-    if(!(await this.canModifyCamera(device))) {
+    if(!(await this.canModifyCamera())) {
 
       return null;
     }
 
     // Do we have any non-RTSP enabled channels? If not, we're done.
-    if(!device.channels.some(channel => !channel.isRtspEnabled)) {
+    if(!device.channels.some((channel) => !channel.isRtspEnabled)) {
 
       return device;
     }
 
-    // Enable RTSP on all available channels.
-    device.channels = device.channels.map((channel: ProtectCameraChannelConfigInterface) => {
-
-      channel.isRtspEnabled = true;
-
-      return channel;
-    });
+    // Build a new channels array with RTSP enabled on every channel, leaving the caller's device object untouched. The controller's response from the PATCH is the
+    // authoritative state.
+    const channels = device.channels.map((channel) => ({ ...channel, isRtspEnabled: true }));
 
     // Update the camera channel JSON with our edits.
-    return this.updateCameraChannels(device);
+    return this.updateCameraChannels(device, channels);
   }
 
   /**
@@ -1225,7 +1240,7 @@ export class ProtectApi extends EventEmitter {
    *   await protect.login("192.168.1.1", "admin", "password");
    *   await protect.getBootstrap();
    *
-   *   // List all devices with full information
+   *   // List all devices with full information.
    *   const allDevices = [
    *     ...(protect.bootstrap?.cameras ?? []),
    *     ...(protect.bootstrap?.lights ?? []),
@@ -1234,19 +1249,19 @@ export class ProtectApi extends EventEmitter {
    *     ...(protect.bootstrap?.viewers ?? [])
    *   ];
    *
-   *   allDevices.forEach(device => {
-   *     // Basic format
+   *   for(const device of allDevices) {
+   *     // Basic format.
    *     console.log(protect.getDeviceName(device));
    *     // Output: "Front Door [G4 Doorbell Pro]"
    *
-   *     // With network info
+   *     // With network info.
    *     console.log(protect.getDeviceName(device, device.name, true));
    *     // Output: "Front Door [G4 Doorbell Pro] (address: 192.168.1.50 mac: 00:00:00:00:00:00)"
    *
-   *     // Custom name
+   *     // Custom name.
    *     console.log(protect.getDeviceName(device, "Custom Name"));
    *     // Output: "Custom Name [G4 Doorbell Pro]"
-   *   });
+   *   }
    * }
    * ```
    *
@@ -1289,13 +1304,11 @@ export class ProtectApi extends EventEmitter {
    *   await protect.getBootstrap();
    *
    *   protect.on("message", (packet) => {
-   *     const device = protect.bootstrap?.cameras.find(
-   *       c => c.id === packet.header.id
-   *     );
+   *     const device = protect.bootstrap?.cameras.find((c) => c.id === packet.header.id);
    *
-   *     if (device) {
+   *     if(device) {
    *       // Logs: "Dream Machine Pro [UDMP] Front Door [G4 Doorbell Pro]"
-   *       console.log(`${protect.getFullName(device)}: ${packet.header.action}`);
+   *       console.log(protect.getFullName(device) + ": " + packet.header.action);
    *     }
    *   });
    * }
@@ -1340,12 +1353,12 @@ export class ProtectApi extends EventEmitter {
    *     // Do work...
    *
    *   } finally {
-   *     // Always clean up connections
+   *     // Always clean up connections.
    *     protect.reset();
    *   }
    * }
    *
-   * // Handle process termination
+   * // Handle process termination.
    * process.on("SIGINT", () => {
    *   protect.reset();
    *   process.exit(0);
@@ -1391,6 +1404,7 @@ export class ProtectApi extends EventEmitter {
       // cannot be pipelined.
       this.wsAgent = new Agent({
 
+        allowH2: false,
         connect: {
 
           keepAlive: true,
@@ -1423,17 +1437,17 @@ export class ProtectApi extends EventEmitter {
    * const protect = new ProtectApi();
    *
    * async function switchControllers() {
-   *   // Connect to first controller
+   *   // Connect to first controller.
    *   await protect.login("192.168.1.1", "admin", "password1");
    *   await protect.getBootstrap();
-   *   console.log(`Connected to ${protect.name}`);
+   *   console.log("Connected to " + protect.name + ".");
    *
-   *   // Switch to second controller
+   *   // Switch to second controller.
    *   protect.logout();
    *
    *   await protect.login("192.168.2.1", "admin", "password2");
    *   await protect.getBootstrap();
-   *   console.log(`Connected to ${protect.name}`);
+   *   console.log("Connected to " + protect.name + ".");
    * }
    * ```
    *
@@ -1462,7 +1476,7 @@ export class ProtectApi extends EventEmitter {
   }
 
   // Utility to validate that we have the privileges we need to modify the camera JSON.
-  private async canModifyCamera(device: ProtectCameraConfigInterface): Promise<boolean> {
+  private async canModifyCamera(): Promise<boolean> {
 
     // Log us in if needed.
     if(!(await this.loginController())) {
@@ -1472,12 +1486,6 @@ export class ProtectApi extends EventEmitter {
 
     // Only admin users can activate RTSP streams.
     if(!this.isAdminUser) {
-
-      return false;
-    }
-
-    // At the moment, we only know about camera devices.
-    if(device.modelKey !== "camera") {
 
       return false;
     }
@@ -1518,21 +1526,21 @@ export class ProtectApi extends EventEmitter {
    * async function setupTalkback(cameraId: string) {
    *   await protect.login("192.168.1.1", "admin", "password");
    *
-   *   // Get the talkback endpoint
+   *   // Get the talkback endpoint.
    *   const params = new URLSearchParams({ camera: cameraId });
    *   const wsUrl = await protect.getWsEndpoint("talkback", params);
    *
-   *   if (!wsUrl) {
-   *     console.error("Failed to get talkback endpoint");
+   *   if(!wsUrl) {
+   *     console.error("Failed to get talkback endpoint.");
    *     return;
    *   }
    *
-   *   // Connect to the WebSocket
+   *   // Connect to the WebSocket.
    *   const ws = new WebSocket(wsUrl);
    *
    *   ws.on("open", () => {
-   *     console.log("Talkback connection established");
-   *     // Send AAC-encoded audio data
+   *     console.log("Talkback connection established.");
+   *     // Send AAC-encoded audio data.
    *     // ws.send(aacAudioBuffer);
    *   });
    *
@@ -1545,12 +1553,6 @@ export class ProtectApi extends EventEmitter {
    * @category API Access
    */
   public async getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams): Promise<Nullable<string>> {
-
-    return this._getWsEndpoint(endpoint, params);
-  }
-
-  // Internal interface to returning a WebSocket URL endpoint from the Protect controller for Protect API services (e.g. livestream, talkback).
-  private async _getWsEndpoint(endpoint: "livestream" | "talkback", params?: URLSearchParams): Promise<Nullable<string>> {
 
     // Log us in if needed.
     if(!(await this.loginController())) {
@@ -1644,40 +1646,40 @@ export class ProtectApi extends EventEmitter {
    * async function customApiCalls() {
    *   await protect.login("192.168.1.1", "admin", "password");
    *
-   *   // Get events from the last hour
+   *   // Get events from the last hour.
    *   const end = Date.now();
    *   const start = end - (60 * 60 * 1000);
    *
    *   const response = await protect.retrieve(
-   *     `https://192.168.1.1/proxy/protect/api/events?start=${start}&end=${end}`,
+   *     "https://192.168.1.1/proxy/protect/api/events?start=" + start.toString() + "&end=" + end.toString(),
    *     { method: "GET" }
    *   );
    *
-   *   if (response) {
+   *   if(response) {
    *     const events = await response.body.json();
-   *     console.log(`Found ${events.length} events`);
+   *     console.log("Found " + events.length.toString() + " events.");
    *   }
    *
-   *   // Download a video clip
+   *   // Download a video clip.
    *   const videoResponse = await protect.retrieve(
-   *     `https://192.168.1.1/proxy/protect/api/video/export`,
+   *     "https://192.168.1.1/proxy/protect/api/video/export",
    *     {
-   *       method: "POST",
    *       body: JSON.stringify({
    *         camera: "camera-id",
-   *         start: start,
    *         end: end,
+   *         start: start,
    *         type: "timelapse"
-   *       })
+   *       }),
+   *       method: "POST"
    *     },
    *     {
-   *       timeout: 30000 // 30 second timeout for video export
+   *       timeout: 30000
    *     }
    *   );
    *
-   *   if (videoResponse) {
+   *   if(videoResponse) {
    *     const videoBuffer = Buffer.from(await videoResponse.body.arrayBuffer());
-   *     // Save or process the video
+   *     // Save or process the video.
    *   }
    * }
    * ```
@@ -1710,18 +1712,19 @@ export class ProtectApi extends EventEmitter {
       this.log.error(message, ...parameters);
     };
 
-    // Catch Protect controller server-side issues.
-
     let response: Dispatcher.ResponseData<unknown>;
 
     // Create a signal handler to deliver the abort operation.
     const controller = new AbortController();
     const timer = setTimeout(() => { controller.abort(); }, retrieveOptions.timeout);
 
+    // Intentionally overwrite the caller's dispatcher and headers so that every request uses our authenticated session (cookie, CSRF token) and connection pool. The
+    // caller controls the method, body, and other options...we own the transport and identity.
     options.dispatcher = this.dispatcher;
     options.headers = this.headers;
     options.signal = controller.signal;
 
+    // Catch Protect controller server-side issues.
     try {
 
       const now = Date.now();
@@ -1732,7 +1735,7 @@ export class ProtectApi extends EventEmitter {
         // Let the user know we've got an API problem.
         if(!this._isThrottled) {
 
-          this.apiLastSuccess = now;
+          this.apiThrottleStart = now;
           this._isThrottled = true;
 
           this.log.error("Throttling API calls due to errors with the %s previous attempts. Pausing communication with the Protect controller for %s minutes.",
@@ -1744,7 +1747,7 @@ export class ProtectApi extends EventEmitter {
         }
 
         // Check to see if we are still throttling our API calls.
-        if((now - this.apiLastSuccess) < (PROTECT_API_RETRY_INTERVAL * 1000)) {
+        if((now - this.apiThrottleStart) < (PROTECT_API_RETRY_INTERVAL * 1000)) {
 
           return null;
         }
@@ -1806,7 +1809,6 @@ export class ProtectApi extends EventEmitter {
       }
 
       // We're all good - return the response and we're done.
-      this.apiLastSuccess = Date.now();
       this.apiErrorCount = 0;
       this._isThrottled = false;
 
@@ -1830,7 +1832,7 @@ export class ProtectApi extends EventEmitter {
         return null;
       }
 
-      // We destroyed the pool due to a reset event and our inflight connections are failing.
+      // The Undici retry interceptor exhausted all configured retries without a successful response.
       if(error instanceof errors.RequestRetryError) {
 
         logError("Unable to connect to the Protect controller. This is temporary and may occur during device reboots.");
@@ -1954,12 +1956,12 @@ export class ProtectApi extends EventEmitter {
    *     "https://192.168.1.1/proxy/protect/api/cameras"
    *   );
    *
-   *   if (response && protect.responseOk(response.statusCode)) {
-   *     console.log("Request successful");
+   *   if(response && protect.responseOk(response.statusCode)) {
+   *     console.log("Request successful.");
    *     const data = await response.body.json();
    *     // Process data...
    *   } else {
-   *     console.error(`Request failed: ${response?.statusCode}`);
+   *     console.error("Request failed: " + (response?.statusCode?.toString() ?? "unknown") + ".");
    *   }
    * }
    * ```
@@ -1999,27 +2001,26 @@ export class ProtectApi extends EventEmitter {
    *   await protect.login("192.168.1.1", "admin", "password");
    *   await protect.getBootstrap();
    *
-   *   const camera = protect.bootstrap?.cameras.find(c => c.id === cameraId);
-   *   if (!camera) return;
+   *   const camera = protect.bootstrap?.cameras.find((c) => c.id === cameraId);
+   *   if(!camera) return;
    *
-   *   // Create a livestream instance and start streaming on channel 0 (highest quality)
-   *   // with the Readable stream interface enabled.
+   *   // Create a livestream instance and start streaming on channel 0 (highest quality) with the Readable stream interface enabled.
    *   const livestream = protect.createLivestream();
    *
-   *   if (!await livestream.start(camera.id, 0, { useStream: true })) {
-   *     console.error("Failed to start livestream");
+   *   if(!await livestream.start(camera.id, 0, { useStream: true })) {
+   *     console.error("Failed to start livestream.");
    *     return;
    *   }
    *
    *   // Pipe the fMP4 stream to a file.
-   *   const output = createWriteStream(`recording-${Date.now()}.mp4`);
+   *   const output = createWriteStream("recording-" + Date.now().toString() + ".mp4");
    *   livestream.stream?.pipe(output);
    *
    *   // Stop after the requested duration.
    *   setTimeout(() => {
    *     livestream.stop();
    *     output.end();
-   *     console.log("Recording complete");
+   *     console.log("Recording complete.");
    *   }, durationMs);
    * }
    * ```
@@ -2036,7 +2037,7 @@ export class ProtectApi extends EventEmitter {
    *
    * @param endpoint - Endpoint type to retrieve
    *
-   * @returns Full URL to the requested endpoint, or empty string if invalid.
+   * @returns Full URL to the requested endpoint.
    *
    * @remarks
    * Generates properly formatted URLs for Protect API endpoints:
@@ -2065,26 +2066,26 @@ export class ProtectApi extends EventEmitter {
    * async function customEndpoints() {
    *   await protect.login("192.168.1.1", "admin", "password");
    *
-   *   // Get base endpoints
+   *   // Get base endpoints.
    *   const cameraEndpoint = protect.getApiEndpoint("camera");
    *   // Returns: "https://192.168.1.1/proxy/protect/api/cameras"
    *
-   *   // Build specific camera URL
+   *   // Build specific camera URL.
    *   const cameraId = "abc123";
-   *   const specificCamera = `${cameraEndpoint}/${cameraId}`;
+   *   const specificCamera = cameraEndpoint + "/" + cameraId;
    *
-   *   // Make custom request
+   *   // Make custom request.
    *   const response = await protect.retrieve(specificCamera);
-   *   if (response) {
+   *   if(response) {
    *     const camera = await response.body.json();
-   *     console.log(`Camera: ${camera.name}`);
+   *     console.log("Camera: " + camera.name);
    *   }
    * }
    * ```
    *
    * @category API Access
    */
-  public getApiEndpoint(endpoint: string): string {
+  public getApiEndpoint(endpoint: ProtectApiEndpoint): string {
 
     let endpointSuffix;
     let endpointPrefix = "/proxy/protect/api/";
