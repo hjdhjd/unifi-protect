@@ -9,11 +9,9 @@
  * The UniFi Protect API is largely undocumented - these interfaces and types have been gleaned through a lot of experimentation and observation. Protect is always
  * evolving and I will attempt to keep up with the changes over time.
  *
- * We use types instead of interfaces because we have a need to provide two versions of each interface: one that represents the interface and one that is recursively
- * partial, for patching the configuration objects and receiving event updates related to them.
- *
- * - We append **Config** to the primary version of a device configuration object.
- * - We append **Payload** to the version of a device configuration object that can have partial components of the object in it, used for patching or updates.
+ * Each device has an **Interface** (the full definition with all properties) and a **Config** type alias (for reads). For PATCH/update payloads, consumers use
+ * `DeepPartial<...Config>` directly. All device interfaces include `[key: string]: ProtectKnownJsonValue` index signatures so that untyped API fields are accessible
+ * without casting. Common device properties are inherited from `ProtectDeviceBaseInterface`.
  *
  * @module ProtectTypes
  */

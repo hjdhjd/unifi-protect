@@ -2044,16 +2044,16 @@ export class ProtectApi extends EventEmitter {
    *
    * | Endpoint | Path | Description |
    * |----------|------|-------------|
-   * | `bootstrap` | `/api/bootstrap` | Complete system configuration |
-   * | `camera` | `/api/cameras` | Camera management |
-   * | `chime` | `/api/chimes` | Chime device management |
-   * | `light` | `/api/lights` | Light device management |
+   * | `bootstrap` | `/proxy/protect/api/bootstrap` | Complete system configuration |
+   * | `camera` | `/proxy/protect/api/cameras` | Camera management |
+   * | `chime` | `/proxy/protect/api/chimes` | Chime device management |
+   * | `light` | `/proxy/protect/api/lights` | Light device management |
    * | `login` | `/api/auth/login` | Authentication endpoint |
-   * | `nvr` | `/api/nvr` | NVR configuration |
+   * | `nvr` | `/proxy/protect/api/nvr` | NVR configuration |
    * | `self` | `/api/users/self` | Current user information |
-   * | `sensor` | `/api/sensors` | Sensor device management |
-   * | `websocket` | `/api/ws` | WebSocket endpoints |
-   * | `viewer` | `/api/viewers` | Viewport device management |
+   * | `sensor` | `/proxy/protect/api/sensors` | Sensor device management |
+   * | `websocket` | `/proxy/protect/api/ws` | WebSocket endpoints |
+   * | `viewer` | `/proxy/protect/api/viewers` | Viewport device management |
    *
    * @example
    * Building custom API URLs:
@@ -2087,83 +2087,25 @@ export class ProtectApi extends EventEmitter {
    */
   public getApiEndpoint(endpoint: ProtectApiEndpoint): string {
 
-    let endpointSuffix;
-    let endpointPrefix = "/proxy/protect/api/";
+    // Endpoint lookup table mapping each endpoint identifier to its URL path components. Most endpoints use the standard /proxy/protect/api/ prefix...login and
+    // self use /api/ because they target UniFi OS authentication rather than the Protect application.
+    const endpoints: Record<ProtectApiEndpoint, { prefix: string; suffix: string }> = {
 
-    switch(endpoint) {
+      bootstrap: { prefix: "/proxy/protect/api/", suffix: "bootstrap" },
+      camera: { prefix: "/proxy/protect/api/", suffix: "cameras" },
+      chime: { prefix: "/proxy/protect/api/", suffix: "chimes" },
+      light: { prefix: "/proxy/protect/api/", suffix: "lights" },
+      login: { prefix: "/api/", suffix: "auth/login" },
+      nvr: { prefix: "/proxy/protect/api/", suffix: "nvr" },
+      self: { prefix: "/api/", suffix: "users/self" },
+      sensor: { prefix: "/proxy/protect/api/", suffix: "sensors" },
+      viewer: { prefix: "/proxy/protect/api/", suffix: "viewers" },
+      websocket: { prefix: "/proxy/protect/api/", suffix: "ws" }
+    };
 
-      case "bootstrap":
+    const { prefix, suffix } = endpoints[endpoint];
 
-        endpointSuffix = "bootstrap";
-
-        break;
-
-      case "camera":
-
-        endpointSuffix = "cameras";
-
-        break;
-
-      case "chime":
-
-        endpointSuffix = "chimes";
-
-        break;
-
-      case "light":
-
-        endpointSuffix = "lights";
-
-        break;
-
-      case "login":
-        endpointPrefix = "/api/";
-        endpointSuffix = "auth/login";
-
-        break;
-
-      case "nvr":
-
-        endpointSuffix = "nvr";
-
-        break;
-
-      case "self":
-
-        endpointPrefix = "/api/";
-        endpointSuffix = "users/self";
-
-        break;
-
-      case "sensor":
-
-        endpointSuffix = "sensors";
-
-        break;
-
-      case "websocket":
-
-        endpointSuffix = "ws";
-
-        break;
-
-      case "viewer":
-
-        endpointSuffix = "viewers";
-
-        break;
-
-      default:
-
-        break;
-    }
-
-    if(!endpointSuffix) {
-
-      return "";
-    }
-
-    return "https://" + this.nvrAddress + endpointPrefix + endpointSuffix;
+    return "https://" + this.nvrAddress + prefix + suffix;
   }
 
   /**
@@ -2182,7 +2124,7 @@ export class ProtectApi extends EventEmitter {
    */
   public get bootstrap(): ProtectNvrBootstrapData {
 
-    return this._bootstrap as ProtectNvrBootstrapData;
+    return this._bootstrap;
   }
 
   /**
@@ -2250,8 +2192,8 @@ export class ProtectApi extends EventEmitter {
    * @returns Controller name in format: `Name [Type]` or just the address if not bootstrapped.
    *
    * @remarks
-   * Returns a human-readable controller identifier. After bootstrap, includes the controller's configured name and model type. Before bootstrap, returns the network
-   * address used for connection.
+   * Returns a human-readable controller identifier. After bootstrap, includes the controller's configured name and model type. Before bootstrap, returns the hostname or
+   * IP address used for connection.
    *
    * @example
    * ```typescript
@@ -2264,7 +2206,7 @@ export class ProtectApi extends EventEmitter {
    */
   public get name(): string {
 
-    // Our NVR string, if it exists, appears as `NVR [NVR Type]`. Otherwise, we appear as `NVRaddress`.
+    // Our NVR string, if it exists, appears as `NVR [NVR Type]`. Otherwise, we appear as `NVR hostname or IP address`.
     if(this._bootstrap?.nvr) {
 
       return (this._bootstrap.nvr.name ?? this._bootstrap.nvr.marketName) + " [" + this._bootstrap.nvr.marketName + "]";
