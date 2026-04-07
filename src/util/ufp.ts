@@ -559,6 +559,17 @@ function parseArguments(argv: string[]): ParsedOptions {
     return null;
   };
 
+  // Model key flag-to-modelKey mapping. Data-driven so adding new device types is a single table entry.
+  const modelKeyFlags: Record<string, string> = {
+
+    "--cameras": "camera",
+    "--chimes": "chime",
+    "--lights": "light",
+    "--nvr": "nvr",
+    "--sensors": "sensor",
+    "--viewers": "viewer"
+  };
+
   while(i < args.length) {
 
     const arg = args[i];
@@ -651,49 +662,9 @@ function parseArguments(argv: string[]): ParsedOptions {
     }
 
     // Model key shortcuts.
-    if(arg === "--cameras") {
+    if(arg in modelKeyFlags) {
 
-      options.filters.push(new ModelKeyFilter("camera"));
-      i++;
-
-      continue;
-    }
-
-    if(arg === "--lights") {
-
-      options.filters.push(new ModelKeyFilter("light"));
-      i++;
-
-      continue;
-    }
-
-    if(arg === "--sensors") {
-
-      options.filters.push(new ModelKeyFilter("sensor"));
-      i++;
-
-      continue;
-    }
-
-    if(arg === "--chimes") {
-
-      options.filters.push(new ModelKeyFilter("chime"));
-      i++;
-
-      continue;
-    }
-
-    if(arg === "--viewers") {
-
-      options.filters.push(new ModelKeyFilter("viewer"));
-      i++;
-
-      continue;
-    }
-
-    if(arg === "--nvr") {
-
-      options.filters.push(new ModelKeyFilter("nvr"));
+      options.filters.push(new ModelKeyFilter(modelKeyFlags[arg]));
       i++;
 
       continue;
