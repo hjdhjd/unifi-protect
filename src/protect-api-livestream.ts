@@ -124,12 +124,11 @@ export class ProtectLivestream extends EventEmitter {
   private _codec: Nullable<string>;
   private _stream: Nullable<Readable>;
   private api: ProtectApi;
-  private errorHandler: Nullable<(event: ErrorEvent) => void>;
   private heartbeat: Nullable<NodeJS.Timeout>;
   private initSegmentPromise?: Promise<Buffer>;
   private lastMessage: number;
   private log: ProtectLogging;
-  private messageHandler: Nullable<(event: MessageEvent) => void>;
+  private sessionAbort: Nullable<AbortController>;
   private ws: Nullable<WebSocket>;
 
   // Create a new instance.
@@ -142,11 +141,10 @@ export class ProtectLivestream extends EventEmitter {
     this._initSegment = null;
     this._stream = null;
     this.api = api;
-    this.errorHandler = null;
     this.heartbeat = null;
     this.lastMessage = 0;
     this.log = log;
-    this.messageHandler = null;
+    this.sessionAbort = null;
     this.ws = null;
   }
 
@@ -190,6 +188,10 @@ export class ProtectLivestream extends EventEmitter {
     // Stop any existing stream.
     this.stop();
 
+    // Create a fresh abort controller for this session. Every resource tied to the session's lifetime receives this signal...when stop() aborts it, all listeners,
+    // promises, and event registrations are cleaned up automatically.
+    this.sessionAbort = new AbortController();
+
     // Clear out the initialization segment and any cached promise from a prior session.
     this._initSegment = null;
     this.initSegmentPromise = undefined;
@@ -203,19 +205,18 @@ export class ProtectLivestream extends EventEmitter {
    */
   public stop(): void {
 
+    // Abort the session signal. This automatically removes all WebSocket event listeners registered with the signal and rejects any pending getInitSegment() promise.
+    this.sessionAbort?.abort();
+    this.sessionAbort = null;
+
     // Close the websocket.
     this.ws?.close();
 
-    if(this.messageHandler) {
+    // Clear the heartbeat timer.
+    if(this.heartbeat) {
 
-      this.ws?.removeEventListener("message", this.messageHandler);
-      this.messageHandler = null;
-    }
-
-    if(this.errorHandler) {
-
-      this.ws?.removeEventListener("error", this.errorHandler);
-      this.errorHandler = null;
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
     }
 
     // If we've created a stream, end it gracefully.
@@ -304,6 +305,9 @@ export class ProtectLivestream extends EventEmitter {
         });
       }
 
+      // All WebSocket listeners use the session's abort signal so they are automatically removed when stop() aborts the session.
+      const { signal } = this.sessionAbort ?? new AbortController();
+
       // Start our heartbeat once we've opened the connection.
       this.ws.addEventListener("open", () => {
 
@@ -313,24 +317,11 @@ export class ProtectLivestream extends EventEmitter {
         // lockup due to regressions in the controller firmware. This ensures we can never hang waiting on data from the API, especially in a livestream scenario.
         this.heartbeat = setInterval(() => {
 
-          // Clear out our heartbeat if our websocket no longer exists.
-          if(!this.ws) {
-
-            // Clear out our heartbeat since we're closing.
-            if(this.heartbeat) {
-
-              clearInterval(this.heartbeat);
-              this.heartbeat = null;
-            }
-
-            return;
-          }
-
           if((Date.now() - this.lastMessage) > PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT) {
 
             logError("the livestream API is not responding.");
 
-            if((this.ws.readyState === WebSocket.CLOSING) || (this.ws.readyState === WebSocket.OPEN)) {
+            if((this.ws?.readyState === WebSocket.CLOSING) || (this.ws?.readyState === WebSocket.OPEN)) {
 
               this.ws.close();
             }
@@ -339,10 +330,10 @@ export class ProtectLivestream extends EventEmitter {
 
         // Process packets coming to our websocket.
         this.processLivestream();
-      }, { once: true });
+      }, { signal });
 
       // Catch any errors and inform the user, if needed.
-      this.ws.addEventListener("error", this.errorHandler = (event: ErrorEvent): void => {
+      this.ws.addEventListener("error", (event: ErrorEvent): void => {
 
         const error = event.error as NodeJS.ErrnoException;
 
@@ -354,21 +345,14 @@ export class ProtectLivestream extends EventEmitter {
         }
 
         this.stop();
-      }, { once: true });
+      }, { signal });
 
       this.ws.addEventListener("close", () => {
-
-        // Clear out our heartbeat since we're closing.
-        if(this.heartbeat) {
-
-          clearInterval(this.heartbeat);
-          this.heartbeat = null;
-        }
 
         this.stop();
 
         this.emit("close");
-      }, { once: true });
+      }, { signal });
 
     } catch(error) {
 
@@ -415,9 +399,12 @@ export class ProtectLivestream extends EventEmitter {
     // Keep any tail bytes that didn't form a full packet yet.
     let packetRemaining: Buffer = EMPTY_BUFFER;
 
-    // Process data coming in from the websocket. The handler is async because Blob data requires an await to convert to an ArrayBuffer.
+    // Process data coming in from the websocket. The handler is async because Blob data requires an await to convert to an ArrayBuffer. The session's abort signal
+    // ensures this listener is removed when stop() is called.
+    const { signal } = this.sessionAbort ?? new AbortController();
+
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
-    this.ws.addEventListener("message", this.messageHandler = async (event: MessageEvent): Promise<void> => {
+    this.ws.addEventListener("message", async (event: MessageEvent): Promise<void> => {
 
       // Update our heartbeat.
       this.lastMessage = Date.now();
@@ -627,14 +614,14 @@ export class ProtectLivestream extends EventEmitter {
         // Advance the offset past this entire packet (header + payload).
         offset = dataEnd;
       }
-    });
+    }, { signal });
   }
 
   /**
    * Retrieve the initialization segment that must be at the start of every fMP4 stream.
    *
-   * @remarks If the stream is stopped or fails before the initialization segment is received, the returned promise will never settle. Callers should race this against
-   *   the `close` event or an external timeout to avoid waiting indefinitely.
+   * @remarks If the stream is stopped before the initialization segment is received, the returned promise rejects with an AbortError. Callers should handle this
+   *   rejection or wrap the call with a timeout.
    *
    * @returns Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
    */
@@ -646,9 +633,24 @@ export class ProtectLivestream extends EventEmitter {
       return this.initSegment;
     }
 
-    // Cache a promise that resolves when the initsegment event is emitted. We need to wait until the initialization segment is seen and then return it.
-    // eslint-disable-next-line @typescript-eslint/non-nullable-type-assertion-style
-    return this.initSegmentPromise ??= events.once(this, "initsegment").then(() => this.initSegment as Buffer);
+    // Cache a promise that resolves when the initsegment event is emitted, or rejects with an AbortError when the session is aborted via stop().
+    return this.initSegmentPromise ??= this.awaitInitSegment();
+  }
+
+  // Wait for the initialization segment event, gated by the session's abort signal. The init segment is guaranteed to be non-null when the event fires because the
+  // event handler in processLivestream sets _initSegment before emitting.
+  private async awaitInitSegment(): Promise<Buffer> {
+
+    // If there's no active session, reject immediately. Calling getInitSegment() on a stopped stream has no session to produce the event and no abort signal to
+    // settle the promise.
+    if(!this.sessionAbort) {
+
+      throw new Error("No active livestream session.");
+    }
+
+    const [initSegment] = await events.once(this, "initsegment", { signal: this.sessionAbort.signal }) as [Buffer];
+
+    return initSegment;
   }
 
   /**
