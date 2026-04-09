@@ -1451,7 +1451,7 @@ export interface ProtectEventAddInterface {
   end: number;
   eventId: string;
   id: string;
-  locked: boolean;
+  locked?: boolean;
   metadata?: ProtectEventMetadata;
   modelKey: "event";
   partition: string;

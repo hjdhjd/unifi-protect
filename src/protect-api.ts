@@ -1394,7 +1394,9 @@ export class ProtectApi extends EventEmitter {
 
       // Create a dispatcher using a new pool. We want to explicitly allow self-signed SSL certificates, enabled HTTP2 connections, and allow up to five connections at a
       // time and provide some robust retry handling. We allow for up to five retries, with a maximum wait time of 1500ms per retry, in factors of 2 starting from a 100ms
-      // delay.
+      // delay. PATCH is deliberately excluded from the retry list...the Protect API isn't documented and we don't trust that PATCH is idempotent on the controller side.
+      // A silent retry could leave us with duplicate side effects we can't see. PATCH failures bubble up through our own error counting instead, so the caller gets to
+      // decide what to do about it.
       this.dispatcher = new Pool("https://" + this.nvrAddress, { allowH2: true, clientTtl: 60 * 1000, connect: { rejectUnauthorized: false }, connections: 5 })
         .compose(ua, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
           statusCodes: [ 400, 404, 429, 500, 502, 503, 504 ], timeoutFactor: 2 }));
