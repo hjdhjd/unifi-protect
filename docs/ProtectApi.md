@@ -27,20 +27,20 @@ analysis of the Protect web interface and extensive testing, as Ubiquiti does no
 ```typescript
 import { ProtectApi } from "unifi-protect";
 
-// Create an API instance
+// Create an API instance.
 const protect = new ProtectApi();
 
-// Login to your Protect controller
+// Login to your Protect controller.
 await protect.login("192.168.1.1", "username", "password");
 
-// Bootstrap to get the current state
+// Bootstrap to get the current state.
 await protect.getBootstrap();
 
-// Access your devices
+// Access your devices.
 const cameras = protect.bootstrap?.cameras ?? [];
-console.log(`Found ${cameras.length} cameras`);
+console.log("Found " + cameras.length.toString() + " cameras.");
 
-// Listen for real-time events
+// Listen for real-time events.
 protect.on("message", (packet) => {
   console.log("Event received:", packet);
 });
@@ -73,16 +73,41 @@ Options to tailor the behavior of [ProtectApi.retrieve](#retrieve).
 
 ## Type Aliases
 
+### ProtectApiEndpoint
+
+```ts
+type ProtectApiEndpoint = 
+  | ProtectKnownDeviceModelKey
+  | "bootstrap"
+  | "login"
+  | "self"
+  | "websocket";
+```
+
+Known Protect API endpoint identifiers accepted by [ProtectApi.getApiEndpoint](#getapiendpoint). Device endpoints correspond to [ProtectKnownDeviceModelKey](#protectknowndevicemodelkey) values.
+
+***
+
+### ProtectKnownDeviceModelKey
+
+```ts
+type ProtectKnownDeviceModelKey = ProtectKnownDeviceTypes["modelKey"];
+```
+
+The model key identifiers for known Protect device categories, derived from the device type interfaces.
+
+***
+
 ### ProtectKnownDevicePayloads
 
 ```ts
 type ProtectKnownDevicePayloads = 
-  | ProtectCameraConfigPayload
-  | ProtectChimeConfigPayload
-  | ProtectLightConfigPayload
-  | ProtectNvrConfigPayload
-  | ProtectSensorConfigPayload
-  | ProtectViewerConfigPayload;
+  | DeepPartial<ProtectCameraConfig>
+  | DeepPartial<ProtectChimeConfig>
+  | DeepPartial<ProtectLightConfig>
+  | DeepPartial<ProtectNvrConfig>
+  | DeepPartial<ProtectSensorConfig>
+| DeepPartial<ProtectViewerConfig>;
 ```
 
 The Protect device payload types we know about and are available to us.
@@ -108,11 +133,11 @@ The Protect device types we know about and are available to us.
 ### ProtectNvrBootstrapData
 
 ```ts
-type ProtectNvrBootstrapData = Nullable<DeepIndexable<ProtectNvrBootstrap>>;
+type ProtectNvrBootstrapData = Nullable<ProtectNvrBootstrap>;
 ```
 
-A deep-indexable version of the Protect NVR bootstrap data. We need this if you want to be able to reference the bootstrap data through indexing
-(e.g. bootstrap["something"]) with strong typing.
+The Protect NVR bootstrap data type used by the [bootstrap](#bootstrap) getter. Device interfaces include index signatures for accessing untyped API
+fields without casting.
 
 ***
 
@@ -201,14 +226,14 @@ class ProtectManager {
   }
 
   private setupEventHandlers(): void {
-    // Handle login events
+    // Handle login events.
     this.api.on("login", (success: boolean) => {
-      console.log(success ? "Login successful" : "Login failed");
+      console.log(success ? "Login successful." : "Login failed.");
     });
 
-    // Process real-time events
+    // Process real-time events.
     this.api.on("message", (packet) => {
-      if (packet.header.modelKey === "camera") {
+      if(packet.header.modelKey === "camera") {
         console.log("Camera event:", packet);
       }
     });
@@ -216,20 +241,20 @@ class ProtectManager {
 
   async connect(host: string, username: string, password: string): Promise<boolean> {
     try {
-      // Login to the controller
-      if (!await this.api.login(host, username, password)) {
-        throw new Error("Authentication failed");
+      // Login to the controller.
+      if(!await this.api.login(host, username, password)) {
+        throw new Error("Authentication failed.");
       }
 
-      // Bootstrap the configuration
-      if (!await this.api.getBootstrap()) {
-        throw new Error("Bootstrap failed");
+      // Bootstrap the configuration.
+      if(!await this.api.getBootstrap()) {
+        throw new Error("Bootstrap failed.");
       }
 
-      console.log(`Connected to ${this.api.name}`);
+      console.log("Connected to " + this.api.name + ".");
       return true;
 
-    } catch (error) {
+    } catch(error) {
       console.error("Connection failed:", error);
       return false;
     }
@@ -238,10 +263,10 @@ class ProtectManager {
   async enableAllRtspStreams(): Promise<void> {
     const cameras = this.api.bootstrap?.cameras ?? [];
 
-    for (const camera of cameras) {
+    for(const camera of cameras) {
       const updated = await this.api.enableRtsp(camera);
-      if (updated) {
-        console.log(`RTSP enabled for ${this.api.getDeviceName(camera)}`);
+      if(updated) {
+        console.log("RTSP enabled for " + this.api.getDeviceName(camera) + ".");
       }
     }
   }
@@ -368,10 +393,10 @@ Unlike RTSP streams, livestreams are delivered over WebSockets with minimal late
 
 ###### Example
 
-Working with livestreams:
+Recording a livestream to a file using the Readable stream interface:
 
 ```typescript
-import { ProtectApi, ProtectLivestream } from "unifi-protect";
+import { ProtectApi } from "unifi-protect";
 import { createWriteStream } from "fs";
 
 const protect = new ProtectApi();
@@ -380,23 +405,26 @@ async function recordLivestream(cameraId: string, durationMs: number) {
   await protect.login("192.168.1.1", "admin", "password");
   await protect.getBootstrap();
 
-  // Create a livestream instance
+  const camera = protect.bootstrap?.cameras.find((c) => c.id === cameraId);
+  if(!camera) return;
+
+  // Create a livestream instance and start streaming on channel 0 (highest quality) with the Readable stream interface enabled.
   const livestream = protect.createLivestream();
 
-  // Start the livestream
-  const camera = protect.bootstrap?.cameras.find(c => c.id === cameraId);
-  if (!camera) return;
+  if(!await livestream.start(camera.id, 0, { useStream: true })) {
+    console.error("Failed to start livestream.");
+    return;
+  }
 
-  // The livestream can be piped to a file, processed, or streamed elsewhere
-  const output = createWriteStream(`recording-${Date.now()}.mp4`);
+  // Pipe the fMP4 stream to a file.
+  const output = createWriteStream("recording-" + Date.now().toString() + ".mp4");
+  livestream.stream?.pipe(output);
 
-  // Start streaming (implementation depends on ProtectLivestream class)
-  await livestream.start(camera, output);
-
-  // Stop after duration
+  // Stop after the requested duration.
   setTimeout(() => {
     livestream.stop();
-    console.log("Recording complete");
+    output.end();
+    console.log("Recording complete.");
   }, durationMs);
 }
 ```
@@ -413,13 +441,13 @@ Return an API endpoint URL for the requested endpoint type.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `endpoint` | `string` | Endpoint type to retrieve |
+| `endpoint` | [`ProtectApiEndpoint`](#protectapiendpoint) | Endpoint type to retrieve |
 
 ###### Returns
 
 `string`
 
-Full URL to the requested endpoint, or empty string if invalid.
+Full URL to the requested endpoint.
 
 ###### Remarks
 
@@ -427,16 +455,16 @@ Generates properly formatted URLs for Protect API endpoints:
 
 | Endpoint | Path | Description |
 |----------|------|-------------|
-| `bootstrap` | `/api/bootstrap` | Complete system configuration |
-| `camera` | `/api/cameras` | Camera management |
-| `chime` | `/api/chimes` | Chime device management |
-| `light` | `/api/lights` | Light device management |
+| `bootstrap` | `/proxy/protect/api/bootstrap` | Complete system configuration |
+| `camera` | `/proxy/protect/api/cameras` | Camera management |
+| `chime` | `/proxy/protect/api/chimes` | Chime device management |
+| `light` | `/proxy/protect/api/lights` | Light device management |
 | `login` | `/api/auth/login` | Authentication endpoint |
-| `nvr` | `/api/nvr` | NVR configuration |
+| `nvr` | `/proxy/protect/api/nvr` | NVR configuration |
 | `self` | `/api/users/self` | Current user information |
-| `sensor` | `/api/sensors` | Sensor device management |
-| `websocket` | `/api/ws` | WebSocket endpoints |
-| `viewer` | `/api/viewers` | Viewport device management |
+| `sensor` | `/proxy/protect/api/sensors` | Sensor device management |
+| `websocket` | `/proxy/protect/api/ws` | WebSocket endpoints |
+| `viewer` | `/proxy/protect/api/viewers` | Viewport device management |
 
 ###### Example
 
@@ -450,19 +478,19 @@ const protect = new ProtectApi();
 async function customEndpoints() {
   await protect.login("192.168.1.1", "admin", "password");
 
-  // Get base endpoints
+  // Get base endpoints.
   const cameraEndpoint = protect.getApiEndpoint("camera");
   // Returns: "https://192.168.1.1/proxy/protect/api/cameras"
 
-  // Build specific camera URL
+  // Build specific camera URL.
   const cameraId = "abc123";
-  const specificCamera = `${cameraEndpoint}/${cameraId}`;
+  const specificCamera = cameraEndpoint + "/" + cameraId;
 
-  // Make custom request
+  // Make custom request.
   const response = await protect.retrieve(specificCamera);
-  if (response) {
+  if(response) {
     const camera = await response.body.json();
-    console.log(`Camera: ${camera.name}`);
+    console.log("Camera: " + camera.name);
   }
 }
 ```
@@ -512,39 +540,32 @@ import { ProtectApi, ProtectCameraConfig } from "unifi-protect";
 const protect = new ProtectApi();
 
 async function analyzeSystem() {
-  // Login and bootstrap
+  // Login and bootstrap.
   await protect.login("192.168.1.1", "admin", "password");
   await protect.getBootstrap();
 
-  // Access the bootstrap data
+  // Access the bootstrap data.
   const bootstrap = protect.bootstrap;
-  if (!bootstrap) return;
+  if(!bootstrap) return;
 
-  // System information
-  console.log(`NVR: ${bootstrap.nvr.name}`);
-  console.log(`Version: ${bootstrap.nvr.version}`);
-  console.log(`Uptime: ${bootstrap.nvr.uptime} seconds`);
+  // System information.
+  console.log("NVR: " + bootstrap.nvr.name);
+  console.log("Version: " + bootstrap.nvr.version);
+  console.log("Up since: " + new Date(bootstrap.nvr.upSince).toString());
 
-  // Device inventory
-  console.log(`Cameras: ${bootstrap.cameras.length}`);
-  console.log(`Lights: ${bootstrap.lights.length}`);
-  console.log(`Sensors: ${bootstrap.sensors.length}`);
+  // Device inventory.
+  console.log("Cameras: " + bootstrap.cameras.length.toString());
+  console.log("Lights: " + bootstrap.lights.length.toString());
+  console.log("Sensors: " + bootstrap.sensors.length.toString());
 
-  // Find specific devices
-  const doorbells = bootstrap.cameras.filter(cam =>
-    cam.featureFlags.isDoorbell
-  );
+  // Find specific devices.
+  const doorbells = bootstrap.cameras.filter((cam) => cam.featureFlags.isDoorbell);
+  const motionSensors = bootstrap.sensors.filter((sensor) => sensor.type === "motion");
 
-  const motionSensors = bootstrap.sensors.filter(sensor =>
-    sensor.type === "motion"
-  );
+  // Check recording status.
+  const recording = bootstrap.cameras.filter((cam) => cam.isRecording && cam.isConnected);
 
-  // Check recording status
-  const recording = bootstrap.cameras.filter(cam =>
-    cam.isRecording && cam.isConnected
-  );
-
-  console.log(`${recording.length} cameras actively recording`);
+  console.log(recording.length.toString() + " cameras actively recording.");
 }
 ```
 
@@ -598,31 +619,31 @@ async function captureSnapshots() {
 
   const cameras = protect.bootstrap?.cameras ?? [];
 
-  for (const camera of cameras) {
-    // Full resolution snapshot
+  for(const camera of cameras) {
+    // Full resolution snapshot.
     const fullRes = await protect.getSnapshot(camera);
 
-    // Thumbnail snapshot
+    // Thumbnail snapshot.
     const thumbnail = await protect.getSnapshot(camera, {
-      width: 640,
-      height: 360
+      height: 360,
+      width: 640
     });
 
-    // Package camera snapshot (if available)
-    if (camera.featureFlags.hasPackageCamera) {
+    // Package camera snapshot (if available).
+    if(camera.featureFlags.hasPackageCamera) {
       const packageSnap = await protect.getSnapshot(camera, {
         usePackageCamera: true
       });
 
-      if (packageSnap) {
-        await writeFile(`${camera.name}-package.jpg`, packageSnap);
+      if(packageSnap) {
+        await writeFile(camera.name + "-package.jpg", packageSnap);
       }
     }
 
-    if (fullRes && thumbnail) {
-      await writeFile(`${camera.name}-full.jpg`, fullRes);
-      await writeFile(`${camera.name}-thumb.jpg`, thumbnail);
-      console.log(`Saved snapshots for ${camera.name}`);
+    if(fullRes && thumbnail) {
+      await writeFile(camera.name + "-full.jpg", fullRes);
+      await writeFile(camera.name + "-thumb.jpg", thumbnail);
+      console.log("Saved snapshots for " + camera.name + ".");
     }
   }
 }
@@ -676,21 +697,21 @@ const protect = new ProtectApi();
 async function setupTalkback(cameraId: string) {
   await protect.login("192.168.1.1", "admin", "password");
 
-  // Get the talkback endpoint
+  // Get the talkback endpoint.
   const params = new URLSearchParams({ camera: cameraId });
   const wsUrl = await protect.getWsEndpoint("talkback", params);
 
-  if (!wsUrl) {
-    console.error("Failed to get talkback endpoint");
+  if(!wsUrl) {
+    console.error("Failed to get talkback endpoint.");
     return;
   }
 
-  // Connect to the WebSocket
+  // Connect to the WebSocket.
   const ws = new WebSocket(wsUrl);
 
   ws.on("open", () => {
-    console.log("Talkback connection established");
-    // Send AAC-encoded audio data
+    console.log("Talkback connection established.");
+    // Send AAC-encoded audio data.
     // ws.send(aacAudioBuffer);
   });
 
@@ -749,40 +770,40 @@ const protect = new ProtectApi();
 async function customApiCalls() {
   await protect.login("192.168.1.1", "admin", "password");
 
-  // Get events from the last hour
+  // Get events from the last hour.
   const end = Date.now();
   const start = end - (60 * 60 * 1000);
 
   const response = await protect.retrieve(
-    `https://192.168.1.1/proxy/protect/api/events?start=${start}&end=${end}`,
+    "https://192.168.1.1/proxy/protect/api/events?start=" + start.toString() + "&end=" + end.toString(),
     { method: "GET" }
   );
 
-  if (response) {
+  if(response) {
     const events = await response.body.json();
-    console.log(`Found ${events.length} events`);
+    console.log("Found " + events.length.toString() + " events.");
   }
 
-  // Download a video clip
+  // Download a video clip.
   const videoResponse = await protect.retrieve(
-    `https://192.168.1.1/proxy/protect/api/video/export`,
+    "https://192.168.1.1/proxy/protect/api/video/export",
     {
-      method: "POST",
       body: JSON.stringify({
         camera: "camera-id",
-        start: start,
         end: end,
+        start: start,
         type: "timelapse"
-      })
+      }),
+      method: "POST"
     },
     {
-      timeout: 30000 // 30 second timeout for video export
+      timeout: 30000
     }
   );
 
-  if (videoResponse) {
+  if(videoResponse) {
     const videoBuffer = Buffer.from(await videoResponse.body.arrayBuffer());
-    // Save or process the video
+    // Save or process the video.
   }
 }
 ```
@@ -842,49 +863,47 @@ async function configureDevices() {
   await protect.getBootstrap();
 
   const camera = protect.bootstrap?.cameras[0];
-  if (!camera) return;
+  if(!camera) return;
 
-  // Update camera name and recording settings
+  // Update camera name and recording settings.
   const updatedCamera = await protect.updateDevice(camera, {
     name: "Front Door Camera",
     recordingSettings: {
       mode: "always",
-      prePaddingSecs: 3,
       postPaddingSecs: 3,
-      retentionDurationMs: 7 * 24 * 60 * 60 * 1000 // 7 days
+      prePaddingSecs: 3,
+      retentionDurationMs: 7 * 24 * 60 * 60 * 1000
     }
   });
 
-  // Configure motion detection
+  // Configure smart detection.
   await protect.updateDevice(camera, {
-    motionSettings: {
-      mode: "always",
-      sensitivity: 80
-    },
     smartDetectSettings: {
-      objectTypes: ["person", "vehicle"],
-      autoTrackingEnabled: true
+      autoTrackingObjectTypes: ["person"],
+      objectTypes: [ "person", "vehicle" ]
     }
   });
 
-  // Update light device
+  // Update light device.
   const light = protect.bootstrap?.lights[0];
-  if (light) {
+  if(light) {
     await protect.updateDevice(light, {
-      lightSettings: {
-        mode: "motion",
-        brightness: 100,
-        durationMs: 15000 // 15 seconds
+      lightDeviceSettings: {
+        ledLevel: 6,
+        pirDuration: 15000,
+        pirSensitivity: 50
+      },
+      lightModeSettings: {
+        mode: "motion"
       }
     });
   }
 
-  // Configure doorbell chime
+  // Configure doorbell chime volume.
   const chime = protect.bootstrap?.chimes[0];
-  if (chime) {
+  if(chime) {
     await protect.updateDevice(chime, {
-      volume: 75,
-      ringtones: ["traditional"]
+      volume: 75
     });
   }
 }
@@ -957,8 +976,8 @@ Get a formatted name for the Protect controller.
 
 ###### Remarks
 
-Returns a human-readable controller identifier. After bootstrap, includes the controller's configured name and model type. Before bootstrap, returns the network
-address used for connection.
+Returns a human-readable controller identifier. After bootstrap, includes the controller's configured name and model type. Before bootstrap, returns the hostname or
+IP address used for connection.
 
 ###### Example
 
@@ -1020,21 +1039,21 @@ async function setupRtspStreams() {
 
   const cameras = protect.bootstrap?.cameras ?? [];
 
-  for (const camera of cameras) {
+  for(const camera of cameras) {
     const updated = await protect.enableRtsp(camera);
 
-    if (updated) {
-      console.log(`RTSP enabled for ${camera.name}`);
+    if(updated) {
+      console.log("RTSP enabled for " + camera.name + ".");
 
-      // Display RTSP URLs
-      updated.channels.forEach((channel, index) => {
-        if (channel.isRtspEnabled) {
-          const rtspUrl = `rtsp://192.168.1.1:7447/${channel.rtspAlias}`;
-          console.log(`  Channel ${index}: ${rtspUrl}`);
+      // Display RTSP URLs.
+      for(const [index, channel] of updated.channels.entries()) {
+        if(channel.isRtspEnabled) {
+          const rtspUrl = "rtsp://192.168.1.1:7447/" + channel.rtspAlias;
+          console.log("  Channel " + index.toString() + ": " + rtspUrl);
         }
-      });
+      }
     } else {
-      console.log(`Failed to enable RTSP for ${camera.name}`);
+      console.log("Failed to enable RTSP for " + camera.name + ".");
     }
   }
 }
@@ -1087,7 +1106,7 @@ async function listDevices() {
   await protect.login("192.168.1.1", "admin", "password");
   await protect.getBootstrap();
 
-  // List all devices with full information
+  // List all devices with full information.
   const allDevices = [
     ...(protect.bootstrap?.cameras ?? []),
     ...(protect.bootstrap?.lights ?? []),
@@ -1096,19 +1115,19 @@ async function listDevices() {
     ...(protect.bootstrap?.viewers ?? [])
   ];
 
-  allDevices.forEach(device => {
-    // Basic format
+  for(const device of allDevices) {
+    // Basic format.
     console.log(protect.getDeviceName(device));
     // Output: "Front Door [G4 Doorbell Pro]"
 
-    // With network info
+    // With network info.
     console.log(protect.getDeviceName(device, device.name, true));
     // Output: "Front Door [G4 Doorbell Pro] (address: 192.168.1.50 mac: 00:00:00:00:00:00)"
 
-    // Custom name
+    // Custom name.
     console.log(protect.getDeviceName(device, "Custom Name"));
     // Output: "Custom Name [G4 Doorbell Pro]"
-  });
+  }
 }
 ```
 
@@ -1152,13 +1171,11 @@ async function monitorDevices() {
   await protect.getBootstrap();
 
   protect.on("message", (packet) => {
-    const device = protect.bootstrap?.cameras.find(
-      c => c.id === packet.header.id
-    );
+    const device = protect.bootstrap?.cameras.find((c) => c.id === packet.header.id);
 
-    if (device) {
+    if(device) {
       // Logs: "Dream Machine Pro [UDMP] Front Door [G4 Doorbell Pro]"
-      console.log(`${protect.getFullName(device)}: ${packet.header.action}`);
+      console.log(protect.getFullName(device) + ": " + packet.header.action);
     }
   });
 }
@@ -1204,12 +1221,12 @@ async function main() {
     // Do work...
 
   } finally {
-    // Always clean up connections
+    // Always clean up connections.
     protect.reset();
   }
 }
 
-// Handle process termination
+// Handle process termination.
 process.on("SIGINT", () => {
   protect.reset();
   process.exit(0);
@@ -1258,12 +1275,12 @@ async function validateResponses() {
     "https://192.168.1.1/proxy/protect/api/cameras"
   );
 
-  if (response && protect.responseOk(response.statusCode)) {
-    console.log("Request successful");
+  if(response && protect.responseOk(response.statusCode)) {
+    console.log("Request successful.");
     const data = await response.body.json();
     // Process data...
   } else {
-    console.error(`Request failed: ${response?.statusCode}`);
+    console.error("Request failed: " + (response?.statusCode?.toString() ?? "unknown") + ".");
   }
 }
 ```
@@ -1318,20 +1335,20 @@ import { ProtectApi } from "unifi-protect";
 
 const protect = new ProtectApi();
 
-// Pattern 1: Using async/await
+// Pattern 1: Using async/await.
 async function connectWithAwait() {
   const success = await protect.login("192.168.1.1", "admin", "password");
-  if (success) {
-    console.log("Connected successfully");
+  if(success) {
+    console.log("Connected successfully.");
   }
 }
 
-// Pattern 2: Using event listeners
+// Pattern 2: Using event listeners.
 function connectWithEvents() {
   protect.once("login", (success: boolean) => {
-    if (success) {
-      console.log("Connected successfully");
-      // Continue with bootstrap
+    if(success) {
+      console.log("Connected successfully.");
+      // Continue with bootstrap.
       protect.getBootstrap();
     }
   });
@@ -1339,13 +1356,13 @@ function connectWithEvents() {
   protect.login("192.168.1.1", "admin", "password");
 }
 
-// Pattern 3: With retry logic
+// Pattern 3: With retry logic.
 async function connectWithRetry(maxAttempts = 3) {
-  for (let i = 0; i < maxAttempts; i++) {
-    if (await protect.login("192.168.1.1", "admin", "password")) {
+  for(let i = 0; i < maxAttempts; i++) {
+    if(await protect.login("192.168.1.1", "admin", "password")) {
       return true;
     }
-    console.log(`Login attempt ${i + 1} failed, retrying...`);
+    console.log("Login attempt " + (i + 1).toString() + " failed, retrying...");
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
   return false;
@@ -1385,16 +1402,16 @@ import { ProtectApi } from "unifi-protect";
 const protect = new ProtectApi();
 
 async function switchControllers() {
-  // Connect to first controller
+  // Connect to first controller.
   await protect.login("192.168.1.1", "admin", "password1");
   await protect.getBootstrap();
-  console.log(`Connected to ${protect.name}`);
+  console.log("Connected to " + protect.name + ".");
 
-  // Switch to second controller
+  // Switch to second controller.
   protect.logout();
 
   await protect.login("192.168.2.1", "admin", "password2");
   await protect.getBootstrap();
-  console.log(`Connected to ${protect.name}`);
+  console.log("Connected to " + protect.name + ".");
 }
 ```

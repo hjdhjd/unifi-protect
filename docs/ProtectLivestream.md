@@ -8,37 +8,33 @@
 
 Access a direct MP4 livestream for a UniFi Protect camera.
 
-The UniFi Protect livestream API is largely undocumented and has been reverse engineered mostly through
-trial and error, as well as observing the Protect controller in action. It builds on the works of others in the
-community - particularly https://github.com/XciD - who have experimented and successfully gotten parts of this API decoded.
-As always, this work stands on the contributions of others and the work that's come before it, and I want to acknowledge those
-that paved the way.
+The UniFi Protect livestream API is largely undocumented and has been reverse engineered mostly through trial and error, as well as observing the Protect
+controller in action. It builds on the works of others in the community - particularly https://github.com/XciD - who have experimented and successfully
+gotten parts of this API decoded. As always, this work stands on the contributions of others and the work that's come before it, and I want to acknowledge
+those that paved the way.
 
-Let's start by defining some terms. In the MP4 world, an MP4 file (or stream) is composed of multiple atoms or segments.
-Think of these as packet types that contain specific pieces of information that are needed to put together a valid MP4 file.
-For our purposes, we're primarily interested in four types of MP4 boxes:
+Let's start by defining some terms. In the MP4 world, an MP4 file (or stream) is composed of multiple atoms or segments. Think of these as packet types
+that contain specific pieces of information that are needed to put together a valid MP4 file. For our purposes, we're primarily interested in four types of
+MP4 boxes:
 
-| Box   | Description                                                                                                                                   |
-|-------|-----------------------------------------------------------------------------------------------------------------------------------------------|
-| FTYP  | File type box. This contains codec and file information for the stream that follows it. It must be at the beginning of any stream, and preceded by the FTYP box.      |
-| MDAT  | Media data box. This contains a segment of the actual audio and video data in the MP4 stream. It is always paired with an MOOF box, which contains the metadata describing this payload in an MDAT box.        |
-| MOOF  | Movie fragment box. This defines the metadata for a specific segment of audio and video. It is always paired with an MDAT box, which contains the actual data.        |
-| MOOV  | Movie metadata box. This contains all the metadata information about the stream that follows. It must be at the beginning of any stream, and preceded by the FTYP box. The Protect livestream API actually combines the FTYP and MOOV boxes, conveniently giving us a complete initialization segment.        |
+- **FTYP** - File type box. Contains codec and file information. It must be at the very beginning of any stream.
+- **MOOV** - Movie metadata box. Contains all the metadata about the stream that follows. It must be preceded by the FTYP box. The Protect livestream API
+  combines the FTYP and MOOV boxes, conveniently giving us a complete initialization segment.
+- **MOOF** - Movie fragment box. Defines the metadata for a specific segment of audio and video. Always paired with an MDAT box containing the actual data.
+- **MDAT** - Media data box. Contains a segment of the actual audio and video data. Always paired with an MOOF box containing the metadata.
 
-Every fMP4 stream begins with an initialization segment comprised of the FTYP and MOOV boxes. It defines the file type,
-what the movie metadata is, and other characteristics. Think of it as the header for the entire stream.
+Every fMP4 stream begins with an initialization segment comprised of the FTYP and MOOV boxes. It defines the file type, what the movie metadata is, and
+other characteristics. Think of it as the header for the entire stream.
 
-After the header, every fMP4 stream has a series of segments (sometimes called fragments, hence the term fMP4),
-that consist of a pair of moof / mdat boxes that includes all the audio and video for that segment. You end up with something
-that looks like:
+After the header, every fMP4 stream has a series of segments (sometimes called fragments, hence the term fMP4), that consist of a pair of MOOF/MDAT boxes
+that includes all the audio and video for that segment. You end up with something that looks like:
 
 ```
  |ftyp|moov|moof|mdat|moof|mdat...
 ```
 
-The UniFi Protect livestream API provides a straightforward interface to generate bespoke fMP4 streams that
-can be tailored depending on your needs. This implementation of the API allows you to access those streams, retrieve all the relevant boxes/atoms you need to
-manipulate them for your application.
+The UniFi Protect livestream API provides a straightforward interface to generate bespoke fMP4 streams that can be tailored depending on your needs. This
+implementation of the API allows you to access those streams and retrieve all the relevant boxes/atoms you need to manipulate them for your application.
 
 ## Interfaces
 
@@ -70,7 +66,7 @@ This class provides a complete event-driven API to access the UniFi Protect Live
 
 3. Start a livestream using [start](#start), stop it with [stop](#stop), and listen for events.
 
-3. Listen for `message` events emitted by [ProtectLivestream](#protectlivestream) which provides Buffers containing the raw fMP4 segment data as it's produced by Protect. You can
+4. Listen for `message` events emitted by [ProtectLivestream](#protectlivestream) which provides Buffers containing the raw fMP4 segment data as it's produced by Protect. You can
    alternatively listen individually for the initialization segment or regular fMP4 segments if you'd like to distinguish between the two types of segments.
 
 Those are the basics that gets us up and running.
@@ -147,7 +143,7 @@ Codec information is provided as `codec,container` where codec is either `avc` (
 
 `string`
 
-Returns a string containing the codec information,if it exists, or `null` otherwise.
+Returns a string containing the codec information, if it exists, or `null` otherwise.
 
 ##### initSegment
 
@@ -196,6 +192,11 @@ Retrieve the initialization segment that must be at the start of every fMP4 stre
 
 Returns a promise that resolves once the initialization segment has been seen, or returning it immediately if it already has been.
 
+###### Remarks
+
+If the stream is stopped or fails before the initialization segment is received, the returned promise will never settle. Callers should race this against
+  the `close` event or an external timeout to avoid waiting indefinitely.
+
 ##### stop()
 
 ```ts
@@ -240,7 +241,7 @@ Returns `true` if the livestream has successfully started, `false` otherwise.
  initsegment - Emitted with the initialization segment Buffer containing FTYP and MOOV boxes (stream mode disabled only).
  message     - Emitted with each complete fMP4 segment Buffer, both initialization and regular segments (stream mode disabled only).
  segment     - Emitted with each complete non-initialization segment Buffer containing MOOF/MDAT pairs (stream mode disabled only).
- timestamps  - Emitted with decode timestamp arrays when extendedVideoMetadata is enabled in options.
+ timestamps  - Emitted with decode timestamp arrays when emitTimestamps is enabled in options.
 
 ###### Remarks
 

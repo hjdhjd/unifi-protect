@@ -27,7 +27,7 @@ events such as motion and doorbell ring. A complete update packet is composed of
 ----------------
 ```
 
-The header frame is required overhead since websockets provide only a transport medium. It's purpose is to tell us what's coming in the frame that follows.
+The header frame is required overhead since websockets provide only a transport medium. Its purpose is to tell us what's coming in the frame that follows.
 
 The action frame identifies what the action and category that the update contains:
 
@@ -49,14 +49,16 @@ Those types are:
 
 Some tips:
 
-- `update` actions are always tied to the following modelKeys: camera, event, nvr, and user.
+- `update` actions are always tied to any valid modelKey that exists in the bootstrap JSON. The exception is `event` which is tied to the Protect events history list
+  that it maintains. The supported modelKeys from the bootstrap JSON are: `bridge`, `camera`, `chime`, `group`, `light`, `liveview`, `nvr`, `sensor`, `user`, and
+  `viewer`.
 
 - `add` actions are always tied to the `event` modelKey and indicate the beginning of an event item in the Protect events list. A subsequent `update` action is sent
-  signaling the end of the event capture, and it's confidence score for motion detection.
+  signaling the end of the event capture, and its confidence score for motion detection.
 
 - The above is NOT the same thing as motion detection. If you want to detect motion, you should watch the `update` action for `camera` modelKeys, and look for a JSON
   that updates lastMotion. For doorbell rings, lastRing. The Protect events list is useful for the Protect app, but it's of limited utility to HomeKit, and it's slow
-  = relative to looking for lastMotion that is. If you want true realtime updates, you want to look at the `update` action.
+  relative to just looking for the lastMotion update. If you want true realtime updates, you want to look at the `update` action.
 
 - JSONs are only payload type that seems to be sent, although the protocol is designed to accept all three.
 
@@ -68,14 +70,6 @@ Some tips:
 ### ProtectEventHeader
 
 UniFi Protect event header.
-
-#### Param
-
-Protect event header.
-
-#### Param
-
-Protect event payload.
 
 #### Remarks
 
@@ -104,14 +98,6 @@ A UniFi Protect event packet represents a realtime event update from a UniFi Pro
 ### ProtectEventPacket
 
 UniFi Protect event packet.
-
-#### Param
-
-Protect event header.
-
-#### Param
-
-Protect event payload.
 
 #### Remarks
 
@@ -152,6 +138,6 @@ Promise resolving to a decoded event packet, or `null` if decoding fails.
 #### Remarks
 
 A UniFi Protect event packet is an encoded representation of state updates that occur in a UniFi Protect controller. This utility function takes an
-encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of it's use is in [ProtectApi](ProtectApi.md) where, once
+encoded packet as an input, and decodes it into an event header and payload that can be acted upon. An example of its use is in [ProtectApi](ProtectApi.md) where, once
 successfully logged into the Protect controller, events are generated automatically and can be accessed by listening to `message` events emitted by
 [ProtectApi](ProtectApi.md).

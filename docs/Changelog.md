@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 4.29.0 (2026-04-09)
+  * Breaking change: `DeepIndexable` has been removed. Device interfaces now include index signatures directly for accessing untyped API fields. `ProtectNvrBootstrapData` is now simply `Nullable<ProtectNvrBootstrap>`.
+  * Breaking change: the named payload type aliases (e.g. `ProtectCameraConfigPayload`) have been removed. Use `DeepPartial<ProtectCameraConfig>` directly instead.
+  * Breaking change: `getInitSegment()` now rejects with an `AbortError` when the livestream session is stopped, rather than leaving the promise unsettled. Callers using timeouts will see no difference, but those relying on the promise never settling should update their error handling.
+  * Improvement: comprehensive type system overhaul with shared base interfaces, index signatures for untyped API field passthrough, and literal `modelKey` discriminants across all device types.
+  * Improvement: hundreds of new device properties added for cameras, sensors, lights, chimes, and viewers to reflect the current Protect API surface.
+  * Improvement: livestream session lifecycle now uses an `AbortController` for clean teardown of all WebSocket listeners and pending promises through a single mechanism.
+  * Improvement: CLI `--device` filter now searches entire event packets for the device ID, picking up events regardless of which field references the device.
+  * Improvement: CLI flags that accept a value now support both `--flag VALUE` and `--flag=VALUE` syntax.
+  * Improvement: CLI input validation for `--timeout`, `--count`, numeric filters, and regex patterns.
+  * Housekeeping.
+
 ## 4.28.0 (2026-03-17)
   * Breaking change: `decodePacket` is now an async standalone export rather than a static method on the `ProtectApiEvents` class. Consumers should update imports accordingly.
   * New feature: ufp CLI event filtering, output formatting, device management, and command registry.
