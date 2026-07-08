@@ -1,0 +1,11 @@
+[**unifi-protect**](../README.md)
+
+***
+
+[Home](../README.md) / PROTECT\_EVENTS\_WATCHDOG\_TIMEOUT
+
+# Variable: PROTECT\_EVENTS\_WATCHDOG\_TIMEOUT
+
+```ts
+const PROTECT_EVENTS_WATCHDOG_TIMEOUT: 300000 = 300000;
+```

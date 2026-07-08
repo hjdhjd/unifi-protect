@@ -1,0 +1,11 @@
+[**unifi-protect**](../README.md)
+
+***
+
+[Home](../README.md) / PROTECT\_REBOOT\_ANTICIPATION\_WINDOW\_MS
+
+# Variable: PROTECT\_REBOOT\_ANTICIPATION\_WINDOW\_MS
+
+```ts
+const PROTECT_REBOOT_ANTICIPATION_WINDOW_MS: 60000 = 60000;
+```

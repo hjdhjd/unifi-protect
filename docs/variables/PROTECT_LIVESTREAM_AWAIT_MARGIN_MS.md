@@ -1,0 +1,11 @@
+[**unifi-protect**](../README.md)
+
+***
+
+[Home](../README.md) / PROTECT\_LIVESTREAM\_AWAIT\_MARGIN\_MS
+
+# Variable: PROTECT\_LIVESTREAM\_AWAIT\_MARGIN\_MS
+
+```ts
+const PROTECT_LIVESTREAM_AWAIT_MARGIN_MS: 1000 = 1000;
+```

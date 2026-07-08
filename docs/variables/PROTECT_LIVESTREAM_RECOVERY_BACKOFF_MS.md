@@ -1,0 +1,11 @@
+[**unifi-protect**](../README.md)
+
+***
+
+[Home](../README.md) / PROTECT\_LIVESTREAM\_RECOVERY\_BACKOFF\_MS
+
+# Variable: PROTECT\_LIVESTREAM\_RECOVERY\_BACKOFF\_MS
+
+```ts
+const PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS: number[];
+```

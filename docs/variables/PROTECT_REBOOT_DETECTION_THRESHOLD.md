@@ -1,0 +1,11 @@
+[**unifi-protect**](../README.md)
+
+***
+
+[Home](../README.md) / PROTECT\_REBOOT\_DETECTION\_THRESHOLD
+
+# Variable: PROTECT\_REBOOT\_DETECTION\_THRESHOLD
+
+```ts
+const PROTECT_REBOOT_DETECTION_THRESHOLD: 5000 = 5000;
+```
