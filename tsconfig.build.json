@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+
+    "rootDir": "src"
+  },
+
+  "exclude": [
+
+    "**/*.fixtures.ts",
+    "**/*.helpers.ts",
+    "**/*.test.ts",
+    "dist",
+    "node_modules",
+    "scripts",
+    "test"
+  ],
+  "extends": "./tsconfig.json",
+  "include": [ "src" ]
+}

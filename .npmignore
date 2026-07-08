@@ -7,3 +7,11 @@
 !config.schema.json
 !dist/**
 !package.json
+!src/**
+
+# Ship the source alongside dist so the emitted declaration maps (.d.ts.map) and source maps (.js.map) resolve to readable TypeScript - "go to definition" and debugger
+# step-into land on the real source, and the masterclass-reference goal is served (consumers can read the source right in node_modules). The test scaffolding is the one
+# part of src that earns no place in the published tarball.
+src/**/*.test.ts
+src/**/*.helpers.ts
+src/**/*.fixtures.ts

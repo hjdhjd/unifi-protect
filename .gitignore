@@ -1,6 +1,9 @@
 # Ignore compiled code
 dist
 
+# Ignore screenshots from failed e2e tests.
+test/.failures/
+
 # Ignore npmrc.
 .npmrc
 
