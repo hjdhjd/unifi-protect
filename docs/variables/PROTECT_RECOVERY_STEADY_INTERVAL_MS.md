@@ -1,0 +1,11 @@
+[**unifi-protect**](../README.md)
+
+***
+
+[Home](../README.md) / PROTECT\_RECOVERY\_STEADY\_INTERVAL\_MS
+
+# Variable: PROTECT\_RECOVERY\_STEADY\_INTERVAL\_MS
+
+```ts
+const PROTECT_RECOVERY_STEADY_INTERVAL_MS: 60000 = 60000;
+```

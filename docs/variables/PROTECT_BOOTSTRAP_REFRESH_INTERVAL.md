@@ -1,0 +1,11 @@
+[**unifi-protect**](../README.md)
+
+***
+
+[Home](../README.md) / PROTECT\_BOOTSTRAP\_REFRESH\_INTERVAL
+
+# Variable: PROTECT\_BOOTSTRAP\_REFRESH\_INTERVAL
+
+```ts
+const PROTECT_BOOTSTRAP_REFRESH_INTERVAL: 120000 = 120000;
+```

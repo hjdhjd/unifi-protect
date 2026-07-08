@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.0.0 (2026-07-08)
+
+v5 is a ground-up rewrite around a single model: the controller's state is a reducer over a typed realtime packet stream, with a periodic re-bootstrap as a permanent failsafe. The entry point, error handling, resource lifetimes, and event model are all new.
+
+  * Breaking change: the entry point is now `ProtectClient.connect()` - a single atomic operation that logs in, bootstraps, and opens the realtime channel, returning a fully-ready client or throwing. The `new ProtectApi()` + `login()` + `getBootstrap()` sequence and its half-constructed-object state are gone.
+  * Breaking change: failures throw a typed `ProtectError` hierarchy split into `RecoverableError` (throttle, timeout, network, abort, stall) and `FatalError` (auth, authorization, request, protocol, bootstrap, capability, codec change, livestream availability). The v4 `Nullable<T>`-on-failure return pattern is removed - methods resolve with their value or throw.
+  * Breaking change: devices are live projections, not cached entities. `client.cameras` / `client.camera(id)` return handles whose getters read through to the current state; per-device operations (`snapshot`, `update`, `reboot`, `livestream`) are methods on the projection.
+  * Breaking change: state is observable - `client.state.observe(selector)` yields a selector's output only when it changes, and `client.events()` is an async-iterable firehose of typed events. The v4 `on("message", ...)` raw-packet listener is replaced by the typed event model.
+  * Breaking change: every long-lived resource is an `AsyncDisposable`; `await using client = await ProtectClient.connect(...)` cleans up the events stream, livestream sessions, refresh timer, and connection pool at scope exit. There are no `.stop()` methods to forget.
+  * Breaking change: the event surface is a three-rail facade - `on` returns a `Disposable`, `once` returns a `Promise`, `stream` returns an `AsyncIterable`. The library no longer extends `EventEmitter`, so its inherited methods no longer leak onto the public surface.
+  * Breaking change: `camera.enableRtsp()` is removed - enable RTSP with a configuration write, `camera.update({ channels })`.
+  * Breaking change: the minimum supported Node version is now Node 22.18 or later.
+  * New feature: multi-subscriber livestream pooling - `camera.livestream()` subscriptions with identical parameters share one underlying WebSocket, late joiners are replayed the cached init segment, and each subscriber has its own unbounded queue so a slow consumer never blocks a fast one. The pool is resilient by default: it reconnects across a controller fault or reboot, a media-stall watchdog surfaces a stream that has gone silent, the first segment after a reconnect is flagged so a pipe consumer can resynchronize, and a codec change across a reconnect ends the stream cleanly rather than feeding a downstream decoder mismatched media.
+  * New feature: first-class two-way audio - `camera.talkback()` opens a send-direction session to a camera's speaker and drains a caller-supplied audio stream with built-in backpressure.
+  * New feature: relay and fob device support. Both are first-class devices - `client.relays` / `client.fobs` return live projections that reduce into state and are observable like every other device; a relay exposes per-output state and `relay.toggleOutput(outputId)`, and a fob button press surfaces as a typed event on the firehose.
+  * New feature: capability-gated device operations as methods on the projections - `camera.unlock()` (a paired Access door), `camera.turnOnFlashlight()`, the package-camera variant of `camera.snapshot()`, and `chime.playSpeaker()` / `chime.playBuzzer()` - each guarded so a device lacking the capability throws `ProtectUnsupportedError` instead of issuing a doomed request.
+  * New feature: doorbell fingerprint and NFC authentication scans are classified as a typed `authDetected` event on the firehose.
+  * New feature: a connection-health monitor (`client.connection`) with an observable state machine, controller reboot detection, throttle status, and automatic events-channel recovery after an outage.
+  * New feature: a `node:diagnostics_channel` observability surface - 23 named channels across HTTP, auth relogin, realtime events, connection state, livestream lifecycle, talkback, and schema drift. Part of the public contract.
+  * Improvement: the `ufp` CLI is rebuilt as a first-class reference consumer with rich filters, device-class command groups (`ufp camera unlock`, `ufp relay toggle`), and a `doctor` health probe.
+  * Housekeeping.
+
 ## 4.29.0 (2026-04-09)
   * Breaking change: `DeepIndexable` has been removed. Device interfaces now include index signatures directly for accessing untyped API fields. `ProtectNvrBootstrapData` is now simply `Nullable<ProtectNvrBootstrap>`.
   * Breaking change: the named payload type aliases (e.g. `ProtectCameraConfigPayload`) have been removed. Use `DeepPartial<ProtectCameraConfig>` directly instead.
