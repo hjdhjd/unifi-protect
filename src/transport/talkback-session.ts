@@ -160,11 +160,10 @@ export class TalkbackSession implements AsyncDisposable {
 
       if(options.signal.aborted) {
 
-        this.#shutdown(1000, "the talkback session was aborted by the caller's signal");
+        this.#abortByCaller();
       } else {
 
-        options.signal.addEventListener("abort", () => this.#shutdown(1000, "the talkback session was aborted by the caller's signal"),
-          { once: true, signal: this.#controller.signal });
+        options.signal.addEventListener("abort", () => this.#abortByCaller(), { once: true, signal: this.#controller.signal });
       }
     }
 
@@ -182,7 +181,8 @@ export class TalkbackSession implements AsyncDisposable {
    * @returns A connected {@link TalkbackSession}.
    *
    * @throws {@link ProtectUnsupportedError} is not thrown here (the capability guard lives on `Camera.talkback`); negotiation surfaces the classified `FatalError` on a
-   *   non-2xx (typically {@link ProtectRequestError}) and a {@link ProtectNetworkError} when the socket fails to open.
+   *   non-2xx (typically {@link ProtectRequestError}), a {@link ProtectNetworkError} when the socket fails to open, and {@link ProtectAbortedError} when the caller's
+   *   signal aborts the connect.
    */
   static async connect(options: TalkbackSessionOptions): Promise<TalkbackSession> {
 
@@ -211,8 +211,8 @@ export class TalkbackSession implements AsyncDisposable {
    *
    * @returns A promise that resolves when the source is exhausted.
    *
-   * @throws {@link ProtectNetworkError} on a socket failure mid-drain or a buffer-ceiling overrun; {@link ProtectAbortedError} when `opts.signal` aborts; any error the
-   *   source itself raises propagates unwrapped.
+   * @throws {@link ProtectNetworkError} on a socket failure mid-drain or a buffer-ceiling overrun; {@link ProtectAbortedError} when the per-send `opts.signal` aborts or
+   *   the session's own caller signal aborts mid-drain; any error the source itself raises propagates unwrapped.
    */
   async send(source: AsyncIterable<Uint8Array>, opts: { signal?: AbortSignal } = {}): Promise<void> {
 
@@ -309,9 +309,10 @@ export class TalkbackSession implements AsyncDisposable {
     await this.close();
   }
 
-  // Negotiate the URL and open the socket. This is the connecting phase: any failure (negotiation 4xx/5xx, network, abort) settles the open handshake as a rejection and
-  // tears down, so connect() surfaces one uniform failure for the whole connect attempt. The negotiated URL carries its own authorization token, so - like the livestream
-  // - no auth headers are stamped on the upgrade.
+  // Negotiate the URL and open the socket. This is the connecting phase: a negotiation (4xx/5xx) or network failure settles the open handshake as a rejection and tears
+  // down, and a caller-signal abort does too but as the typed ProtectAbortedError (recorded in #failure before teardown). Either way connect() throws for the whole
+  // connect attempt, with no half-open session. The negotiated URL carries its own authorization token, so - like the livestream - no auth headers are stamped on the
+  // upgrade.
   async #connect(signal?: AbortSignal): Promise<void> {
 
     // An already-aborted caller signal tears us down in the constructor before this runs; bail without touching state so we never negotiate or build a socket.
@@ -432,6 +433,15 @@ export class TalkbackSession implements AsyncDisposable {
     }
 
     this.#closePromise = (this.#ownedAgent === null) ? Promise.resolve() : this.#ownedAgent.destroy();
+  }
+
+  // The caller's own signal fired. Record it as a typed aborted failure BEFORE teardown, so both places #onClose surfaces the stored #failure - the connect handshake's
+  // rejection and an in-flight send's fault rejection - report the caller's abort as ProtectAbortedError rather than the generic network error a socket death produces.
+  // One event, one type, wherever it is observed.
+  #abortByCaller(): void {
+
+    this.#failure ??= new ProtectAbortedError("The UniFi Protect talkback session was aborted by the caller's signal.");
+    this.#shutdown(1000, "the talkback session was aborted by the caller's signal");
   }
 
   // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - destroying the owned agent (in #onClose) is what guarantees the
