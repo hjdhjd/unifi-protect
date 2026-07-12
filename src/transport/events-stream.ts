@@ -26,7 +26,7 @@
  */
 import { Agent, WebSocket } from "undici";
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
-import { ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
 import type { ProtectWebSocket, ProtectWebSocketErrorEvent } from "./ws.ts";
 import { classifyPacket, isKnownModelKey } from "../protocol/events.ts";
 import type { Clock } from "../clock.ts";
@@ -73,11 +73,11 @@ export interface EventStreamOptions {
  *   before classification - so it carries the valid-but-unmodeled frames the classifier drops to `null`, which `packet` never sees. Pure observability for protocol
  *   exploration and capture; never dispatched into state, no state-ordering guarantee (unlike `packet`, which is dispatched-then-emitted).
  * - `closed` fires once when the WebSocket closes (naturally, on error, or on a watchdog stall), carrying the close frame's code and reason.
- * - `error` carries a typed {@link ProtectError} - a decode failure, a socket error, a {@link ProtectStallError} from the silence watchdog, or a
- *   {@link ProtectNetworkError}
- *   when the peer closes a live socket unsolicited (a controller reboot drops the socket this way: a `close` event with no preceding socket `error`). Every
- *   termination we
- *   did not initiate reaches this rail; a self-initiated close stays informational on `closed`. The error *type* is the discriminant the `ConnectionMonitor` acts on.
+ * - `error` carries a typed {@link ProtectError} - a decode failure, a socket error, a {@link ProtectStallError} from the silence watchdog, or a {@link
+ *   ProtectNetworkError} when the peer closes a live socket unsolicited (a controller reboot drops the socket this way: a `close` event with no preceding socket
+ *   `error`). Every termination we did not initiate reaches this rail; a self-initiated close stays informational on `closed`, and a caller-signal abort before open
+ *   surfaces on the {@link EventStream.opened} handshake rejection as {@link ProtectAbortedError} rather than here. The error *type* is the discriminant the
+ *   `ConnectionMonitor` acts on.
  *
  * @category Transport
  */
@@ -124,6 +124,9 @@ export class EventStream implements AsyncDisposable {
   // one and route
   // only the latter onto the error rail.
   #closeInitiated = false;
+  // Set ONLY by the caller-abort teardown path, a narrowing of the broader #closeInitiated, so #onClose settles a still-pending open handshake as the typed
+  // ProtectAbortedError for a caller abort while every other pre-open teardown (socket close, error, watchdog, explicit close()) keeps the generic ProtectNetworkError.
+  #callerAborted = false;
   #lastMessageAt: number;
   // True once the socket has opened. Gates the unsolicited-close error so a pre-open connect failure flows through the opened-handshake rejection alone, not a recovery.
   #live = false;
@@ -195,10 +198,10 @@ export class EventStream implements AsyncDisposable {
 
       if(options.signal.aborted) {
 
-        this.#shutdown(1000, "connection aborted by the caller's signal");
+        this.#abortByCaller();
       } else {
 
-        options.signal.addEventListener("abort", () => this.#shutdown(1000, "connection aborted by the caller's signal"), { once: true, signal });
+        options.signal.addEventListener("abort", () => this.#abortByCaller(), { once: true, signal });
       }
     }
 
@@ -215,7 +218,7 @@ export class EventStream implements AsyncDisposable {
    *
    * @returns A connected {@link EventStream}.
    *
-   * @throws {@link ProtectNetworkError} if the socket closes (or the caller's signal aborts) before it opens.
+   * @throws {@link ProtectNetworkError} if the socket closes before it opens, or {@link ProtectAbortedError} if the caller's signal aborts the connect.
    */
   static async connect(options: EventStreamOptions): Promise<EventStream> {
 
@@ -227,8 +230,8 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * The open handshake. Resolves when the WebSocket opens; rejects with a {@link ProtectNetworkError} if it closes or is aborted first. The composition root awaits
-   * this *after* attaching its bridge subscription, so no frame is lost between open and subscription.
+   * The open handshake. Resolves when the WebSocket opens; rejects with a {@link ProtectNetworkError} if it closes before opening, or a {@link ProtectAbortedError} if
+   * the caller's signal aborts first. The composition root awaits this *after* attaching its bridge subscription, so no frame is lost between open and subscription.
    */
   get opened(): Promise<void> {
 
@@ -413,7 +416,11 @@ export class EventStream implements AsyncDisposable {
 
     this.#closed = true;
     this.#controller.abort();
-    this.#settleOpen(new ProtectNetworkError("The UniFi Protect realtime events API closed before it finished connecting.", { cause: reason }));
+
+    // Settle a still-pending open handshake as a failure. A caller-signal abort surfaces as the typed ProtectAbortedError (its own event, its own type); every other
+    // pre-open teardown - an unsolicited peer close, a socket error, a watchdog stall, an explicit close() - stays the generic pre-open network error.
+    this.#settleOpen(this.#callerAborted ? new ProtectAbortedError("The UniFi Protect realtime events API connection was aborted by the caller's signal.") :
+      new ProtectNetworkError("The UniFi Protect realtime events API closed before it finished connecting.", { cause: reason }));
 
     // An unsolicited close - the peer dropped a live socket without our asking - is termination we did not initiate, the same category as a socket error, and a
     // controller
@@ -436,6 +443,14 @@ export class EventStream implements AsyncDisposable {
     }
 
     this.#closePromise = (this.#ownedAgent === null) ? Promise.resolve() : this.#ownedAgent.destroy();
+  }
+
+  // The caller's own signal fired. Mark this teardown as a caller abort BEFORE it runs, so #onClose settles a still-pending open handshake as the typed
+  // ProtectAbortedError; only this path sets the mark, so a socket close, an error, the watchdog, or an explicit close() keep the generic pre-open network error.
+  #abortByCaller(): void {
+
+    this.#callerAborted = true;
+    this.#shutdown(1000, "connection aborted by the caller's signal");
   }
 
   // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - destroying the owned agent (in #onClose) is what guarantees

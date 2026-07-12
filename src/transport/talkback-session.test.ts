@@ -348,9 +348,31 @@ describe("TalkbackSession", () => {
 
           return new FakeWritableWebSocket({ autoOpen: false });
         }
-      }), ProtectNetworkError);
+      }), ProtectAbortedError);
 
       assert.equal(built, false);
+    });
+
+    test("a caller-signal abort while URL negotiation is in flight rejects connect with ProtectAbortedError", async () => {
+
+      const controller = new AbortController();
+
+      // A resolver that never settles, so the abort lands squarely inside the connecting phase - the negotiation await - rather than before construction. This is the
+      // distinct abort-mid-negotiation path: the session's own teardown wins the race and settles the handshake before the parked resolver could ever reject, so
+      // the typed abort, not a generic negotiation error, is what connect() throws.
+      const connecting = TalkbackSession.connect({
+
+        cameraId: "cam1",
+        log: silentLog(),
+        resolveUrl: () => new Promise<string>(() => undefined),
+        signal: controller.signal,
+        webSocket: () => new FakeWritableWebSocket({ autoOpen: false })
+      });
+
+      await tick();
+      controller.abort();
+
+      await assert.rejects(connecting, ProtectAbortedError);
     });
 
     test("aborting the session signal after it is live tears the session down and rejects an in-flight send", async () => {
@@ -361,14 +383,15 @@ describe("TalkbackSession", () => {
       assert.equal(session.state, "live");
 
       // Start a drain that parks on its second pull, then abort the session-level signal (the one passed to connect, distinct from a per-send signal). The constructor's
-      // abort listener runs #shutdown, which closes the socket and rejects the in-flight send - the documented "once live, if it aborts, the session tears down and an
-      // in-flight send rejects" contract, the live-session counterpart to the already-aborted-before-connect teardown above.
+      // abort listener records the typed caller abort and runs #shutdown, which closes the socket and rejects the in-flight send with ProtectAbortedError - the
+      // documented "once live, if it aborts, the session tears down and an in-flight send rejects" contract, the live-session counterpart to the
+      // already-aborted-before-connect teardown above.
       const sending = session.send(parkingSource(Buffer.from("a")));
 
       await tick();
       controller.abort();
 
-      await assert.rejects(sending, ProtectNetworkError);
+      await assert.rejects(sending, ProtectAbortedError);
       assert.equal(session.state, "closed");
       assert.equal(ws.closeRequested, true);
     });

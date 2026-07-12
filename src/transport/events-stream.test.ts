@@ -3,7 +3,7 @@
  * events-stream.test.ts: Tests for EventStream - the single decode site, the three-rail fan-out, schema-drift surfacing, decode-failure resilience, the silence
  * watchdog, and teardown. Driven through an injected fake WebSocket and a fake Clock, so the realtime stream is exercised deterministically without a live controller.
  */
-import { ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
+import { ProtectAbortedError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { capturingLog, expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
@@ -93,7 +93,7 @@ describe("EventStream", () => {
 
       const stream = new EventStream({ host: HOST, lastUpdateId: "u0", log: silentLog(), signal: controller.signal, webSocket: () => ws });
 
-      await assert.rejects(stream.opened, ProtectNetworkError);
+      await assert.rejects(stream.opened, ProtectAbortedError);
       assert.equal(ws.closeRequested, true);
     });
 
@@ -105,7 +105,7 @@ describe("EventStream", () => {
 
       controller.abort();
 
-      await assert.rejects(stream.opened, ProtectNetworkError);
+      await assert.rejects(stream.opened, ProtectAbortedError);
     });
   });
 
