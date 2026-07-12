@@ -1143,6 +1143,113 @@ describe("LivestreamPool", () => {
 
       assert.equal(await sub.whenEstablished(), false);
     });
+
+    test("a disposed subscriber's establishment wait resolves false while a sibling's stays pending until media", async () => {
+
+      const { pool, sockets } = makePool();
+      const controller = new AbortController();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC, { signal: controller.signal });
+
+      await flush();
+
+      // Drive the shared session to the init-only point: both subscribers are mid-establishment (whenEstablished() pending, no media yet).
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      // Start sub2's wait, then abort its own signal. The wait must resolve false promptly - it routes through this subscription's own disposal - while sub1's wait stays
+      // pending because the shared session lives on (sub1 is still attached). Pre-fix, sub2's wait forwarded straight to the shared latch and hung until sub1 settled it.
+      const sub2Wait = sub2.whenEstablished();
+
+      controller.abort();
+      await flush();
+
+      assert.equal(await sub2Wait, false);
+
+      const siblingProbe = await Promise.race([ sub1.whenEstablished().then(() => "resolved"), flush().then(() => "pending") ]);
+
+      assert.equal(siblingProbe, "pending", "the sibling's wait must stay pending while its own session is still establishing");
+
+      // The first media settles the sibling's wait true, exactly as it would have without the disposal.
+      pushMedia(at(sockets, 0));
+      await flush();
+
+      assert.equal(await sub1.whenEstablished(), true);
+
+      await sub1[Symbol.asyncDispose]();
+    });
+
+    test("an explicit dispose mid-wait resolves the wait false with no signal involved", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC);
+
+      await flush();
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      // No signal here: start sub2's wait, then dispose it explicitly. The disposal deferred - not an abort listener - settles the wait false, and the shared session
+      // stays up because sub1 is still attached, so this false cannot be the give-up path. This tells the disposal-deferred design apart from a signal-only race.
+      const sub2Wait = sub2.whenEstablished();
+
+      await sub2[Symbol.asyncDispose]();
+
+      assert.equal(await sub2Wait, false);
+
+      pushMedia(at(sockets, 0));
+      await flush();
+
+      assert.equal(await sub1.whenEstablished(), true);
+
+      await sub1[Symbol.asyncDispose]();
+    });
+
+    test("whenEstablished() called after disposal resolves false without forwarding to the still-pending shared latch", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC);
+
+      await flush();
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      // Dispose sub2 first (sub1 keeps the shared session and its latch alive), THEN call whenEstablished(): the #disposed guard answers false directly. This proves the
+      // deferred exists from construction - a dispose that precedes the first call still answers false - and that the post-dispose call never touches the shared latch.
+      await sub2[Symbol.asyncDispose]();
+
+      assert.equal(await sub2.whenEstablished(), false);
+
+      // The shared latch is still pending (sub1 remains, no media yet); a forward would hang here rather than resolve false, which is what "did not forward" means.
+      const hostStillPending = await Promise.race([ sub1.whenEstablished().then(() => "resolved"), flush().then(() => "pending") ]);
+
+      assert.equal(hostStillPending, "pending");
+
+      await sub1[Symbol.asyncDispose]();
+    });
+
+    test("repeated whenEstablished() calls share one disposal deferred and leak no per-call state", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC);
+
+      await flush();
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      // Two overlapping waits on the same subscription, both racing the one shared disposal deferred rather than per-call listeners. Disposing once must settle BOTH
+      // false, proving the deferred is shared so repeated calls register nothing per call and leak nothing.
+      const firstWait = sub2.whenEstablished();
+      const secondWait = sub2.whenEstablished();
+
+      await sub2[Symbol.asyncDispose]();
+
+      assert.equal(await firstWait, false);
+      assert.equal(await secondWait, false);
+
+      // A further call after disposal takes the guarded path and still answers false, identically.
+      assert.equal(await sub2.whenEstablished(), false);
+
+      await sub1[Symbol.asyncDispose]();
+    });
   });
 
   describe("media-stall watchdog", () => {
