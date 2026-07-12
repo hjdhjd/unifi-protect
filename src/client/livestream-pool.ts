@@ -208,6 +208,11 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   readonly id: string;
 
   readonly #clock: Clock;
+  // A one-shot deferred settled `false` the instant this subscription is disposed by any path. `whenEstablished()` races the shared session's establishment latch against
+  // it, so a departed subscriber's own wait ends with the subscription instead of hanging on the shared latch until the remaining subscribers settle it. It only ever
+  // resolves (never rejects), so it needs no observed-rejection handler; if `whenEstablished()` is never called it simply settles unobserved and is collected with the
+  // subscription.
+  readonly #disposalDeferred = Promise.withResolvers<false>();
   readonly #host: SubscriptionHost;
   readonly #onDispose: (subscription: LivestreamSubscription) => void;
   readonly #queue: Segment[] = [];
@@ -298,6 +303,10 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
     this.#disposed = true;
     this.#done = true;
 
+    // Settle the disposal deferred first, so a pending `whenEstablished()` on this subscription unblocks as `false` the moment the subscription ends, whatever ended it -
+    // its own signal abort (which routes here), an explicit `await using` exit, or the drain loop's `finally`.
+    this.#disposalDeferred.resolve(false);
+
     if((this.#signal !== undefined) && (this.#abortHandler !== null)) {
 
       this.#signal.removeEventListener("abort", this.#abortHandler);
@@ -318,16 +327,28 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   }
 
   /**
-   * Resolve once the shared stream has produced its first MEDIA segment (`true`), or once it has given up before ever establishing (`false`). Liveness is media-keyed: a
-   * controller that connects and acks with an init but then produces no media is NOT established - it elapses its recovery window and reconnects, so this resolves `true`
-   * only when media is actually flowing. This is the boundary the two recovery regimes hinge on - a consumer awaits it to know media came up at all before settling into
-   * the resilient steady state.
+   * Resolve `true` once the shared stream has produced its first MEDIA segment, or `false` once this subscription's wait for it is over. Liveness is
+   * media-keyed: a controller that connects and acks with an init but then produces no media is NOT established - it elapses its recovery window and reconnects, so this
+   * resolves `true` only when media is actually flowing. It resolves `false` in every case where the wait is over without media: the shared stream gave up
+   * establishing, or this subscription itself was disposed - its own signal aborting, an explicit `await using` exit, or breaking its iterator - so a departed
+   * subscriber's own wait ends with the subscription rather than hanging on the shared establishment latch until the remaining subscribers happen to settle it. The
+   * boolean deliberately does not distinguish these outcomes because every consumer's correct reaction is identical: stop waiting and clean up.
    *
-   * @returns A promise resolving `true` once the first media segment flows, `false` if establishment was abandoned.
+   * @returns A promise resolving `true` once the first media segment flows, `false` if establishment was abandoned or this subscription was disposed first.
    */
   async whenEstablished(): Promise<boolean> {
 
-    return this.#host.whenEstablished();
+    // Already disposed: there is nothing left to wait for, and we must not forward to the still-pending shared latch (unlike the departed-mid-wait case below, which the
+    // disposal deferred settles). A repeat call lands here identically - the answer is a property of this subscription's state, not of any per-call listener.
+    if(this.#disposed) {
+
+      return false;
+    }
+
+    // Race the shared establishment latch against this subscription's own disposal. The shared latch settles for the whole stream (first media `true`, or give-up
+    // `false`); the disposal deferred settles `false` for this subscriber alone. It is shared across every call, so repeated waits register nothing per call and leak no
+    // listeners.
+    return Promise.race([ this.#host.whenEstablished(), this.#disposalDeferred.promise ]);
   }
 
   // Push a segment to this subscriber. Records liveness, tracks the peak queue depth (the consumer's slowness signal), enqueues, and wakes a pending next(). Codec reads
