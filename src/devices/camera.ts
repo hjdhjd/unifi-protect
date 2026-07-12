@@ -2,11 +2,11 @@
  *
  * camera.ts: The Camera device projection - read-through config plus the camera-specific commands (snapshot, livestream).
  */
+import type { LivestreamSubscribeOptions, LivestreamSubscription } from "../client/livestream-pool.ts";
 import { ProtectProtocolError, ProtectUnsupportedError } from "../errors.ts";
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { LivestreamSpec } from "../transport/livestream-session.ts";
-import type { LivestreamSubscription } from "../client/livestream-pool.ts";
 import type { ProtectCameraConfig } from "../types/index.ts";
 import type { TalkbackSession } from "../transport/talkback-session.ts";
 import { selectCamera } from "../state/selectors.ts";
@@ -34,25 +34,12 @@ export interface SnapshotOptions {
 
 /**
  * Options for {@link Camera.livestream} - the stream-affecting `source` selector (a quality channel or a secondary lens) and tuning (segment length, chunk size, opt-in
- * timestamps) without `cameraId` (the camera supplies its own id), plus an optional abort signal that disposes the returned subscription and an optional `urgency`
- * closure feeding the pool's resilient recovery.
+ * timestamps) without `cameraId` (the camera supplies its own id), plus the per-subscription {@link LivestreamSubscribeOptions} (an abort signal that disposes the
+ * returned subscription, an `urgency` closure feeding the pool's resilient recovery, and `discardOnDispose`).
  *
  * @category Devices
  */
-export interface LivestreamOptions extends Omit<LivestreamSpec, "cameraId"> {
-
-  signal?: AbortSignal;
-
-  /**
-   * How many milliseconds this consumer can tolerate receiving no segment, pulled fresh at each decision and aggregated across a shared stream by the minimum. It serves
-   * consumer-owned policies at once. First, the resilient recovery's await budget self-tunes from the consumer's real buffer headroom: a live view reports ~0
-   * (recover aggressively), a paced recording its cushion, a passive buffer a large value (wait patiently). Second, it is the consumer's MEDIA-stall detection deadline
-   * for the pool's always-on (while live) media watchdog: declaring nothing leaves the default 10 s window (every stream is media-watched by default), a tighter value
-   * tightens detection (clamped up to a small floor against jitter), and Infinity opts out of media-stall detection entirely (the session's any-byte heartbeat still
-   * watches the socket). Omit it to leave the stream maximally patient on recovery and media-watched at the 10 s default.
-   */
-  urgency?: () => number;
-}
+export interface LivestreamOptions extends Omit<LivestreamSpec, "cameraId">, LivestreamSubscribeOptions {}
 
 /**
  * A camera projection. Inherits the read-through getters, live `observe`, and the write-through `update` and `reboot` commands from {@link DeviceProjection}, and adds
@@ -218,16 +205,16 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
    * stream and replays the cached init segment to late joiners. The returned subscription is an `AsyncIterable<Segment>` and `AsyncDisposable`; iterate it for segments,
    * dispose it (or abort its signal) to leave - the underlying session closes once the last subscriber departs.
    *
-   * @param opts - The stream source and tuning, plus an optional abort signal that disposes the subscription.
+   * @param opts - The stream source and tuning, plus the per-subscription options (abort signal, urgency, and discard-on-dispose).
    *
    * @returns A live subscription.
    */
   livestream(opts: LivestreamOptions): LivestreamSubscription {
 
-    const { signal, urgency, ...spec } = opts;
+    const { discardOnDispose, signal, urgency, ...spec } = opts;
 
     return this.ctx.livestreamPool.subscribe({ cameraId: this.id, ...spec },
-      { ...((signal !== undefined) && { signal }), ...((urgency !== undefined) && { urgency }) });
+      { ...((discardOnDispose !== undefined) && { discardOnDispose }), ...((signal !== undefined) && { signal }), ...((urgency !== undefined) && { urgency }) });
   }
 
   /**

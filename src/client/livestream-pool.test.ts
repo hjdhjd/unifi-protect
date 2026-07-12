@@ -337,6 +337,84 @@ describe("LivestreamPool", () => {
     });
   });
 
+  describe("discardOnDispose", () => {
+
+    test("dropping the undelivered queue on dispose delivers no stale segments and reports the exact discarded count", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC, { discardOnDispose: true });
+
+      await flush();
+
+      // Queue an init and two media without pulling, so three undelivered segments sit in this subscriber's queue.
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+      pushMedia(at(sockets, 0));
+      pushMedia(at(sockets, 0));
+      await flush();
+
+      assert.equal(sub.stats.queueDepth, 3);
+
+      await sub[Symbol.asyncDispose]();
+
+      // The discard cleared exactly the three queued segments, and the terminal - not a stale segment - surfaces on the next pull.
+      assert.equal(sub.stats.discarded, 3);
+      assert.equal(sub.stats.queueDepth, 0);
+      assert.equal((await sub[Symbol.asyncIterator]().next()).done, true);
+    });
+
+    test("a pool-forced give-up still drains the queued init before the terminal, even with discardOnDispose set", async () => {
+
+      const clock = fakeClock();
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC, { discardOnDispose: true });
+
+      await flush();
+
+      // Walk the default establishing curve to the deadline (as the compatibility-pinning drain-then-throw test does), emitting an init on each fresh socket. The first
+      // attempt's init is queued; later same-codec re-inits are suppressed.
+      const windows = [ 5000, 8000, 10000, 10000 ];
+
+      for(const window of windows) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await establishInit(at(sockets, sockets.length - 1), { codec: "avc1.640028" });
+        clock.advance(window);
+        // eslint-disable-next-line no-await-in-loop
+        await flush();
+      }
+
+      // discardOnDispose is scoped to the consumer's own disposal, NOT the pool-forced fail() teardown: the queued init still drains to the consumer before the give-up
+      // terminal, exactly as it does without the option. This is the drain-then-throw contract holding for the pool-forced path regardless of the flag.
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      await assert.rejects(iterator.next(), ProtectLivestreamUnavailableError);
+    });
+
+    test("without discardOnDispose a disposed subscription still drains its queued segments before ending", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await flush();
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+      pushMedia(at(sockets, 0));
+      await flush();
+
+      assert.equal(sub.stats.queueDepth, 2);
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      await sub[Symbol.asyncDispose]();
+
+      // The default is unchanged: the queued init and media still drain to the consumer before the clean terminal, and nothing was discarded.
+      assert.equal(sub.stats.discarded, 0);
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal((await iterator.next()).done, true);
+    });
+  });
+
   describe("pool disposal", () => {
 
     test("disposing the pool closes every managed session", async () => {

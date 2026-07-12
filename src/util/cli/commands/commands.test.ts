@@ -728,7 +728,7 @@ describe("watch livestream", () => {
             yield { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), type: "init" };
           },
           [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve(),
-          stats: { delivered: 1, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 }
+          stats: { delivered: 1, discarded: 0, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 }
         }),
         modelKey: "camera",
         name: "Cam"
@@ -786,7 +786,7 @@ describe("watch livestream", () => {
           yield { data: Buffer.from([ 4, 5, 6 ]), mdat: Buffer.alloc(0), moof: Buffer.alloc(0), timestamps: [ 10, 20 ], type: "media" };
         },
         [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve(),
-        stats: { delivered: 1, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 }
+        stats: { delivered: 1, discarded: 0, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 }
       }),
       modelKey: "camera",
       name: "Cam"
@@ -867,7 +867,7 @@ describe("watch livestream", () => {
           yield { data: Buffer.from([ 4, 5, 6 ]), mdat: Buffer.alloc(0), moof: Buffer.alloc(0), type: "media" };
         },
         [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve(),
-        stats: { delivered: 2, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 }
+        stats: { delivered: 2, discarded: 0, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 }
       }),
       modelKey: "camera",
       name: "Cam"
