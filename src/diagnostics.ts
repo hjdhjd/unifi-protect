@@ -2,6 +2,7 @@
  *
  * diagnostics.ts: Named node:diagnostics_channel publishers for the UniFi Protect library.
  */
+import type { LivestreamSubscriptionStats } from "./client/livestream-pool.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 /**
@@ -316,14 +317,15 @@ export interface LivestreamSubscriptionCreatedPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamSubscriptionDisposed}. `stats` carries the subscription's final delivery counters.
+ * Payload published on {@link channels.livestreamSubscriptionDisposed}. `stats` carries the subscription's final delivery counters, including any segments discarded on
+ * disposal.
  *
  * @category Diagnostics
  */
 export interface LivestreamSubscriptionDisposedPayload {
 
   key: string;
-  stats: { delivered: number; lastSegmentAt: number; peakQueueDepth: number; queueDepth: number };
+  stats: LivestreamSubscriptionStats;
   subscriptionId: string;
 }
 

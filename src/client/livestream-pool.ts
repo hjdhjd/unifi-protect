@@ -158,10 +158,49 @@ export function defaultLivestreamRecoveryPolicy(context: RecoveryContext): Recov
  */
 export interface LivestreamSubscriptionStats {
 
+  /** Segments handed to the iterator over this subscription's life. */
   delivered: number;
+
+  /** Segments dropped undelivered when this subscription was disposed under `discardOnDispose`; `0` for a default drain-on-dispose subscription. */
+  discarded: number;
+
+  /** The `clock.now()` timestamp of the most recent segment enqueued for this subscriber. */
   lastSegmentAt: number;
+
+  /** The historical high-water mark of `queueDepth`. Monotonic: it records the peak backlog this subscriber ever accrued, which a later discard does not lower. */
   peakQueueDepth: number;
+
+  /** Segments queued but not yet delivered right now - the live backlog. Reads `0` immediately after a `discardOnDispose` disposal clears the queue. */
   queueDepth: number;
+}
+
+/**
+ * Per-subscription options for {@link LivestreamPool.subscribe} (and, through it, the `Camera.livestream` consumer entry point). All optional: a bare `subscribe(spec)`
+ * is a resilient, drain-on-dispose subscription with no abort wiring and no reported urgency.
+ *
+ * @category Client
+ */
+export interface LivestreamSubscribeOptions {
+
+  /**
+   * Discard any still-queued, undelivered segments the instant this subscription is disposed, so a consumer mid-iteration receives the terminal rather than draining
+   * stale bytes first. Off by default: a disposed subscription normally drains its queue before ending. Scoped to the consumer's own disposal alone; a pool-forced
+   * terminal (codec change, give-up, last-subscriber detach, pool disposal) still drains the queue before the terminal surfaces, exactly as it does without this option.
+   */
+  discardOnDispose?: boolean;
+
+  /** An abort signal that disposes this subscription (and only this one - a shared session lives as long as any subscriber remains). */
+  signal?: AbortSignal;
+
+  /**
+   * How many milliseconds this consumer can tolerate receiving no segment, pulled fresh at each decision and aggregated across a shared stream by the minimum. It serves
+   * consumer-owned policies at once. First, the resilient recovery's await budget self-tunes from the consumer's real buffer headroom: a live view reports ~0
+   * (recover aggressively), a paced recording its cushion, a passive buffer a large value (wait patiently). Second, it is the consumer's MEDIA-stall detection deadline
+   * for the pool's always-on (while live) media watchdog: declaring nothing leaves the default 10 s window (every stream is media-watched by default), a tighter value
+   * tightens detection (clamped up to a small floor against jitter), and Infinity opts out of media-stall detection entirely (the session's any-byte heartbeat still
+   * watches the socket). Omit it to leave the stream maximally patient on recovery and media-watched at the 10 s default.
+   */
+  urgency?: () => number;
 }
 
 /**
@@ -208,6 +247,9 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   readonly id: string;
 
   readonly #clock: Clock;
+  // When set, disposing this subscription clears its undelivered queue so a consumer mid-iteration receives the terminal rather than stale segments. Consumer-disposal
+  // scoped by construction (see the clear site in `[Symbol.asyncDispose]`).
+  readonly #discardOnDispose: boolean;
   // A one-shot deferred settled `false` the instant this subscription is disposed by any path. `whenEstablished()` races the shared session's establishment latch against
   // it, so a departed subscriber's own wait ends with the subscription instead of hanging on the shared latch until the remaining subscribers settle it. It only ever
   // resolves (never rejects), so it needs no observed-rejection handler; if `whenEstablished()` is never called it simply settles unobserved and is collected with the
@@ -219,6 +261,7 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
 
   #abortHandler: (() => void) | null = null;
   #delivered = 0;
+  #discarded = 0;
   #disposed = false;
   #done = false;
   #error: ProtectError | null = null;
@@ -228,10 +271,12 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   // The resolver of a pending `next()` that is waiting for the queue to fill or the stream to terminate. Cleared each time it is fired.
   #wake: (() => void) | null = null;
 
-  constructor(opts: { clock: Clock; host: SubscriptionHost; onDispose: (subscription: LivestreamSubscription) => void; signal?: AbortSignal }) {
+  constructor(opts: { clock: Clock; discardOnDispose: boolean; host: SubscriptionHost; onDispose: (subscription: LivestreamSubscription) => void;
+    signal?: AbortSignal; }) {
 
     this.id = randomUUID();
     this.#clock = opts.clock;
+    this.#discardOnDispose = opts.discardOnDispose;
     this.#host = opts.host;
     this.#onDispose = opts.onDispose;
     this.#signal = opts.signal;
@@ -275,7 +320,8 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   /** The live delivery counters for this subscription. `queueDepth` / `peakQueueDepth` let a consumer detect that it is falling behind. */
   get stats(): LivestreamSubscriptionStats {
 
-    return { delivered: this.#delivered, lastSegmentAt: this.#lastSegmentAt, peakQueueDepth: this.#peakQueueDepth, queueDepth: this.#queue.length };
+    return { delivered: this.#delivered, discarded: this.#discarded, lastSegmentAt: this.#lastSegmentAt, peakQueueDepth: this.#peakQueueDepth,
+      queueDepth: this.#queue.length };
   }
 
   /**
@@ -311,6 +357,17 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
 
       this.#signal.removeEventListener("abort", this.#abortHandler);
       this.#abortHandler = null;
+    }
+
+    // Discard-on-dispose: drop whatever is still queued so the imminent wake surfaces the terminal (`#done` is set above) instead of draining stale bytes, and record the
+    // exact count for observability. This clear is scoped correctly to consumer disposal BY CONSTRUCTION: the pool-forced terminals (`fail()` / `close()`) reach a
+    // subscriber only through `#drain`'s `finally`, which fires AFTER the queue has already drained to the consumer, so they never route through this method with a
+    // non-empty queue - the drain-then-terminal contract holds for them regardless of this flag. The clear precedes `#fireWake()` so a parked `next()` re-checks an
+    // already-empty queue.
+    if(this.#discardOnDispose) {
+
+      this.#discarded = this.#queue.length;
+      this.#queue.length = 0;
     }
 
     this.#fireWake();
@@ -1205,12 +1262,12 @@ export class LivestreamPool implements AsyncDisposable {
    * shared session recovers under the pool's policy without failing any subscriber.
    *
    * @param spec - The stream to subscribe to.
-   * @param opts - An optional abort signal that disposes this subscription (and only this one), and an optional `urgency` closure reporting how many milliseconds this
-   *               consumer can tolerate receiving no segment (pulled at each recovery decision; aggregated across the shared stream by the minimum).
+   * @param opts - Per-subscription {@link LivestreamSubscribeOptions}: an optional abort signal that disposes this subscription (and only this one), an
+   *               optional `urgency` closure feeding the resilient recovery, and `discardOnDispose` dropping the undelivered queue on this consumer's own disposal.
    *
    * @returns A live subscription.
    */
-  subscribe(spec: LivestreamSpec, opts: { signal?: AbortSignal; urgency?: () => number } = {}): LivestreamSubscription {
+  subscribe(spec: LivestreamSpec, opts: LivestreamSubscribeOptions = {}): LivestreamSubscription {
 
     const resolved = resolveLivestreamSpec(spec);
     const key = livestreamKey(resolved);
@@ -1236,7 +1293,7 @@ export class LivestreamPool implements AsyncDisposable {
     }
 
     const session = managed;
-    const subscription = new LivestreamSubscription({ clock: this.#clock, host: session,
+    const subscription = new LivestreamSubscription({ clock: this.#clock, discardOnDispose: opts.discardOnDispose ?? false, host: session,
       onDispose: (disposed): void => this.#onSubscriptionDisposed(key, session, disposed), ...((opts.signal !== undefined) && { signal: opts.signal }) });
 
     session.attach(subscription, opts.urgency);
