@@ -94,5 +94,5 @@ A promise that resolves when the source is exhausted.
 
 #### Throws
 
-[ProtectNetworkError](../classes/ProtectNetworkError.md) on a socket failure mid-drain or a buffer-ceiling overrun; [ProtectAbortedError](../classes/ProtectAbortedError.md) when `opts.signal` aborts; any error the
-  source itself raises propagates unwrapped.
+[ProtectNetworkError](../classes/ProtectNetworkError.md) on a socket failure mid-drain or a buffer-ceiling overrun; [ProtectAbortedError](../classes/ProtectAbortedError.md) when the per-send `opts.signal` aborts or
+  the session's own caller signal aborts mid-drain; any error the source itself raises propagates unwrapped.

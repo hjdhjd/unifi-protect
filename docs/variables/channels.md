@@ -8,6 +8,7 @@
 
 ```ts
 const channels: {
+  adoptionContradiction: Channel<AdoptionContradictionPayload, AdoptionContradictionPayload>;
   authRelogin: Channel<AuthReloginPayload, AuthReloginPayload>;
   connectionRebootDetected: Channel<ConnectionRebootDetectedPayload, ConnectionRebootDetectedPayload>;
   connectionTransition: Channel<ConnectionTransitionPayload, ConnectionTransitionPayload>;
@@ -53,6 +54,7 @@ entry here and its payload interface below.
 
 | Name | Type | Description |
 | ------ | ------ | ------ |
+| <a id="property-adoptioncontradiction"></a> `adoptionContradiction` | `Channel`\<[`AdoptionContradictionPayload`](../interfaces/AdoptionContradictionPayload.md), [`AdoptionContradictionPayload`](../interfaces/AdoptionContradictionPayload.md)\> | A device record asserted that another controller has adopted it while naming this controller as its owner - the two cannot both be true, so the model corrected the record to keep the device adopted here. Published by the StateStore from its dispatch chokepoint on the first edge of each episode per device (a device is one `modelKey:id`), driven by what the wire explicitly asserts: a fresh assertion of the contradiction publishes, and the same device re-asserting it on the next refresh publishes nothing until the controller retracts it (or the device leaves). A G2-generation controller defect surfaces this on 4-hour anchors and holds until a reboot; the signal exists so a consumer sees the anomaly explicitly rather than the model silently absorbing it. |
 | <a id="property-authrelogin"></a> `authRelogin` | `Channel`\<[`AuthReloginPayload`](../interfaces/AuthReloginPayload.md), [`AuthReloginPayload`](../interfaces/AuthReloginPayload.md)\> | The 401-triggered relogin ran. The only visibility into mid-session session recovery, which is otherwise silent (it has no return value a consumer sees); the payload's `success` reports whether the session was recovered. Connect-time login is deliberately not channelled - the `connect()` result and the `http:request:*` channels already are its single source. |
 | <a id="property-connectionrebootdetected"></a> `connectionRebootDetected` | `Channel`\<[`ConnectionRebootDetectedPayload`](../interfaces/ConnectionRebootDetectedPayload.md), [`ConnectionRebootDetectedPayload`](../interfaces/ConnectionRebootDetectedPayload.md)\> | A controller reboot was detected by comparing the NVR's self-reported boot time (`upSince`) across bootstraps. |
 | <a id="property-connectiontransition"></a> `connectionTransition` | `Channel`\<[`ConnectionTransitionPayload`](../interfaces/ConnectionTransitionPayload.md), [`ConnectionTransitionPayload`](../interfaces/ConnectionTransitionPayload.md)\> | The connection-state FSM moved between states. |

@@ -84,7 +84,7 @@ export type { ConnectionEvents, ConnectionMonitor, ConnectionState, ConnectionTr
 // Livestream pool - the subscription handle a consumer receives (a type), the recovery-policy contract a consumer's injected `recoveryPolicy` is written against (types),
 // and the library's default policy a consumer may delegate to when composing its own (a value).
 export { defaultLivestreamRecoveryPolicy } from "./client/livestream-pool.ts";
-export type { LivestreamSubscription, LivestreamSubscriptionState, LivestreamSubscriptionStats, RecoveryContext, RecoveryDecision,
+export type { LivestreamSubscribeOptions, LivestreamSubscription, LivestreamSubscriptionState, LivestreamSubscriptionStats, RecoveryContext, RecoveryDecision,
   RecoveryPolicy } from "./client/livestream-pool.ts";
 
 // Diagnostics - the named observability channels (subscribed by a consumer) and their payload shapes. Part of the public contract.

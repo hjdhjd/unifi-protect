@@ -112,7 +112,7 @@ dispose it (or abort its signal) to leave - the underlying session closes once t
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`LivestreamOptions`](LivestreamOptions.md) | The stream source and tuning, plus an optional abort signal that disposes the subscription. |
+| `opts` | [`LivestreamOptions`](LivestreamOptions.md) | The stream source and tuning, plus the per-subscription options (abort signal, urgency, and discard-on-dispose). |
 
 #### Returns
 
