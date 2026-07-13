@@ -27,14 +27,15 @@
  *
  * @module StateStore
  */
-import { createInitialState, reduce } from "../protocol/reducer.ts";
+import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
+import type { DeepPartial, ProtectNvrBootstrap, ProtectNvrConfig, ProtectStateRecord } from "../types/index.ts";
+import { MAP_BACKED_STATE_MODEL_KEYS, adoptedByOtherAssertion, adoptionView, createInitialState, isAdoptionContradiction, mapFieldFor,
+  reduce } from "../protocol/reducer.ts";
+import type { MapBackedStateModelKey, ProtectState } from "../protocol/reducer.ts";
+import type { StateModelKey, TypedEvent } from "../protocol/events.ts";
 import type { Clock } from "../clock.ts";
 import { PROTECT_BOOTSTRAP_REFRESH_INTERVAL } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
-import type { ProtectNvrBootstrap } from "../types/index.ts";
-import type { ProtectState } from "../protocol/reducer.ts";
-import type { SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
-import type { TypedEvent } from "../protocol/events.ts";
 import { channels } from "../diagnostics.ts";
 import { findUnmodeledDeviceCollections } from "../protocol/events.ts";
 import { noopLog } from "../logging.ts";
@@ -172,6 +173,12 @@ export class StateStore implements AsyncDisposable {
   // is the sole re-publish suppressor here - the dispatch Object.is gate never fires for a bootstrap (applyBootstrap always mints a new state), so it cannot dedup these.
   // Mirrors EventStream.#seenUnknown, the realtime twin.
   readonly #seenUnmodeled = new Set<string>();
+  // The per-session set of devices currently inside an adoption self-contradiction episode, keyed by "modelKey:id". A device joins when the wire asserts the
+  // contradiction and leaves when the wire retracts it (a clean or genuine-foreign assertion) or the device is removed. This set is the sole re-publish suppressor:
+  // publishing is gated on the ENTER edge (a key not already present), so a device re-asserting the defect on every 120-second refresh publishes exactly once, mirroring
+  // how #seenUnmodeled dedups the schema tripwire. It starts empty each session, so a process restart mid-episode re-publishes once on its first post-restart bootstrap -
+  // accepted by design, since a fresh process legitimately reports the anomaly it finds.
+  readonly #engagedAdoption = new Set<string>();
   #state: ProtectState;
 
   constructor(options: StateStoreOptions) {
@@ -262,6 +269,11 @@ export class StateStore implements AsyncDisposable {
       this.#detectUnmodeledCollections(event.data);
     }
 
+    // Advance the adoption self-contradiction episode set here, before the fold, from the wire-side event and the pre-fold stored records. It reads what the wire
+    // explicitly asserts rather than the reducer's merged output - a clean-recovery patch that nets to a reducer no-op must still clear the set - so it sits ahead of
+    // both the reduce call and the same-reference gate below.
+    this.#trackAdoptionContradiction(event);
+
     const next = reduce(this.#state, event);
 
     // The reducer returns the same reference for an event that changed nothing - a no-op realtime patch or any activity signal - and this gate skips waking observers
@@ -301,6 +313,142 @@ export class StateStore implements AsyncDisposable {
 
         channels.schemaUnmodeledCollection.publish(collection satisfies SchemaUnmodeledCollectionPayload);
       }
+    }
+  }
+
+  // Advance the adoption self-contradiction episode set from one event, before the fold. A bootstrap reconciles the whole set against the fresh device inventory; a
+  // device add or patch drives that one device; a removal clears it; activity signals carry no adoption data and are ignored.
+  #trackAdoptionContradiction(event: TypedEvent): void {
+
+    switch(event.kind) {
+
+      case "bootstrapLoaded":
+
+        this.#reconcileAdoptionFromBootstrap(event.data);
+
+        break;
+
+      case "deviceAdded":
+
+        this.#trackAdoptionForDevice(event.modelKey, event.id, event.data, false);
+
+        break;
+
+      case "devicePatched":
+
+        this.#trackAdoptionForDevice(event.modelKey, event.id, event.patch, true);
+
+        break;
+
+      case "deviceRemoved":
+
+        this.#engagedAdoption.delete(adoptionKey(event.modelKey, event.id));
+
+        break;
+
+      default:
+
+        break;
+    }
+  }
+
+  // A bootstrap is authoritative for the whole engaged set. Snapshot the engaged keys, drive an ENTER/CLEAR decision from every device record the bootstrap carries (each
+  // is a full record that explicitly asserts its adoption), then clear any engaged device the fresh bootstrap no longer lists - the reverse diff runs over the engaged
+  // snapshot, a handful of keys, not over the collections. Reads the controller's own MAC from the incoming bootstrap's own NVR record, and the pre-fold stored record
+  // for each id so the detector sees the merged view.
+  #reconcileAdoptionFromBootstrap(bootstrap: ProtectNvrBootstrap): void {
+
+    const ownMac = macOf(bootstrap.nvr);
+    const stale = new Set(this.#engagedAdoption);
+    const source = bootstrap as unknown as Record<string, unknown>;
+
+    for(const modelKey of MAP_BACKED_STATE_MODEL_KEYS) {
+
+      const field = mapFieldFor(modelKey);
+      const collection = source[field] as readonly ProtectStateRecord[] | undefined;
+
+      if(collection === undefined) {
+
+        continue;
+      }
+
+      const priorMap = this.#state[field] as ReadonlyMap<string, ProtectStateRecord>;
+
+      for(const record of collection) {
+
+        stale.delete(adoptionKey(modelKey, record.id));
+        this.#applyAdoptionTransition(modelKey, record.id, record, priorMap.get(record.id), ownMac);
+      }
+    }
+
+    for(const key of stale) {
+
+      this.#engagedAdoption.delete(key);
+    }
+  }
+
+  // Drive the engaged set from a single device add or patch. Adoption is a device concept, so the nvr singleton (not map-backed) is ignored. Only an explicit wire
+  // assertion of isAdoptedByOther moves the set: a patch that says nothing about adoption holds the set steady, because the stored record is already normalized and
+  // falling back to its value would misread "clean" and churn the episode. A patch against an id absent from pre-fold state changes nothing, mirroring the reducer's
+  // no-op-for-unknown-id contract.
+  #trackAdoptionForDevice(modelKey: StateModelKey, id: string, incoming: ProtectStateRecord | DeepPartial<ProtectStateRecord>, requireStored: boolean): void {
+
+    if(modelKey === "nvr") {
+
+      return;
+    }
+
+    if(adoptedByOtherAssertion(incoming) === undefined) {
+
+      return;
+    }
+
+    const field = mapFieldFor(modelKey);
+    const stored = (this.#state[field] as ReadonlyMap<string, ProtectStateRecord>).get(id);
+
+    if(requireStored && (stored === undefined)) {
+
+      return;
+    }
+
+    this.#applyAdoptionTransition(modelKey, id, incoming, stored, macOf(this.#state.nvr));
+  }
+
+  // The ENTER/CLEAR decision for one device from the pre-fold merged view and this controller's own MAC. On the contradiction, publish only when the device was not
+  // already engaged (the edge), then engage it. Otherwise the wire asserts something coherent - a clean record or a genuine foreign adoption - so clear any engagement to
+  // re-arm a future episode. Only ENTER publishes; CLEAR is silent.
+  #applyAdoptionTransition(modelKey: MapBackedStateModelKey, id: string, incoming: ProtectStateRecord | DeepPartial<ProtectStateRecord>,
+    stored: ProtectStateRecord | undefined, ownMac: string | undefined): void {
+
+    const key = adoptionKey(modelKey, id);
+    const view = adoptionView(stored, incoming);
+
+    if(!isAdoptionContradiction(view, ownMac)) {
+
+      this.#engagedAdoption.delete(key);
+
+      return;
+    }
+
+    if(this.#engagedAdoption.has(key)) {
+
+      return;
+    }
+
+    this.#engagedAdoption.add(key);
+    this.#publishAdoptionContradiction({ id, mac: deviceMac(incoming) ?? deviceMac(stored) ?? "", modelKey, nvrMac: view.nvrMac ?? "" });
+  }
+
+  // Warn once at the episode edge and publish the typed diagnostic when the channel has subscribers - the same subscriber gate the schema tripwire uses. The warn gives
+  // operators a plain-language heads-up that a controller-side defect is being corrected; the payload carries the structured detail.
+  #publishAdoptionContradiction(payload: AdoptionContradictionPayload): void {
+
+    this.#log.warn("A device reports being adopted by another controller while naming this controller as its owner, which cannot both be true; this controller is " +
+      "keeping the device adopted here.", payload);
+
+    if(channels.adoptionContradiction.hasSubscribers) {
+
+      channels.adoptionContradiction.publish(payload satisfies AdoptionContradictionPayload);
     }
   }
 
@@ -345,4 +493,27 @@ export class StateStore implements AsyncDisposable {
       // The interval iterator throws on abort when the store is disposed. That is the expected end of the loop, not an error.
     }
   }
+}
+
+// The engaged-set key for a device: its model key and id joined, the same "modelKey:id" identity the payload carries split back out. One definition so ENTER, CLEAR, and
+// removal all agree on the key shape.
+function adoptionKey(modelKey: string, id: string): string {
+
+  return modelKey + ":" + id;
+}
+
+// This controller's own MAC read off an NVR record (the stored singleton, or an incoming bootstrap's own NVR), or undefined when there is none or it carries no string
+// MAC. The detector treats an undefined or empty MAC as inert, so the scan stays quiet until the controller identity is known.
+function macOf(nvr: ProtectNvrConfig | null | undefined): string | undefined {
+
+  return (typeof nvr?.mac === "string") ? nvr.mac : undefined;
+}
+
+// A device record's own hardware MAC for the diagnostic payload, read defensively off the incoming record-or-patch or the stored record; a flip patch carries no mac, so
+// the stored record supplies it.
+function deviceMac(record: ProtectStateRecord | DeepPartial<ProtectStateRecord> | undefined): string | undefined {
+
+  const mac = (record as Record<string, unknown> | undefined)?.["mac"];
+
+  return (typeof mac === "string") ? mac : undefined;
 }

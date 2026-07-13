@@ -4,12 +4,12 @@
  * load-bearing invisible-on-no-drift property), the bootstrap-schema tripwire (the schema:unmodeledCollection diagnostics publish and its per-session dedup), and
  * disposal. Driven entirely through a fake clock and a fake refresh seam; no network and no real timers.
  */
+import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
 import { capturingLog, expectAt, fakeClock } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
-import { makeBootstrap, makeCamera } from "../fixtures.helpers.ts";
+import { makeBootstrap, makeCamera, makeNvr, makeSensor } from "../fixtures.helpers.ts";
 import { selectCamera, selectCameras } from "./selectors.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
-import type { SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
 import { StateStore } from "./store.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
@@ -320,6 +320,160 @@ describe("StateStore", () => {
 
         channels.schemaUnmodeledCollection.unsubscribe(onDrift);
       }
+    });
+  });
+
+  describe("adoption self-contradiction diagnostics", () => {
+
+    // The controller's own MAC and the capture-derived flagged sensor from the 2026-07-12 SuperLink defect, plus its coherent counterpart.
+    const ownMac = "8CEDE1E8CF7F";
+    const controller = (): ReturnType<typeof makeNvr> => makeNvr({ mac: ownMac });
+    const flaggedSensor = (): ReturnType<typeof makeSensor> => makeSensor({ id: "s1", isAdopted: true, isAdoptedByOther: true, mac: "9041B23A5251", nvrMac: ownMac });
+    const cleanSensor = (): ReturnType<typeof makeSensor> => makeSensor({ id: "s1", isAdopted: true, isAdoptedByOther: false, mac: "9041B23A5251", nvrMac: ownMac });
+    const flaggedBootstrap = (): ReturnType<typeof makeBootstrap> => makeBootstrap({ nvr: controller(), sensors: [flaggedSensor()] });
+
+    // Run a body against a plain store with a live subscription to the adoption channel, collecting every published payload and always detaching the handler after.
+    function withCapture(run: (store: StateStore, published: AdoptionContradictionPayload[]) => void): void {
+
+      const store = plainStore();
+      const published: AdoptionContradictionPayload[] = [];
+      const onPublish = (message: unknown): void => void published.push(message as AdoptionContradictionPayload);
+
+      channels.adoptionContradiction.subscribe(onPublish);
+
+      try {
+
+        run(store, published);
+      } finally {
+
+        channels.adoptionContradiction.unsubscribe(onPublish);
+      }
+    }
+
+    test("publishes once on the ENTER edge with the device payload and warns, and a second flagged bootstrap re-publishes nothing", () => {
+
+      const log = capturingLog();
+      const store = new StateStore({ clock: fakeClock(), log, refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
+      const published: AdoptionContradictionPayload[] = [];
+      const onPublish = (message: unknown): void => void published.push(message as AdoptionContradictionPayload);
+
+      channels.adoptionContradiction.subscribe(onPublish);
+
+      try {
+
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+
+        assert.equal(published.length, 1);
+        assert.deepEqual(published[0], { id: "s1", mac: "9041B23A5251", modelKey: "sensor", nvrMac: ownMac });
+        assert.ok(log.entries.some((entry) => (entry.level === "warn") && entry.message.includes("adopted by another controller")), "a warn narrates the episode");
+
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+
+        assert.equal(published.length, 1, "the same engaged device re-asserting on the next bootstrap publishes nothing");
+      } finally {
+
+        channels.adoptionContradiction.unsubscribe(onPublish);
+      }
+    });
+
+    test("a repeat flagged patch and a flagged deviceAdded re-send publish nothing once the device is engaged", () => {
+
+      withCapture((store, published) => {
+
+        store.dispatch({ data: makeBootstrap({ nvr: controller(), sensors: [cleanSensor()] }), kind: "bootstrapLoaded" });
+        store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { isAdoptedByOther: true } });
+        assert.equal(published.length, 1, "the flip patch is the ENTER edge");
+
+        store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { isAdoptedByOther: true } });
+        assert.equal(published.length, 1, "a repeat flagged patch publishes nothing");
+
+        store.dispatch({ data: flaggedSensor(), id: "s1", kind: "deviceAdded", modelKey: "sensor" });
+        assert.equal(published.length, 1, "a flagged deviceAdded re-send publishes nothing");
+      });
+    });
+
+    test("a patch silent on adoption holds: it publishes nothing and does not clear the engaged episode", () => {
+
+      withCapture((store, published) => {
+
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        assert.equal(published.length, 1);
+
+        store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { lastSeen: 123 } });
+        assert.equal(published.length, 1, "a lastSeen-only patch publishes nothing");
+
+        // The device is still engaged after the HOLD, so re-asserting the flag on the next bootstrap publishes nothing (had the HOLD cleared, this would re-publish).
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        assert.equal(published.length, 1, "the device remained engaged through the HOLD");
+      });
+    });
+
+    test("a clean-recovery patch that nets to a reducer no-op still clears the episode, re-arming a future publish", () => {
+
+      withCapture((store, published) => {
+
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        assert.equal(published.length, 1);
+
+        // The stored record is already normalized, so a clean patch asserting isAdoptedByOther false nets to a reducer no-op - but it explicitly asserts a coherent
+        // adoption, so it must clear the engaged set anyway.
+        store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { isAdoptedByOther: false } });
+        assert.equal(published.length, 1, "the clean recovery itself publishes nothing");
+
+        store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { isAdoptedByOther: true } });
+        assert.equal(published.length, 2, "after the clear, a new flagged assertion publishes again");
+      });
+    });
+
+    test("clean and genuinely-foreign ingestion publish nothing on the entry paths", () => {
+
+      withCapture((store, published) => {
+
+        store.dispatch({ data: makeBootstrap({ nvr: controller(), sensors: [cleanSensor()] }), kind: "bootstrapLoaded" });
+        store.dispatch({ data: makeBootstrap({ nvr: controller(),
+          sensors: [makeSensor({ id: "s2", isAdopted: true, isAdoptedByOther: true, mac: "9041B23A5252", nvrMac: "FFEEDDCCBBAA" })] }), kind: "bootstrapLoaded" });
+
+        assert.equal(published.length, 0, "neither a clean nor a genuinely-foreign record is a contradiction");
+      });
+    });
+
+    test("a device absent from a fresh bootstrap, a clean bootstrap record, a clean deviceAdded, and a removal each clear the episode", () => {
+
+      // Absent from a fresh bootstrap clears the episode; the device returning flagged then re-publishes.
+      withCapture((store, published) => {
+
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        store.dispatch({ data: makeBootstrap({ nvr: controller() }), kind: "bootstrapLoaded" });
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        assert.equal(published.length, 2, "the device vanished then returned flagged, so the episode re-published");
+      });
+
+      // A clean bootstrap record for the same device clears the episode.
+      withCapture((store, published) => {
+
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        store.dispatch({ data: makeBootstrap({ nvr: controller(), sensors: [cleanSensor()] }), kind: "bootstrapLoaded" });
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        assert.equal(published.length, 2, "a clean bootstrap record cleared the episode, so re-flagging publishes again");
+      });
+
+      // A clean deviceAdded clears the episode.
+      withCapture((store, published) => {
+
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        store.dispatch({ data: cleanSensor(), id: "s1", kind: "deviceAdded", modelKey: "sensor" });
+        store.dispatch({ data: flaggedSensor(), id: "s1", kind: "deviceAdded", modelKey: "sensor" });
+        assert.equal(published.length, 2, "a clean deviceAdded cleared the episode, so re-flagging publishes again");
+      });
+
+      // A removal clears the episode.
+      withCapture((store, published) => {
+
+        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+        store.dispatch({ id: "s1", kind: "deviceRemoved", modelKey: "sensor" });
+        store.dispatch({ data: flaggedSensor(), id: "s1", kind: "deviceAdded", modelKey: "sensor" });
+        assert.equal(published.length, 2, "removal cleared the episode, so re-adding flagged publishes again");
+      });
     });
   });
 });

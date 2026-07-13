@@ -9,6 +9,7 @@ import { applyBootstrap, applyDevicePatch, createInitialState, reduce } from "./
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
+import { selectAdoptedRelayIds, selectAdoptedSensorIds } from "../state/selectors.ts";
 import { ProtectProtocolError } from "../errors.ts";
 import type { ProtectState } from "./reducer.ts";
 import type { TypedEvent } from "./events.ts";
@@ -610,5 +611,149 @@ describe("applyBootstrap - relays", () => {
     assert.ok(!Object.is(next.relays, initial.relays), "the relays map is rebuilt when one relay drifts");
     assert.ok(!Object.is(next.relays.get("r1"), initial.relays.get("r1")), "the drifted relay takes a new reference");
     assert.ok(Object.is(next.relays.get("r2"), initial.relays.get("r2")), "the unchanged relay keeps its reference (structural sharing)");
+  });
+});
+
+describe("reduce - adoption self-contradiction normalization", () => {
+
+  // The controller's own MAC and the capture-derived flagged devices from the 2026-07-12 SuperLink defect: a relay and a sensor that report isAdoptedByOther true while
+  // their nvrMac still names this very controller. The relay/sensor ids and MACs and the controller MAC are the live values (no colons, the controller's raw format);
+  // synthetic cases below use the colon-delimited fixture MAC convention.
+  const ownMac = "8CEDE1E8CF7F";
+  const flaggedRelay = (): ReturnType<typeof makeRelay> => makeRelay({ id: "6a132d8f03ad6f03e4024ebc", isAdopted: true, isAdoptedByOther: true, mac: "74F92C267508",
+    nvrMac: ownMac });
+  const flaggedSensor = (): ReturnType<typeof makeSensor> => makeSensor({ id: "6a452cbd02321503e4027317", isAdopted: true, isAdoptedByOther: true, mac: "9041B23A5251",
+    nvrMac: ownMac });
+  const controller = (): ReturnType<typeof makeNvr> => makeNvr({ mac: ownMac });
+
+  // Seed a state whose NVR MAC is known, so the detector is live for a subsequent realtime deviceAdded/devicePatched.
+  const seeded = (): ProtectState => applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller() }));
+
+  test("(a) a bootstrap normalizes flagged own-MAC records across collections, admits them to membership, and leaves the caller's bootstrap untouched", () => {
+
+    const bootstrap = makeBootstrap({ nvr: controller(), relays: [flaggedRelay()], sensors: [flaggedSensor()] });
+    const state = applyBootstrap(createInitialState(), bootstrap);
+
+    assert.equal(state.relays.get("6a132d8f03ad6f03e4024ebc")?.isAdoptedByOther, false, "the flagged relay enters state normalized");
+    assert.equal(state.sensors.get("6a452cbd02321503e4027317")?.isAdoptedByOther, false, "the flagged sensor enters state normalized");
+    assert.deepEqual(selectAdoptedRelayIds(state), ["6a132d8f03ad6f03e4024ebc"], "the normalized relay counts as adopted here");
+    assert.deepEqual(selectAdoptedSensorIds(state), ["6a452cbd02321503e4027317"], "the normalized sensor counts as adopted here");
+
+    // Mutation-discrimination for the bootstrap path: the caller's own bootstrap object still carries the raw flag for the wire-faithful surfaces.
+    assert.equal(bootstrap.relays[0]?.isAdoptedByOther, true, "the caller's bootstrap relay still carries the raw flag");
+    assert.equal(bootstrap.sensors[0]?.isAdoptedByOther, true, "the caller's bootstrap sensor still carries the raw flag");
+  });
+
+  test("(a2) a second bootstrap still carrying the flagged record re-mints nothing: map, record, and membership references hold while bootstrapId advances", () => {
+
+    const first = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), relays: [flaggedRelay()], sensors: [flaggedSensor()] }));
+    const membershipBefore = selectAdoptedRelayIds(first);
+    const second = applyBootstrap(first, makeBootstrap({ nvr: controller(), relays: [flaggedRelay()], sensors: [flaggedSensor()] }));
+
+    assert.ok(Object.is(second.relays, first.relays), "the relays map keeps its reference across a zero-drift flagged refresh");
+    assert.ok(Object.is(second.sensors, first.sensors), "the sensors map keeps its reference");
+    assert.ok(Object.is(second.relays.get("6a132d8f03ad6f03e4024ebc"), first.relays.get("6a132d8f03ad6f03e4024ebc")), "the normalized relay record keeps its reference");
+    assert.equal(second.bootstrapId, first.bootstrapId + 1, "bootstrapId still advances on the applied refresh");
+    assert.ok(Object.is(selectAdoptedRelayIds(second), membershipBefore), "the membership id-list reference is unchanged");
+  });
+
+  test("(b) a devicePatched flip on a clean own-MAC device is a whole-state no-op that never mutates the incoming event", () => {
+
+    const clean = makeRelay({ id: "r1", isAdopted: true, isAdoptedByOther: false, mac: "AA:BB:CC:00:00:11", nvrMac: ownMac });
+    const sibling = makeRelay({ id: "r2", isAdopted: true, isAdoptedByOther: false, mac: "AA:BB:CC:00:00:12", nvrMac: ownMac });
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), relays: [ clean, sibling ] }));
+    const patch = { isAdoptedByOther: true };
+    const next = reduce(initial, { id: "r1", kind: "devicePatched", modelKey: "relay", patch });
+
+    assert.ok(Object.is(next, initial), "the flip nets to no value change, so the state reference is unchanged");
+    assert.deepEqual(selectAdoptedRelayIds(next), [ "r1", "r2" ], "membership is unchanged");
+    assert.ok(Object.is(next.relays.get("r2"), initial.relays.get("r2")), "the untouched sibling keeps its exact reference");
+    assert.equal(patch.isAdoptedByOther, true, "the incoming patch object still carries the raw flag for the events() firehose");
+  });
+
+  test("(b2) a repeat flagged patch on an already-clean stored record is a no-op again", () => {
+
+    const clean = makeRelay({ id: "r1", isAdopted: true, isAdoptedByOther: false, mac: "AA:BB:CC:00:00:11", nvrMac: ownMac });
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), relays: [clean] }));
+    const once = reduce(initial, { id: "r1", kind: "devicePatched", modelKey: "relay", patch: { isAdoptedByOther: true } });
+    const twice = reduce(once, { id: "r1", kind: "devicePatched", modelKey: "relay", patch: { isAdoptedByOther: true } });
+
+    assert.ok(Object.is(once, initial), "the first flip nets to no change");
+    assert.ok(Object.is(twice, once), "the repeat flip nets to no change");
+  });
+
+  test("(c) a genuine foreign adoption still evicts, and a migration from own-MAC-flagged to foreign evicts", () => {
+
+    // A device adopted by a genuinely different controller (a foreign nvrMac) is not the contradiction, so it must keep evicting exactly as before.
+    const foreign = makeSensor({ id: "s1", isAdopted: true, isAdoptedByOther: true, mac: "9041B23A5251", nvrMac: "FFEEDDCCBBAA" });
+    const foreignState = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), sensors: [foreign] }));
+
+    assert.deepEqual(selectAdoptedSensorIds(foreignState), [], "a genuinely foreign-adopted device is excluded from membership");
+    assert.equal(foreignState.sensors.get("s1")?.isAdoptedByOther, true, "a genuine foreign adoption is left untouched");
+
+    // Migration: own-MAC-flagged (normalized, retained), then a patch asserting BOTH the flag AND a foreign nvrMac - a real migration - is honored and evicts.
+    const flagged = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), sensors: [flaggedSensor()] }));
+
+    assert.deepEqual(selectAdoptedSensorIds(flagged), ["6a452cbd02321503e4027317"], "the own-MAC-flagged sensor is retained via normalization");
+
+    const migrated = reduce(flagged, { id: "6a452cbd02321503e4027317", kind: "devicePatched", modelKey: "sensor",
+      patch: { isAdoptedByOther: true, nvrMac: "FFEEDDCCBBAA" } });
+
+    assert.equal(migrated.sensors.get("6a452cbd02321503e4027317")?.isAdoptedByOther, true, "a real migration to a foreign controller is honored, not normalized");
+    assert.deepEqual(selectAdoptedSensorIds(migrated), [], "the migrated device drops out of membership");
+  });
+
+  test("(d1) a clean adopted own-MAC record passes through unchanged by reference even when the controller MAC is known", () => {
+
+    const clean = makeRelay({ id: "r1", isAdopted: true, isAdoptedByOther: false, mac: "AA:BB:CC:00:00:11", nvrMac: ownMac });
+    const next = reduce(seeded(), { data: clean, id: "r1", kind: "deviceAdded", modelKey: "relay" });
+
+    assert.ok(Object.is(next.relays.get("r1"), clean), "a coherent record is stored by its exact reference, not a copy");
+  });
+
+  test("(d2) an unadopted record flagged adopted-by-other with own MAC is not normalized (the isAdopted gate)", () => {
+
+    const unadopted = makeRelay({ id: "r1", isAdopted: false, isAdoptedByOther: true, mac: "AA:BB:CC:00:00:11", nvrMac: ownMac });
+    const next = reduce(seeded(), { data: unadopted, id: "r1", kind: "deviceAdded", modelKey: "relay" });
+
+    assert.ok(Object.is(next.relays.get("r1"), unadopted), "an unadopted record is not the contradiction, so it is stored unchanged");
+    assert.equal(next.relays.get("r1")?.isAdoptedByOther, true, "isAdoptedByOther is left as the wire reported it");
+  });
+
+  test("(d3) no normalization when the device omits nvrMac, when the controller MAC is unknown, or before the first bootstrap", () => {
+
+    // No nvrMac on the device: the detector has no MAC to compare, so a flagged record is left as-is.
+    const noNvrMac = makeRelay({ id: "r1", isAdopted: true, isAdoptedByOther: true, mac: "AA:BB:CC:00:00:11" });
+    const afterNoNvrMac = reduce(seeded(), { data: noNvrMac, id: "r1", kind: "deviceAdded", modelKey: "relay" });
+
+    assert.ok(Object.is(afterNoNvrMac.relays.get("r1"), noNvrMac), "a flagged record without an nvrMac is not normalized");
+
+    // Controller MAC unknown: an NVR fixture with no MAC leaves the own-MAC undefined, so the detector is inert.
+    const seededNoMac = applyBootstrap(createInitialState(), makeBootstrap({ nvr: makeNvr({ mac: undefined }) }));
+    const flagged = makeRelay({ id: "r2", isAdopted: true, isAdoptedByOther: true, mac: "AA:BB:CC:00:00:12", nvrMac: ownMac });
+    const afterNoOwnMac = reduce(seededNoMac, { data: flagged, id: "r2", kind: "deviceAdded", modelKey: "relay" });
+
+    assert.equal(afterNoOwnMac.relays.get("r2")?.isAdoptedByOther, true, "an unknown controller MAC leaves the detector inert");
+
+    // Before the first bootstrap: state.nvr is null, so a flagged deviceAdded is not normalized.
+    const beforeBootstrap = reduce(createInitialState(), { data: makeRelay({ id: "r3", isAdopted: true, isAdoptedByOther: true, mac: "AA:BB:CC:00:00:13",
+      nvrMac: ownMac }), id: "r3", kind: "deviceAdded", modelKey: "relay" });
+
+    assert.equal(beforeBootstrap.relays.get("r3")?.isAdoptedByOther, true, "with no NVR yet, the detector is inert");
+  });
+
+  test("(f) a flagged deviceAdded normalizes and admits membership, repeats are same-reference no-ops, and the event record keeps the raw flag", () => {
+
+    const record = flaggedRelay();
+    const added = reduce(seeded(), { data: record, id: record.id, kind: "deviceAdded", modelKey: "relay" });
+
+    assert.equal(added.relays.get(record.id)?.isAdoptedByOther, false, "the flagged deviceAdded record enters state normalized");
+    assert.deepEqual(selectAdoptedRelayIds(added), [record.id], "the normalized device counts as adopted here");
+    assert.equal(record.isAdoptedByOther, true, "the event's record object still carries the raw flag for the events() firehose");
+
+    // A re-send of an equal flagged record nets to no change: the stored normalized record compares equal to the re-normalized re-send.
+    const resent = reduce(added, { data: flaggedRelay(), id: record.id, kind: "deviceAdded", modelKey: "relay" });
+
+    assert.ok(Object.is(resent, added), "an identical flagged re-send is a whole-state no-op");
   });
 });

@@ -25,6 +25,14 @@ import diagnosticsChannel from "node:diagnostics_channel";
  */
 export const channels = {
 
+  /** A device record asserted that another controller has adopted it while naming this controller as its owner - the two cannot both be true, so the model corrected the
+   * record to keep the device adopted here. Published by the StateStore from its dispatch chokepoint on the first edge of each episode per device (a device is one
+   * `modelKey:id`), driven by what the wire explicitly asserts: a fresh assertion of the contradiction publishes, and the same device re-asserting it on the next refresh
+   * publishes nothing until the controller retracts it (or the device leaves). A G2-generation controller defect surfaces this on 4-hour anchors and holds until a
+   * reboot; the signal exists so a consumer sees the anomaly explicitly rather than the model silently absorbing it.
+   */
+  adoptionContradiction: diagnosticsChannel.channel<AdoptionContradictionPayload>("unifi-protect:adoption:contradiction"),
+
   /** The 401-triggered relogin ran. The only visibility into mid-session session recovery, which is otherwise silent (it has no return value a consumer sees); the
    * payload's `success` reports whether the session was recovered. Connect-time login is deliberately not channelled - the `connect()` result and the `http:request:*`
    * channels already are its single source.
@@ -104,6 +112,21 @@ export const channels = {
   /** A talkback (two-way audio) session opened a WebSocket to a camera's speaker. */
   talkbackSessionOpened: diagnosticsChannel.channel<TalkbackSessionOpenedPayload>("unifi-protect:talkback:session:opened")
 } as const;
+
+/**
+ * Payload published on {@link channels.adoptionContradiction}. `modelKey` and `id` identify the device whose record was self-contradictory; `mac` is the device's own
+ * hardware address; `nvrMac` is the owning-controller address the record asserted, which equals this controller's own MAC (that equality is what makes the
+ * adopted-by-another claim provably false). The library corrects the record and publishes this once per episode; consumers building dashboards add their own counters.
+ *
+ * @category Diagnostics
+ */
+export interface AdoptionContradictionPayload {
+
+  id: string;
+  mac: string;
+  modelKey: string;
+  nvrMac: string;
+}
 
 /**
  * Payload published on {@link channels.authRelogin}. `success` is `true` when the relogin re-established the session, `false` when it could not (no retained credentials,

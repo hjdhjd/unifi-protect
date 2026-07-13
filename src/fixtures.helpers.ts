@@ -76,6 +76,7 @@ export function makeNvr(overrides: Record<string, unknown> = {}): ProtectNvrConf
 
     host: "192.168.1.1",
     id: "nvr-1",
+    mac: "AA:BB:CC:DD:EE:FF",
     marketName: "UDM Pro",
     modelKey: "nvr",
     name: "Dream Machine Pro",
