@@ -213,13 +213,15 @@ so on a healthy stream it is a no-op; it never forces a reconnect of a working c
 whenEstablished(): Promise<boolean>;
 ```
 
-Resolve once the shared stream has produced its first MEDIA segment (`true`), or once it has given up before ever establishing (`false`). Liveness is media-keyed: a
-controller that connects and acks with an init but then produces no media is NOT established - it elapses its recovery window and reconnects, so this resolves `true`
-only when media is actually flowing. This is the boundary the two recovery regimes hinge on - a consumer awaits it to know media came up at all before settling into
-the resilient steady state.
+Resolve `true` once the shared stream has produced its first MEDIA segment, or `false` once this subscription's wait for it is over. Liveness is
+media-keyed: a controller that connects and acks with an init but then produces no media is NOT established - it elapses its recovery window and reconnects, so this
+resolves `true` only when media is actually flowing. It resolves `false` in every case where the wait is over without media: the shared stream gave up
+establishing, or this subscription itself was disposed - its own signal aborting, an explicit `await using` exit, or breaking its iterator - so a departed
+subscriber's own wait ends with the subscription rather than hanging on the shared establishment latch until the remaining subscribers happen to settle it. The
+boolean deliberately does not distinguish these outcomes because every consumer's correct reaction is identical: stop waiting and clean up.
 
 #### Returns
 
 `Promise`\<`boolean`\>
 
-A promise resolving `true` once the first media segment flows, `false` if establishment was abandoned.
+A promise resolving `true` once the first media segment flows, `false` if establishment was abandoned or this subscription was disposed first.

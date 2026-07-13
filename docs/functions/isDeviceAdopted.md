@@ -17,7 +17,9 @@ is the single definition of "online".
 The predicate is **ownership**, not **readiness**: `isAdopted` is set once any controller has adopted the device, and `isAdoptedByOther` marks one adopted by a
 *different* NVR, so `isAdopted && !isAdoptedByOther` is precisely "ours". We deliberately do not also exclude the transient `isAdopting`: a device mid-adoption has not
 yet flipped `isAdopted` true (so it is already excluded), and a device being *re*-provisioned is still owned by us - dropping it from the membership set on a transient
-would churn the set, the opposite of what the membership selectors are for. "Can it stream right now?" is liveness ([isDeviceOnline](isDeviceOnline.md)), a separate question.
+would churn the set, the opposite of what the membership selectors are for. "Can it stream right now?" is liveness ([isDeviceOnline](isDeviceOnline.md)), a separate question. The
+predicate stays this simple because the reducer already refuses the provably-false record - `isAdoptedByOther` true while the record names this very controller as its
+owner - at ingestion, so this read never has to second-guess a self-contradictory flag.
 
 ## Parameters
 

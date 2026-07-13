@@ -175,7 +175,7 @@ export interface LivestreamSubscriptionStats {
 }
 
 /**
- * Per-subscription options for {@link LivestreamPool.subscribe} (and, through it, the `Camera.livestream` consumer entry point). All optional: a bare `subscribe(spec)`
+ * Per-subscription options for `LivestreamPool.subscribe` (reached through the {@link Camera.livestream} consumer entry point). All optional: a bare `subscribe(spec)`
  * is a resilient, drain-on-dispose subscription with no abort wiring and no reported urgency.
  *
  * @category Client
