@@ -89,7 +89,8 @@ export type { LivestreamSubscription, LivestreamSubscriptionState, LivestreamSub
 
 // Diagnostics - the named observability channels (subscribed by a consumer) and their payload shapes. Part of the public contract.
 export { channels } from "./diagnostics.ts";
-export type { AuthReloginPayload, ConnectionRebootDetectedPayload, ConnectionTransitionPayload, EventsClosedPayload, EventsPacketPayload, EventsReconnectingPayload,
+export type { AdoptionContradictionPayload, AuthReloginPayload, ConnectionRebootDetectedPayload, ConnectionTransitionPayload, EventsClosedPayload, EventsPacketPayload,
+  EventsReconnectingPayload,
   HttpRequestEndPayload, HttpRequestStartPayload, HttpThrottleEnteredPayload, LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload,
   LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload,
   LivestreamStallDetectedPayload, LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload,
