@@ -5,8 +5,8 @@
  */
 import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.ts";
 import { describe, test } from "node:test";
-import { deviceSelectors, isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectControllerUpSince, selectIsAdmin, selectLiveview, selectLiveviews,
-  selectNvr, selectRingtone, selectRingtones } from "./selectors.ts";
+import { deviceSelectors, isDeviceAdopted, isDeviceOnline, livestreamAudioSampleRate, selectAuthUser, selectControllerName, selectControllerUpSince, selectIsAdmin,
+  selectLiveview, selectLiveviews, selectNvr, selectRingtone, selectRingtones } from "./selectors.ts";
 import { makeBootstrap, makeCamera, makeChime, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
 import { DEVICE_COLLECTION_KEYS } from "../protocol/events.ts";
@@ -323,6 +323,15 @@ describe("selectors", () => {
       assert.equal(isDeviceAdopted({ isAdopted: true, isAdoptedByOther: true }), false);
       assert.equal(isDeviceAdopted({ isAdopted: false, isAdoptedByOther: false }), false);
       assert.equal(isDeviceAdopted({ isAdopted: false, isAdoptedByOther: true }), false);
+    });
+  });
+
+  describe("livestreamAudioSampleRate", () => {
+
+    test("is 48 kHz for a doorbell and 16 kHz for every other camera", () => {
+
+      assert.equal(livestreamAudioSampleRate({ featureFlags: { isDoorbell: true } }), 48000);
+      assert.equal(livestreamAudioSampleRate({ featureFlags: { isDoorbell: false } }), 16000);
     });
   });
 
