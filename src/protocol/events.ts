@@ -19,12 +19,17 @@ import type { DeepPartial, ProtectNvrBootstrap, ProtectStateRecord } from "../ty
 import type { RawPacket } from "./packet.ts";
 import { assertNever } from "../errors.ts";
 
-// The modelKey taxonomy is three nested tiers (DeviceModelKey ⊂ StateModelKey ⊂ ModelKey), each declared once as the single source of truth for both its type and its
-// runtime membership test. The controller emits realtime `update` packets for more than the projectable devices, so the tiers separate three distinct questions:
-// "is this device-addressable?", "do we reduce it into state?", and "is this a modelKey we recognize on the wire at all?".
+// The modelKey taxonomy is four nested tiers (DeviceCollectionKey ⊂ DeviceModelKey ⊂ StateModelKey ⊂ ModelKey), each declared once as the single source of truth for both
+// its type and its runtime membership test. The controller emits realtime `update` packets for more than the projectable devices, so the tiers separate the distinct
+// questions: "is this an id-keyed device collection?", "is this device-addressable?", "do we reduce it into state?", and "is this a modelKey we recognize on the wire at
+// all?".
 
-// Tier 1 - addressable via a REST endpoint and surfaced as a Layer-3 projection identity.
-const DEVICE_MODEL_KEYS = [ "camera", "chime", "fob", "light", "nvr", "relay", "sensor", "viewer" ] as const;
+// Tier 0 - the id-keyed device collections: every DeviceModelKey except the NVR singleton. The vocabulary a consumer iterates to reach a device category's selectors and
+// projections, and the innermost tier of the taxonomy.
+export const DEVICE_COLLECTION_KEYS = [ "camera", "chime", "fob", "light", "relay", "sensor", "viewer" ] as const;
+
+// Tier 1 - addressable via a REST endpoint and surfaced as a Layer-3 projection identity: the device collections plus the NVR singleton.
+const DEVICE_MODEL_KEYS = [ ...DEVICE_COLLECTION_KEYS, "nvr" ] as const;
 
 // Tier 2 - the model keys the reducer folds into ProtectState from the realtime stream: every device, the user roster, and the liveview collection. `user` and `liveview`
 // are reduced (their realtime updates carry permission/role and liveview changes we want reflected immediately) but are not device-addressed, so each is a StateModelKey
@@ -42,7 +47,14 @@ const STATE_MODEL_KEYS = [ ...DEVICE_MODEL_KEYS, "liveview", "user" ] as const;
 const KNOWN_MODEL_KEYS = [ ...STATE_MODEL_KEYS, "activeSessionStat", "aiport", "aiprocessor", "bridge", "event", "group", "linkstation", "smartDetectObject" ] as const;
 
 /**
- * The model keys addressable via a REST endpoint and a Layer-3 projection. The innermost tier - a subset of {@link StateModelKey}.
+ * The id-keyed device collections - every {@link DeviceModelKey} except the NVR singleton. The vocabulary the device selectors, the projections, and every per-category
+ * consumer iterate over; the innermost tier of the modelKey taxonomy.
+ */
+export type DeviceCollectionKey = typeof DEVICE_COLLECTION_KEYS[number];
+
+/**
+ * The model keys addressable via a REST endpoint and a Layer-3 projection: the {@link DeviceCollectionKey} collections plus the NVR singleton. A superset of
+ * `DeviceCollectionKey` and a subset of {@link StateModelKey}.
  */
 export type DeviceModelKey = typeof DEVICE_MODEL_KEYS[number];
 

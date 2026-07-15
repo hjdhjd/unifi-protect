@@ -25,6 +25,7 @@
  */
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectNvrUserConfig,
   ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectViewerConfig } from "../types/index.ts";
+import type { DeviceCollectionKey } from "../protocol/events.ts";
 import type { ProtectState } from "../protocol/reducer.ts";
 
 // The device-lifecycle string that marks a device reachable. Every device carries this `state` enum, whereas the boolean `isConnected` is present only on the wired
@@ -272,89 +273,49 @@ const viewers = collectionSelectors<ProtectViewerConfig>((state) => state.viewer
 const liveviews = collectionViews<ProtectNvrLiveviewConfig>((state) => state.liveviews);
 const ringtones = collectionViews<ProtectRingtoneConfig>((state) => state.ringtones);
 
-/** All cameras, memoized on the camera-map identity. @category State */
-export const selectCameras = cameras.all;
+/**
+ * The key-to-config map for the id-keyed device collections: each {@link DeviceCollectionKey} paired with the config-record type its collection holds. The catalog below
+ * is typed against it, and consumers derive the device-config union from it (the library's `ProtectDeviceConfig`), so the collection vocabulary and its record types stay
+ * locked to one map rather than drifting across a hand-maintained union.
+ *
+ * @category State
+ */
+export interface ProtectDeviceConfigMap {
 
-/** A single camera by id, or `undefined` when absent. @category State */
-export const selectCamera = cameras.byId;
+  camera: ProtectCameraConfig;
+  chime: ProtectChimeConfig;
+  fob: ProtectFobConfig;
+  light: ProtectLightConfig;
+  relay: ProtectRelayConfig;
+  sensor: ProtectSensorConfig;
+  viewer: ProtectViewerConfig;
+}
 
-/** The connected cameras only. @category State */
-export const selectOnlineCameras = cameras.online;
+// Exactness both directions: the mapped catalog below already rejects a config-map key MISSING from the vocabulary (its `ProtectDeviceConfigMap[K]` lookup would not
+// resolve); this line rejects an EXTRA key, so the map and the DeviceCollectionKey set cannot drift apart.
+type ConfigMapKeysExact = keyof ProtectDeviceConfigMap extends DeviceCollectionKey ? true : never;
 
-/** The ids of the cameras adopted by this controller, content-memoized to change reference only when the membership set changes. @category State */
-export const selectAdoptedCameraIds = cameras.adoptedIds;
+const _configMapKeysExact: ConfigMapKeysExact = true;
 
-/** All chimes, memoized on the chime-map identity. @category State */
-export const selectChimes = chimes.all;
+/**
+ * The category-keyed selector catalog: one {@link CollectionSelectors} quartet per {@link DeviceCollectionKey}, each exactly typed to its category's config record. The
+ * single surface a consumer reaches every device collection's selectors through - `deviceSelectors.camera.all`, `deviceSelectors[key].byId(id)`, and the rest - so the
+ * two memo regimes this module documents (map-identity for the record views, content memoization for `adoptedIds`) reach every category through one entry rather than a
+ * flat export per category. The mapped type pins each entry to its own config record, so `deviceSelectors.camera.all` returns `readonly ProtectCameraConfig[]` while
+ * generic iteration over the key set stays fully typed.
+ *
+ * @category State
+ */
+export const deviceSelectors: { readonly [K in DeviceCollectionKey]: CollectionSelectors<ProtectDeviceConfigMap[K]> } = {
 
-/** A single chime by id, or `undefined` when absent. @category State */
-export const selectChime = chimes.byId;
-
-/** The connected chimes only. @category State */
-export const selectOnlineChimes = chimes.online;
-
-/** The ids of the chimes adopted by this controller, content-memoized to change reference only when the membership set changes. @category State */
-export const selectAdoptedChimeIds = chimes.adoptedIds;
-
-/** All fobs, memoized on the fob-map identity. @category State */
-export const selectFobs = fobs.all;
-
-/** A single fob by id, or `undefined` when absent. @category State */
-export const selectFob = fobs.byId;
-
-/** The connected fobs only. @category State */
-export const selectOnlineFobs = fobs.online;
-
-/** The ids of the fobs adopted by this controller, content-memoized to change reference only when the membership set changes. @category State */
-export const selectAdoptedFobIds = fobs.adoptedIds;
-
-/** All lights, memoized on the light-map identity. @category State */
-export const selectLights = lights.all;
-
-/** A single light by id, or `undefined` when absent. @category State */
-export const selectLight = lights.byId;
-
-/** The connected lights only. @category State */
-export const selectOnlineLights = lights.online;
-
-/** The ids of the lights adopted by this controller, content-memoized to change reference only when the membership set changes. @category State */
-export const selectAdoptedLightIds = lights.adoptedIds;
-
-/** All relays, memoized on the relay-map identity. @category State */
-export const selectRelays = relays.all;
-
-/** A single relay by id, or `undefined` when absent. @category State */
-export const selectRelay = relays.byId;
-
-/** The connected relays only. @category State */
-export const selectOnlineRelays = relays.online;
-
-/** The ids of the relays adopted by this controller, content-memoized to change reference only when the membership set changes. @category State */
-export const selectAdoptedRelayIds = relays.adoptedIds;
-
-/** All sensors, memoized on the sensor-map identity. @category State */
-export const selectSensors = sensors.all;
-
-/** A single sensor by id, or `undefined` when absent. @category State */
-export const selectSensor = sensors.byId;
-
-/** The connected sensors only. @category State */
-export const selectOnlineSensors = sensors.online;
-
-/** The ids of the sensors adopted by this controller, content-memoized to change reference only when the membership set changes. @category State */
-export const selectAdoptedSensorIds = sensors.adoptedIds;
-
-/** All viewers, memoized on the viewer-map identity. @category State */
-export const selectViewers = viewers.all;
-
-/** A single viewer by id, or `undefined` when absent. @category State */
-export const selectViewer = viewers.byId;
-
-/** The connected viewers only. @category State */
-export const selectOnlineViewers = viewers.online;
-
-/** The ids of the viewers adopted by this controller, content-memoized to change reference only when the membership set changes. @category State */
-export const selectAdoptedViewerIds = viewers.adoptedIds;
+  camera: cameras,
+  chime: chimes,
+  fob: fobs,
+  light: lights,
+  relay: relays,
+  sensor: sensors,
+  viewer: viewers
+};
 
 /** All liveviews, memoized on the liveview-map identity. Each record carries its `slots[].cameras`. @category State */
 export const selectLiveviews = liveviews.all;

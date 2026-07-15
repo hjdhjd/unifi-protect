@@ -48,20 +48,22 @@ export type { Clock } from "./clock.ts";
 // (`client.rawPackets()`) and the input/output of those codec statics: the decoded-but-unclassified frame, header plus payload, including ones the classifier drops.
 export type { ProtectEventHeader, RawPacket } from "./protocol/packet.ts";
 export type { LivestreamSource, Segment } from "./transport/livestream-session.ts";
-export type { AuthMethod, SmartDetectType, StateModelKey, TypedEvent } from "./protocol/events.ts";
+// The id-keyed device-collection vocabulary - the category key set the selector catalog and every per-category consumer iterate over. A value export (a consumer iterates
+// the runtime array to reach a category's selectors) plus its type; `DeviceModelKey` stays internal, since the collection vocabulary is the consumer-facing surface.
+export { DEVICE_COLLECTION_KEYS } from "./protocol/events.ts";
+export type { AuthMethod, DeviceCollectionKey, SmartDetectType, StateModelKey, TypedEvent } from "./protocol/events.ts";
 // Talkback - the send-direction two-way-audio session a consumer receives from `camera.talkback()` and its lifecycle-state type. Type-only: a consumer never constructs
 // one (the camera factory does), drives it through `send`/`close`/dispose, and reads `state`.
 export type { TalkbackSession, TalkbackState } from "./transport/talkback-session.ts";
 export type { ProtectState } from "./protocol/reducer.ts";
 
-// State - the observable store a consumer receives from `client.state`, and the memoized selectors a consumer passes to `observe` (or calls directly). The
-// `selectAdopted<Category>Ids` selectors are the content-memoized membership sets: they change reference only when a device is adopted or removed, so a consumer can
-// `observe` one to drive accessory add/remove without waking on routine config churn.
-export { isDeviceAdopted, isDeviceOnline, selectAdoptedCameraIds, selectAdoptedChimeIds, selectAdoptedFobIds, selectAdoptedLightIds, selectAdoptedRelayIds,
-  selectAdoptedSensorIds, selectAdoptedViewerIds, selectAuthUser, selectCamera, selectCameras, selectChime, selectChimes, selectControllerName, selectFob, selectFobs,
-  selectIsAdmin, selectLight, selectLights, selectLiveview, selectLiveviews, selectNvr, selectOnlineCameras, selectOnlineChimes, selectOnlineFobs, selectOnlineLights,
-  selectOnlineRelays, selectOnlineSensors, selectOnlineViewers, selectRelay, selectRelays, selectRingtone, selectRingtones, selectSensor, selectSensors, selectViewer,
-  selectViewers } from "./state/selectors.ts";
+// State - the observable store a consumer receives from `client.state`, and the memoized selectors a consumer passes to `observe` (or calls directly). `deviceSelectors`
+// is the category-keyed catalog: `deviceSelectors.<category>` exposes that collection's quartet (`all`, `byId`, `online`, `adoptedIds`), and `adoptedIds` is the
+// content-memoized membership set - it changes reference only when a device is adopted or removed, so a consumer can `observe` one to drive accessory add/remove without
+// waking on routine config churn. `ProtectDeviceConfigMap` and the `CollectionSelectors` / `CollectionViews` shapes type a consumer's own generic iteration over it.
+export { deviceSelectors, isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectIsAdmin, selectLiveview, selectLiveviews, selectNvr,
+  selectRingtone, selectRingtones } from "./state/selectors.ts";
+export type { CollectionSelectors, CollectionViews, ProtectDeviceConfigMap } from "./state/selectors.ts";
 export type { StateStore } from "./state/store.ts";
 
 // Devices - the projections a consumer receives from `client.cameras` / `client.camera(id)`. They are type-only: a consumer never constructs one (the registry does) and

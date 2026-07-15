@@ -2,11 +2,11 @@
  *
  * device.ts: The projection bases - a read-only core every projection shares, and the command-bearing device layer that adds update/reboot on top.
  */
-import type { DeepPartial, ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectRelayConfig, ProtectSensorConfig,
-  ProtectViewerConfig } from "../types/index.ts";
+import type { DeviceCollectionKey, DeviceModelKey } from "../protocol/events.ts";
 import type { HttpMethod, ProtectResponse } from "../transport/http.ts";
+import type { DeepPartial } from "../types/index.ts";
 import type { DeviceContext } from "./context.ts";
-import type { DeviceModelKey } from "../protocol/events.ts";
+import type { ProtectDeviceConfigMap } from "../state/selectors.ts";
 import type { ProtectState } from "../protocol/reducer.ts";
 import { deviceEndpoint } from "./endpoints.ts";
 import { isDeviceOnline } from "../state/selectors.ts";
@@ -16,8 +16,7 @@ import { isDeviceOnline } from "../state/selectors.ts";
  *
  * @category Devices
  */
-export type ProtectDeviceConfig = ProtectCameraConfig | ProtectChimeConfig | ProtectFobConfig | ProtectLightConfig | ProtectRelayConfig | ProtectSensorConfig |
-  ProtectViewerConfig;
+export type ProtectDeviceConfig = ProtectDeviceConfigMap[DeviceCollectionKey];
 
 /**
  * The read-only core every projection shares - whether it is a command-bearing device ({@link DeviceProjection}) or the read-only NVR singleton (`Nvr`). A projection is

@@ -5,7 +5,7 @@
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { ProtectChimeConfig } from "../types/index.ts";
-import { selectChime } from "../state/selectors.ts";
+import { deviceSelectors } from "../state/selectors.ts";
 
 /**
  * Options for {@link Chime.playSpeaker}. Every field is optional. The ringtone/playback fields (`repeatTimes`, `ringtoneId`, `volume`) map 1:1 to the controller's
@@ -48,7 +48,7 @@ export class Chime extends DeviceProjection<ProtectChimeConfig> {
 
   constructor(ctx: DeviceContext, id: string) {
 
-    super(ctx, id, selectChime);
+    super(ctx, id, deviceSelectors.chime.byId);
   }
 
   /**
