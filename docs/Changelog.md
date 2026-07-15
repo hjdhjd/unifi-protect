@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.1.0 (2026-07-14)
+  * New feature: `discardOnDispose`, an opt-in on livestream subscriptions that drops undelivered segments when a subscription is disposed, for consumers that would rather abandon a backlog than drain it.
+  * Improvement: a livestream subscription's establishment wait now settles immediately when the subscription is disposed or its signal aborts, instead of waiting out the connection attempt.
+  * Improvement: aborting a talkback session or the event stream through your own `AbortSignal` now surfaces as a typed aborted error on both transports, so a caller-initiated abort is distinguishable from a genuine failure.
+  * Fix: a device is now kept adopted when its record briefly claims another controller owns it while still naming this controller as the owner, instead of dropping out of the device list on a self-contradictory adoption record.
+  * Housekeeping.
+
 ## 5.0.0 (2026-07-08)
 
 v5 is a ground-up rewrite around a single model: the controller's state is a reducer over a typed realtime packet stream, with a periodic re-bootstrap as a permanent failsafe. The entry point, error handling, resource lifetimes, and event model are all new.
