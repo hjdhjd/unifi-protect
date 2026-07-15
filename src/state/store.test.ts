@@ -5,11 +5,11 @@
  * disposal. Driven entirely through a fake clock and a fake refresh seam; no network and no real timers.
  */
 import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
+import { StateStore, createStateStore } from "./store.ts";
 import { capturingLog, expectAt, fakeClock } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeNvr, makeSensor } from "../fixtures.helpers.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
-import { StateStore } from "./store.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { setTimeout as delay } from "node:timers/promises";
@@ -475,5 +475,48 @@ describe("StateStore", () => {
         assert.equal(published.length, 2, "removal cleared the episode, so re-adding flagged publishes again");
       });
     });
+  });
+});
+
+describe("createStateStore", () => {
+
+  test("constructs the real store: observe wakes on the selected change and dedups an unrelated one", async () => {
+
+    const store = createStateStore({ clock: fakeClock(),
+      refresh: () => Promise.reject(new Error("the refresh seam must not be called")), refreshIntervalMs: false });
+
+    store.dispatch({ data: makeBootstrap({ cameras: [ makeCamera({ id: "c1" }), makeCamera({ id: "c2" }) ] }), kind: "bootstrapLoaded" });
+
+    const ac = new AbortController();
+    const { done, values } = collect(store.observe(deviceSelectors.camera.byId("c1"), { signal: ac.signal }));
+
+    await delay(0);
+
+    // A change to c2 must not wake an observer selecting c1 (the real dedup), while a change to c1 must (the real observe path) - proving the factory built the genuine
+    // engine, not a stub.
+    store.dispatch({ id: "c2", kind: "devicePatched", modelKey: "camera", patch: { name: "Other" } });
+    await delay(5);
+    assert.equal(values.length, 0, "an unrelated change is deduped");
+
+    store.dispatch({ id: "c1", kind: "devicePatched", modelKey: "camera", patch: { name: "Renamed" } });
+    await expectAt(() => values.length === 1);
+    assert.equal(values[0]?.name, "Renamed", "the selected change woke the observer");
+
+    ac.abort();
+    await done;
+  });
+
+  test("passes its options through: a supplied initial state is the new store's starting snapshot", () => {
+
+    // Build a populated snapshot via a throwaway store, then prove createStateStore starts a fresh store from exactly that state - the initialState option reached it.
+    const seed = plainStore();
+
+    seed.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "seed", name: "Seeded" })] }), kind: "bootstrapLoaded" });
+
+    const store = createStateStore({ initialState: seed.snapshot(),
+      refresh: () => Promise.reject(new Error("the refresh seam must not be called")), refreshIntervalMs: false });
+
+    assert.equal(store.snapshot().cameras.size, 1, "the supplied initial state reached the new store");
+    assert.equal(deviceSelectors.camera.byId("seed")(store.snapshot())?.name, "Seeded");
   });
 });

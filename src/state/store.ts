@@ -157,7 +157,8 @@ class StateObserver<T> {
 }
 
 /**
- * The canonical state holder. See the module doc for the model. Constructed by `ProtectClient.connect()`; consumers read it as `client.state`.
+ * The canonical state holder. See the module doc for the model. Constructed by `ProtectClient.connect()`; consumers read it as `client.state`. The one documented
+ * exception is {@link createStateStore}, the test-construction factory a harness uses to drive the real engine standalone.
  *
  * @category State
  */
@@ -493,6 +494,23 @@ export class StateStore implements AsyncDisposable {
       // The interval iterator throws on abort when the store is disposed. That is the expected end of the loop, not an error.
     }
   }
+}
+
+/**
+ * Construct a {@link StateStore} directly - the single, documented exception to the package's export law, which otherwise keeps `StateStore` type-only so a client has
+ * exactly one composition path (`ProtectClient.connect()`). This factory exists for the test harnesses that need the real reducer and observer engine standalone: a
+ * consumer driving the genuine store never has to hand-mirror its dispatch, dedup, and refresh semantics in a double. Constructing a client remains exactly one path;
+ * this widens only the store's own construction, for tests.
+ *
+ * @param options - The store options: the required refresh seam, and the optional clock, initial state, logger, and refresh interval.
+ *
+ * @returns A new state store.
+ *
+ * @category State
+ */
+export function createStateStore(options: StateStoreOptions): StateStore {
+
+  return new StateStore(options);
 }
 
 // The engaged-set key for a device: its model key and id joined, the same "modelKey:id" identity the payload carries split back out. One definition so ENTER, CLEAR, and

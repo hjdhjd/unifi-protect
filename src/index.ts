@@ -10,7 +10,8 @@
 //   - `export type` only for what a consumer receives but never builds: the device projections, the getter-return classes (StateStore / ConnectionMonitor / Transport /
 //     ProtectResponse / LivestreamSubscription), and every event, state, option, and domain type reachable from a public signature. Exporting these as types makes a
 //     second composition path unrepresentable - there is exactly one way to build a client, ProtectClient.connect() - so the single-source-of-truth rule is enforced by
-//     the compiler rather than by documentation.
+//     the compiler rather than by documentation. The one blessed exception is `createStateStore`, a value export that constructs the real store standalone for test
+//     harnesses; it widens only the store's own construction, never the client's, which stays the single `connect()` path.
 //   - Export nothing that is pure composition internals: AuthSession, EventStream, EventBus, LivestreamSession, LivestreamPool, DeviceRegistry, the free codec/reducer
 //     functions, and the internal seams and helpers. They are reachable in source for the reader, never on the published surface.
 //
@@ -65,7 +66,8 @@ export type { ProtectState } from "./protocol/reducer.ts";
 export { deviceSelectors, isDeviceAdopted, isDeviceOnline, livestreamAudioSampleRate, selectAuthUser, selectControllerName, selectIsAdmin, selectLiveview,
   selectLiveviews, selectNvr, selectRingtone, selectRingtones } from "./state/selectors.ts";
 export type { CollectionSelectors, CollectionViews, ProtectDeviceConfigMap } from "./state/selectors.ts";
-export type { StateStore } from "./state/store.ts";
+export { createStateStore } from "./state/store.ts";
+export type { StateStore, StateStoreOptions } from "./state/store.ts";
 
 // Devices - the projections a consumer receives from `client.cameras` / `client.camera(id)`. They are type-only: a consumer never constructs one (the registry does) and
 // narrows a handle by its `modelKey` discriminant rather than `instanceof`, which is the discriminated-union idiom the design is built on.
