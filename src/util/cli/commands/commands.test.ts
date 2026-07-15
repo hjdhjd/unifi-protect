@@ -1529,7 +1529,7 @@ describe("doctor", () => {
       channels.schemaUnmodeledCollection.publish({ collection: "garages", count: 1, exampleId: "g1", known: false, modelKey: "garage" });
       channels.schemaUnknownModelKey.publish({ action: "add", exampleId: "g1", modelKey: "garage" });
       channels.eventsPacket.publish({ kind: "motionDetected" });
-      channels.httpRequestStart.publish({ method: "GET", requestId: "r1", url: "https://controller/" });
+      channels.httpRequestStart.publish({ host: "controller", method: "GET", requestId: "r1", url: "https://controller/" });
 
       return realOpen(opts);
     };
@@ -1573,7 +1573,7 @@ describe("diagnostics", () => {
     // The feed subscribes before the client opens, so a single message published inside the opener meets the --count 1 budget and resolves the wait.
     ctx.openClient = (opts?: { debug?: boolean; refreshIntervalMs?: number | false; signal?: AbortSignal }): Promise<ProtectClient> => {
 
-      channels.httpRequestStart.publish({ method: "GET", requestId: "r1", url: "https://controller/" });
+      channels.httpRequestStart.publish({ host: "controller", method: "GET", requestId: "r1", url: "https://controller/" });
 
       return realOpen(opts);
     };

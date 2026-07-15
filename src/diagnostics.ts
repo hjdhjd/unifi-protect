@@ -206,6 +206,12 @@ export interface HttpRequestEndPayload {
 
   durationMs: number;
   error?: string;
+
+  /**
+   * The controller address this client was built against, verbatim as supplied to `ProtectClient.connect()`. The structured identity that scopes a payload to one
+   * controller on the process-global diagnostics channel, mirroring `cameraId` on the livestream payloads.
+   */
+  host: string;
   method: string;
   requestId: string;
   statusCode?: number;
@@ -219,6 +225,11 @@ export interface HttpRequestEndPayload {
  */
 export interface HttpRequestStartPayload {
 
+  /**
+   * The controller address this client was built against, verbatim as supplied to `ProtectClient.connect()`. The structured identity that scopes a payload to one
+   * controller on the process-global diagnostics channel, mirroring `cameraId` on the livestream payloads.
+   */
+  host: string;
   method: string;
   requestId: string;
   url: string;
