@@ -72,6 +72,22 @@ export function isDeviceAdopted(device: { isAdopted: boolean; isAdoptedByOther: 
 }
 
 /**
+ * The livestream (fMP4) audio sample rate for a camera, in hertz. On the fMP4 livestream, Protect doorbells deliver AAC audio at 48 kHz and every other camera delivers
+ * 16 kHz, so this is the single source of that wire fact - a consumer branching on the rate reads it here rather than re-deriving it from the doorbell flag. The scope is
+ * the livestream source rate only: the RTSP transport delivers 48 kHz regardless of camera type, a separate fact this helper deliberately does not model.
+ *
+ * @param camera - Any camera config (only `featureFlags.isDoorbell` is read).
+ *
+ * @returns 48000 for a doorbell, 16000 for every other camera.
+ *
+ * @category State
+ */
+export function livestreamAudioSampleRate(camera: { featureFlags: { isDoorbell: boolean } }): 16000 | 48000 {
+
+  return camera.featureFlags.isDoorbell ? 48000 : 16000;
+}
+
+/**
  * The base pair of selectors every id-keyed collection exposes: the full array (memoized on the backing map's identity) and an O(1) by-id lookup.
  *
  * @typeParam T - The collection's config record type.

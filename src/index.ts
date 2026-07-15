@@ -61,8 +61,9 @@ export type { ProtectState } from "./protocol/reducer.ts";
 // is the category-keyed catalog: `deviceSelectors.<category>` exposes that collection's quartet (`all`, `byId`, `online`, `adoptedIds`), and `adoptedIds` is the
 // content-memoized membership set - it changes reference only when a device is adopted or removed, so a consumer can `observe` one to drive accessory add/remove without
 // waking on routine config churn. `ProtectDeviceConfigMap` and the `CollectionSelectors` / `CollectionViews` shapes type a consumer's own generic iteration over it.
-export { deviceSelectors, isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectIsAdmin, selectLiveview, selectLiveviews, selectNvr,
-  selectRingtone, selectRingtones } from "./state/selectors.ts";
+// `livestreamAudioSampleRate` is the single source for a camera's fMP4 livestream audio sample rate - a doorbell's 48 kHz versus every other camera's 16 kHz.
+export { deviceSelectors, isDeviceAdopted, isDeviceOnline, livestreamAudioSampleRate, selectAuthUser, selectControllerName, selectIsAdmin, selectLiveview,
+  selectLiveviews, selectNvr, selectRingtone, selectRingtones } from "./state/selectors.ts";
 export type { CollectionSelectors, CollectionViews, ProtectDeviceConfigMap } from "./state/selectors.ts";
 export type { StateStore } from "./state/store.ts";
 
