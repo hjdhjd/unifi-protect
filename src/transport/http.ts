@@ -465,7 +465,7 @@ export class Transport implements AsyncDisposable {
 
     if(channels.httpRequestStart.hasSubscribers) {
 
-      channels.httpRequestStart.publish({ method, requestId, url } satisfies HttpRequestStartPayload);
+      channels.httpRequestStart.publish({ host: this.#host, method, requestId, url } satisfies HttpRequestStartPayload);
     }
 
     const startedAt = this.#clock.now();
@@ -582,12 +582,13 @@ export class Transport implements AsyncDisposable {
     return new ProtectNetworkError("A network error occurred communicating with the UniFi Protect controller.", { cause: error });
   }
 
-  // Publish the request:end diagnostic when anyone is listening. Centralized so the success and failure paths emit the same shape.
-  #publishEnd(payload: HttpRequestEndPayload): void {
+  // Publish the request:end diagnostic when anyone is listening. Centralized so the success and failure paths emit the same shape, and the controller host is stamped
+  // once here from this client's own address rather than repeated at each call site.
+  #publishEnd(payload: Omit<HttpRequestEndPayload, "host">): void {
 
     if(channels.httpRequestEnd.hasSubscribers) {
 
-      channels.httpRequestEnd.publish(payload);
+      channels.httpRequestEnd.publish({ ...payload, host: this.#host } satisfies HttpRequestEndPayload);
     }
   }
 

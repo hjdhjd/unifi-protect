@@ -419,18 +419,21 @@ describe("Transport", () => {
 
     test("publishes request start and end with a correlating requestId", async () => {
 
-      const starts: { method: string; requestId: string; url: string }[] = [];
-      const ends: { requestId: string; statusCode?: number }[] = [];
-      const onStart = (message: unknown): void => void starts.push(message as { method: string; requestId: string; url: string });
-      const onEnd = (message: unknown): void => void ends.push(message as { requestId: string; statusCode?: number });
+      const starts: { host: string; method: string; requestId: string; url: string }[] = [];
+      const ends: { host: string; requestId: string; statusCode?: number }[] = [];
+      const onStart = (message: unknown): void => void starts.push(message as { host: string; method: string; requestId: string; url: string });
+      const onEnd = (message: unknown): void => void ends.push(message as { host: string; requestId: string; statusCode?: number });
 
       diagnosticsChannel.subscribe("unifi-protect:http:request:start", onStart);
       diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+
+      let configuredHost = "";
 
       try {
 
         const { host, pool, transport } = makeMockTransport();
 
+        configuredHost = host;
         pool.intercept({ method: "GET", path: "/d" }).reply(200, {});
 
         await transport.send(url(host, "/d"));
@@ -442,9 +445,40 @@ describe("Transport", () => {
 
       assert.equal(starts.length, 1);
       assert.equal(starts[0]?.method, "GET");
+      assert.equal(starts[0]?.host, configuredHost, "the start payload carries the configured controller host verbatim");
       assert.equal(ends.length, 1);
       assert.equal(ends[0]?.statusCode, 200);
+      assert.equal(ends[0]?.host, configuredHost, "the end payload carries the configured controller host verbatim");
       assert.equal(starts[0]?.requestId, ends[0]?.requestId, "start and end must share the requestId");
+    });
+
+    test("stamps the controller host on the end payload even when the request fails at the transport level", async () => {
+
+      const ends: { error?: string; host: string; statusCode?: number }[] = [];
+      const onEnd = (message: unknown): void => void ends.push(message as { error?: string; host: string; statusCode?: number });
+
+      diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+
+      let configuredHost = "";
+
+      try {
+
+        const { host, pool, transport } = makeMockTransport();
+        const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+
+        configuredHost = host;
+        pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
+
+        await assert.rejects(transport.send(url(host, "/x")), ProtectNetworkError);
+      } finally {
+
+        diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
+      }
+
+      assert.equal(ends.length, 1);
+      assert.equal(ends[0]?.host, configuredHost, "the failure-path end payload still carries the configured controller host");
+      assert.equal(ends[0]?.statusCode, undefined, "a transport-level failure carries no status code");
+      assert.ok((ends[0]?.error ?? "").length > 0, "a transport-level failure carries an error message");
     });
 
     test("publishes throttle entered and exited around the breaker lifecycle", async () => {
