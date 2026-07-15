@@ -5,10 +5,8 @@
 import { COMMON_OPTIONS, CliError, boundedSignal, parseDuration, parsePositiveInt, take } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import type { ProtectClient, ProtectDeviceConfig, ProtectState } from "../../../index.ts";
+import { deviceSelectors, isDeviceOnline, selectControllerName, selectIsAdmin } from "../../../index.ts";
 import { findDevice, isDeviceCategory } from "../lookup.ts";
-import { isDeviceOnline, selectCameras, selectChimes, selectControllerName, selectFobs, selectIsAdmin, selectLights,
-  selectOnlineCameras, selectOnlineChimes, selectOnlineFobs, selectOnlineLights, selectOnlineRelays, selectOnlineSensors, selectOnlineViewers, selectRelays,
-  selectSensors, selectViewers } from "../../../index.ts";
 import type { DeviceCategory } from "../lookup.ts";
 import type { Output } from "../output/format.ts";
 import { parseArgs } from "node:util";
@@ -53,13 +51,13 @@ interface CategorySelectors {
 // mirrors a library collection selector pair, so the menu never offers a slice the library cannot model.
 const CATEGORIES: Record<DeviceCategory, CategorySelectors> = {
 
-  cameras: { all: selectCameras, label: "Cameras", online: selectOnlineCameras },
-  chimes: { all: selectChimes, label: "Chimes", online: selectOnlineChimes },
-  fobs: { all: selectFobs, label: "Fobs", online: selectOnlineFobs },
-  lights: { all: selectLights, label: "Lights", online: selectOnlineLights },
-  relays: { all: selectRelays, label: "Relays", online: selectOnlineRelays },
-  sensors: { all: selectSensors, label: "Sensors", online: selectOnlineSensors },
-  viewers: { all: selectViewers, label: "Viewers", online: selectOnlineViewers }
+  cameras: { all: deviceSelectors.camera.all, label: "Cameras", online: deviceSelectors.camera.online },
+  chimes: { all: deviceSelectors.chime.all, label: "Chimes", online: deviceSelectors.chime.online },
+  fobs: { all: deviceSelectors.fob.all, label: "Fobs", online: deviceSelectors.fob.online },
+  lights: { all: deviceSelectors.light.all, label: "Lights", online: deviceSelectors.light.online },
+  relays: { all: deviceSelectors.relay.all, label: "Relays", online: deviceSelectors.relay.online },
+  sensors: { all: deviceSelectors.sensor.all, label: "Sensors", online: deviceSelectors.sensor.online },
+  viewers: { all: deviceSelectors.viewer.all, label: "Viewers", online: deviceSelectors.viewer.online }
 };
 
 // The controller-fact family: derived facts that are not device collections. These mirror the client's derived getters (isAdmin, controllerName) and update live - a

@@ -5,7 +5,7 @@
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { ProtectLightConfig } from "../types/index.ts";
-import { selectLight } from "../state/selectors.ts";
+import { deviceSelectors } from "../state/selectors.ts";
 
 /**
  * A light projection. Inherits the read-through getters, live `observe`, and write-through `update` from {@link DeviceProjection}; light-specific behavior (level,
@@ -19,6 +19,6 @@ export class Light extends DeviceProjection<ProtectLightConfig> {
 
   constructor(ctx: DeviceContext, id: string) {
 
-    super(ctx, id, selectLight);
+    super(ctx, id, deviceSelectors.light.byId);
   }
 }

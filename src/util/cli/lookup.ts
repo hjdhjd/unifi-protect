@@ -2,7 +2,7 @@
  *
  * lookup.ts: Finding things in a connected client by what the operator typed - a device by id or name, and an id-to-name resolver for event rendering.
  */
-import type { Camera, Chime, Fob, Light, ProtectClient, Relay, Sensor, Viewer } from "../../index.ts";
+import type { Camera, Chime, DeviceCollectionKey, Fob, Light, ProtectClient, Relay, Sensor, Viewer } from "../../index.ts";
 import { CliError } from "./shared.ts";
 
 /**
@@ -34,7 +34,7 @@ export function allDevices(client: ProtectClient): AnyDevice[] {
  *
  * @category CLI
  */
-export const DEVICE_CATEGORIES = [ "cameras", "chimes", "fobs", "lights", "relays", "sensors", "viewers" ] as const;
+export const DEVICE_CATEGORIES = [ "cameras", "chimes", "fobs", "lights", "relays", "sensors", "viewers" ] as const satisfies readonly `${DeviceCollectionKey}s`[];
 
 /**
  * One of the {@link DEVICE_CATEGORIES} plural words.
@@ -42,6 +42,12 @@ export const DEVICE_CATEGORIES = [ "cameras", "chimes", "fobs", "lights", "relay
  * @category CLI
  */
 export type DeviceCategory = typeof DEVICE_CATEGORIES[number];
+
+// Completeness: every DeviceCollectionKey's plural word appears in DEVICE_CATEGORIES above. The `satisfies` on the literal rejects an extra or misspelled token; this
+// assert rejects a missing one - a dropped category makes this type `never` and fails the assignment - so the CLI vocabulary cannot fall behind the library's.
+type DeviceCategoriesComplete = `${DeviceCollectionKey}s` extends DeviceCategory ? true : never;
+
+const _deviceCategoriesComplete: DeviceCategoriesComplete = true;
 
 /**
  * Whether a raw token is one of the device-category words. The membership test that lets a command resolve a positional to "a class of devices."

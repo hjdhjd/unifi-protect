@@ -8,12 +8,12 @@ import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } f
 import { capturingLog, expectAt, fakeClock } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeNvr, makeSensor } from "../fixtures.helpers.ts";
-import { selectCamera, selectCameras } from "./selectors.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import { StateStore } from "./store.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { setTimeout as delay } from "node:timers/promises";
+import { deviceSelectors } from "./selectors.ts";
 
 // Drive an observer in the background, collecting every yielded value into an array. Returns the array plus the iteration's completion promise so a test can abort the
 // signal and await a clean teardown. The caller awaits a scheduler tick after calling this so the async-generator body registers the observer before any dispatch.
@@ -62,7 +62,7 @@ describe("StateStore", () => {
 
       assert.equal(store.snapshot().bootstrapId, 1);
       assert.equal(store.snapshot().cameras.size, 1);
-      assert.equal(selectCamera("c1")(store.snapshot())?.name, "Front");
+      assert.equal(deviceSelectors.camera.byId("c1")(store.snapshot())?.name, "Front");
     });
 
     test("a no-op event leaves the state reference unchanged", () => {
@@ -86,7 +86,7 @@ describe("StateStore", () => {
       store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1", name: "Front" })] }), kind: "bootstrapLoaded" });
 
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(selectCamera("c1"), { signal: ac.signal }));
+      const { done, values } = collect(store.observe(deviceSelectors.camera.byId("c1"), { signal: ac.signal }));
 
       // Let the async-generator body register the observer (it reads the baseline from the current snapshot at this point).
       await delay(0);
@@ -107,7 +107,7 @@ describe("StateStore", () => {
       store.dispatch({ data: makeBootstrap({ cameras: [ makeCamera({ id: "c1" }), makeCamera({ id: "c2" }) ] }), kind: "bootstrapLoaded" });
 
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(selectCamera("c1"), { signal: ac.signal }));
+      const { done, values } = collect(store.observe(deviceSelectors.camera.byId("c1"), { signal: ac.signal }));
 
       await delay(0);
 
@@ -127,7 +127,7 @@ describe("StateStore", () => {
 
       ac.abort();
 
-      const { done, values } = collect(store.observe(selectCameras, { signal: ac.signal }));
+      const { done, values } = collect(store.observe(deviceSelectors.camera.all, { signal: ac.signal }));
 
       await done;
       assert.equal(values.length, 0);
@@ -137,7 +137,7 @@ describe("StateStore", () => {
 
       const store = plainStore();
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(selectCameras, { signal: ac.signal }));
+      const { done, values } = collect(store.observe(deviceSelectors.camera.all, { signal: ac.signal }));
 
       await delay(0);
       store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }), kind: "bootstrapLoaded" });
@@ -163,7 +163,7 @@ describe("StateStore", () => {
       store.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
 
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(selectCameras, { signal: ac.signal }));
+      const { done, values } = collect(store.observe(deviceSelectors.camera.all, { signal: ac.signal }));
 
       await delay(0);
 
@@ -190,7 +190,7 @@ describe("StateStore", () => {
       store.dispatch({ data: bootstrapFor(), kind: "bootstrapLoaded" });
 
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(selectCamera("c1"), { signal: ac.signal }));
+      const { done, values } = collect(store.observe(deviceSelectors.camera.byId("c1"), { signal: ac.signal }));
 
       await delay(0);
 
@@ -258,7 +258,7 @@ describe("StateStore", () => {
 
       const clock = fakeClock();
       const store = new StateStore({ clock, refresh: () => Promise.resolve(makeBootstrap()), refreshIntervalMs: 1000 });
-      const { done, values } = collect(store.observe(selectCameras));
+      const { done, values } = collect(store.observe(deviceSelectors.camera.all));
 
       await delay(0);
       await store[Symbol.asyncDispose]();

@@ -5,7 +5,7 @@
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { ProtectViewerConfig } from "../types/index.ts";
-import { selectViewer } from "../state/selectors.ts";
+import { deviceSelectors } from "../state/selectors.ts";
 
 /**
  * A viewer projection. Inherits the read-through getters, live `observe`, and write-through `update` from {@link DeviceProjection}; viewer-specific behavior
@@ -19,6 +19,6 @@ export class Viewer extends DeviceProjection<ProtectViewerConfig> {
 
   constructor(ctx: DeviceContext, id: string) {
 
-    super(ctx, id, selectViewer);
+    super(ctx, id, deviceSelectors.viewer.byId);
   }
 }
