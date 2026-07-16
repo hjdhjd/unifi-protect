@@ -1038,6 +1038,62 @@ describe("LivestreamPool", () => {
 
       await sub[Symbol.asyncDispose]();
     });
+
+    test("a disposed subscriber's reassess cannot re-decide a shared in-flight recovery episode", async () => {
+
+      const clock = fakeClock();
+      let recoveringCalls = 0;
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        recoveringCalls++;
+
+        // The first recovery decision parks on a long wait; only a valid reassess should force the re-decision that reconnects.
+        return (recoveringCalls === 1) ? { forMs: 1000000000, kind: "wait" } : { awaitMs: 100000, kind: "reconnect" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+
+      // Both subscribers attach while the stream is live, before the drop, so neither attach trips the joiner re-decision that only fires during a recovering episode.
+      const sub1 = pool.subscribe(SPEC);
+
+      await flush();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const sub2 = pool.subscribe(SPEC);
+
+      // The controller drops the live stream, beginning a recovering episode the policy parks on a wait - no new socket yet.
+      at(sockets, 0).emitClose(1000, "dropped");
+      await flush();
+
+      assert.equal(sockets.length, 1);
+
+      // Dispose one subscriber; the sibling still owns the in-flight episode, and detach does not re-decide while a subscriber remains.
+      await sub1[Symbol.asyncDispose]();
+      await flush();
+
+      // The disposed subscriber's reassess must leave the parked episode untouched. Without the guard this call settles the episode early, reconnecting and incrementing
+      // recoveringCalls - so the two assertions below fail against the unguarded implementation.
+      sub1.reassess();
+      await flush();
+
+      assert.equal(sockets.length, 1);
+      assert.equal(recoveringCalls, 1);
+
+      // Positive control: the still-live sibling's reassess DOES settle the episode, proving the guard is scoped to the disposed subscription rather than disabling
+      // reassessment outright.
+      sub2.reassess();
+      await flush();
+
+      assert.equal(sockets.length, 2);
+      assert.equal(recoveringCalls, 2);
+
+      await sub2[Symbol.asyncDispose]();
+    });
   });
 
   describe("recovery diagnostics", () => {

@@ -380,6 +380,13 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
    */
   reassess(): void {
 
+    // A disposed subscription no longer speaks for a consumer, so it must not nudge the shared stream's recovery. With sibling subscribers still attached, an unguarded
+    // call from a departed consumer could re-decide an in-flight recovery episode the siblings still own.
+    if(this.#disposed) {
+
+      return;
+    }
+
     this.#host.reassess();
   }
 
