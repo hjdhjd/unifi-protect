@@ -5,7 +5,7 @@
  */
 import { FRAME_END_SEGMENT, FRAME_MOOF, buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
-import { ProtectNetworkError, ProtectStallError } from "../errors.ts";
+import { ProtectAbortedError, ProtectNetworkError, ProtectStallError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { fakeClock, silentLog } from "../testing.helpers.ts";
 import type { FakeClock } from "../testing.helpers.ts";
@@ -339,6 +339,9 @@ describe("LivestreamSession", () => {
       const clock = fakeClock();
       const { session, ws } = await openSession({ clock });
       const errors = collectErrors(session);
+      let closeInfo: { cause?: ProtectError; code: number; reason: string } | undefined;
+
+      session.on("closed", (info) => { closeInfo = info; });
 
       clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
       await clock.tick();
@@ -348,6 +351,9 @@ describe("LivestreamSession", () => {
       assert.equal((errors[0]).silentForMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
       assert.equal(session.state, "closed");
       assert.equal(ws.closeRequested, true);
+
+      // The stall the error rail carried is the same object the closure records as its cause.
+      assert.ok(Object.is(closeInfo?.cause, errors[0]));
     });
 
     test("the watchdog does not trip while frames are flowing", async () => {
@@ -372,6 +378,7 @@ describe("LivestreamSession", () => {
     test("a failed negotiation surfaces a ProtectNetworkError and never opens a socket", async () => {
 
       let built = false;
+      const closed = Promise.withResolvers<{ cause?: ProtectError; code: number; reason: string }>();
       const session = new LivestreamSession({
 
         log: silentLog(),
@@ -385,38 +392,61 @@ describe("LivestreamSession", () => {
         }
       });
 
+      session.on("closed", (info) => closed.resolve(info));
+
       const [error] = await session.once("error");
 
       assert.ok(error instanceof ProtectNetworkError);
       assert.equal(built, false);
       assert.equal(session.state, "closed");
+
+      // The wrapped ProtectNetworkError the error rail carried is the same object the closure records as its cause.
+      const info = await closed.promise;
+
+      assert.ok(Object.is(info.cause, error));
     });
 
     test("a typed negotiation error passes through unwrapped", async () => {
 
+      const thrown = new ProtectStallError("stalled", { silentForMs: 1 });
+      const closed = Promise.withResolvers<{ cause?: ProtectError; code: number; reason: string }>();
       const session = new LivestreamSession({
 
         log: silentLog(),
-        resolveUrl: async () => { throw new ProtectStallError("stalled", { silentForMs: 1 }); },
+        resolveUrl: async () => { throw thrown; },
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
         webSocket: () => new FakeWebSocket({ autoOpen: false })
       });
 
+      session.on("closed", (info) => closed.resolve(info));
+
       const [error] = await session.once("error");
 
       assert.ok(error instanceof ProtectStallError);
+
+      // The passthrough contract end to end: the exact instance the resolver threw rides the error rail and is recorded as the closure's cause.
+      const info = await closed.promise;
+
+      assert.ok(Object.is(error, thrown));
+      assert.ok(Object.is(info.cause, thrown));
     });
 
     test("a socket error surfaces a ProtectNetworkError and closes", async () => {
 
       const { session, ws } = await openSession();
       const errors = collectErrors(session);
+      let closeInfo: { cause?: ProtectError; code: number; reason: string } | undefined;
+
+      session.on("closed", (info) => { closeInfo = info; });
 
       ws.emitError(new Error("socket boom"));
 
       assert.equal(errors.length, 1);
       assert.ok(errors[0] instanceof ProtectNetworkError);
       assert.equal(session.state, "closed");
+
+      // The ProtectNetworkError the error rail carried is the same object the closure records as its cause.
+      assert.ok(Object.is(closeInfo?.cause, errors[0]));
     });
   });
 
@@ -469,6 +499,111 @@ describe("LivestreamSession", () => {
 
       assert.equal(built, false);
       assert.equal(session.state, "closed");
+    });
+
+    test("an already-aborted caller signal records the ProtectAbortedError as the close cause", () => {
+
+      const controller = new AbortController();
+
+      controller.abort();
+
+      // The constructor closes the session synchronously before any listener can attach, so the getter is the only surface that can observe this cause.
+      const session = new LivestreamSession({
+
+        log: silentLog(),
+        resolveUrl: fixedUrl,
+        signal: controller.signal,
+        spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
+        webSocket: () => new FakeWebSocket({ autoOpen: false })
+      });
+
+      assert.ok(session.closeCause instanceof ProtectAbortedError);
+      assert.equal(session.state, "closed");
+    });
+
+    test("a mid-flight caller abort records the ProtectAbortedError on both the payload and closeCause", async () => {
+
+      const controller = new AbortController();
+      const built = Promise.withResolvers<FakeWebSocket>();
+      const session = new LivestreamSession({
+
+        log: silentLog(),
+        resolveUrl: fixedUrl,
+        signal: controller.signal,
+        spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
+        webSocket: () => {
+
+          const ws = new FakeWebSocket({ autoOpen: false });
+
+          built.resolve(ws);
+
+          return ws;
+        }
+      });
+
+      const ws = await built.promise;
+
+      ws.emitOpen();
+
+      const closed = Promise.withResolvers<{ cause?: ProtectError; code: number; reason: string }>();
+
+      session.on("closed", (info) => closed.resolve(info));
+
+      controller.abort();
+
+      const info = await closed.promise;
+
+      // Both surfaces report the one fact: the abort's cause rides the closed payload and is the same object the getter returns.
+      assert.ok(info.cause instanceof ProtectAbortedError);
+      assert.ok(Object.is(info.cause, session.closeCause));
+    });
+
+    test("a plain close() carries no cause: closeCause stays null and the payload omits the key", async () => {
+
+      const { session } = await openSession();
+      const closed = Promise.withResolvers<{ cause?: ProtectError; code: number; reason: string }>();
+
+      session.on("closed", (info) => closed.resolve(info));
+
+      await session.close();
+
+      const info = await closed.promise;
+
+      assert.equal(session.closeCause, null);
+      assert.equal("cause" in info, false);
+    });
+
+    test("first cause wins: a later plain close() does not overwrite the recorded abort cause", async () => {
+
+      const controller = new AbortController();
+      const built = Promise.withResolvers<FakeWebSocket>();
+      const session = new LivestreamSession({
+
+        log: silentLog(),
+        resolveUrl: fixedUrl,
+        signal: controller.signal,
+        spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
+        webSocket: () => {
+
+          const ws = new FakeWebSocket({ autoOpen: false });
+
+          built.resolve(ws);
+
+          return ws;
+        }
+      });
+
+      const ws = await built.promise;
+
+      ws.emitOpen();
+
+      // The mid-flight abort is the first initiated teardown; it records the ProtectAbortedError.
+      controller.abort();
+
+      // A subsequent explicit close() is a second initiated teardown whose null cause must not overwrite the first.
+      await session.close();
+
+      assert.ok(session.closeCause instanceof ProtectAbortedError);
     });
 
     test("emitting two media segments in one message decodes both", async () => {
