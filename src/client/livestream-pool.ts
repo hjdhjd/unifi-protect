@@ -257,6 +257,9 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   readonly #disposalDeferred = Promise.withResolvers<false>();
   readonly #host: SubscriptionHost;
   readonly #onDispose: (subscription: LivestreamSubscription) => void;
+  // This queue is a policy-bearing media backlog on the library's hottest path - it carries the per-subscriber delivery statistics, the consumer-disposal discard, and
+  // the drain-before-terminal guarantee - kept deliberately separate from the generic `EventBus` rail, which rides Node's own async iterator and carries no per-consumer
+  // policy.
   readonly #queue: Segment[] = [];
 
   #abortHandler: (() => void) | null = null;
