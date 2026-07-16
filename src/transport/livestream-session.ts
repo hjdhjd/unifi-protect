@@ -29,7 +29,7 @@
  */
 import { Agent, WebSocket } from "undici";
 import { PROTECT_LIVESTREAM_CHUNK_SIZE, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_SEGMENT_LENGTH } from "../settings.ts";
-import { ProtectError, ProtectNetworkError, ProtectStallError, assertNever } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectStallError, assertNever } from "../errors.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { ProtectLogging } from "../logging.ts";
@@ -159,7 +159,9 @@ export type Segment =
  * The events {@link LivestreamSession} publishes on its three-rail surface.
  *
  * - `segment` is the decoded stream: one init or media {@link Segment} per controller fragment. The pool bridges this rail and fans each segment to every subscriber.
- * - `closed` fires once when the WebSocket closes (naturally, on error, or on a watchdog stall), carrying the close frame's code and reason.
+ * - `closed` fires once when the WebSocket closes (naturally, on error, or on a watchdog stall), carrying the close frame's code and reason, plus the optional typed
+ *   {@link ProtectError} cause an initiated teardown recorded - a caller abort, a failed negotiation, a socket error, or the watchdog stall - and omitted for a plain
+ *   or spontaneous close.
  * - `error` carries a typed {@link ProtectError} - a {@link ProtectStallError} from the watchdog, or a {@link ProtectNetworkError} from a negotiation or socket failure.
  *   The error *type* is the discriminant a subscriber acts on.
  *
@@ -167,7 +169,7 @@ export type Segment =
  */
 export interface LivestreamSessionEvents {
 
-  closed: [info: { code: number; reason: string }];
+  closed: [info: { cause?: ProtectError; code: number; reason: string }];
   error: [err: ProtectError];
   segment: [segment: Segment];
 }
@@ -302,6 +304,11 @@ export class LivestreamSession implements AsyncDisposable {
   #lastSegmentAt = 0;
   #state: LivestreamState = "idle";
 
+  // The typed cause of the session's closure, handed to `#shutdown` by whichever initiated teardown knows why - the caller's abort, a failed endpoint negotiation, a
+  // socket error, or the watchdog's stall - and null for a plain close, including a spontaneous socket close (the raw close listener reaches `#onClose` directly and has
+  // no cause to record; a socket error that precedes it has already routed through `#shutdown` with its typed error). `#shutdown` is the field's single writer.
+  #closeCause: ProtectError | null = null;
+
   // The cached init segment (a detached copy, since it is held for the session lifetime and replayed to late joiners) and the codec string captured from the controller.
   #codec = "";
   #initSegment: { codec: string; data: Buffer } | null = null;
@@ -325,11 +332,12 @@ export class LivestreamSession implements AsyncDisposable {
 
       if(options.signal.aborted) {
 
-        this.#shutdown(1000, "the livestream was aborted by the caller's signal");
+        this.#shutdown(1000, "the livestream was aborted by the caller's signal",
+          new ProtectAbortedError("The UniFi Protect livestream was aborted by the caller's signal."));
       } else {
 
-        options.signal.addEventListener("abort", () => this.#shutdown(1000, "the livestream was aborted by the caller's signal"),
-          { once: true, signal: this.#controller.signal });
+        options.signal.addEventListener("abort", () => this.#shutdown(1000, "the livestream was aborted by the caller's signal",
+          new ProtectAbortedError("The UniFi Protect livestream was aborted by the caller's signal.")), { once: true, signal: this.#controller.signal });
       }
     }
 
@@ -348,6 +356,16 @@ export class LivestreamSession implements AsyncDisposable {
   get state(): LivestreamState {
 
     return this.#state;
+  }
+
+  /**
+   * The typed cause of the session's closure: null while the session is open and for a plain close, otherwise the {@link ProtectError} an initiated teardown recorded.
+   * This is the synchronous-closure surface - a session constructed with an already-aborted signal is closed before any listener can attach, so its cause is read here
+   * rather than from the `closed` payload.
+   */
+  get closeCause(): ProtectError | null {
+
+    return this.#closeCause;
   }
 
   /**
@@ -430,9 +448,12 @@ export class LivestreamSession implements AsyncDisposable {
       // `#closed` because it is a live getter the type system cannot narrow to a constant across the await - and it is set in lockstep with `#closed` on teardown.
       if(!this.#controller.signal.aborted) {
 
-        this.#bus.emit("error", (error instanceof ProtectError) ? error :
-          new ProtectNetworkError("The UniFi Protect livestream WebSocket endpoint could not be negotiated.", { cause: error }));
-        this.#shutdown(1006, "the livestream endpoint negotiation failed");
+        // Construct the typed negotiation failure once: the same object rides the error rail and is carried to `#shutdown` as the closure's cause.
+        const failure = (error instanceof ProtectError) ? error :
+          new ProtectNetworkError("The UniFi Protect livestream WebSocket endpoint could not be negotiated.", { cause: error });
+
+        this.#bus.emit("error", failure);
+        this.#shutdown(1006, "the livestream endpoint negotiation failed", failure);
       }
 
       return;
@@ -712,8 +733,11 @@ export class LivestreamSession implements AsyncDisposable {
       this.#log.error("The UniFi Protect livestream API reported an error.", event.error ?? event.message);
     }
 
-    this.#bus.emit("error", new ProtectNetworkError("The UniFi Protect livestream API connection failed.", { cause: event.error }));
-    this.#shutdown(1006, "the livestream connection errored");
+    // Construct the socket failure once: the same object rides the error rail and is carried to `#shutdown` as the closure's cause.
+    const failure = new ProtectNetworkError("The UniFi Protect livestream API connection failed.", { cause: event.error });
+
+    this.#bus.emit("error", failure);
+    this.#shutdown(1006, "the livestream connection errored", failure);
   }
 
   // The single teardown. Guarded so it runs once whether triggered by the socket's close event, an error, the watchdog, or an explicit close. Aborts the controller
@@ -729,14 +753,18 @@ export class LivestreamSession implements AsyncDisposable {
     this.#state = "closed";
     this.#controller.abort();
     this.#log.debug("The UniFi Protect livestream API connection closed.", { code, reason });
-    this.#bus.emit("closed", { code, reason });
+    this.#bus.emit("closed", { ...((this.#closeCause !== null) && { cause: this.#closeCause }), code, reason });
 
     this.#closePromise = (this.#ownedAgent === null) ? Promise.resolve() : this.#ownedAgent.destroy();
   }
 
   // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - destroying the owned agent (in #onClose) is what guarantees the
-  // underlying connection is released even if the close frame never completes, or if we tear down before the socket was ever built (negotiation abort).
-  #shutdown(code: number, reason: string): void {
+  // underlying connection is released even if the close frame never completes, or if we tear down before the socket was ever built (negotiation abort). An initiated
+  // teardown that knows why it closed hands the typed cause here; it is recorded only when none is set yet, so the first cause wins and a later trigger never overwrites
+  // it.
+  #shutdown(code: number, reason: string, cause: ProtectError | null = null): void {
+
+    this.#closeCause ??= cause;
 
     if(!this.#closed) {
 
@@ -768,8 +796,12 @@ export class LivestreamSession implements AsyncDisposable {
         if(silentForMs >= PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT) {
 
           this.#log.error("The UniFi Protect livestream API went silent beyond the heartbeat window; tearing down the stalled session.", { silentForMs });
-          this.#bus.emit("error", new ProtectStallError("The UniFi Protect livestream API produced no data within the heartbeat window.", { silentForMs }));
-          this.#shutdown(1006, "the livestream stalled past the heartbeat window");
+
+          // Construct the stall once: the same object rides the error rail and is carried to `#shutdown` as the closure's cause.
+          const stall = new ProtectStallError("The UniFi Protect livestream API produced no data within the heartbeat window.", { silentForMs });
+
+          this.#bus.emit("error", stall);
+          this.#shutdown(1006, "the livestream stalled past the heartbeat window", stall);
 
           return;
         }
