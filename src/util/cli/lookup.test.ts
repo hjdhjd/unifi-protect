@@ -15,7 +15,7 @@ interface FakeOpts {
   nvr?: { id: string; name: string } | null;
 }
 
-// Build a client exposing only what lookup reads: the device collections, camera(id), and the NVR snapshot. The device stubs carry the id, name, and the discriminant
+// Build a client exposing only what lookup reads: the device collections, camera(id), and the NVR snapshot. The device stubs carry the id, name, and the tag
 // `modelKey` the typed resolver narrows on (the fields lookup touches), cast to the projection types.
 function fakeClient(opts: FakeOpts): ProtectClient {
 

@@ -18,7 +18,7 @@
 // The test the next contributor applies to any new symbol: does a consumer construct or call it (value), receive it (type), or neither (internal)? That keeps this file
 // a deliberate, reviewable contract rather than whatever each module happens to export.
 
-// Errors - the typed hierarchy. Consumers branch on these with `instanceof`, so they are value exports; the bootstrap-stage discriminant is a type.
+// Errors - the typed hierarchy. Consumers branch on these with `instanceof`, so they are value exports; the bootstrap-stage tag is a type.
 export { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCodecChangeError, ProtectError,
   ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError,
   ProtectUnsupportedError, RecoverableError } from "./errors.ts";
@@ -70,7 +70,7 @@ export { createStateStore } from "./state/store.ts";
 export type { StateStore, StateStoreOptions } from "./state/store.ts";
 
 // Devices - the projections a consumer receives from `client.cameras` / `client.camera(id)`. They are type-only: a consumer never constructs one (the registry does) and
-// narrows a handle by its `modelKey` discriminant rather than `instanceof`, which is the discriminated-union idiom the design is built on.
+// narrows a handle by its `modelKey` tag rather than `instanceof`, which is the discriminated-union idiom the design is built on.
 export type { Camera, LivestreamOptions, SnapshotOptions } from "./devices/camera.ts";
 export type { Chime, PlaySpeakerOptions } from "./devices/chime.ts";
 export type { DeviceProjection, Projection, ProtectDeviceConfig } from "./devices/device.ts";

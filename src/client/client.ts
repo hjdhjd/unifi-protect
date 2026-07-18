@@ -728,7 +728,7 @@ export class ProtectClient implements AsyncDisposable {
   /**
    * Dispose the client: tear down the connection monitor (stopping recovery and closing the events stream), close every livestream session in the pool, stop the refresh
    * failsafe and terminate observers, end the session, and destroy the connection pool - in that order, so ingestion stops before the state and transport it feeds.
-   * Idempotent and the canonical teardown via `await using client = await ProtectClient.connect(...)`.
+   * Safe to call more than once, and the canonical teardown via `await using client = await ProtectClient.connect(...)`.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 

@@ -26,7 +26,7 @@ const EVENT_NAME_PREFIX = "ufp:event:";
  * A typed facade over `node:events.EventEmitter` that exposes exactly three subscription shapes - the canonical contract every event-producing subsystem in this
  * library presents (`Transport`, `EventStream`, `ConnectionMonitor`, `LivestreamSession`, `ProtectClient`).
  *
- * We *compose* `EventEmitter` rather than *extend* it, for several load-bearing reasons:
+ * We *compose* `EventEmitter` rather than *extend* it, for several concrete reasons:
  *
  * 1. {@link on} returns a `Disposable`, not `this`. `using sub = bus.on(...)` auto-cleans at scope exit, so listener leaks are prevented structurally rather than by
  *    discipline - and inline arrow handlers are fine because the handle, not the function identity, is what unsubscribes.

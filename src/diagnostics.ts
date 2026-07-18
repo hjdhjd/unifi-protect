@@ -175,7 +175,7 @@ export interface EventsClosedPayload {
 }
 
 /**
- * Payload published on {@link channels.eventsPacket}. `kind` is a `TypedEvent` discriminant; `modelKey` and `id` are present for device-scoped events.
+ * Payload published on {@link channels.eventsPacket}. `kind` is a `TypedEvent` tag; `modelKey` and `id` are present for device-scoped events.
  *
  * @category Diagnostics
  */
@@ -364,7 +364,7 @@ export interface LivestreamSubscriptionDisposedPayload {
 }
 
 /**
- * Payload published on {@link channels.schemaUnknownModelKey}. `action` and `exampleId` are the discriminating fields from the offending packet's header so a consumer
+ * Payload published on {@link channels.schemaUnknownModelKey}. `action` and `exampleId` are the identifying fields from the offending packet's header so a consumer
  * can correlate the drift signal with concrete wire activity (e.g., "modelKey 'garage' first seen at action 'add' with id <uuid>"). The library does not accumulate or
  * aggregate beyond the first-occurrence dedup; consumers building dashboards add their own counters from this channel.
  *

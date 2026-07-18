@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * reducer.test.ts: Unit tests for the pure state reducer. These tests pin the three invariants the observation layer depends on - immutability, structural sharing, and
+ * reducer.test.ts: Unit tests for the pure state reducer. These tests pin the three guarantees the observation layer depends on - immutability, structural sharing, and
  * no-op fidelity (same value in, same reference out) - because a regression in any of them would silently either churn observers or suppress real notifications.
  * Coverage is exhaustive by design for the reconciliation surface: every merge rule and every reconciliation outcome (zero drift, partial drift, full replacement) is
  * asserted, and every event-kind category is representatively exercised.
@@ -50,7 +50,7 @@ describe("createInitialState", () => {
 
 describe("applyDevicePatch", () => {
 
-  // The load-bearing no-op cases: a patch that changes nothing must return the input by reference so observers do not fire.
+  // The no-op cases the observers depend on: a patch that changes nothing must return the input by reference so observers do not fire.
   test("an empty patch returns the same reference", () => {
 
     const device = { count: 1, name: "x" };
@@ -639,7 +639,7 @@ describe("reduce - adoption self-contradiction normalization", () => {
     assert.deepEqual(deviceSelectors.relay.adoptedIds(state), ["6a132d8f03ad6f03e4024ebc"], "the normalized relay counts as adopted here");
     assert.deepEqual(deviceSelectors.sensor.adoptedIds(state), ["6a452cbd02321503e4027317"], "the normalized sensor counts as adopted here");
 
-    // Mutation-discrimination for the bootstrap path: the caller's own bootstrap object still carries the raw flag for the wire-faithful surfaces.
+    // Telling the mutation apart on the bootstrap path: the caller's own bootstrap object still carries the raw flag for the wire-faithful surfaces.
     assert.equal(bootstrap.relays[0]?.isAdoptedByOther, true, "the caller's bootstrap relay still carries the raw flag");
     assert.equal(bootstrap.sensors[0]?.isAdoptedByOther, true, "the caller's bootstrap sensor still carries the raw flag");
   });

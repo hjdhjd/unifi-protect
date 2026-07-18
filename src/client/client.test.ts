@@ -196,7 +196,7 @@ describe("ProtectClient.connect", () => {
 
   describe("event subscription and teardown", () => {
 
-    test("on() returns an idempotent Disposable", async () => {
+    test("on() returns a Disposable that is safe to dispose more than once", async () => {
 
       const { agent, pool } = mockController();
 
@@ -208,7 +208,7 @@ describe("ProtectClient.connect", () => {
 
       assert.equal(typeof sub[Symbol.dispose], "function");
 
-      // Disposal must be safe and idempotent - the second dispose is a no-op.
+      // Disposal must be safe to repeat - the second dispose is a no-op.
       sub[Symbol.dispose]();
       sub[Symbol.dispose]();
     });
@@ -259,7 +259,7 @@ describe("ProtectClient.connect", () => {
 
       const client = await connect(agent);
 
-      // Disposing twice must not throw - the events stream, store, session, and transport teardown are each idempotent.
+      // Disposing twice must not throw - the events stream, store, session, and transport teardown are each safe to call more than once.
       await client[Symbol.asyncDispose]();
       await client[Symbol.asyncDispose]();
     });

@@ -454,7 +454,7 @@ export class StateStore implements AsyncDisposable {
   }
 
   /**
-   * Stop the refresh failsafe and terminate every open observer. Idempotent.
+   * Stop the refresh failsafe and terminate every open observer. Safe to call more than once.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 

@@ -205,7 +205,7 @@ class ManagedEventStream implements AsyncDisposable {
   }
 
   /**
-   * Dispose the owner: detach the bridges and tear the current stream down. Idempotent via the underlying stream's own idempotent close.
+   * Dispose the owner: detach the bridges and tear the current stream down. Safe to call more than once, via the underlying stream's own repeat-safe close.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
@@ -427,7 +427,7 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Dispose the monitor: end the reboot-observation loop and any recovery wait, detach the throttle subscriptions, and tear the events stream down. Idempotent.
+   * Dispose the monitor: end the reboot-observation loop and any recovery wait, detach the throttle subscriptions, and tear the events stream down. A no-op on repeat.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
@@ -620,7 +620,7 @@ export class ConnectionMonitor {
   // composition root), so they dispatch through an open breaker at this loop's cadence rather than waiting out the breaker's cooldown - the unification that makes the
   // monitor the single owner of re-probe cadence during recovery. A successful probe closes the breaker as a side effect of its own booking; the monitor never touches
   // breaker internals. Success returns true (the caller stops); a failure at any step drops to `lost` and returns false so the caller retries. Announcing `lost` is
-  // idempotent (controllerLost fires once per episode), so repeated failures while a sluggish controller returns do not spam.
+  // a no-op on repeat (controllerLost fires once per episode), so repeated failures while a sluggish controller returns do not spam.
   async #attemptRecovery(): Promise<boolean> {
 
     try {

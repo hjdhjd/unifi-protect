@@ -6,7 +6,7 @@
 /**
  * Pure binary codec for the UniFi Protect realtime events wire protocol. This module is Layer 1: no I/O, no time, no side effects - just bytes in, structure out
  * (and back). It establishes one half of the protocol contract; {@link ../protocol/events | events.ts} establishes the other half by lifting a {@link RawPacket}
- * into a typed event. Splitting the two lets us test the binary protocol independently of the type discrimination.
+ * into a typed event. Splitting the two lets us test the binary protocol independently of the type classification.
  *
  * A complete update packet is four frames - two 8-byte headers, each followed by its payload:
  *
@@ -43,7 +43,7 @@ import { inflateSync } from "node:zlib";
 // Header frame size, in bytes. Two of these prefix every packet - one before the action payload, one before the data payload.
 const HEADER_SIZE = 8;
 
-// Frame discriminator byte (header offset 0). Action frames are first (1), data frames second (2). The `as const` map plus value-union alias gives dot-access without
+// Frame tag byte (header offset 0). Action frames are first (1), data frames second (2). The `as const` map plus value-union alias gives dot-access without
 // the non-erasable runtime emit of a numeric enum.
 const FrameType = {
 
@@ -281,7 +281,7 @@ function parseJson(body: Buffer): unknown {
   }
 }
 
-// Validate the documented action-frame invariants: a non-null object whose four required fields are all strings. A controller bug or corrupted frame surfaces here
+// Validate the documented action-frame rules: a non-null object whose four required fields are all strings. A controller bug or corrupted frame surfaces here
 // rather than as a TypeError at the first downstream property access.
 function isProtectEventHeader(value: unknown): value is ProtectEventHeader {
 

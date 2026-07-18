@@ -481,7 +481,7 @@ describe("EventStream", () => {
 
   describe("teardown", () => {
 
-    test("close() emits closed once, detaches listeners, and is idempotent", async () => {
+    test("close() emits closed once, detaches listeners, and is safe to call more than once", async () => {
 
       const { stream, ws } = await openStream();
       const closed = collect(stream, "closed");

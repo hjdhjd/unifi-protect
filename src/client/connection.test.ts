@@ -532,7 +532,7 @@ describe("ConnectionMonitor", () => {
       store.dispatch({ data: makeBootstrap({ nvr: makeNvr({ upSince: 100000 }) }), kind: "bootstrapLoaded" });
 
       // Detection wakes the parked wait, so recovery relaunches and walks back to healthy WITHOUT advancing the clock by that first delay - only settle()s. This is the
-      // discriminating assertion: without the wake the loop cannot progress until a clock.advance(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0]).
+      // distinguishing assertion: without the wake the loop cannot progress until a clock.advance(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0]).
       await expectAt(() => monitor.state === "healthy", { message: "expected the detected reboot to wake recovery and relaunch immediately" });
 
       assert.equal(streams.length, 2, "recovery relaunched the events stream on the wake rather than waiting out the backoff");
@@ -558,7 +558,7 @@ describe("ConnectionMonitor", () => {
       const streamsBefore = streams.length;
 
       // Disposal aborts the monitor's lifetime controller, which is the wait's other composed signal. The loop must read that as disposal (not a wake) and END - it must
-      // not fall through to a relaunch. This no-relaunch assertion is the load-bearing discriminator between disposal and a wake (a rejection-only check would be
+      // not fall through to a relaunch. This no-relaunch assertion is the check that tells disposal apart from a wake (a rejection-only check would be
       // vacuous, since #attemptRecovery swallows its own error).
       await monitor[Symbol.asyncDispose]();
       await settle();

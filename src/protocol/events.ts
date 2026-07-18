@@ -62,7 +62,7 @@ export type DeviceModelKey = typeof DEVICE_MODEL_KEYS[number];
  * The model keys the library reduces into canonical {@link ProtectState} *from the realtime stream*: the devices, the NVR, the user roster, and the liveview collection.
  * A superset of `DeviceModelKey` (it adds `user` and `liveview`, reduced but not device-addressed) and a subset of `ModelKey` (the full observed wire vocabulary).
  *
- * "Reduced into state" and "is a `StateModelKey`" are two orthogonal axes. `applyBootstrap` reconciles *every* reduced collection (it is the universal input), so a
+ * "Reduced into state" and "is a `StateModelKey`" are two independent axes. `applyBootstrap` reconciles *every* reduced collection (it is the universal input), so a
  * collection can live in {@link ProtectState} without being a `StateModelKey`: `ringtones` is reduced and observable, but the controller broadcasts no `ringtone` packet,
  * so it advances bootstrap-only and is intentionally excluded here (and from `ModelKey`). `StateModelKey` is precisely the subset the controller *also* emits
  * realtime deltas for - the keys the reducer's realtime upsert/patch/remove path touches.
@@ -121,7 +121,7 @@ export type AuthMethod = "fingerprint" | "nfc";
  *   the classifier's own answer rather than re-deriving it from metadata shape, exactly as `smartDetect` lifts `objectTypes`; whether the scan succeeded and which
  *   identity matched stay metadata reads (an unrecognized scan still classifies, carrying e.g. `metadata.fingerprint.ulpId: null`).
  * - `doorbellRing` - a doorbell was pressed.
- * - `accessEvent` - a UniFi Access occurrence (door, reader, lock), discriminated within the `event` channel by its access metadata.
+ * - `accessEvent` - a UniFi Access occurrence (door, reader, lock), distinguished within the `event` channel by its access metadata.
  * - `buttonPressed` - a security-action button was pressed on a fob (or a sensor with a button). Device-attributed (the pressing device, from the
  *   payload's `device` field), so it routes by `deviceId` like `accessEvent`; the classifier lifts `button` (which button) and `pressType` (how it was pressed), and
  *   the device family rides in `metadata.deviceModelKey` since the wire event type is shared across button-bearing devices.
@@ -148,7 +148,7 @@ export type TypedEvent =
   { kind: "accessEvent"; deviceId: string; eventId: string; at: number; action: string; metadata?: Record<string, unknown> } |
   { kind: "buttonPressed"; deviceId: string; eventId: string; at: number; button: string; pressType: string; metadata?: Record<string, unknown> };
 
-// The discriminating `type` values on an `event`-modelKey payload, grouped by the activity signal each maps to. Naming them as constants keeps the wire vocabulary in
+// The distinguishing `type` values on an `event`-modelKey payload, grouped by the activity signal each maps to. Naming them as constants keeps the wire vocabulary in
 // one place and makes it cheap to extend as live-controller captures confirm additional values.
 // The auth wire types map to their resolved `AuthMethod` rather than a bare membership list: under `noUncheckedIndexedAccess` a lookup returns `AuthMethod | undefined`,
 // so this map is both the "is this an auth type?" test and the method resolution - no parallel list-and-switch to keep in sync, and a new auth type is a single entry
@@ -163,12 +163,12 @@ const TAMPER_EVENT_TYPE = "smartDetectTamper";
 /**
  * Classify a decoded {@link RawPacket} into a {@link TypedEvent}, or `null` if the packet is valid but describes something the library does not model.
  *
- * This is a pure, stateless, total function. It reads only the packet's own self-description - the action, the model key, and the payload's discriminating fields -
+ * This is a pure, stateless, total function. It reads only the packet's own self-description - the action, the model key, and the payload's distinguishing fields -
  * and never consults prior state, never holds state, and never throws. Returning `null` is the documented signal for "a well-formed packet we do not (yet) model":
  * an unknown model key, an action we do not handle, a device transition whose payload is not an object, or an `event` packet that does not self-describe as one of
  * the modeled occurrences. The caller observes the `null` and moves on (logging at debug if it wishes).
  *
- * Statelessness is the load-bearing property. Activity signals (`motionDetected`, `smartDetect`, `tamperDetected`, `authDetected`, `doorbellRing`, `accessEvent`) are
+ * Statelessness is what keeps this correct. Activity signals (`motionDetected`, `smartDetect`, `tamperDetected`, `authDetected`, `doorbellRing`, `accessEvent`) are
  * derived *exclusively* from the `event` model key, because that is the only packet that carries an occurrence's identity and metadata. Camera state - `lastMotion`,
  * `lastRing`, `isMotionDetected` - flows through the same classifier as a `devicePatched`; it is never re-synthesized into an activity signal, which would require
  * remembering the previous value and thus break purity. "Did motion happen?" has exactly one home (the occurrence); "what is the camera's current `lastMotion`?" has
@@ -354,7 +354,7 @@ function classifyStateTransition(action: string, modelKey: StateModelKey, id: st
 }
 
 // Map an `event`-model-key packet to an activity signal. The packet must self-describe: an `add` always carries the full event object (with `type`), while a
-// finalizing `update` is classified only when its partial still carries the discriminating fields. The header id is the occurrence identity, shared across the add
+// finalizing `update` is classified only when its partial still carries the distinguishing fields. The header id is the occurrence identity, shared across the add
 // and any finalizing update so a consumer can correlate them.
 function classifyActivity(eventId: string, payload: unknown): TypedEvent | null {
 

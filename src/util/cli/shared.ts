@@ -448,7 +448,7 @@ export function matchesEvent(filter: EventFilter, event: TypedEvent, resolveName
 
 /**
  * The raw filter flags as parsed from the command line, for `ufp watch raw`. The raw firehose matches on a {@link RawPacket}'s wire header rather than a classified
- * event, so its axes are `modelKey` and `action` (the header's two discriminants) plus `device` (the header's `id`, resolved to a name like the event filter's). Each
+ * event, so its axes are `modelKey` and `action` (the header's two axes) plus `device` (the header's `id`, resolved to a name like the event filter's). Each
  * has an exclude form. {@link buildRawFilter} compiles this into the matcher {@link matchesRawPacket} uses.
  *
  * @category CLI

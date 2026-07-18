@@ -11,13 +11,13 @@
  * from (via the synthetic `bootstrapLoaded` event), then continuously advances. Periodic re-bootstrap is a permanent failsafe against the controller's occasionally
  * lossy event delivery, reconciled here so that a refresh which finds no drift produces no observable change at all.
  *
- * Three invariants make the observation layer above this cheap and correct:
+ * Three guarantees make the observation layer above this cheap and correct:
  *
  * - **Immutability.** No function here mutates its input. Every step returns either the same reference (nothing changed) or a new one (something did).
  * - **Structural sharing.** A change rebuilds only the path from the root to the changed node; every untouched device, map, and nested object keeps its existing
  *   reference. This is what makes `Object.is`-based change detection in selectors and observers both correct and nearly free.
  * - **No-op fidelity.** A patch, upsert, removal, or full re-bootstrap that changes nothing by *value* returns the same reference by *identity*. This is the
- *   load-bearing property for "the 120-second refresh is invisible when nothing drifted."
+ *   property that makes "the 120-second refresh is invisible when nothing drifted" hold.
  *
  * @module ProtectReducer
  */
@@ -34,7 +34,7 @@ import { isDeepStrictEqual } from "node:util";
  *
  * There is deliberately no `lastEventAt` here. Channel liveness is intrinsic to the realtime channel, so the events-WebSocket watchdog reads its timestamp from the
  * `EventStream` (which clock-stamps every message), not from this state: a pure reducer cannot write a wall-clock field without minting a new state reference on every
- * packet, which would destroy the no-op/structural-sharing invariant the observation layer depends on.
+ * packet, which would destroy the no-op/structural-sharing guarantee the observation layer depends on.
  *
  * Beyond devices, the state carries session identity and the controller's read-only collections, all lifted from the bootstrap: `authUserId` (the authenticated session's
  * user id, a singleton like `nvr`), `users` (the controller's roster), `liveviews` (the saved camera layouts), and `ringtones` (the chime ringtone library), each
@@ -176,7 +176,7 @@ export function reduce(state: ProtectState, event: TypedEvent): ProtectState {
 /**
  * Recursively merge a partial patch onto a device record. Objects merge by key; arrays and primitives replace wholesale; an explicit `null` clears a field. The
  * merge is value-aware: it returns the *same reference* when the patch changes nothing, and rebuilds only the nodes on the path to an actual change (every untouched
- * nested object keeps its reference). This is the structural-sharing engine the no-op fidelity invariant depends on.
+ * nested object keeps its reference). This is the structural-sharing engine the no-op fidelity guarantee depends on.
  *
  * @param device - The current device record.
  * @param patch  - The partial update to merge onto it.

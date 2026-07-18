@@ -9,7 +9,7 @@
  */
 import { deflateSync } from "node:zlib";
 
-// Frame discriminator byte. Action frames go first (1), data frames second (2).
+// Frame tag byte. Action frames go first (1), data frames second (2).
 export const PACKET_TYPE_ACTION = 1;
 export const PACKET_TYPE_DATA = 2;
 

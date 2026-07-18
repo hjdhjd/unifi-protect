@@ -89,7 +89,7 @@ describe("typed error fields and cause chaining", () => {
     assert.deepEqual(error.headers, { "content-type": "application/json" });
   });
 
-  test("ProtectBootstrapError carries its stage discriminant", () => {
+  test("ProtectBootstrapError carries its stage tag", () => {
 
     assert.equal(new ProtectBootstrapError("m", { stage: "subscribe" }).stage, "subscribe");
   });
@@ -170,14 +170,14 @@ describe("INSPECT_OPTIONS", () => {
 
 describe("assertNever", () => {
 
-  test("throws a ProtectProtocolError naming an object variant's kind discriminant", () => {
+  test("throws a ProtectProtocolError naming an object variant's kind tag", () => {
 
-    // The reducer and event-attribution switches reach this only when untyped code smuggles in an unmodeled variant; we surface the discriminant for diagnosis.
+    // The reducer and event-attribution switches reach this only when untyped code smuggles in an unmodeled variant; we surface the tag for diagnosis.
     assert.throws(() => assertNever({ kind: "ghostKind" } as never),
       (error: unknown) => (error instanceof ProtectProtocolError) && error.message.includes("ghostKind"));
   });
 
-  test("throws naming a bare value when the variant has no kind discriminant", () => {
+  test("throws naming a bare value when the variant has no kind tag", () => {
 
     // The modelKey switch passes a bare string, not an object - the fallback branch surfaces its string form rather than a useless `undefined`.
     assert.throws(() => assertNever("phantomModelKey" as never),
