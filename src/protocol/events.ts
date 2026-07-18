@@ -47,7 +47,7 @@ const STATE_MODEL_KEYS = [ ...DEVICE_MODEL_KEYS, "liveview", "user" ] as const;
 const KNOWN_MODEL_KEYS = [ ...STATE_MODEL_KEYS, "activeSessionStat", "aiport", "aiprocessor", "bridge", "event", "group", "linkstation", "smartDetectObject" ] as const;
 
 /**
- * The id-keyed device collections - every {@link DeviceModelKey} except the NVR singleton. The vocabulary the device selectors, the projections, and every per-category
+ * The id-keyed device collections - every `DeviceModelKey` except the NVR singleton. The vocabulary the device selectors, the projections, and every per-category
  * consumer iterate over; the innermost tier of the modelKey taxonomy.
  */
 export type DeviceCollectionKey = typeof DEVICE_COLLECTION_KEYS[number];
