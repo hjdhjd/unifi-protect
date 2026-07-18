@@ -6,7 +6,8 @@
 
 # Interface: StateStore
 
-The canonical state holder. See the module doc for the model. Constructed by `ProtectClient.connect()`; consumers read it as `client.state`.
+The canonical state holder. See the module doc for the model. Constructed by `ProtectClient.connect()`; consumers read it as `client.state`. The one documented
+exception is [createStateStore](../functions/createStateStore.md), the test-construction factory a harness uses to drive the real engine standalone.
 
 ## Implements
 
@@ -20,7 +21,7 @@ The canonical state holder. See the module doc for the model. Constructed by `Pr
 asyncDispose: Promise<void>;
 ```
 
-Stop the refresh failsafe and terminate every open observer. Idempotent.
+Stop the refresh failsafe and terminate every open observer. Safe to call more than once.
 
 #### Returns
 

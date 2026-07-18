@@ -111,7 +111,7 @@ It splits into two categories by relationship to state:
   the classifier's own answer rather than re-deriving it from metadata shape, exactly as `smartDetect` lifts `objectTypes`; whether the scan succeeded and which
   identity matched stay metadata reads (an unrecognized scan still classifies, carrying e.g. `metadata.fingerprint.ulpId: null`).
 - `doorbellRing` - a doorbell was pressed.
-- `accessEvent` - a UniFi Access occurrence (door, reader, lock), discriminated within the `event` channel by its access metadata.
+- `accessEvent` - a UniFi Access occurrence (door, reader, lock), distinguished within the `event` channel by its access metadata.
 - `buttonPressed` - a security-action button was pressed on a fob (or a sensor with a button). Device-attributed (the pressing device, from the
   payload's `device` field), so it routes by `deviceId` like `accessEvent`; the classifier lifts `button` (which button) and `pressType` (how it was pressed), and
   the device family rides in `metadata.deviceModelKey` since the wire event type is shared across button-bearing devices.

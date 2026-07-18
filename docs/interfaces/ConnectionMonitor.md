@@ -80,7 +80,7 @@ The current connection state. Derived live from the recovery phase and the trans
 asyncDispose: Promise<void>;
 ```
 
-Dispose the monitor: end the reboot-observation loop and any recovery wait, detach the throttle subscriptions, and tear the events stream down. Idempotent.
+Dispose the monitor: end the reboot-observation loop and any recovery wait, detach the throttle subscriptions, and tear the events stream down. A no-op on repeat.
 
 #### Returns
 

@@ -19,7 +19,7 @@ on) is expressed through `update` payloads rather than bespoke methods.
 | Property | Modifier | Type | Default value | Description | Overrides | Inherited from |
 | ------ | ------ | ------ | ------ | ------ | ------ | ------ |
 | <a id="id"></a> `id` | `readonly` | `string` | `undefined` | The device's stable id. | - | [`DeviceProjection`](DeviceProjection.md).[`id`](DeviceProjection.md#id) |
-| <a id="modelkey"></a> `modelKey` | `readonly` | `"camera"` | `"camera"` | The device category discriminant, fixed by the concrete subclass. | [`DeviceProjection`](DeviceProjection.md).[`modelKey`](DeviceProjection.md#modelkey) | - |
+| <a id="modelkey"></a> `modelKey` | `readonly` | `"camera"` | `"camera"` | The device category tag, fixed by the concrete subclass. | [`DeviceProjection`](DeviceProjection.md).[`modelKey`](DeviceProjection.md#modelkey) | - |
 
 ## Accessors
 

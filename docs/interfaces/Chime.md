@@ -22,7 +22,7 @@ all, and the controller advertises no per-chime flag for any of them - so, like 
 | Property | Modifier | Type | Default value | Description | Overrides | Inherited from |
 | ------ | ------ | ------ | ------ | ------ | ------ | ------ |
 | <a id="id"></a> `id` | `readonly` | `string` | `undefined` | The device's stable id. | - | [`DeviceProjection`](DeviceProjection.md).[`id`](DeviceProjection.md#id) |
-| <a id="modelkey"></a> `modelKey` | `readonly` | `"chime"` | `"chime"` | The device category discriminant, fixed by the concrete subclass. | [`DeviceProjection`](DeviceProjection.md).[`modelKey`](DeviceProjection.md#modelkey) | - |
+| <a id="modelkey"></a> `modelKey` | `readonly` | `"chime"` | `"chime"` | The device category tag, fixed by the concrete subclass. | [`DeviceProjection`](DeviceProjection.md).[`modelKey`](DeviceProjection.md#modelkey) | - |
 
 ## Accessors
 

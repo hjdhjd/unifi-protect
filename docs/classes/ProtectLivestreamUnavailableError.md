@@ -6,7 +6,7 @@
 
 # Class: ProtectLivestreamUnavailableError
 
-A pooled livestream's recovery policy gave up. The `phase` discriminates the two regimes the pool runs: `establishing` means the first segment never arrived within
+A pooled livestream's recovery policy gave up. The `phase` names which of the two regimes the pool runs: `establishing` means the first segment never arrived within
 the bounded establishment deadline (the stream that never produced media), and `recovering` means a previously-live stream could not be re-established and the policy
 elected to stop. Fatal because the policy - the single authority over whether to keep trying - has declared the stream unrecoverable; the consumer re-subscribes if it
 still wants the stream. `attempts` carries how many consecutive reconnect attempts the episode made before the policy returned `giveUp`.

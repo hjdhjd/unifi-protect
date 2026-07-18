@@ -107,7 +107,7 @@ asyncDispose: Promise<void>;
 ```
 
 Dispose the subscription: detach it from its shared session (decrementing the reference count, which tears the session down if it was the last), end any in-flight
-iteration, and detach the consumer's abort listener. Idempotent.
+iteration, and detach the consumer's abort listener. Safe to call more than once.
 
 #### Returns
 

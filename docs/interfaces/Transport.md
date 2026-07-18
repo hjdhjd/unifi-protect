@@ -18,7 +18,7 @@ The breaker is the canonical three-state model - `closed -> open -> half-open ->
   only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
 
 Reachability lives here; session validity lives in `AuthSession`. The breaker never calls login to probe recovery - the next real request is
-the probe, and the orthogonal 401-relogin concern is the injected `onUnauthorized` seam. The clock is injected so every transition is deterministically testable.
+the probe, and the independent 401-relogin concern is the injected `onUnauthorized` seam. The clock is injected so every transition is deterministically testable.
 
 ## Implements
 

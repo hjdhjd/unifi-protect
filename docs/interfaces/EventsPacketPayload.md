@@ -6,7 +6,7 @@
 
 # Interface: EventsPacketPayload
 
-Payload published on [channels.eventsPacket](../variables/channels.md#property-eventspacket). `kind` is a `TypedEvent` discriminant; `modelKey` and `id` are present for device-scoped events.
+Payload published on [channels.eventsPacket](../variables/channels.md#property-eventspacket). `kind` is a `TypedEvent` tag; `modelKey` and `id` are present for device-scoped events.
 
 ## Properties
 
