@@ -39,7 +39,7 @@ import type { ProtectViewerConfig } from "./viewer.ts";
 
 /**
  * The union of every device-config record the reducer maintains as canonical state. A realtime device transition (`deviceAdded` / `devicePatched`) carries one of
- * these shapes, discriminated by the packet's `modelKey`. The NVR config is included because the controller emits `modelKey: "nvr"` updates that patch the NVR's
+ * these shapes, distinguished by the packet's `modelKey`. The NVR config is included because the controller emits `modelKey: "nvr"` updates that patch the NVR's
  * own configuration through the same dispatch path as any other device. Consumers narrow on `modelKey` (or on a structural field) to recover the specific shape.
  */
 export type ProtectKnownDevice = ProtectCameraConfig | ProtectChimeConfig | ProtectFobConfig | ProtectLightConfig | ProtectNvrConfig | ProtectRelayConfig |
@@ -47,7 +47,7 @@ export type ProtectKnownDevice = ProtectCameraConfig | ProtectChimeConfig | Prot
 
 /**
  * The union of every config record the reducer stores in {@link ProtectState}: the devices and NVR of {@link ProtectKnownDevice}, plus the controller's user and liveview
- * records. A realtime state transition (`deviceAdded` / `devicePatched`) carries one of these, discriminated by the packet's `modelKey`. The `user` roster is included
+ * records. A realtime state transition (`deviceAdded` / `devicePatched`) carries one of these, distinguished by the packet's `modelKey`. The `user` roster is included
  * because the controller emits `modelKey: "user"` updates - permission and login changes - on the realtime stream; the `liveview` collection because it emits
  * `modelKey: "liveview"` updates as liveviews are added, edited, or removed. The reducer folds both in through the same dispatch path as any device. This widens
  * {@link ProtectKnownDevice} by exactly the record types the user roster (`user`) and the liveview collection (`liveview`) introduce; consumers narrow on `modelKey` to

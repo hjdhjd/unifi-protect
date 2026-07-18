@@ -7,7 +7,7 @@
  * Pre-built selectors over {@link ProtectState}. Every selector is a **pure function returning config records** (`ProtectCameraConfig`, ...), never a Layer-3 `Camera`
  * projection - selectors live in the data layer, and a projection needs the client (Layer 3, built by the `DeviceRegistry`).
  *
- * Returning config records is load-bearing, not stylistic. {@link StateStore.observe} detects change with `Object.is`; the reducer keeps a record's reference stable
+ * Returning config records is required, not stylistic. {@link StateStore.observe} detects change with `Object.is`; the reducer keeps a record's reference stable
  * across dispatches that did not touch it (structural sharing), and these selectors keep a *derived array's* reference stable across dispatches that did not touch its
  * backing map (memoization on map identity). A selector that constructed a fresh `Camera` on each call would compare unequal every time, fire every observer on every
  * dispatch, and defeat the "refresh is invisible when nothing drifted" guarantee.

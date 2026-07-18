@@ -76,7 +76,7 @@ export interface EventStreamOptions {
  * - `error` carries a typed {@link ProtectError} - a decode failure, a socket error, a {@link ProtectStallError} from the silence watchdog, or a {@link
  *   ProtectNetworkError} when the peer closes a live socket unsolicited (a controller reboot drops the socket this way: a `close` event with no preceding socket
  *   `error`). Every termination we did not initiate reaches this rail; a self-initiated close stays informational on `closed`, and a caller-signal abort before open
- *   surfaces on the {@link EventStream.opened} handshake rejection as {@link ProtectAbortedError} rather than here. The error *type* is the discriminant the
+ *   surfaces on the {@link EventStream.opened} handshake rejection as {@link ProtectAbortedError} rather than here. The error *type* is what the
  *   `ConnectionMonitor` acts on.
  *
  * @category Transport
@@ -316,7 +316,7 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * Close the stream: request the WebSocket close, detach every listener, end the watchdog, and destroy the owned agent. Idempotent and awaitable.
+   * Close the stream: request the WebSocket close, detach every listener, end the watchdog, and destroy the owned agent. Safe to call more than once, and awaitable.
    */
   async close(): Promise<void> {
 

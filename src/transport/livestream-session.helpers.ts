@@ -4,7 +4,7 @@
  * values mirror the (private) LiveFrame map in livestream-session.ts; each frame is a 1-byte type, a 3-byte big-endian length, then the payload.
  */
 
-// Frame-type discriminator bytes. Mirror the production LiveFrame map byte-for-byte.
+// Frame-type tag bytes. Mirror the production LiveFrame map byte-for-byte.
 export const FRAME_TIMESTAMP = 247;
 export const FRAME_CODEC_INFORMATION = 248;
 export const FRAME_BEGIN_SEGMENT = 249;

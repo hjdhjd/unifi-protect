@@ -117,7 +117,7 @@ function kindColor(colors: Output["colors"], kind: TypedEvent["kind"]): (text: s
   }
 }
 
-// A compact, human-readable detail suffix for an event - the discriminating fields for its kind. Activity signals carry their occurrence id (so start and finalize
+// A compact, human-readable detail suffix for an event - the distinguishing fields for its kind. Activity signals carry their occurrence id (so start and finalize
 // correlate); a patch lists the fields it touched; an add/remove names the modelKey.
 function eventDetail(event: TypedEvent): string | undefined {
 

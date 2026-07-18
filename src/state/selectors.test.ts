@@ -111,7 +111,7 @@ describe("selectors", () => {
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true, name: "Front" })] }));
       const before = deviceSelectors.camera.adoptedIds(state);
       // A name patch rebuilds the camera map (its identity changes), but the adopted-id set is unchanged - so the membership selector must hand back the prior array.
-      // This is the load-bearing property: an identity-memoized selector would wake the observer here; the content-memoized one does not.
+      // This is the whole point: an identity-memoized selector would wake the observer here; the content-memoized one does not.
       const churned = reduce(state, { id: "c1", kind: "devicePatched", modelKey: "camera", patch: { name: "Renamed" } });
 
       assert.ok(!Object.is(deviceSelectors.camera.all(state), deviceSelectors.camera.all(churned)),

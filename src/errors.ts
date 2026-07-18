@@ -236,13 +236,13 @@ export class ProtectProtocolError extends FatalError {
  *
  * @returns Never returns - always throws.
  *
- * @throws {@link ProtectProtocolError} always, naming the unhandled variant's discriminant.
+ * @throws {@link ProtectProtocolError} always, naming the unhandled variant's tag.
  *
  * @category Errors
  */
 export function assertNever(value: never): never {
 
-  // `value` is statically `never`, so we read its runtime shape defensively: an object variant surfaces its `kind` discriminant, anything else (a bare string such as a
+  // `value` is statically `never`, so we read its runtime shape defensively: an object variant surfaces its `kind` tag, anything else (a bare string such as a
   // modelKey) surfaces its string form.
   const variant = value as unknown;
   const detail = ((typeof variant === "object") && (variant !== null) && ("kind" in variant)) ? String(variant.kind) : String(variant);
@@ -251,7 +251,7 @@ export function assertNever(value: never): never {
 }
 
 /**
- * The bootstrap sequence failed while fetching or parsing the controller bootstrap document. `stage` discriminates which - `"fetch"` when the bootstrap endpoint returns
+ * The bootstrap sequence failed while fetching or parsing the controller bootstrap document. `stage` marks which - `"fetch"` when the bootstrap endpoint returns
  * a non-2xx status or the transport fails reaching it, `"parse"` when the body cannot be decoded - so the caller and the diagnostics surface can report the precise point
  * of failure rather than a generic "connect failed." A login or reachability failure is not wrapped here; it propagates as its own typed fatal.
  *
@@ -271,7 +271,7 @@ export class ProtectBootstrapError extends FatalError {
 }
 
 /**
- * The stages of the `connect()` sequence, used to discriminate a {@link ProtectBootstrapError}. The sequence authenticates, fetches the bootstrap document, parses it,
+ * The stages of the `connect()` sequence, used to tag a {@link ProtectBootstrapError}. The sequence authenticates, fetches the bootstrap document, parses it,
  * then subscribes to the realtime stream; only the fetch and parse stages are wrapped as a bootstrap error, because a login or reachability failure already propagates as
  * its own typed fatal (`ProtectAuthError` / `ProtectNetworkError`).
  *
@@ -305,7 +305,7 @@ export class ProtectCodecChangeError extends FatalError {
 }
 
 /**
- * A pooled livestream's recovery policy gave up. The `phase` discriminates the two regimes the pool runs: `establishing` means the first segment never arrived within
+ * A pooled livestream's recovery policy gave up. The `phase` names which of the two regimes the pool runs: `establishing` means the first segment never arrived within
  * the bounded establishment deadline (the stream that never produced media), and `recovering` means a previously-live stream could not be re-established and the policy
  * elected to stop. Fatal because the policy - the single authority over whether to keep trying - has declared the stream unrecoverable; the consumer re-subscribes if it
  * still wants the stream. `attempts` carries how many consecutive reconnect attempts the episode made before the policy returned `giveUp`.

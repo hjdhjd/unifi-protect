@@ -291,7 +291,7 @@ export class TalkbackSession implements AsyncDisposable {
   }
 
   /**
-   * Close the session: request the WebSocket close, detach every listener, and destroy the owned agent. Idempotent and awaitable. An in-flight {@link
+   * Close the session: request the WebSocket close, detach every listener, and destroy the owned agent. Safe to call more than once, and awaitable. An in-flight {@link
    * TalkbackSession.send} rejects.
    */
   async close(): Promise<void> {

@@ -340,7 +340,7 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
 
   /**
    * Dispose the subscription: detach it from its shared session (decrementing the reference count, which tears the session down if it was the last), end any in-flight
-   * iteration, and detach the consumer's abort listener. Idempotent.
+   * iteration, and detach the consumer's abort listener. Safe to call more than once.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
@@ -519,8 +519,8 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
 // producing segments, so the window times out as `elapsed`, which keeps the model uniform (failure is always "no media segment in the window").
 type RecoveryOutcome = "aborted" | "elapsed" | "reassess" | "recovered";
 
-// The per-install one-shot latches that must move in lockstep with every freshly-installed session, consolidated into one object so the lockstep invariant is enforced
-// by structure rather than by separate booleans a future edit could desynchronize. They are all reset atomically in `#installSession` and consumed at most once over
+// The per-install one-shot latches that must move in lockstep with every freshly-installed session, consolidated into one object so the lockstep is enforced by
+// structure rather than by separate booleans a future edit could desynchronize. They are all reset atomically in `#installSession` and consumed at most once over
 // that session's life:
 //
 // - `awaitingFirstSegment` gates the codec-gate / init point: the very first segment of a freshly-installed session (normally the init) routes to `#handleFirstSegment`.
@@ -822,7 +822,7 @@ class ManagedSession implements SubscriptionHost {
 
     // Disarm the media-stall watchdog before installing the replacement session: a reconnect is leaving the live domain for a recovery window, so the watchdog (valid
     // only while live) must not survive into it - and the recovery-loop window and the watchdog are never both live, strictly sequential at the first-media boundary. The
-    // disarm is idempotent, so it is a safe no-op on a multi-attempt establishment that reinstalls before any media ever armed it.
+    // disarm is a no-op on repeat, so it is safe on a multi-attempt establishment that reinstalls before any media ever armed it.
     this.#disarmWatchdog();
 
     for(const rail of this.#currentRails) {
@@ -1021,7 +1021,7 @@ class ManagedSession implements SubscriptionHost {
     void this.#runWatchdog(this.#watchdogController.signal).then(() => undefined, () => undefined);
   }
 
-  // Disarm the media-stall watchdog. Aborts the interval loop (ending it cleanly) and clears the handle. Idempotent: a safe no-op when the watchdog was never armed (a
+  // Disarm the media-stall watchdog. Aborts the interval loop (ending it cleanly) and clears the handle. A no-op on repeat, and when the watchdog was never armed (a
   // stream torn down or reconnected before any media flowed), so both `#installSession` and `#teardown` can call it unconditionally.
   #disarmWatchdog(): void {
 

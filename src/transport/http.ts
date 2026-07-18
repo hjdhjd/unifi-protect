@@ -257,7 +257,7 @@ export class ProtectResponse {
  *   only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
  * Reachability lives here; session validity lives in `AuthSession`. The breaker never calls login to probe recovery - the next real request is
- * the probe, and the orthogonal 401-relogin concern is the injected `onUnauthorized` seam. The clock is injected so every transition is deterministically testable.
+ * the probe, and the independent 401-relogin concern is the injected `onUnauthorized` seam. The clock is injected so every transition is deterministically testable.
  *
  * @category Transport
  */
@@ -595,7 +595,7 @@ export class Transport implements AsyncDisposable {
   // Build the owned connection pool: self-signed certs accepted (controllers ship them), HTTP/2 enabled and preferred in the ALPN offer so a controller that supports
   // it negotiates h2 rather than falling back to HTTP/1.1, five concurrent connections, a 60-second client TTL so each pooled connection is recycled roughly once a
   // minute rather than kept alive indefinitely (bounding how long a keepalive socket to a controller that has since rebooted or silently dropped the link can linger
-  // before it is retired), a fixed user-agent, and the exponential-backoff retry interceptor. The retried set is the conventionally idempotent verbs plus POST: the
+  // before it is retired), a fixed user-agent, and the exponential-backoff retry interceptor. The retried set is the conventionally retry-safe verbs plus POST: the
   // interceptor only fires on the transient controller-readiness codes in RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable -
   // conditions in which the controller was not in a state to accept and act on the request - so re-sending a POST does not risk double-applying one that already took
   // effect. PATCH is held out of the set even so, because the config writes it carries are the one place a double-apply would be consequential and the undocumented API
@@ -608,7 +608,7 @@ export class Transport implements AsyncDisposable {
 
       // This cast is safe only because this composed pool's one caller, Transport.#dispatch, always passes headers as a plain object - never the string[] or
       // iterable-of-tuples forms undici's UndiciHeaders union otherwise permits, on which a bracket assignment would silently fail to add a usable header rather than
-      // throw. A future caller of this interceptor, or a refactor of #dispatch, must preserve that plain-object invariant.
+      // throw. A future caller of this interceptor, or a refactor of #dispatch, must keep passing headers as a plain object.
       (dispatchOptions.headers as Record<string, string | string[]>)["user-agent"] = "unifi-protect";
 
       return dispatch(dispatchOptions, handler);

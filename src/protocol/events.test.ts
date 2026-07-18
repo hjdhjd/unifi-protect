@@ -271,7 +271,7 @@ describe("classifyPacket - activity signals (event model key only)", () => {
   test("an unrecognized fingerprint scan (matched no identity) still classifies as authDetected - the scan is classified, the match is data", () => {
 
     // Live capture: a fingerprint the reader cannot match to a user arrives camera-attributed with `metadata.fingerprint.ulpId: null`. Classification
-    // discriminates on the auth `type`, so the occurrence still classifies; whether an identity matched is data the consumer reads from metadata,
+    // branches on the auth `type`, so the occurrence still classifies; whether an identity matched is data the consumer reads from metadata,
     // never a classification input.
     const result = classifyPacket(pkt({ action: "add", id: "evt-fu", modelKey: "event",
       payload: { camera: "camera-1", metadata: { fingerprint: { ulpId: null } }, start: 555, type: "fingerprintIdentified" } }));
@@ -433,7 +433,7 @@ describe("eventSubjects", () => {
 
   test("the synthetic bootstrap concerns no single record", () => {
 
-    // We only need the discriminant here; the bootstrap payload shape is immaterial to attribution, so we cast past it.
+    // We only need the tag here; the bootstrap payload shape is immaterial to attribution, so we cast past it.
     assert.deepEqual(eventSubjects({ kind: "bootstrapLoaded" } as unknown as TypedEvent), []);
   });
 

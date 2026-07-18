@@ -307,7 +307,7 @@ describe("TalkbackSession", () => {
 
   describe("teardown", () => {
 
-    test("close() requests the socket close, sets state closed, and is idempotent", async () => {
+    test("close() requests the socket close, sets state closed, and is safe to call more than once", async () => {
 
       const { session, ws } = await openSession();
 

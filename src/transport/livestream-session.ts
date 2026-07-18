@@ -77,7 +77,7 @@ export type LivestreamState = "idle" | "connecting" | "handshaking" | "live" | "
 
 /**
  * The mutually-exclusive livestream source selector. A livestream is captured EITHER from a quality channel on the primary sensor OR from a secondary lens (which the
- * controller always addresses on channel 0); the two can never be combined. Tag-discriminated (matching {@link Segment}) so the discriminant is authoritative regardless
+ * controller always addresses on channel 0); the two can never be combined. Tagged (matching {@link Segment}) so the tag is authoritative regardless
  * of how the value is built, and so the illegal "a non-zero channel paired with a lens" request is unrepresentable at the type level rather than silently coerced.
  *
  * @category Transport
@@ -163,7 +163,7 @@ export type Segment =
  *   {@link ProtectError} cause an initiated teardown recorded - a caller abort, a failed negotiation, a socket error, or the watchdog stall - and omitted for a plain
  *   or spontaneous close.
  * - `error` carries a typed {@link ProtectError} - a {@link ProtectStallError} from the watchdog, or a {@link ProtectNetworkError} from a negotiation or socket failure.
- *   The error *type* is the discriminant a subscriber acts on.
+ *   The error *type* is what a subscriber acts on.
  *
  * @category Transport
  */
@@ -408,7 +408,7 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   /**
-   * Close the session: request the WebSocket close, detach every listener, end the watchdog, and destroy the owned agent. Idempotent and awaitable.
+   * Close the session: request the WebSocket close, detach every listener, end the watchdog, and destroy the owned agent. Safe to call more than once, and awaitable.
    */
   async close(): Promise<void> {
 

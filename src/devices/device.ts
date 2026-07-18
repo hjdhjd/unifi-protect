@@ -124,7 +124,7 @@ export abstract class Projection<TConfig> {
 
 /**
  * The shared base of every *device* projection (`Camera`, `Chime`, `Fob`, `Light`, `Relay`, `Sensor`, `Viewer`). It extends the read-only {@link Projection} core with
- * what every device category adds: a stable `id`, the `modelKey` discriminant, the `name` / `isOnline` getters, and the write-through `update` and `reboot` commands
+ * what every device category adds: a stable `id`, the `modelKey` tag, the `name` / `isOnline` getters, and the write-through `update` and `reboot` commands
  * (every Protect device type exposes a reboot endpoint).
  *
  * Commands are **write-through**: `update` PATCHes the controller and returns the same live handle, but does *not* fold the response into the store. State advances
@@ -141,7 +141,7 @@ export abstract class DeviceProjection<TConfig extends ProtectDeviceConfig> exte
   /** The device's stable id. */
   readonly id: string;
 
-  /** The device category discriminant, fixed by the concrete subclass. */
+  /** The device category tag, fixed by the concrete subclass. */
   abstract readonly modelKey: DeviceModelKey;
 
   protected constructor(ctx: DeviceContext, id: string, select: (id: string) => (state: ProtectState) => TConfig | undefined) {
