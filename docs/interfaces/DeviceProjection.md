@@ -7,7 +7,7 @@
 # Abstract Interface: DeviceProjection\<TConfig\>
 
 The shared base of every *device* projection (`Camera`, `Chime`, `Fob`, `Light`, `Relay`, `Sensor`, `Viewer`). It extends the read-only [Projection](Projection.md) core with
-what every device category adds: a stable `id`, the `modelKey` discriminant, the `name` / `isOnline` getters, and the write-through `update` and `reboot` commands
+what every device category adds: a stable `id`, the `modelKey` tag, the `name` / `isOnline` getters, and the write-through `update` and `reboot` commands
 (every Protect device type exposes a reboot endpoint).
 
 Commands are **write-through**: `update` PATCHes the controller and returns the same live handle, but does *not* fold the response into the store. State advances
@@ -40,7 +40,7 @@ effect once the stream (or the next refresh) delivers it, not synchronously afte
 | Property | Modifier | Type | Description |
 | ------ | ------ | ------ | ------ |
 | <a id="id"></a> `id` | `readonly` | `string` | The device's stable id. |
-| <a id="modelkey"></a> `modelKey` | `abstract` | \| `"camera"` \| `"chime"` \| `"fob"` \| `"light"` \| `"relay"` \| `"sensor"` \| `"viewer"` \| `"nvr"` | The device category discriminant, fixed by the concrete subclass. |
+| <a id="modelkey"></a> `modelKey` | `abstract` | \| `"camera"` \| `"chime"` \| `"fob"` \| `"light"` \| `"relay"` \| `"sensor"` \| `"viewer"` \| `"nvr"` | The device category tag, fixed by the concrete subclass. |
 
 ## Accessors
 

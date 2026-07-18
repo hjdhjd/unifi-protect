@@ -30,7 +30,7 @@ fresh state reference (the store's dispatch gate relies on this), surfaced for d
 
 There is deliberately no `lastEventAt` here. Channel liveness is intrinsic to the realtime channel, so the events-WebSocket watchdog reads its timestamp from the
 `EventStream` (which clock-stamps every message), not from this state: a pure reducer cannot write a wall-clock field without minting a new state reference on every
-packet, which would destroy the no-op/structural-sharing invariant the observation layer depends on.
+packet, which would destroy the no-op/structural-sharing guarantee the observation layer depends on.
 
 Beyond devices, the state carries session identity and the controller's read-only collections, all lifted from the bootstrap: `authUserId` (the authenticated session's
 user id, a singleton like `nvr`), `users` (the controller's roster), `liveviews` (the saved camera layouts), and `ringtones` (the chime ringtone library), each
