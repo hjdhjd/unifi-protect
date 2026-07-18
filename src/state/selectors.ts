@@ -103,7 +103,7 @@ export interface CollectionViews<T> {
 /**
  * The selectors every *device* collection exposes: the {@link CollectionViews} pair (records, memoized on map identity), the connected-only subset, and the
  * content-memoized set of ids adopted by this controller - the membership set a reactive consumer observes to react to devices being adopted or removed without waking on
- * every config patch. See {@link memoizeArrayByContent} for the content-vs-identity memoization distinction `adoptedIds` rests on.
+ * every config patch. See `memoizeArrayByContent` for the content-vs-identity memoization distinction `adoptedIds` rests on.
  *
  * @typeParam T - The collection's config record type.
  *
