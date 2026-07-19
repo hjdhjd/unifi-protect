@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.2.0 (2026-07-19)
+  * Breaking change: the flat per-category selector exports (`selectCameras`, `selectOnlineCameras`, `selectAdoptedCameraIds`, `selectCamera`, and their siblings across every device category) are replaced by `deviceSelectors`, a single category-keyed selector catalog - one exactly-typed selector set per device category (`all`, `online`, `adoptedIds`, `byId`), with the collection vocabulary (`DeviceCollectionKey`, `DEVICE_COLLECTION_KEYS`) exported alongside it. Consumers using the `client.cameras` / `client.camera(id)` projections are unaffected.
+  * Improvement: `livestreamAudioSampleRate`, an exported helper returning the audio sample rate a camera's livestream delivers - 48 kHz on a doorbell, 16 kHz on everything else - so consumers can configure a downstream audio pipeline from the camera's capabilities instead of hardcoding the rates.
+  * Improvement: the HTTP diagnostics payloads now carry the controller host, verbatim as supplied to `ProtectClient.connect()`, so a multi-controller consumer can attribute every payload on the process-global diagnostics channel to the controller that produced it.
+  * Improvement: `createStateStore`, a test-construction factory for the state store, so consumers can drive state-dependent code in their own tests without a live controller.
+  * Improvement: a livestream session's closure now records its typed cause - a caller abort, a failed negotiation, a socket error, or a watchdog stall - on the diagnostics surface, so an initiated teardown is distinguishable from a spontaneous close.
+  * Improvement: calling `reassess()` on a livestream subscription you have already disposed is now a no-op, so a departed consumer can no longer re-decide an in-flight recovery episode that its sibling subscribers still own.
+  * Housekeeping.
+
 ## 5.1.0 (2026-07-14)
   * New feature: `discardOnDispose`, an opt-in on livestream subscriptions that drops undelivered segments when a subscription is disposed, for consumers that would rather abandon a backlog than drain it.
   * Improvement: a livestream subscription's establishment wait now settles immediately when the subscription is disposed or its signal aborts, instead of waiting out the connection attempt.
