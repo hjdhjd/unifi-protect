@@ -133,7 +133,11 @@ export class AuthSession {
    */
   async login(credentials: ProtectCredentials, opts: { signal?: AbortSignal } = {}): Promise<void> {
 
-    this.#credentials = credentials;
+    /* We snapshot the credentials rather than holding the caller's object. The handshake and the relogin's stale-session guard read this field long after login()
+     * returns and compare it by reference to decide whether an in-flight handshake still belongs to the current session, so the session's identity needs to be its
+     * own - independent of anything the caller later does with the object it passed us.
+     */
+    this.#credentials = { ...credentials };
 
     if(!(await this.#handshake(opts.signal))) {
 
