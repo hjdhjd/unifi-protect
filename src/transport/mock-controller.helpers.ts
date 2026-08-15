@@ -21,8 +21,8 @@ export interface MockTransport {
   transport: Transport;
 }
 
-// Build a Transport backed by a MockAgent and a fake clock. Optional seams (getAuthHeaders, onUnauthorized, log) are forwarded only when supplied so the transport
-// sees them absent rather than literal-undefined under exactOptionalPropertyTypes.
+// Build a Transport backed by a MockAgent and a fake clock. Optional dependencies (getAuthHeaders, onUnauthorized, log) are forwarded only when supplied so the
+// transport sees them absent rather than literal-undefined under exactOptionalPropertyTypes.
 export function makeMockTransport(options: {
   getAuthHeaders?: () => Record<string, string>;
   host?: string;

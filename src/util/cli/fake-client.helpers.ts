@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * fake-client.helpers.ts: A minimal, configurable fake ProtectClient and command-context harness for unit-testing CLI commands through the injected openClient seam.
+ * fake-client.helpers.ts: A minimal, configurable fake ProtectClient and command-context harness for unit-testing CLI commands through the injected openClient hook.
  */
 import type { PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment, TypedEvent } from "../../index.ts";
 import type { CommandContext } from "./shared.ts";
@@ -228,7 +228,7 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
 
 /**
  * Build a fake {@link ProtectClient} and a record of the calls commands make against it. Sufficient for unit-testing the CLI commands through the injected `openClient`
- * seam: device collections and lookups, snapshot/livestream/update/reboot, the controller reboot, the realtime firehose, and the derived getters. It is intentionally
+ * hook: device collections and lookups, snapshot/livestream/update/reboot, the controller reboot, the realtime firehose, and the derived getters. It is intentionally
  * minimal - tests configure only what the command under test reads - and is cast to `ProtectClient` at the one boundary where a structural fake meets the nominal type.
  *
  * @param options - The devices, NVR, derived facts, and scripted events the fake should report.

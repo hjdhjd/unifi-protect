@@ -69,7 +69,7 @@ export interface RequestOptions {
  *   passes `false` so its own 401 cannot recurse back into relogin.
  * - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the
  *   `ConnectionMonitor`'s cadence rather than waiting out the 300-second cooldown, while still booking its outcome through the normal path - so a successful probe
- *   closes the breaker exactly as the autonomous half-open trial would. Only the monitor's recovery seams (`verify`, recovery `reBootstrap`) pass `true`; the refresh
+ *   closes the breaker exactly as the autonomous half-open trial would. Only the monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh
  *   failsafe and device commands leave it `false` and stay gated, so the breaker still protects against operational hammering.
  *
  * @category Transport
@@ -81,12 +81,12 @@ export interface SendOptions extends RequestOptions {
 }
 
 /**
- * Construction options for {@link Transport}. `host` is the controller address; everything else is an injected seam.
+ * Construction options for {@link Transport}. `host` is the controller address; everything else is an injected dependency.
  *
  * - `dispatcher` substitutes the undici dispatcher (an `undici.MockAgent` in tests, or a consumer-supplied pool). When injected, the transport never destroys or
  *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher.
  * - `getAuthHeaders` supplies the cookie + CSRF headers stamped onto every request. `onUnauthorized` is the relogin hook invoked on a 401 before a single retry.
- *   Both point upward at `AuthSession`, so they are passed as plain function seams (dependency inversion) rather than an `AuthSession` import.
+ *   Both point upward at `AuthSession`, so they are passed as plain function references (dependency inversion) rather than an `AuthSession` import.
  *
  * @category Transport
  */
@@ -257,7 +257,7 @@ export class ProtectResponse {
  *   only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
  * Reachability lives here; session validity lives in `AuthSession`. The breaker never calls login to probe recovery - the next real request is
- * the probe, and the independent 401-relogin concern is the injected `onUnauthorized` seam. The clock is injected so every transition is deterministically testable.
+ * the probe, and the independent 401-relogin concern is the injected `onUnauthorized` hook. The clock is injected so every transition is deterministically testable.
  *
  * @category Transport
  */
@@ -599,7 +599,7 @@ export class Transport implements AsyncDisposable {
   // interceptor only fires on the transient controller-readiness codes in RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable -
   // conditions in which the controller was not in a state to accept and act on the request - so re-sending a POST does not risk double-applying one that already took
   // effect. PATCH is held out of the set even so, because the config writes it carries are the one place a double-apply would be consequential and the undocumented API
-  // offers no idempotency guarantee.
+  // promises nothing about what a repeated write does.
   #buildPool(): Dispatcher {
 
     const userAgent: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {

@@ -56,7 +56,7 @@ import { wallClock } from "../clock.ts";
 
 /**
  * Options for {@link ProtectClient.connect}. `host`, `username`, and `password` are the required controller address and credentials; the rest are optional injected
- * seams, each defaulted at the composition root:
+ * dependencies, each defaulted at the composition root:
  *
  * - `clock` is the time source threaded into every subsystem (transport, store, event stream, livestream pool); it defaults to the wall clock, and tests inject a
  *   fake to drive timers deterministically.
@@ -68,7 +68,7 @@ import { wallClock } from "../clock.ts";
  *   failsafe entirely so the consumer relies solely on the realtime event stream.
  * - `signal` cancels the initial login and bootstrap fetch; it is bound only to connect, never to a later recovery relaunch.
  * - `webSocket` is the receive-direction {@link ProtectWebSocket} factory used by the events stream and livestream pool; it defaults to a real socket and is the
- *   socket-injection seam for tests. It does not apply to the write-direction talkback socket.
+ *   socket-injection point for tests. It does not apply to the write-direction talkback socket.
  *
  * @category Client
  */
@@ -104,7 +104,7 @@ export interface ProtectClientEvents {
 }
 
 // The internal parts the private constructor assembles into a client. Built by `connect()` once login and the initial bootstrap have succeeded; the constructor wires the
-// ConnectionMonitor from the events-channel seams (factory, re-bootstrap, verify) and the firehose packet sink, then `connect()` awaits the monitor's initial open.
+// ConnectionMonitor from the events-channel hooks (factory, re-bootstrap, verify) and the firehose packet sink, then `connect()` awaits the monitor's initial open.
 interface ProtectClientParts {
 
   auth: AuthSession;
@@ -128,7 +128,7 @@ function bootstrapUrl(host: string): string {
   return "https://" + host + "/proxy/protect/api/bootstrap";
 }
 
-// Probe the controller's liveness with a GET against the bootstrap endpoint - the ConnectionMonitor's verify() seam. We use GET, not HEAD: the controller does not answer
+// Probe the controller's liveness with a GET against the bootstrap endpoint - the ConnectionMonitor's verify() hook. We use GET, not HEAD: the controller does not answer
 // HEAD there (it stalls until the deadline elapses and the retries exhaust, so a HEAD probe never succeeds - live validation found recovery could never complete because
 // of this), whereas the GET the connect and refresh paths already use responds promptly. The response body is buffered and discarded; the bootstrap payload is small, so
 // this stays a cheap liveness check next to a full re-bootstrap (which also parses and dispatches it). Resolves on a 2xx, throws otherwise. The send carries `probe:
@@ -216,7 +216,7 @@ export class ProtectClient implements AsyncDisposable {
       this.#bus.emit("rawPacket", packet);
     };
 
-    // Build the connection monitor from the events-channel seams. Its constructor begins connecting the initial events stream synchronously and attaches the packet sink
+    // Build the connection monitor from the events-channel hooks. Its constructor begins connecting the initial events stream synchronously and attaches the packet sink
     // before anything awaits the open handshake, so the race-free "subscribe before open" property holds.
     this.#connection = new ConnectionMonitor({
 
@@ -237,7 +237,7 @@ export class ProtectClient implements AsyncDisposable {
   /**
    * Connect to a Protect controller. Logs in, fetches the initial bootstrap, seeds the reducer, and wires the periodic refresh failsafe - all as one atomic operation.
    *
-   * @param opts - The controller address, credentials, and optional seams (logger, clock, refresh interval, injected dispatcher, abort signal).
+   * @param opts - The controller address, credentials, and optional overrides (logger, clock, refresh interval, injected dispatcher, abort signal).
    *
    * @returns A fully-ready client.
    *
@@ -249,7 +249,7 @@ export class ProtectClient implements AsyncDisposable {
     const clock = opts.clock ?? wallClock;
     const log = opts.log ?? noopLog;
 
-    // Wire the transport's auth seams to the session through a late-binding closure: the arrows below run only when a request is dispatched, which is strictly after
+    // Wire the transport's auth hooks to the session through a late-binding closure: the arrows below run only when a request is dispatched, which is strictly after
     // `auth` is assigned, so there is no temporal-dead-zone hazard. This is what lets the transport stamp auth headers and trigger relogin without importing upward. The
     // `let` is required (not the single-assignment `const` prefer-const wants) precisely because those closures capture `auth` before it is assigned.
     // eslint-disable-next-line prefer-const
@@ -284,7 +284,7 @@ export class ProtectClient implements AsyncDisposable {
       throw error;
     }
 
-    // Stage 3: assemble the store, seed it with the bootstrap through the single dispatch chokepoint, and wire the refresh failsafe. The refresh seam is the same
+    // Stage 3: assemble the store, seed it with the bootstrap through the single dispatch chokepoint, and wire the refresh failsafe. The refresh hook is the same
     // bootstrap fetch with no caller signal - the store owns its own lifetime and aborts the loop on disposal.
     const store = new StateStore({
 
@@ -296,10 +296,10 @@ export class ProtectClient implements AsyncDisposable {
 
     store.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
 
-    // Stage 4: build the events-channel seams the ConnectionMonitor drives. The factory is the single events-stream construction path - used for the initial stream and
+    // Stage 4: build the events-channel hooks the ConnectionMonitor drives. The factory is the single events-stream construction path - used for the initial stream and
     // every recovery relaunch; its optional signal is bound only to the initial connect. `reBootstrap` reuses the shared bootstrap fetch and the store's single dispatch
     // chokepoint, returning the fresh `lastUpdateId` to seed a relaunch. `verify` is the GET liveness probe (a HEAD probe stalls against this controller - see
-    // `probeBootstrap`). The auth-header seam mirrors the transport's.
+    // `probeBootstrap`). The auth-header hook mirrors the transport's.
     const eventStreamFactory = (lastUpdateId: string, signal?: AbortSignal): EventStream => new EventStream({
 
       clock,
@@ -324,7 +324,7 @@ export class ProtectClient implements AsyncDisposable {
 
     const verify = (signal?: AbortSignal): Promise<void> => probeBootstrap(transport, opts.host, signal);
 
-    // The livestream pool, composed with the transport-backed URL resolver and the shared WebSocket factory seam. It owns no transport itself - it negotiates through the
+    // The livestream pool, composed with the transport-backed URL resolver and the shared WebSocket factory. It owns no transport itself - it negotiates through the
     // injected resolver - and lazily opens an underlying session only when a camera is first subscribed.
     const livestreamPool = new LivestreamPool({
 
@@ -338,7 +338,7 @@ export class ProtectClient implements AsyncDisposable {
     // The talkback factory, bound to the transport-backed talkback URL resolver. Unlike the livestream pool, talkback is exclusive and per-call, so this mints an
     // independent atomic TalkbackSession per invocation rather than fanning out a shared one; the projection passes only its camera id and an optional signal, and the
     // WebSocket wire knowledge (negotiation path, self-signed agent) stays here in Layer 2. The resolver is built once and closed over. The talkback session uses its own
-    // default (writable) WebSocket factory: the `opts.webSocket` ConnectOptions seam is the receive-direction socket factory (ProtectWebSocket, for the events stream and
+    // default (writable) WebSocket factory: the `opts.webSocket` ConnectOptions hook is the receive-direction socket factory (ProtectWebSocket, for the events stream and
     // livestream pool) and does not fit the write-direction ProtectWritableWebSocket talkback needs, so it is deliberately not threaded here - the send socket is faked
     // at the TalkbackSession level, not through the full client.
     const resolveTalkbackUrl = talkbackUrlResolver(transport, opts.host);

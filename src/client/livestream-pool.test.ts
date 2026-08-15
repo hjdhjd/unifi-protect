@@ -91,7 +91,7 @@ async function establishInit(ws: FakeWebSocket, opts: { codec: string; data?: Bu
 
 // Fully establish (or recover) a stream: drive the open + init handshake AND the first media segment, then yield the event loop so both reach the subscribers. Liveness
 // is media-keyed, so it is this first media - not the init - that settles the episode `recovered`, resolves `whenEstablished()` true, and returns the stream to `live`.
-// The codec lets a caller drive a same-codec (seamless) or codec-changed (terminal) reconnect; a codec change is detected on the init and tears the stream down before
+// The codec lets a caller drive a same-codec (recoverable) or codec-changed (terminal) reconnect; a codec change is detected on the init and tears the stream down before
 // the media, so callers driving a codec change use `establishInit` instead.
 async function establish(ws: FakeWebSocket, opts: { codec: string; data?: Buffer } = { codec: "avc1.640028" }): Promise<void> {
 
@@ -460,7 +460,7 @@ describe("LivestreamPool", () => {
 
       assert.equal(sockets.length, 2);
 
-      // The reconnected socket negotiates the same codec, so its redundant init is suppressed and media resumes seamlessly - no second init reaches the iterator. The
+      // The reconnected socket negotiates the same codec, so its redundant init is suppressed and media resumes uninterrupted - no second init reaches the iterator. The
       // reconnect settles `recovered` only when its first media flows, not on the suppressed init.
       await establish(at(sockets, 1), { codec: "avc1.640028" });
 
@@ -491,7 +491,7 @@ describe("LivestreamPool", () => {
 
       assert.ok((established.type === "media") && (established.discontinuity === undefined), "establishment media must not be marked");
 
-      // The controller closes the stream; the pool reconnects on a fresh same-codec socket (its redundant init is suppressed and media resumes seamlessly).
+      // The controller closes the stream; the pool reconnects on a fresh same-codec socket (its redundant init is suppressed and media resumes uninterrupted).
       at(sockets, 0).emitClose(1000, "the controller closed the stream");
       await flush();
 

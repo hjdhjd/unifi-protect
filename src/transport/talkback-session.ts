@@ -56,9 +56,9 @@ export type TalkbackState = "closed" | "closing" | "connecting" | "live";
  * Construction options for {@link TalkbackSession}.
  *
  * - `cameraId` is the camera whose speaker receives the audio - the only negotiation param.
- * - `resolveUrl` is the negotiation seam, identical in type to {@link LivestreamSession}'s: given the request params it returns the controller-minted, host-rewritten
+ * - `resolveUrl` is the negotiation hook, identical in type to {@link LivestreamSession}'s: given the request params it returns the controller-minted, host-rewritten
  *   WebSocket URL. The composition root wires it to a transport-backed GET (see `talkbackUrlResolver`); tests pass a one-line fake.
- * - `webSocket` is the injected I/O seam - the write-direction `ProtectWritableWebSocket`, distinct from the receive-direction seam {@link EventStream} /
+ * - `webSocket` is the injected I/O dependency - the write-direction `ProtectWritableWebSocket`, distinct from the receive-direction interface {@link EventStream} /
  *   {@link LivestreamSession} share; omit it for the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts, the session tears down and an in-flight `send` rejects.
  *

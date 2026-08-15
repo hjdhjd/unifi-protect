@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events-stream.helpers.ts: A deterministic fake WebSocket for EventStream tests - the injected I/O seam that lets the realtime stream be exercised without a live
+ * events-stream.helpers.ts: A deterministic fake WebSocket for EventStream tests - the injected I/O dependency that lets the realtime stream be exercised without a live
  * controller (undici's MockAgent does not mock WebSockets).
  */
 import type { ProtectWebSocket } from "./ws.ts";
@@ -31,7 +31,7 @@ export interface FakeWebSocketOptions {
 }
 
 /**
- * A deterministic in-memory WebSocket that satisfies the {@link ProtectWebSocket} surface {@link EventStream} consumes. Tests inject it via the `webSocket` factory seam
+ * A deterministic in-memory WebSocket that satisfies the {@link ProtectWebSocket} surface {@link EventStream} consumes. Tests inject it via the `webSocket` factory
  * and drive the connection with the `emit*` methods - no network, no real server, no timing nondeterminism. It honors `once` and `signal` on `addEventListener` exactly
  * as the real socket does, so the EventStream's single-AbortController teardown (which detaches every listener at once) is exercised faithfully.
  */
