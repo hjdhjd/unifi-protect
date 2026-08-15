@@ -20,7 +20,7 @@
  * identity, via {@link livestreamKey}) *before* negotiating - only the first subscriber for a key creates a managed session, which then creates and negotiates each
  * underlying session. `subscribe` registers the managed session in the map synchronously, so a concurrent early subscriber attaches to the one in-flight session.
  *
- * **The pool owns no transport.** It receives `resolveUrl` - the transport-backed negotiation seam (see {@link wsEndpointResolver}) - so it stays unit-testable with a
+ * **The pool owns no transport.** It receives `resolveUrl` - the transport-backed negotiation hook (see {@link wsEndpointResolver}) - so it stays unit-testable with a
  * one-line fake resolver and a fake WebSocket, and the negotiation lives end-to-end inside each session (one connect attempt, one error path).
  *
  * @module LivestreamPool
@@ -92,7 +92,7 @@ export type RecoveryDecision =
   { kind: "giveUp" };
 
 /**
- * The single decision authority for a stream's recovery, injected at the pool (the same dependency-inversion seam as `resolveUrl`). Pure: given the library-observable
+ * The single decision authority for a stream's recovery, injected at the pool (the same dependency inversion as `resolveUrl`). Pure: given the library-observable
  * {@link RecoveryContext}, it returns a {@link RecoveryDecision}. The library ships {@link defaultLivestreamRecoveryPolicy}, a health-agnostic default; a consumer
  * injects its own to add the controller-health correlation only it can observe.
  *
@@ -204,8 +204,8 @@ export interface LivestreamSubscribeOptions {
 }
 
 /**
- * Construction options for {@link LivestreamPool}. `resolveUrl` is the transport-backed negotiation seam (build it with {@link livestreamUrlResolver}, the shared {@link
- * wsEndpointResolver}'s livestream specialization); `webSocket` is the injected I/O seam, shared with {@link EventStream}'s and threaded down to each session;
+ * Construction options for {@link LivestreamPool}. `resolveUrl` is the transport-backed negotiation hook (build it with {@link livestreamUrlResolver}, the shared {@link
+ * wsEndpointResolver}'s livestream specialization); `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s and threaded down to each session;
  * `recoveryPolicy` is the per-stream recovery decision authority, defaulting to {@link defaultLivestreamRecoveryPolicy}.
  *
  * @category Client
@@ -235,7 +235,7 @@ interface SubscriptionHost {
  * subscription has its **own unbounded queue**: the pool pushes every segment to every subscriber, so one slow consumer cannot stall a fast one, and nothing is dropped.
  *
  * The stream is **resilient by default**: a recoverable stall or reconnect is invisible to the iterator - it pauses while the underlying session is re-established and
- * resumes seamlessly when segments flow again (a same-codec reconnect suppresses the redundant init). The iterator terminates only on these conditions: disposal (a
+ * resumes uninterrupted when segments flow again (a same-codec reconnect suppresses the redundant init). The iterator terminates only on these conditions: disposal (a
  * clean `done`), a codec change across a reconnect (it throws {@link ProtectCodecChangeError}), and the recovery policy giving up (it throws {@link
  * ProtectLivestreamUnavailableError}). A recoverable stall is *not* one of them.
  *
@@ -576,7 +576,7 @@ class ManagedSession implements SubscriptionHost {
 
   // The current recovery episode's bookkeeping: which regime, how many attempts have failed, when it began, the lockstep per-install latches (see the
   // SessionInstallState type - the codec-gate point, the media-keyed recovery point, and the post-reconnect discontinuity marker, reset as a unit per install), and the
-  // resolver of the window the loop is currently awaiting (the single seam the rails and reassess() settle).
+  // resolver of the window the loop is currently awaiting (the single point the rails and reassess() settle).
   #attempts = 0;
   #episodeStartedAt = 0;
   #install: SessionInstallState = { awaitingFirstMedia: false, awaitingFirstSegment: false, pendingDiscontinuity: false };
@@ -860,7 +860,7 @@ class ManagedSession implements SubscriptionHost {
   }
 
   // Await the outcome of one decision's window. A media segment restores the stream (settled `recovered` by the segment handler), the timer elapses (`elapsed`), a
-  // consumer reassesses (`reassess`), or teardown aborts the controller (`aborted`). The single settle seam is `#settleOutcome`; every settler routes through `#settle`,
+  // consumer reassesses (`reassess`), or teardown aborts the controller (`aborted`). The single settle point is `#settleOutcome`; every settler routes through `#settle`,
   // so the first to fire wins and the rest are no-ops. The timer's own controller is aborted in the finally so a settled window cancels its pending wait.
   async #raceOutcome(timeoutMs: number, signal: AbortSignal): Promise<RecoveryOutcome> {
 
@@ -946,9 +946,10 @@ class ManagedSession implements SubscriptionHost {
   // The first segment of a freshly-installed session - normally the init - is the codec-gate point, NOT the recovery point. It is settle-free: the episode stays in
   // flight (its recovery window still bounds time-to-first-MEDIA) so that a controller that inits then never produces media elapses the window and reconnects rather than
   // being presumed live. It applies the codec gate - the very first establishment caches and delivers the init; a same-codec reconnect suppresses the byte-equivalent
-  // re-emit (HKSV tolerates no second init; an FFmpeg pipe cannot re-init) and resumes seamlessly; a changed codec is the one terminal a recovery raises, torn down here
-  // via the controller's abort (which settles the window `aborted`, booking no spurious attempt). It does NOT need the settle-race guard the recovery-media path keeps:
-  // the init can only reach us on the current session's still-attached rail, and an elapsed window would already have disposed that rail before the init could arrive.
+  // re-emit (HKSV tolerates no second init; an FFmpeg pipe cannot re-init) and resumes uninterrupted; a changed codec is the one terminal a recovery raises, torn down
+  // here via the controller's abort (which settles the window `aborted`, booking no spurious attempt). It does NOT need the settle-race guard the recovery-media path
+  // keeps: the init can only reach us on the current session's still-attached rail, and an elapsed window would already have disposed that rail before the init could
+  // arrive.
   #handleFirstSegment(segment: Segment): void {
 
     if(segment.type === "init") {
@@ -1100,7 +1101,7 @@ class ManagedSession implements SubscriptionHost {
     this.#teardown("the livestream codec changed");
   }
 
-  // The recovery policy gave up. Publish the exhausted diagnostic (the seam an opt-in consumer self-heal observer watches), then tear the stream down with a
+  // The recovery policy gave up. Publish the exhausted diagnostic (the signal an opt-in consumer self-heal observer watches), then tear the stream down with a
   // ProtectLivestreamUnavailableError carrying the regime and the attempt count. An establishing give-up also resolves the establishment latch false.
   #giveUp(): void {
 

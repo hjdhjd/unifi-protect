@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * connection.test.ts: Tests for ConnectionMonitor - the derived-state FSM, reboot detection via the controller's boot time, throttle/stall folding, and the guarded
- * auto-recovery sequence (verify -> re-bootstrap -> relaunch). Driven with a fake clock, a fake throttle source, and injected events-stream/verify/re-bootstrap seams,
+ * auto-recovery sequence (verify -> re-bootstrap -> relaunch). Driven with a fake clock, a fake throttle source, and injected events-stream/verify/re-bootstrap hooks,
  * so every path is exercised without a live controller.
  */
 import type { ConnectionState, ConnectionTransition, ThrottleSource } from "./connection.ts";
@@ -83,7 +83,7 @@ interface CapturedEvents {
 }
 
 // Build a ConnectionMonitor over fakes: a real StateStore (failsafe disabled, seeded with one bootstrap), a fake throttle source, an events-stream factory that hands out
-// FakeWebSockets we can drive, and controllable verify / re-bootstrap seams. Returns the monitor plus the levers a test pulls.
+// FakeWebSockets we can drive, and controllable verify / re-bootstrap hooks. Returns the monitor plus the levers a test pulls.
 function harness(options: { initialUpSince?: number; log?: ProtectLogging; throttledAtStart?: boolean } = {}): {
   clock: ReturnType<typeof fakeClock>;
   control: {
@@ -487,7 +487,7 @@ describe("ConnectionMonitor", () => {
       assert.equal(monitor.state, "throttled");
 
       // Fault the events channel. Recovery must drive the probe at its own cadence regardless of the breaker, rather than skipping while throttled and waiting out its
-      // cooldown - in production the verify seam carries probe:true so the send bypasses the cooldown gate; here we assert the monitor-level half: recovery actually
+      // cooldown - in production the verify hook carries probe:true so the send bypasses the cooldown gate; here we assert the monitor-level half: recovery actually
       // probes and re-bootstraps rather than skipping.
       streams[0]?.emitError(new Error("socket dropped"));
       await pump(clock);

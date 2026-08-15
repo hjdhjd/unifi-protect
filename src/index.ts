@@ -13,7 +13,7 @@
 //     the compiler rather than by documentation. The one blessed exception is `createStateStore`, a value export that constructs the real store standalone for test
 //     harnesses; it widens only the store's own construction, never the client's, which stays the single `connect()` path.
 //   - Export nothing that is pure composition internals: AuthSession, EventStream, EventBus, LivestreamSession, LivestreamPool, DeviceRegistry, the free codec/reducer
-//     functions, and the internal seams and helpers. They are reachable in source for the reader, never on the published surface.
+//     functions, and the internal interfaces and helpers. They are reachable in source for the reader, never on the published surface.
 //
 // The test the next contributor applies to any new symbol: does a consumer construct or call it (value), receive it (type), or neither (internal)? That keeps this file
 // a deliberate, reviewable contract rather than whatever each module happens to export.
@@ -35,11 +35,11 @@ export type { StreamOptions } from "./event-bus.ts";
 // consumer (ProtectClient.connect() builds it), so it is a type-only export.
 export type { ProtectResponse, RequestOptions, SendOptions, Transport, TransportEvents } from "./transport/http.ts";
 
-// The minimal WebSocket surface a consumer must return when injecting the optional `webSocket` factory seam via ConnectOptions; reachable from the public surface, so it
+// The minimal WebSocket surface a consumer must return when injecting the optional `webSocket` factory via ConnectOptions; reachable from the public surface, so it
 // is named here even though the default undici-backed factory means most consumers never touch it.
 export type { ProtectWebSocket } from "./transport/ws.ts";
 
-// Clock - the time abstraction (a ConnectOptions seam) and its production implementation a consumer may reuse.
+// Clock - the time abstraction (injected through ConnectOptions) and its production implementation a consumer may reuse.
 export { wallClock } from "./clock.ts";
 export type { Clock } from "./clock.ts";
 

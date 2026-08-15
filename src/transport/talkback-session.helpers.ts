@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * talkback-session.helpers.ts: A deterministic fake write-direction WebSocket for TalkbackSession tests - the injected I/O seam that lets the send-only channel be
+ * talkback-session.helpers.ts: A deterministic fake write-direction WebSocket for TalkbackSession tests - the injected I/O dependency that lets the send-only channel be
  * exercised without a live controller, mirroring the receive-direction FakeWebSocket but carrying only the write surface.
  */
 import type { ProtectWritableWebSocket } from "./ws.ts";
@@ -32,8 +32,8 @@ export interface FakeWritableWebSocketOptions {
 
 /**
  * A deterministic in-memory WebSocket that satisfies the {@link ProtectWritableWebSocket} surface {@link TalkbackSession} consumes. It carries only the write-direction
- * surface - `send`, `bufferedAmount`, and the `open` / `close` / `error` listeners - with no `message` listener and no `binaryType`, exactly as the write seam declares.
- * Tests inject it via the `webSocket` factory seam and drive the connection with the `emit*` methods; `sent` records every frame written and `bufferedAmount` is mutable
+ * surface - `send`, `bufferedAmount`, and the `open` / `close` / `error` listeners - with no `message` listener and no `binaryType`, exactly as that interface declares.
+ * Tests inject it via the `webSocket` factory and drive the connection with the `emit*` methods; `sent` records every frame written and `bufferedAmount` is mutable
  * so a test can drive the backpressure safety bound.
  */
 export class FakeWritableWebSocket implements ProtectWritableWebSocket {

@@ -11,7 +11,7 @@
  * The surface is the three-rail model (see {@link EventBus}): an internal `EventBus<EventStreamEvents>` backs `on` / `once` / `stream`. The library composes
  * `node:events.EventEmitter`; it does not extend it.
  *
- * **The WebSocket is an injected dependency**, exactly like the {@link Transport}'s dispatcher and the {@link StateStore}'s refresh seam. `EventStream` depends on the
+ * **The WebSocket is an injected dependency**, exactly like the {@link Transport}'s dispatcher and the {@link StateStore}'s refresh hook. `EventStream` depends on the
  * minimal {@link ProtectWebSocket} interface - only the surface it uses - never undici's full type. The default factory builds undici's `WebSocket` over an owned
  * HTTP/1.1 agent with `rejectUnauthorized: false` (Protect controllers ship self-signed certificates, and a WebSocket upgrade cannot ride the HTTP/2 request pool).
  * Tests inject a fake socket and drive `open` / `message` / `close` / `error` deterministically (undici's `MockAgent` does not mock WebSockets).
@@ -48,8 +48,8 @@ import { wallClock } from "../clock.ts";
  *
  * - `host` and `lastUpdateId` build the WebSocket URL; `lastUpdateId` is handed to the controller so it replays any events that fired between the bootstrap snapshot
  *   and the WebSocket coming online.
- * - `getAuthHeaders` is the cookie seam, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses).
- * - `webSocket` is the injected I/O seam; omit it to use the default undici-backed factory, inject it in tests.
+ * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses).
+ * - `webSocket` is the injected I/O dependency; omit it to use the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connection attempt - if it aborts before the socket opens, {@link EventStream.opened} rejects and the stream tears down.
  *
  * @category Transport
@@ -141,7 +141,7 @@ export class EventStream implements AsyncDisposable {
     const url = "wss://" + options.host + "/proxy/protect/ws/updates?" + new URLSearchParams({ lastUpdateId: options.lastUpdateId }).toString();
 
     // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that accepts the controller's self-signed certificate.
-    // undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface we model, so it assigns directly - no cast, the seam is honest by construction.
+    // undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface we model, so it assigns directly - no cast, the interface is honest by construction.
     if(options.webSocket !== undefined) {
 
       this.#ownedAgent = null;

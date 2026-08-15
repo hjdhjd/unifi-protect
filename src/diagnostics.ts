@@ -69,7 +69,7 @@ export const channels = {
   /** A pooled livestream reconnected and the controller negotiated a different codec than the one in flight - the one terminal a recovering stream raises. */
   livestreamCodecChanged: diagnosticsChannel.channel<LivestreamCodecChangedPayload>("unifi-protect:livestream:codec:changed"),
 
-  /** A pooled livestream's recovery policy gave up. The seam an opt-in consumer self-heal observer (a user-gated camera reboot) watches; the library reboots nothing. */
+  /** A pooled livestream's recovery policy gave up. What an opt-in consumer self-heal observer (a user-gated camera reboot) watches; the library reboots nothing. */
   livestreamRecoveryExhausted: diagnosticsChannel.channel<LivestreamRecoveryExhaustedPayload>("unifi-protect:livestream:recovery:exhausted"),
 
   /** A pooled livestream's recovery episode restored the stream after a fault. */
@@ -262,7 +262,7 @@ export interface LivestreamCodecChangedPayload {
 
 /**
  * Payload published on {@link channels.livestreamRecoveryExhausted}. `attempts` is the number of consecutive failed reconnect attempts before the policy gave up. The
- * consumer's iterator also receives a {@link ProtectLivestreamUnavailableError}; this channel is the seam an opt-in self-heal observer watches.
+ * consumer's iterator also receives a {@link ProtectLivestreamUnavailableError}; this channel is what an opt-in self-heal observer watches.
  *
  * @category Diagnostics
  */

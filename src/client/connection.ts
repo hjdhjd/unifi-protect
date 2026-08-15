@@ -22,8 +22,8 @@
  * is just "recompute the derived value after any input and emit when it differs," so there is no transition table to drift out of sync.
  *
  * **Coupling is narrow and inverted.** The transport dependency is the structural {@link ThrottleSource} (exactly `isThrottled` plus the two throttle rails), not the
- * concrete class; the store is read only through its public `observe`/`snapshot`; every other I/O is an injected seam wired at the composition root (the events-stream
- * factory, the packet sink, `reBootstrap`, `verify`). The monitor never imports another subsystem's internals.
+ * concrete class; the store is read only through its public `observe`/`snapshot`; every other I/O is an injected dependency wired at the composition root (the
+ * events-stream factory, the packet sink, `reBootstrap`, `verify`). The monitor never imports another subsystem's internals.
  *
  * @module ConnectionMonitor
  */
@@ -112,7 +112,7 @@ export interface ThrottleSource {
 }
 
 /**
- * Construction options for {@link ConnectionMonitor}. Every I/O dependency is an injected seam wired at the composition root, mirroring how every other subsystem in the
+ * Construction options for {@link ConnectionMonitor}. Every I/O dependency is injected and wired at the composition root, mirroring how every other subsystem in the
  * library inverts its dependencies.
  *
  * - `eventStreamFactory` builds an events stream for a given `lastUpdateId`; it is the single construction path, used for the initial stream and every relaunch. The

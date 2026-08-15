@@ -7,11 +7,11 @@
 /**
  * `LivestreamSession` owns one camera livestream WebSocket and decodes the controller's fMP4 frame protocol into a stream of {@link Segment}s. It is the **structural
  * sibling of {@link EventStream}**: construct-begins-connecting, a single {@link AbortController} that detaches every listener at once, a {@link Clock}-driven silence
- * watchdog, an injected `webSocket` factory seam, a private {@link EventBus} for its surface, and `AsyncDisposable`. A reader who has internalized `EventStream` reads
+ * watchdog, an injected `webSocket` factory, a private {@link EventBus} for its surface, and `AsyncDisposable`. A reader who has internalized `EventStream` reads
  * this class and recognizes the same skeleton.
  *
  * The one thing the events stream does not need and this one does is **URL negotiation**. The events WebSocket connects to a fixed, predictable address; a livestream
- * URL is minted on demand by the controller over authenticated HTTP and must be fetched first. That fetch is the injected `resolveUrl` seam (dependency inversion,
+ * URL is minted on demand by the controller over authenticated HTTP and must be fetched first. That fetch is the injected `resolveUrl` hook (dependency inversion,
  * exactly like the {@link Transport}'s `getAuthHeaders` and the {@link StateStore}'s `refresh`): the session owns the *whole* connect attempt - negotiate the URL, open
  * the socket, receive the first init segment - so every failure flows through one error rail, while the session never imports `Transport`. The composition root wires
  * `resolveUrl` to a transport-backed GET that returns the controller-minted, host-rewritten URL.
@@ -178,9 +178,9 @@ export interface LivestreamSessionEvents {
  * Construction options for {@link LivestreamSession}.
  *
  * - `spec` describes the stream; the session resolves its defaults and builds the negotiation params from it.
- * - `resolveUrl` is the negotiation seam: given the request params, it returns the controller-minted, host-rewritten WebSocket URL. The composition root wires it to a
+ * - `resolveUrl` is the negotiation hook: given the request params, it returns the controller-minted, host-rewritten WebSocket URL. The composition root wires it to a
  *   transport-backed GET; tests pass a one-line fake.
- * - `webSocket` is the injected I/O seam, shared with {@link EventStream}'s; omit it for the default undici-backed factory, inject it in tests.
+ * - `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s; omit it for the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connect attempt - if it aborts before or during connection, the session tears down.
  *
  * @category Transport

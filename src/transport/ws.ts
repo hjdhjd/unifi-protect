@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * ws.ts: The minimal WebSocket seam shared by every WebSocket-owning transport, plus the message-to-Buffer normalizer every receive-direction transport decodes through.
+ * ws.ts: The minimal WebSocket surface every WebSocket-owning transport shares, plus the message-to-Buffer normalizer every receive-direction transport decodes through.
  */
 
 /**
@@ -10,7 +10,7 @@
  * a single definition and a test fake written against it drives any of them.
  *
  * The send-direction transport (the {@link TalkbackSession}) is write-only and reads nothing inbound, so it depends on the separate, equally minimal
- * `ProtectWritableWebSocket` below rather than this one - the seam is split by direction so neither interface carries a method its consumers never call.
+ * `ProtectWritableWebSocket` below rather than this one - the surface is split by direction so neither interface carries a method its consumers never call.
  *
  * @category Transport
  */
@@ -28,9 +28,9 @@ export interface ProtectWebSocket {
  * The minimal *send-direction* WebSocket surface the {@link TalkbackSession} consumes - the write-direction sibling of {@link ProtectWebSocket}. It writes opaque audio
  * bytes (`send`) and reads `bufferedAmount` as its structural-backpressure safety bound, but never reads inbound frames, so it has no `message` listener and no
  * `binaryType` (a write-only socket has no inbound binary to type). It shares the `open` / `close` / `error` listener shape and the close/error payload types with the
- * receive seam, but it is a distinct interface rather than an extension of it: talkback's listener set is not a superset of the receive one (it drops `message`), so the
- * two diverge cleanly instead of one bolting unused surface onto the other. undici's `WebSocket` structurally satisfies this, so the default factory assigns without a
- * cast.
+ * receive-direction surface, but it is a distinct interface rather than an extension of it: talkback's listener set is not a superset of the receive one (it drops
+ * `message`), so the two diverge cleanly instead of one bolting unused surface onto the other. undici's `WebSocket` structurally satisfies this, so the default factory
+ * assigns without a cast.
  *
  * @category Transport
  */

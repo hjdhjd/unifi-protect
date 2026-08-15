@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * commands.test.ts: Per-command unit tests driving each CLI command through the injected openClient seam - parse, render, dispatch, and error paths.
+ * commands.test.ts: Per-command unit tests driving each CLI command through the injected openClient hook - parse, render, dispatch, and error paths.
  */
 import type { LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment, TypedEvent } from "../../../index.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectProtocolError, ProtectUnsupportedError } from "../../../index.ts";

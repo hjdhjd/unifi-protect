@@ -134,7 +134,7 @@ describe("ProtectClient.connect", () => {
       const clock = fakeClock();
 
       interceptLogin(pool);
-      // The initial bootstrap has one camera; the next scheduled refresh returns two, exercising the client's transport-backed refresh seam end to end.
+      // The initial bootstrap has one camera; the next scheduled refresh returns two, exercising the client's transport-backed refresh hook end to end.
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ cameras: [ makeCamera({ id: "c1" }), makeCamera({ id: "c2" }) ] }));
 

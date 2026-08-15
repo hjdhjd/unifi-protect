@@ -16,7 +16,7 @@ import type { Transport } from "../transport/http.ts";
  * A projection reads its config through `store` (snapshot for sync getters, observe for the change stream) and issues its write-through commands through `transport`. It
  * never holds device state of its own - it is a live view over the single source of truth.
  *
- * The `livestreamPool` and `talkback` members are the binary-channel seams the composition root binds: a projection reaches the shared livestream pool through the
+ * The `livestreamPool` and `talkback` members are the binary-channel dependencies the composition root binds: a projection reaches the shared livestream pool through the
  * former and opens a per-call talkback session through the latter, in both cases passing only its own id while the WebSocket wire knowledge stays in Layer 2. `talkback`
  * is a factory (not a pool) because talkback is exclusive and per-call - each invocation mints an independent {@link TalkbackSession} - and it returns a `Promise`
  * because the session connects atomically (ready or throws), where `livestreamPool.subscribe` returns synchronously because the pool registers a subscription eagerly for

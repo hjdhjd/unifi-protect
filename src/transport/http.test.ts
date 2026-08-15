@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * http.test.ts: Unit tests for the HTTP transport - the send/request surface, ProtectResponse decoding and ensureOk classification, transport-error classification
- * (timeout vs caller-abort vs network), the auth-header seam and 401-relogin retry, and the full throttle circuit-breaker FSM (closed -> open -> half-open -> closed).
+ * (timeout vs caller-abort vs network), the auth-header hook and 401-relogin retry, and the full throttle circuit-breaker FSM (closed -> open -> half-open -> closed).
  *
  * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, and a fake Clock advances breaker time
  * without real-time waits. The injected dispatcher and clock let these tests pin the controller's throttle and retry behavior - the established behavioral contract -
@@ -163,7 +163,7 @@ describe("Transport", () => {
     });
   });
 
-  describe("auth-header seam and 401 relogin", () => {
+  describe("auth-header hook and 401 relogin", () => {
 
     test("stamps the auth headers from getAuthHeaders onto every request", async () => {
 

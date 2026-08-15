@@ -20,7 +20,7 @@ const SUBCOMMANDS: Record<string, CommandSpec> = {
 };
 
 // Group usage, rendered from SUBCOMMANDS through the shared `commandList` helper - the same one the top-level `ufp` screen and the `watch` group use - so the listed
-// subcommands and their summaries cannot drift from what actually dispatches. The "See also" line closes the discoverability seam that a camera's live video feed is
+// subcommands and their summaries cannot drift from what actually dispatches. The "See also" line closes the discoverability gap that a camera's live video feed is
 // addressed under the streaming family (`watch livestream`), not here, even though both act on a camera: the split is by interaction mode, an open-ended subscription
 // versus a bounded action.
 const USAGE = [

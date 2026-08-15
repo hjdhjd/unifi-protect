@@ -80,7 +80,7 @@ export function createCliLogger(opts: { debug?: boolean; stream?: OutputStream }
 
 /**
  * Load credentials and connect a ready {@link ProtectClient}. The single home for "how the ufp CLI connects" - commands reach it through the injected `ctx.openClient`
- * seam (`await using client = await ctx.openClient({ debug, signal })`, never by importing this opener directly), so the `await using` lifetime is visible at each call
+ * hook (`await using client = await ctx.openClient({ debug, signal })`, never by importing this opener directly), so the `await using` lifetime is visible at each call
  * site while the credential-loading and connect-assembly live in exactly one place. `log` serves direct library callers; CLI commands leave it to the default logger.
  *
  * @param opts - Discovery overrides, logger, refresh cadence, and the Ctrl-C signal.

@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * client.test.ts: Unit tests for the CLI's stderr-routed logger - level gating (warn/error always, info/debug behind --debug) and the structured-context rendering that
- * keeps an object or Error legible. The connect-assembly half of this module (openClient) is the deliberately-mocked seam and is exercised one layer down, at the
+ * keeps an object or Error legible. The connect-assembly half of this module (openClient) is the deliberately-mocked dependency and is exercised one layer down, at the
  * ProtectClient.connect boundary.
  */
 import { describe, test } from "node:test";

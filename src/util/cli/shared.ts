@@ -30,7 +30,7 @@ export class CliError extends Error {
 }
 
 /**
- * The context every command receives from the entry point: its own argument slice (everything after the command verb), the environment, the injected client-opener seam
+ * The context every command receives from the entry point: its own argument slice (everything after the command verb), the environment, the injected client-opener hook
  * ({@link OpenClient}), the default `Output` (stdout), and the process-wide Ctrl-C signal. A command that pipes a binary payload to stdout builds its own stderr-pointed
  * `Output` from `env`; everything else writes through the supplied one.
  *
@@ -46,7 +46,7 @@ export interface CommandContext {
 }
 
 /**
- * The client-opener seam. The entry point injects the production opener (load credentials, then `ProtectClient.connect`); a test injects a fake returning a fake client.
+ * The client-opener hook. The entry point injects the production opener (load credentials, then `ProtectClient.connect`); a test injects a fake returning a fake client.
  * Commands always open through `ctx.openClient`, never by importing the opener directly, which is what makes every command unit-testable without a live controller.
  *
  * @category CLI
