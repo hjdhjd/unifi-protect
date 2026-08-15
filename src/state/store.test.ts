@@ -2,7 +2,7 @@
  *
  * store.test.ts: Unit tests for the observable StateStore - snapshot, the observe/dedup contract, the single dispatch chokepoint, the refresh failsafe (including its
  * invisible-on-no-drift property), the bootstrap-schema tripwire (the schema:unmodeledCollection diagnostics publish and its per-session dedup), and
- * disposal. Driven entirely through a fake clock and a fake refresh seam; no network and no real timers.
+ * disposal. Driven entirely through a fake clock and a fake refresh hook; no network and no real timers.
  */
 import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
 import { StateStore, createStateStore } from "./store.ts";
@@ -31,11 +31,11 @@ function collect<T>(iterable: AsyncIterable<T>): { done: Promise<void>; values: 
   return { done, values };
 }
 
-// A store with the refresh failsafe disabled - the common shape for tests that exercise dispatch and observe in isolation. The refresh seam is never invoked, so it
+// A store with the refresh failsafe disabled - the common shape for tests that exercise dispatch and observe in isolation. The refresh hook is never invoked, so it
 // rejects to make an accidental call loud.
 function plainStore(): StateStore {
 
-  return new StateStore({ clock: fakeClock(), refresh: () => Promise.reject(new Error("the refresh seam must not be called when the failsafe is disabled")),
+  return new StateStore({ clock: fakeClock(), refresh: () => Promise.reject(new Error("the refresh hook must not be called when the failsafe is disabled")),
     refreshIntervalMs: false });
 }
 
@@ -243,7 +243,7 @@ describe("StateStore", () => {
         return Promise.resolve(makeBootstrap());
       }, refreshIntervalMs: false });
 
-      // With the loop disabled there is no interval consumer, so a tick releases nothing and the refresh seam is never invoked.
+      // With the loop disabled there is no interval consumer, so a tick releases nothing and the refresh hook is never invoked.
       await clock.tick();
       await delay(5);
       assert.equal(refreshes, 0);
@@ -266,6 +266,36 @@ describe("StateStore", () => {
       // Disposal closes the observer, so its iteration completes without further values.
       await done;
       assert.equal(values.length, 0);
+    });
+
+    test("an observation begun after disposal completes immediately", async () => {
+
+      const store = plainStore();
+
+      await store[Symbol.asyncDispose]();
+
+      // No dispatch, no abort, and no further disposal will ever arrive to unpark this iteration, so it must complete on its own rather than registering.
+      const { done, values } = collect(store.observe(deviceSelectors.camera.all));
+
+      await done;
+      assert.equal(values.length, 0);
+    });
+
+    test("a dispatch after disposal is a no-op: the state reference holds", async () => {
+
+      const store = plainStore();
+
+      store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }), kind: "bootstrapLoaded" });
+
+      const before = store.snapshot();
+
+      await store[Symbol.asyncDispose]();
+
+      // The dispatch chokepoint covers every caller, including a refresh that was already in flight when disposal ran and settles afterward - nothing may advance a
+      // disposed store's state.
+      store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1", name: "Late" })] }), kind: "bootstrapLoaded" });
+
+      assert.ok(Object.is(before, store.snapshot()), "a dispatch after disposal must not advance the state");
     });
   });
 
@@ -483,7 +513,7 @@ describe("createStateStore", () => {
   test("constructs the real store: observe wakes on the selected change and dedups an unrelated one", async () => {
 
     const store = createStateStore({ clock: fakeClock(),
-      refresh: () => Promise.reject(new Error("the refresh seam must not be called")), refreshIntervalMs: false });
+      refresh: () => Promise.reject(new Error("the refresh hook must not be called")), refreshIntervalMs: false });
 
     store.dispatch({ data: makeBootstrap({ cameras: [ makeCamera({ id: "c1" }), makeCamera({ id: "c2" }) ] }), kind: "bootstrapLoaded" });
 
@@ -514,7 +544,7 @@ describe("createStateStore", () => {
     seed.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "seed", name: "Seeded" })] }), kind: "bootstrapLoaded" });
 
     const store = createStateStore({ initialState: seed.snapshot(),
-      refresh: () => Promise.reject(new Error("the refresh seam must not be called")), refreshIntervalMs: false });
+      refresh: () => Promise.reject(new Error("the refresh hook must not be called")), refreshIntervalMs: false });
 
     assert.equal(store.snapshot().cameras.size, 1, "the supplied initial state reached the new store");
     assert.equal(deviceSelectors.camera.byId("seed")(store.snapshot())?.name, "Seeded");

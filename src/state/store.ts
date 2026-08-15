@@ -15,8 +15,8 @@
  *   preserves references through structural sharing and the selectors memoize on map identity, an `Object.is` comparison is a correct and nearly free change test.
  *
  * The store also owns the **bootstrap refresh failsafe**: on a fixed cadence (default {@link PROTECT_BOOTSTRAP_REFRESH_INTERVAL}) it fetches a fresh bootstrap through
- * the injected `refresh` seam and dispatches it. The reducer's `applyBootstrap` reconciliation makes a refresh that finds no drift produce no observer notifications at
- * all - the failsafe is invisible until something has actually changed. The seam (rather than a `Transport` reference) keeps the store at the data layer and testable
+ * the injected `refresh` hook and dispatches it. The reducer's `applyBootstrap` reconciliation makes a refresh that finds no drift produce no observer notifications at
+ * all - the failsafe is invisible until something has actually changed. The hook (rather than a `Transport` reference) keeps the store at the data layer and testable
  * with a fake refresh and a fake `Clock`.
  *
  * Finally, the store publishes the **bootstrap-schema tripwire**: at its dispatch chokepoint every applied bootstrap is scanned by the pure
@@ -44,7 +44,7 @@ import { wallClock } from "../clock.ts";
 /**
  * Construction options for {@link StateStore}.
  *
- * - `refresh` is the only required option: the seam the failsafe calls to fetch a fresh bootstrap. The composition root wires it to a transport request; tests wire a
+ * - `refresh` is the only required option: the hook the failsafe calls to fetch a fresh bootstrap. The composition root wires it to a transport request; tests wire a
  *   fake. Injecting a function rather than a `Transport` is what keeps the store at the data layer (it never imports the transport) and deterministically testable.
  * - `refreshIntervalMs` defaults to {@link PROTECT_BOOTSTRAP_REFRESH_INTERVAL}; pass `false` or a non-positive interval to disable the failsafe entirely (the consumer
  *   then relies solely on the realtime event stream).
@@ -165,6 +165,9 @@ class StateObserver<T> {
 export class StateStore implements AsyncDisposable {
 
   readonly #clock: Clock;
+  // Set by disposal and never cleared. The store is disposed once, at the end of its life, so this is a terminal condition rather than a mode: it is what lets the
+  // dispatch chokepoint and observe() refuse work for a store whose teardown has already run.
+  #disposed = false;
   readonly #log: ProtectLogging;
   // One AbortController for the refresh-loop lifetime, aborted on disposal - the library's "one AbortController per resource lifetime" rule.
   readonly #refreshController = new AbortController();
@@ -214,7 +217,7 @@ export class StateStore implements AsyncDisposable {
    * it changes".
    *
    * Termination: pass `opts.signal` to end the iteration (the iterator returns cleanly on abort), or simply `break` out of the `for await` - either path unregisters
-   * the observer. An already-aborted signal yields nothing.
+   * the observer. An already-aborted signal yields nothing, and so does an observation begun on a disposed store.
    *
    * @typeParam T - The selector's output type.
    *
@@ -229,6 +232,14 @@ export class StateStore implements AsyncDisposable {
 
     // Nothing to observe if the caller handed us an already-aborted signal.
     if(signal?.aborted) {
+
+      return;
+    }
+
+    /* A disposed store notifies nobody ever again, so registering here would hand the caller an iterator that can never yield and never end, parking its consumer
+     * forever. Completing immediately is the honest answer: the observation is over before it began, which is exactly what an observation of a torn-down store is.
+     */
+    if(this.#disposed) {
 
       return;
     }
@@ -262,6 +273,14 @@ export class StateStore implements AsyncDisposable {
    * @internal
    */
   dispatch(event: TypedEvent): void {
+
+    /* Disposal is terminal, and this is the one place every caller passes through - the realtime stream, the refresh failsafe, and the connect() factory alike - so
+     * guarding here covers them all, including a refresh already in flight when disposal ran and settling afterward.
+     */
+    if(this.#disposed) {
+
+      return;
+    }
 
     // A bootstrapLoaded event is the one place device classes enumerate, so it is where the bootstrap-schema tripwire runs - the standing twin of EventStream's realtime
     // schema:unknownModelKey. It depends only on event.data, so it sits at the top of the path, independent of the reduce and the commit gate below.
@@ -454,10 +473,12 @@ export class StateStore implements AsyncDisposable {
   }
 
   /**
-   * Stop the refresh failsafe and terminate every open observer. Safe to call more than once.
+   * Stop the refresh failsafe and terminate every open observer. Safe to call more than once. After it resolves the store is inert: nothing dispatches, nothing is
+   * notified, and a later observation completes immediately rather than registering.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
+    this.#disposed = true;
     this.#refreshController.abort();
 
     for(const observer of this.#observers) {
@@ -502,7 +523,7 @@ export class StateStore implements AsyncDisposable {
  * consumer driving the genuine store never has to hand-mirror its dispatch, dedup, and refresh semantics in a double. Constructing a client remains exactly one path;
  * this widens only the store's own construction, for tests.
  *
- * @param options - The store options: the required refresh seam, and the optional clock, initial state, logger, and refresh interval.
+ * @param options - The store options: the required refresh hook, and the optional clock, initial state, logger, and refresh interval.
  *
  * @returns A new state store.
  *
