@@ -148,7 +148,7 @@ describe("selectors", () => {
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras:
         [ makeCamera({ id: "c1", isAdopted: true }), makeCamera({ id: "c2", isAdopted: true }) ] }));
       const before = deviceSelectors.camera.adoptedIds(state);
-      // c2 is swapped for c3: the set count stays at two, so the equality check cannot short-circuit on length and must compare element-for-element to see the change.
+      // C2 is swapped for c3: the set count stays at two, so the equality check cannot short-circuit on length and must compare element-for-element to see the change.
       const swapped = applyBootstrap(state, makeBootstrap({ cameras: [ makeCamera({ id: "c1", isAdopted: true }), makeCamera({ id: "c3", isAdopted: true }) ] }));
       const after = deviceSelectors.camera.adoptedIds(swapped);
 
@@ -180,7 +180,7 @@ describe("selectors", () => {
 
       assert.deepEqual(deviceSelectors.camera.adoptedIds(adopted), ["c1"]);
 
-      // isAdoptedByOther wins: the device is owned elsewhere now, so it drops out of our membership set even though isAdopted remains true.
+      // IsAdoptedByOther wins: the device is owned elsewhere now, so it drops out of our membership set even though isAdopted remains true.
       const claimedByOther = reduce(adopted, { id: "c1", kind: "devicePatched", modelKey: "camera", patch: { isAdoptedByOther: true } });
 
       assert.deepEqual(deviceSelectors.camera.adoptedIds(claimedByOther), []);
@@ -261,18 +261,18 @@ describe("selectors", () => {
         viewers: [makeViewer({ id: "v1" })]
       }));
 
-      // by-id lookups resolve against the correct collection.
+      // By-id lookups resolve against the correct collection.
       assert.equal(deviceSelectors.chime.byId("ch1")(state)?.id, "ch1");
       assert.equal(deviceSelectors.light.byId("l1")(state)?.id, "l1");
       assert.equal(deviceSelectors.relay.byId("r1")(state)?.id, "r1");
       assert.equal(deviceSelectors.sensor.byId("s1")(state)?.id, "s1");
       assert.equal(deviceSelectors.viewer.byId("v1")(state)?.id, "v1");
 
-      // full-collection selectors return their one device each.
+      // Full-collection selectors return their one device each.
       assert.deepEqual([ deviceSelectors.chime.all(state).length, deviceSelectors.light.all(state).length, deviceSelectors.relay.all(state).length,
         deviceSelectors.sensor.all(state).length, deviceSelectors.viewer.all(state).length ], [ 1, 1, 1, 1, 1 ]);
 
-      // the fixtures default to the connected state, so the online subsets match the full collections.
+      // The fixtures default to the connected state, so the online subsets match the full collections.
       assert.deepEqual([ deviceSelectors.chime.online(state).length, deviceSelectors.light.online(state).length, deviceSelectors.relay.online(state).length,
         deviceSelectors.sensor.online(state).length, deviceSelectors.viewer.online(state).length ], [ 1, 1, 1, 1, 1 ]);
     });
@@ -287,7 +287,7 @@ describe("selectors", () => {
         makeRelay({ id: "r2", isAdopted: true, state: "DISCONNECTED" }),
         makeRelay({ id: "r3", isAdopted: false, state: "CONNECTED" }) ] }));
 
-      // all: every relay; byId: the one record (undefined for an unknown id); online: only the connected ones; adoptedIds: the owned-and-adopted ids, sorted.
+      // All: every relay; byId: the one record (undefined for an unknown id); online: only the connected ones; adoptedIds: the owned-and-adopted ids, sorted.
       assert.deepEqual(deviceSelectors.relay.all(state).map((relay) => relay.id).sort(), [ "r1", "r2", "r3" ]);
       assert.equal(deviceSelectors.relay.byId("r1")(state)?.id, "r1");
       assert.equal(deviceSelectors.relay.byId("missing")(state), undefined);

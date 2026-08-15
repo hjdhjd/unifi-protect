@@ -44,9 +44,9 @@ import { randomUUID } from "node:crypto";
 import { wallClock } from "../clock.ts";
 
 /**
- * The coarse, stable lifecycle of a pooled stream as a subscriber observes it. `connecting` is bounded establishment (no segment has ever flowed); `live` is a healthy
- * stream; `recovering` is an in-flight recovery episode (a recoverable stall shows here *without* ending iteration); `closed` is terminal (disposed, codec change, or the
- * policy gave up).
+ * The coarse, stable lifecycle of a pooled stream as a subscriber observes it. `connecting` is bounded establishment (no MEDIA segment has ever flowed); `live` is a
+ * healthy stream; `recovering` is an in-flight recovery episode (a recoverable stall shows here *without* ending iteration); `closed` is terminal (disposed, codec
+ * change, or the policy gave up).
  *
  * @category Client
  */
@@ -101,7 +101,7 @@ export type RecoveryDecision =
 export type RecoveryPolicy = (context: RecoveryContext) => RecoveryDecision;
 
 /**
- * The library's default, health-agnostic recovery policy. It is **phase-split**, because the two regimes have different timing authorities:
+ * The library's default, health-agnostic recovery policy. It is **phase-split**, because establishing and recovering have different timing authorities:
  *
  * - **Establishment (`phase === "establishing"`) is hardware-bound and urgency-INDEPENDENT.** A fresh stream is minted at the camera's own first-segment latency, which
  *   no consumer can hurry - so the per-attempt window follows the fixed, patient {@link PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS} curve and ignores `toleranceMs` entirely
@@ -670,9 +670,9 @@ class ManagedSession implements SubscriptionHost {
   // connection - it only short-circuits a wait/backoff a consumer's changed urgency has made stale.
   //
   // It is gated to the recovering phase. A reassess re-asks the policy because the consumer's urgency changed, but establishment is urgency-INDEPENDENT - a fresh stream
-  // mints at the camera's own first-segment latency, which no consumer can hurry - so re-deciding an establishing episode cannot change its window. Now that the recovery
-  // point keys on media, an establishing episode stays in flight through the init->media gap, so an ungated reassess in that gap would settle the live window and the
-  // loop would re-consult and reinstall, tearing down a healthy session that has already inited and is about to produce media. Gating to recovering keeps the
+  // mints at the camera's own first-segment latency, which no consumer can hurry - so re-deciding an establishing episode cannot change its window. The recovery point
+  // keys on media, not the init, so an establishing episode stays in flight through the init->media gap; an ungated reassess in that gap would settle the live window
+  // and the loop would re-consult and reinstall, tearing down a healthy session that has already inited and is about to produce media. Gating to recovering keeps the
   // urgency-driven re-decision exactly where urgency matters and leaves a connecting stream's progress untouched. (When the stream is live, no window is awaited, so
   // `#settle` no-ops regardless; the gate's sole effect is to spare the in-flight establishing session.)
   reassess(): void {
@@ -690,9 +690,9 @@ class ManagedSession implements SubscriptionHost {
   }
 
   // The recovery loop: a reducer over recovery events. Each pass asks the policy for a decision given the live context, applies it (reconnect builds a fresh session;
-  // wait leaves the socket alone; giveUp is terminal), then awaits the decision's window. A segment ends the window as `recovered` and the episode is over; the window
-  // elapsing on a reconnect counts a failed attempt and re-consults; a torn-down stream ends the loop. The loop is bound to the managed session's AbortController, so
-  // teardown (last subscriber, pool disposal, terminal) ends it cleanly.
+  // wait leaves the socket alone; giveUp is terminal), then awaits the decision's window. A MEDIA segment ends the window as `recovered` and the episode is over; the
+  // window elapsing on a reconnect counts a failed attempt and re-consults; a torn-down stream ends the loop. The loop is bound to the managed session's
+  // AbortController, so teardown (last subscriber, pool disposal, terminal) ends it cleanly.
   async #runEpisode(phase: "establishing" | "recovering"): Promise<void> {
 
     this.#phase = phase;
@@ -796,9 +796,9 @@ class ManagedSession implements SubscriptionHost {
   // (every live stream is media-watched by default - the fail-safe analog of the byte heartbeat), whereas the recovery-await aggregate reads an undeclared subscriber as
   // Infinity (patient). A subscriber declaring a tighter value pulls the MIN down; one declaring Infinity opts itself out entirely, so a stream where every subscriber
   // opts out yields Infinity and the watchdog's per-tick `>= Infinity` comparison never fires (the byte backstop alone watches it). A finite MIN is clamped UP to the
-  // floor so a maximally-urgent consumer cannot set a threshold so tight that ordinary inter-segment jitter trips it. We read the RAW aggregate here, never the
-  // margin-reduced RecoveryContext.toleranceMs - detection answers "notice a stall this fast," a different question from the recovery-await's "how long to wait per
-  // attempt," so the 10 s detection default must never leak into recovery and vice versa.
+  // floor so a maximally-urgent consumer cannot set a threshold so tight that ordinary inter-segment jitter trips it. We read the RAW aggregate here, never the value
+  // `defaultLivestreamRecoveryPolicy` derives from it after subtracting the await margin - detection answers "notice a stall this fast," a different question from
+  // the recovery-await's "how long to wait per attempt," so the 10 s detection default must never leak into recovery and vice versa.
   #detectionThresholdMs(): number {
 
     // Seed the MIN at its identity (Infinity), then fold in each subscriber's contribution: the 10 s default when it declared no urgency, otherwise its declared value.
@@ -1005,8 +1005,9 @@ class ManagedSession implements SubscriptionHost {
   //
   // We arm even when the current threshold is Infinity (an all-opted-out stream): the loop is then a zero-cost idle interval whose per-tick comparison never fires, but
   // it stays running so a subscriber that later joins or tightens (pulling the MIN finite) is caught on the next tick with no explicit re-arm - the same property that
-  // lets a tighten DURING a stall be caught. The arm is gated on `#state === "live"` by its sole caller, so it never runs during establishing / recovering (no media has
-  // flowed). Abort-and-replace the controller so a stale loop from a prior arm can never coexist with the new one, then drive the interval on its signal.
+  // lets a tighten DURING a stall be caught. The arm no-ops unless `#state` is already "live", which holds here because `#onRecovered` sets it just before the sole
+  // caller invokes this method, so it never runs during establishing / recovering (no media has flowed). Abort-and-replace the controller so a stale loop from a
+  // prior arm can never coexist with the new one, then drive the interval on its signal.
   #armWatchdog(): void {
 
     if(this.#state !== "live") {

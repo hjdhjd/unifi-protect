@@ -1,8 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * livestream-pool.test.ts: Tests for the resilient-by-default LivestreamPool - multi-subscriber session sharing, late-joiner init replay, exact ref-counted teardown,
- * slow-vs-fast subscriber isolation, the stream-affecting pool key, the transport-backed URL resolver, diagnostics, Camera.livestream delegation, and the recovery layer:
- * invisible reconnect (same-codec init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the two regimes, reassess, and
+ * slow-vs-fast subscriber isolation, the stream-affecting pool key, diagnostics, Camera.livestream delegation, and the recovery layer: invisible reconnect
+ * (same-codec init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the establishing and recovering regimes, reassess, and
  * whenEstablished.
  */
 import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-pool.ts";
@@ -107,10 +107,11 @@ function pushMedia(ws: FakeWebSocket): void {
   ws.emitMessage(buildMediaSegment({ mdat: Buffer.from("m"), moof: Buffer.from("f") }));
 }
 
-// Pulse every active interval-poll loop `count` times. Two interval watchdogs are live once a stream is established: the session's any-byte heartbeat (registered first,
-// at socket open) and the pool's media-stall watchdog (registered later, at the first media). The fake clock's `tick()` releases ONE pending iteration per call (FIFO),
-// so a single tick wakes whichever loop registered earliest; pulsing a few times in a row wakes both and lets each loop re-register and re-evaluate. Tests that need the
-// MEDIA watchdog (not the heartbeat) to evaluate `now() - lastMediaAt` against its threshold pulse twice so the pool loop's body runs after the session loop's.
+// Pulse every active interval-poll loop `count` times. Once a stream is established, the active interval watchdogs are the session's any-byte heartbeat,
+// registered first at socket open, and the pool's media-stall watchdog, registered later at the first media. The fake clock's `tick()` releases ONE pending
+// iteration per call (FIFO), so a single tick wakes whichever loop registered earliest; pulsing a few times in a row wakes each of them in turn and lets it
+// re-register and re-evaluate. Tests that need the MEDIA watchdog (not the heartbeat) to evaluate `now() - lastMediaAt` against its threshold pulse twice so the
+// pool loop's body runs after the session loop's.
 async function pulse(clock: FakeClock, count = 2): Promise<void> {
 
   for(let index = 0; index < count; index++) {
@@ -356,7 +357,7 @@ describe("LivestreamPool", () => {
 
       await sub[Symbol.asyncDispose]();
 
-      // The discard cleared exactly the three queued segments, and the terminal - not a stale segment - surfaces on the next pull.
+      // The discard cleared every queued segment, and the terminal - not a stale segment - surfaces on the next pull.
       assert.equal(sub.stats.discarded, 3);
       assert.equal(sub.stats.queueDepth, 0);
       assert.equal((await sub[Symbol.asyncIterator]().next()).done, true);
@@ -370,8 +371,8 @@ describe("LivestreamPool", () => {
 
       await flush();
 
-      // Walk the default establishing curve to the deadline (as the compatibility-pinning drain-then-throw test does), emitting an init on each fresh socket. The first
-      // attempt's init is queued; later same-codec re-inits are suppressed.
+      // Walk the default establishing curve to the deadline, as the init-then-no-media give-up test does, emitting an init on each fresh socket. The first attempt's
+      // init is queued; later same-codec re-inits are suppressed.
       const windows = [ 5000, 8000, 10000, 10000 ];
 
       for(const window of windows) {
@@ -572,7 +573,8 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "media");
       assert.equal(sub.state, "live");
 
-      // The first session goes silent past its heartbeat window; its watchdog tears it down, and the pool begins recovery.
+      // The first session goes silent past its heartbeat window; its watchdog tears it down, and the pool begins recovery. The advance matches
+      // PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, the silence threshold the watchdog fires at.
       clock.advance(10000);
       await clock.tick();
       await flush();
@@ -708,8 +710,8 @@ describe("LivestreamPool", () => {
       await flush();
 
       // Each attempt: the controller acks with an init but then produces NO media, then we elapse the attempt's window. Because liveness is media-keyed, an init alone
-      // never settles the episode, so each such session is a failed media-establishment attempt - exactly the init-then-hang the change exists to bound. We walk the full
-      // default curve (5s + 8s + 10s + 10s = 33s) until the deadline is crossed, emitting the init on each fresh socket and elapsing its window.
+      // never settles the episode, so each such session is a failed media-establishment attempt - exactly the init-then-hang the establishment deadline bounds. We
+      // walk the full default curve (5s + 8s + 10s + 10s = 33s) until the deadline is crossed, emitting the init on each fresh socket and elapsing its window.
       const windows = [ 5000, 8000, 10000, 10000 ];
 
       for(const window of windows) {
@@ -1077,7 +1079,7 @@ describe("LivestreamPool", () => {
       await flush();
 
       // The disposed subscriber's reassess must leave the parked episode untouched. Without the guard this call settles the episode early, reconnecting and incrementing
-      // recoveringCalls - so the two assertions below fail against the unguarded implementation.
+      // recoveringCalls - so the assertions below (socket count and recoveringCalls) fail against the unguarded implementation.
       sub1.reassess();
       await flush();
 
@@ -1291,7 +1293,7 @@ describe("LivestreamPool", () => {
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
 
       // Start sub2's wait, then abort its own signal. The wait must resolve false promptly - it routes through this subscription's own disposal - while sub1's wait stays
-      // pending because the shared session lives on (sub1 is still attached). Pre-fix, sub2's wait forwarded straight to the shared latch and hung until sub1 settled it.
+      // pending because the shared session lives on (sub1 is still attached).
       const sub2Wait = sub2.whenEstablished();
 
       controller.abort();
@@ -1415,7 +1417,8 @@ describe("LivestreamPool", () => {
       assert.equal(sockets.length, 1);
 
       // Now go media-silent past the default threshold while keeping the byte heartbeat alive with a non-media frame, so the recovery can ONLY be the media watchdog (the
-      // byte watchdog cannot trip - it just saw a frame). The media watchdog reads `now() - #lastMediaAt >= 10000` and recovers into a fresh session.
+      // byte watchdog cannot trip - it just saw a frame). The media watchdog compares the media-silence duration against the aggregated detection threshold, 10s by
+      // default here, and recovers into a fresh session.
       clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
       at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
       await flush();
@@ -1790,7 +1793,8 @@ describe("LivestreamPool", () => {
 
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
 
-      // No urgency declared. The DETECTION default is 10s, but the recovery-await aggregate must still be Infinity - the two defaults are separate and must not leak.
+      // No urgency declared. The DETECTION default is 10s, but the recovery-await aggregate must still be Infinity - the detection default and the recovery-await
+      // default are separate and must not leak into one another.
       const sub = pool.subscribe(SPEC);
 
       await flush();
@@ -1945,6 +1949,10 @@ describe("LivestreamPool", () => {
       let captured: { opts: { signal?: AbortSignal; urgency?: () => number }; spec: LivestreamSpec } | null = null;
       const controller = new AbortController();
       const urgency = (): number => 0;
+
+      // This fixture implements only the DeviceContext members that Camera.livestream() touches - livestreamPool.subscribe() to capture
+      // its arguments, plus stub log/store/transport fields to satisfy the shape. Neither the subscribe() return value nor the store and
+      // transport fields resemble their real interfaces, so both casts route through unknown rather than claiming a genuine match.
       const context = {
 
         host: "10.0.0.1",

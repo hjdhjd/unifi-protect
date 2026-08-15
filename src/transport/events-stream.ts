@@ -120,9 +120,8 @@ export class EventStream implements AsyncDisposable {
   // frame, seeded to construction time so a fresh stream is not instantly considered stale.
   #closePromise: Promise<void> | null = null;
   #closed = false;
-  // Set by every self-initiated teardown (close(), caller abort, watchdog stall, socket error), so #onClose can tell a deliberate close from a peer-initiated
-  // one and route
-  // only the latter onto the error rail.
+  // Set by every self-initiated teardown (close(), caller abort, watchdog stall, socket error), so #onClose can tell a deliberate close from a peer-initiated one and
+  // route only the latter onto the error rail.
   #closeInitiated = false;
   // Set ONLY by the caller-abort teardown path, a narrowing of the broader #closeInitiated, so #onClose settles a still-pending open handshake as the typed
   // ProtectAbortedError for a caller abort while every other pre-open teardown (socket close, error, watchdog, explicit close()) keeps the generic ProtectNetworkError.
@@ -320,6 +319,10 @@ export class EventStream implements AsyncDisposable {
    */
   async close(): Promise<void> {
 
+    // WebSocket close code 1000 (RFC 6455 normal closure) marks a close this instance itself decided on - an explicit close() call or a caller-signal abort - while code
+    // 1006 (abnormal closure) marks a close forced by conditions outside our control - a socket error or a watchdog-detected stall. Every #shutdown call site in this
+    // file chooses between the two along exactly that line, so #onClose and any downstream consumer inspecting the code can tell a deliberate teardown from one that
+    // signals a connection problem.
     this.#shutdown(1000, "the events stream was closed by the client");
 
     await (this.#closePromise ?? Promise.resolve());
@@ -423,12 +426,9 @@ export class EventStream implements AsyncDisposable {
       new ProtectNetworkError("The UniFi Protect realtime events API closed before it finished connecting.", { cause: reason }));
 
     // An unsolicited close - the peer dropped a live socket without our asking - is termination we did not initiate, the same category as a socket error, and a
-    // controller
-    // reboot arrives exactly this way (a `close` event with no preceding socket `error`). Route it onto the error rail so the ConnectionMonitor recovers; a
-    // self-initiated
-    // close, or one that follows an already-emitted error (socket error / watchdog stall, both of which set #closeInitiated via #shutdown), stays informational.
-    // The #live
-    // gate keeps a pre-open connect failure on the opened-handshake rejection rather than starting a doomed recovery.
+    // controller reboot arrives exactly this way (a `close` event with no preceding socket `error`). Route it onto the error rail so the ConnectionMonitor recovers; a
+    // self-initiated close, or one that follows an already-emitted error (socket error / watchdog stall, both of which set #closeInitiated via #shutdown), stays
+    // informational. The #live gate keeps a pre-open connect failure on the opened-handshake rejection rather than starting a doomed recovery.
     if(!this.#closeInitiated && this.#live) {
 
       this.#bus.emit("error", new ProtectNetworkError("The UniFi Protect realtime events API connection closed unexpectedly.", { cause: reason }));

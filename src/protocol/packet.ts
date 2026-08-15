@@ -156,6 +156,9 @@ export function decodePacket(buf: Uint8Array): RawPacket {
  *
  * @returns The encoded bytes as a `Buffer`.
  *
+ * @throws `TypeError` if `packet.header` or a non-`Buffer`/non-`string` `packet.payload` holds a value `JSON.stringify` cannot serialize (a circular
+ *   reference or a `BigInt`). This propagates unwrapped rather than as the library's typed {@link ProtectProtocolError}.
+ *
  * @category Codec
  */
 export function encodePacket(packet: RawPacket): Buffer {

@@ -11,9 +11,9 @@ Options for [Chime.playSpeaker](Chime.md#playspeaker). Every field is optional. 
 select a specific ringtone and/or override its playback. `signal` is the client-side abort signal for the request and is never sent to the controller.
 
 To play a ringtone *the way it is configured* (the per-ringtone `repeatTimes`/`volume` stored in the chime's `ringSettings`), join those values yourself from the
-read-through `chime.config.ringSettings` and pass them here. That join is deliberately
-left to the consumer: `ringSettings` is keyed by `(cameraId, ringtoneId)`, so which entry to match and what to fall back to are policy decisions the library does not
-make on the caller's behalf, and a command that read state internally would be a second, invisible reader of `ringSettings`.
+read-through `chime.config.ringSettings` and pass them here. That join is deliberately left to the consumer: `ringSettings` is keyed by `(cameraId, ringtoneId)`, so
+which entry to match and what to fall back to are policy decisions the library does not make on the caller's behalf, and a command that read state internally would be
+a second, invisible reader of `ringSettings`.
 
 ## Properties
 

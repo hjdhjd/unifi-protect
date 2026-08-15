@@ -6,8 +6,8 @@
 
 # Interface: Light
 
-A light projection. Inherits the read-through getters, live `observe`, and write-through `update` from [DeviceProjection](DeviceProjection.md); light-specific behavior (level,
-motion activation) is expressed through `update` payloads rather than bespoke methods.
+A light projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from [DeviceProjection](DeviceProjection.md); light-specific
+behavior (level, motion activation) is expressed through `update` payloads rather than bespoke methods.
 
 ## Extends
 

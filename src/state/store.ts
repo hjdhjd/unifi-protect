@@ -266,7 +266,8 @@ export class StateStore implements AsyncDisposable {
    * Advance the state by one event. The single mutation chokepoint: it folds the event through the pure reducer and, only when the resulting state is a *different*
    * reference, commits it and notifies every active observer. A no-op event (one the reducer returns unchanged) notifies nobody.
    *
-   * Package-internal: the realtime event stream, the refresh failsafe, and the `connect()` factory's initial bootstrap call it. It is not a consumer-facing surface.
+   * Package-internal: the realtime event stream, the refresh failsafe, the `connect()` factory's initial bootstrap, and `ConnectionMonitor`'s recovery re-bootstrap
+   * call it. It is not a consumer-facing surface.
    *
    * @param event - The typed event to apply.
    *
@@ -274,8 +275,9 @@ export class StateStore implements AsyncDisposable {
    */
   dispatch(event: TypedEvent): void {
 
-    /* Disposal is terminal, and this is the one place every caller passes through - the realtime stream, the refresh failsafe, and the connect() factory alike - so
-     * guarding here covers them all, including a refresh already in flight when disposal ran and settling afterward.
+    /* Disposal is terminal, and this is the one place every caller passes through - the realtime stream, the refresh failsafe, the connect() factory, and
+     * ConnectionMonitor's recovery re-bootstrap alike - so guarding here covers them all, including a refresh already in flight when disposal ran and settling
+     * afterward.
      */
     if(this.#disposed) {
 
@@ -380,6 +382,10 @@ export class StateStore implements AsyncDisposable {
 
     const ownMac = macOf(bootstrap.nvr);
     const stale = new Set(this.#engagedAdoption);
+
+    // mapFieldFor(modelKey) always returns one of ProtectNvrBootstrap's own declared collection-field names for every MAP_BACKED_STATE_MODEL_KEYS member, so bridging
+    // through Record<string, unknown> below is a type-system workaround for dynamic-key access, not a genuine unsafe cast: the runtime-computed lookup on the next line
+    // always targets a real, correctly-typed collection.
     const source = bootstrap as unknown as Record<string, unknown>;
 
     for(const modelKey of MAP_BACKED_STATE_MODEL_KEYS) {
@@ -549,7 +555,9 @@ function macOf(nvr: ProtectNvrConfig | null | undefined): string | undefined {
 }
 
 // A device record's own hardware MAC for the diagnostic payload, read defensively off the incoming record-or-patch or the stored record; a flip patch carries no mac, so
-// the stored record supplies it.
+// the stored record supplies it. The untyped read is safe against the full ProtectStateRecord union because deviceMac is only ever reached from #applyAdoptionTransition
+// after isAdoptionContradiction has already required isAdopted === true, a field only a device record populates, so the liveview and user members of that union - which
+// carry no mac field - can never reach this line.
 function deviceMac(record: ProtectStateRecord | DeepPartial<ProtectStateRecord> | undefined): string | undefined {
 
   const mac = (record as Record<string, unknown> | undefined)?.["mac"];

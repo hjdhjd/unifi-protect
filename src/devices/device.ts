@@ -128,7 +128,7 @@ export abstract class Projection<TConfig> {
  * (every Protect device type exposes a reboot endpoint).
  *
  * Commands are **write-through**: `update` PATCHes the controller and returns the same live handle, but does *not* fold the response into the store. State advances
- * solely through the reducer's two universal inputs - the realtime event stream and the bootstrap refresh failsafe - so the issuer learns of its own change the way every
+ * solely through the reducer's universal inputs - the realtime event stream and the bootstrap refresh failsafe - so the issuer learns of its own change the way every
  * other subscriber does (the controller broadcasts the resulting `devicePatched` to all WebSocket subscribers). The consequence is that a projection reflects a command's
  * effect once the stream (or the next refresh) delivers it, not synchronously after the `await`; consumers `observe()` rather than read-after-write.
  *
@@ -176,11 +176,10 @@ export abstract class DeviceProjection<TConfig extends ProtectDeviceConfig> exte
   /**
    * Issue an authenticated REST call to this device's endpoint and return the 2xx-classified response. This is the single home for the device-command mechanic - URL
    * construction, the JSON-body convention, content-type, the GET/HEAD no-body rule, signal threading, and `ensureOk` classification - so every command and query shares
-   * one definition rather than re-spelling the request shape. A body-bearing method (any method other than GET/HEAD) always carries a JSON body -
-   * the supplied `payload`, or `{}` for a parameterless command - so a command's wire shape never depends on whether it happens to take parameters;
-   * `GET`/`HEAD` carry none. The caller keeps what is
-   * genuinely its own - any capability guard (thrown before this is reached) and any extraction from the response (`.body` bytes, a parsed `json<T>()` field) - and the
-   * write-through contract holds: this returns the classified response but never folds it into the store.
+   * one definition rather than re-spelling the request shape. A body-bearing method (any method other than GET/HEAD) always carries a JSON body - the supplied `payload`,
+   * or `{}` for a parameterless command - so a command's wire shape never depends on whether it happens to take parameters; `GET`/`HEAD` carry none. The caller keeps
+   * what is genuinely its own - any capability guard (thrown before this is reached) and any extraction from the response (`.body` bytes, a parsed `json<T>()` field) -
+   * and the write-through contract holds: this returns the classified response but never folds it into the store.
    *
    * @param path - The suffix appended to this device's endpoint (e.g. `/reboot`, `/snapshot?w=640`); `""` targets the device record itself, as the `update` PATCH does.
    * @param opts - The HTTP `method` (default `POST`), an optional JSON `payload`, and an optional abort `signal`.

@@ -10,7 +10,7 @@
 function defaultLivestreamRecoveryPolicy(context): RecoveryDecision;
 ```
 
-The library's default, health-agnostic recovery policy. It is **phase-split**, because the two regimes have different timing authorities:
+The library's default, health-agnostic recovery policy. It is **phase-split**, because establishing and recovering have different timing authorities:
 
 - **Establishment (`phase === "establishing"`) is hardware-bound and urgency-INDEPENDENT.** A fresh stream is minted at the camera's own first-segment latency, which
   no consumer can hurry - so the per-attempt window follows the fixed, patient [PROTECT\_LIVESTREAM\_ESTABLISH\_BACKOFF\_MS](../variables/PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS.md) curve and ignores `toleranceMs` entirely

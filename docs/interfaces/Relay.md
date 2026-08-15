@@ -6,8 +6,8 @@
 
 # Interface: Relay
 
-A relay projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from [DeviceProjection](DeviceProjection.md), and adds the one
-relay-specific command: [Relay.toggleOutput](#toggleoutput), the faithful primitive over the controller's per-output activate endpoint.
+A relay projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from [DeviceProjection](DeviceProjection.md), and adds its
+relay-specific command, [Relay.toggleOutput](#toggleoutput), the faithful primitive over the controller's per-output activate endpoint.
 
 ## Extends
 

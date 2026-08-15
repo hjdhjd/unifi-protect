@@ -7,7 +7,7 @@
  * The typed-event taxonomy for the UniFi Protect realtime stream, the pure {@link classifyPacket} that lifts a {@link RawPacket} into it, and the bootstrap-dimension
  * {@link findUnmodeledDeviceCollections} that lifts an applied bootstrap into the device collections the reducer does not model.
  *
- * This module is Layer 1: it depends only on the codec's output shape and the domain types, performs no I/O, holds no state, and never throws. It is the second half
+ * This module is Layer 1: it depends only on the codec's output shape and the domain types, performs no I/O, and holds no state. It is the second half
  * of the protocol contract - {@link ../protocol/packet | packet.ts} turns bytes into a `RawPacket`; this turns a `RawPacket` into a {@link TypedEvent}. Because it owns
  * the modelKey vocabulary ({@link DEVICE_MODEL_KEYS} / {@link KNOWN_MODEL_KEYS}), it also hosts the bootstrap-dimension classifier: where `classifyPacket` catches
  * an unmodeled class that *emits a realtime packet*, `findUnmodeledDeviceCollections` catches one that merely *lives in the bootstrap* - the standing twin the realtime
@@ -19,10 +19,10 @@ import type { DeepPartial, ProtectNvrBootstrap, ProtectStateRecord } from "../ty
 import type { RawPacket } from "./packet.ts";
 import { assertNever } from "../errors.ts";
 
-// The modelKey taxonomy is four nested tiers (DeviceCollectionKey ⊂ DeviceModelKey ⊂ StateModelKey ⊂ ModelKey), each declared once as the single source of truth for both
-// its type and its runtime membership test. The controller emits realtime `update` packets for more than the projectable devices, so the tiers separate the distinct
-// questions: "is this an id-keyed device collection?", "is this device-addressable?", "do we reduce it into state?", and "is this a modelKey we recognize on the wire at
-// all?".
+// The modelKey taxonomy nests DeviceCollectionKey inside DeviceModelKey inside StateModelKey inside ModelKey, each declared once as the single source of truth
+// for both its type and its runtime membership test. The controller emits realtime `update` packets for more than the projectable devices, so the tiers separate
+// the distinct questions: "is this an id-keyed device collection?", "is this device-addressable?", "do we reduce it into state?", and "is this a modelKey we
+// recognize on the wire at all?".
 
 // Tier 0 - the id-keyed device collections: every DeviceModelKey except the NVR singleton. The vocabulary a consumer iterates to reach a device category's selectors and
 // projections, and the innermost tier of the taxonomy.
@@ -41,7 +41,7 @@ const STATE_MODEL_KEYS = [ ...DEVICE_MODEL_KEYS, "liveview", "user" ] as const;
 // Tier 3 - every model key the controller is observed to emit on the realtime stream: the reduced set, the `event` activity channel, and the recognized-but-unmodeled
 // keys the controller broadcasts but the library does not fold into state - the `group`/`bridge` collections, the newer device classes (`aiport`, `aiprocessor`,
 // `linkstation`), and detection/session telemetry (`smartDetectObject`, `activeSessionStat`). A device-shaped key here can become a reduced StateModelKey when a
-// consumer needs it - `relay` made exactly that promotion to a DeviceModelKey. Membership in this set is what makes the schema:unknownModelKey diagnostic
+// consumer needs it - `relay` is one such promoted key, modeled as a DeviceModelKey. Membership in this set is what makes the schema:unknownModelKey diagnostic
 // honest - a key in this set is known even when we do not reduce it, so the diagnostic fires only for a key outside it (genuine wire drift). This set beyond the
 // collections was confirmed by a schema-drift sweep against a real controller; `doorlock` and `ringtone` remain deliberately absent, as neither is observed in practice.
 const KNOWN_MODEL_KEYS = [ ...STATE_MODEL_KEYS, "activeSessionStat", "aiport", "aiprocessor", "bridge", "event", "group", "linkstation", "smartDetectObject" ] as const;
@@ -114,7 +114,7 @@ export type AuthMethod = "fingerprint" | "nfc";
  *   unlike motion's `lastMotion` - so the occurrence is its single source of truth. It is a sibling of `motionDetected`, not a `smartDetect` variant: tamper is not a
  *   smart object class and carries no `objectTypes`.
  * - `authDetected` - a doorbell reported an authentication scan: a fingerprint match (`fingerprintIdentified`) or an NFC card tap (`nfcCardScanned`). Camera-attributed
- *   (the doorbell that performed the scan, resolved via the payload `camera` field) and, like `tamperDetected`, a one-way occurrence with no paired state field, so the
+ *   (the doorbell that performed the scan) and, like `tamperDetected`, a one-way occurrence with no paired state field, so the
  *   occurrence is its single source of truth. It is decided by its explicit auth `type` *ahead* of the generic `accessEvent` fallback as defensive precedence - live
  *   captures of both methods confirm auth metadata (`fingerprint`/`nfc`) and the `accessEventId` access marker are disjoint, so a scan is never absorbed as a bare access
  *   occurrence even were a future firmware to co-stamp it. The `method` the classifier resolved (`"fingerprint"` / `"nfc"`) is lifted onto the event - the consumer reads
@@ -122,9 +122,10 @@ export type AuthMethod = "fingerprint" | "nfc";
  *   identity matched stay metadata reads (an unrecognized scan still classifies, carrying e.g. `metadata.fingerprint.ulpId: null`).
  * - `doorbellRing` - a doorbell was pressed.
  * - `accessEvent` - a UniFi Access occurrence (door, reader, lock), distinguished within the `event` channel by its access metadata.
- * - `buttonPressed` - a security-action button was pressed on a fob (or a sensor with a button). Device-attributed (the pressing device, from the
- *   payload's `device` field), so it routes by `deviceId` like `accessEvent`; the classifier lifts `button` (which button) and `pressType` (how it was pressed), and
- *   the device family rides in `metadata.deviceModelKey` since the wire event type is shared across button-bearing devices.
+ * - `buttonPressed` - a security-action button was pressed on a fob (or a sensor with a button). Device-attributed (the pressing device, from the payload's
+ *   `device` field, or the metadata's `sensorId` text when the payload carries no device), so it routes by `deviceId` like `accessEvent`; the classifier lifts
+ *   `button` (which button) and `pressType` (how it was pressed), and the device family rides in `metadata.deviceModelKey` since the wire event type is shared
+ *   across button-bearing devices.
  *
  * @category Events
  */
@@ -274,10 +275,10 @@ export interface UnmodeledCollection {
  * The bootstrap-dimension twin of {@link classifyPacket}: scan an applied bootstrap for device-shaped collections the reducer does not model. Pure, total, and
  * side-effect-free - it reads only the bootstrap and the modelKey vocabulary beside it. A collection qualifies when its value is a non-empty array whose first element
  * is a record carrying both a string `modelKey` and a string `mac` - the device shape, present on relay/aiport/aiprocessor/linkstation/bridge and absent on the
- * user/liveview/ringtone rosters (no `mac`) and the group collections (no `modelKey`+`mac`) - and whose `modelKey` is not already a {@link DeviceModelKey} the library
- * models. For each survivor it reports the bootstrap array key (`collection`), the record's self-declared `modelKey`, the array length (`count`), the first record's id
- * (`exampleId`), and whether the `modelKey` is otherwise recognized (`known`, via {@link isKnownModelKey}) - `true` for a recognized-but-unreduced class, `false` for
- * genuine drift.
+ * user/liveview/ringtone rosters (no `mac`) and the group collections (a `modelKey` but no `mac`) - and whose `modelKey` is not already a {@link DeviceModelKey} the
+ * library models. For each survivor it reports the bootstrap array key (`collection`), the record's self-declared `modelKey`, the array length (`count`), the first
+ * record's id (`exampleId`), and whether the `modelKey` is otherwise recognized (`known`, via {@link isKnownModelKey}) - `true` for a recognized-but-unreduced class,
+ * `false` for genuine drift.
  *
  * Where {@link classifyPacket} catches an unmodeled class that emits a realtime packet, this catches a quiescent one that merely lives in the bootstrap. Both read the
  * same vocabulary, so a class the library already models is automatically excluded from both, with no separate edit needed here.
@@ -295,7 +296,7 @@ export function findUnmodeledDeviceCollections(bootstrap: ProtectNvrBootstrap): 
   for(const [ collection, value ] of Object.entries(bootstrap)) {
 
     // The device-shaped predicate: a non-empty array whose first element is a record with both a string `modelKey` and a string `mac`. The `mac` is what separates a
-    // device collection from the user/liveview/ringtone rosters (no `mac`) and the group collections (no `modelKey`+`mac`).
+    // device collection from the user/liveview/ringtone rosters (no `mac`) and the group collections (a `modelKey` but no `mac`).
     if(!Array.isArray(value) || (value.length === 0)) {
 
       continue;
@@ -369,13 +370,14 @@ function classifyActivity(eventId: string, payload: unknown): TypedEvent | null 
   const metadata = recordField(payload, "metadata");
   const type = stringField(payload, "type");
 
-  // A doorbell authentication scan - a fingerprint match or an NFC card tap - is camera-attributed (the doorbell that performed it), resolved live via the payload's
-  // `camera` field (no `cameraId`). Live captures of both methods confirm its metadata (`fingerprint`/`nfc`) and a generic access occurrence's `accessEventId` marker are
-  // disjoint, so the two branches do not collide on observed traffic; we nonetheless resolve the `method` from the wire `type` and decide the occurrence by it
-  // *before* the accessEvent branch below - the same "an explicit type wins over the metadata fallback" discipline `tamperDetected` uses against the
-  // smart-detection branch - as defensive precedence, so a future firmware that co-stamped a scan with `accessEventId` could still never have it
-  // absorbed as a bare `accessEvent`. The resolved method is lifted onto the event (the classifier's own answer, so the consumer never re-derives it
-  // from metadata shape), exactly as `smartDetect` lifts `objectTypes`. Because this test precedes the shared camera-id guard further down, it carries
+  // A doorbell authentication scan - a fingerprint match or an NFC card tap - is camera-attributed (the doorbell that performed it), resolved through the
+  // shared `cameraId`-then-`camera` fallback every camera-attributed signal uses. Live captures of both methods confirm its metadata (`fingerprint`/`nfc`)
+  // and a generic access occurrence's `accessEventId` marker are disjoint, so the two branches do not collide on observed traffic; we nonetheless resolve
+  // the `method` from the wire `type` and decide the occurrence by it *before* the accessEvent branch below - the same "an explicit type wins over the
+  // metadata fallback" discipline `tamperDetected` uses against the smart-detection branch - as defensive precedence, so a future firmware that
+  // co-stamped a scan with `accessEventId` could still never have it absorbed as a bare `accessEvent`. The resolved method is lifted onto the event
+  // (the classifier's own answer, so the consumer never re-derives it from metadata shape), exactly as `smartDetect` lifts `objectTypes`. Because this
+  // test precedes the shared camera-id guard further down, it carries
   // its own: without a camera id the signal is unroutable, so we decline. Whether the scan succeeded and which identity matched stay metadata reads at
   // delivery - data, not classification (an unrecognized scan still classifies, carrying `metadata.fingerprint.ulpId: null`).
   const method = (type !== undefined) ? AUTH_EVENT_METHODS[type] : undefined;
@@ -400,9 +402,10 @@ function classifyActivity(eventId: string, payload: unknown): TypedEvent | null 
     return { action: stringField(metadata, "action") ?? type ?? "", at, deviceId, eventId, kind: "accessEvent", metadata };
   }
 
-  // A button press on a fob (or a sensor with a button) is a device-attributed occurrence: the wire carries the pressing device on `device` (with `camera` null), so it
-  // routes by `deviceId` like an access occurrence rather than through the camera-id guard below. The lifted `button` and `pressType` are the occurrence's identity -
-  // which button, and how it was pressed - while the device family rides in `metadata.deviceModelKey`, since the event type is shared across button-bearing devices.
+  // A button press on a fob (or a sensor with a button) is a device-attributed occurrence: the wire carries the pressing device on `device` (with `camera` null),
+  // or falls back to the metadata's `sensorId` text when the payload carries no device, so it routes by `deviceId` like an access occurrence rather than
+  // through the camera-id guard below. The lifted `button` and `pressType` are the occurrence's identity - which button, and how it was pressed - while the
+  // device family rides in `metadata.deviceModelKey`, since the event type is shared across button-bearing devices.
   if(type === SENSOR_BUTTON_EVENT_TYPE) {
 
     const deviceId = stringField(payload, "device") ?? readNestedText(metadata?.["sensorId"]);
@@ -485,9 +488,9 @@ export function isKnownModelKey(value: string): value is ModelKey {
 }
 
 /**
- * Whether the given wire model key is one the library models as a device - a {@link DeviceModelKey} with a REST endpoint and a Layer-3 projection. The innermost of the
- * three nested vocabulary guards ({@link isKnownModelKey} is the outermost). {@link findUnmodeledDeviceCollections} uses it to drop a bootstrap collection the library
- * already models, so a class promoted into {@link DEVICE_MODEL_KEYS} (as `relay` was) leaves the unmodeled report automatically, with no second edit.
+ * Whether the given wire model key is one the library models as a device - a {@link DeviceModelKey} with a REST endpoint and a Layer-3 projection. The innermost of
+ * this file's nested vocabulary guards ({@link isKnownModelKey} is the outermost). {@link findUnmodeledDeviceCollections} uses it to drop a bootstrap collection the
+ * library already models, so a class promoted into {@link DEVICE_MODEL_KEYS} (as `relay` was) leaves the unmodeled report automatically, with no second edit.
  *
  * @param value - The wire model-key string.
  *
@@ -538,7 +541,8 @@ function stringArrayField(record: Record<string, unknown>, key: string): readonl
   return Array.isArray(value) ? value.filter((element): element is string => typeof element === "string") : [];
 }
 
-// Read the `.text` of a `{ text: string }`-shaped property (the access metadata's deviceId shape), or undefined if it does not match.
+// Read the `.text` of a `{ text: string }`-shaped property - the shape the access metadata's `deviceId` field and the button-press metadata's `sensorId`, `button`,
+// and `buttonPressType` fields share - or undefined if it does not match.
 function readNestedText(value: unknown): string | undefined {
 
   return isRecord(value) ? stringField(value, "text") : undefined;

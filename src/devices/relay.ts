@@ -8,8 +8,8 @@ import type { ProtectRelayConfig } from "../types/index.ts";
 import { deviceSelectors } from "../state/selectors.ts";
 
 /**
- * A relay projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from {@link DeviceProjection}, and adds the one
- * relay-specific command: {@link Relay.toggleOutput}, the faithful primitive over the controller's per-output activate endpoint.
+ * A relay projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from {@link DeviceProjection}, and adds its
+ * relay-specific command, {@link Relay.toggleOutput}, the faithful primitive over the controller's per-output activate endpoint.
  *
  * @category Devices
  */

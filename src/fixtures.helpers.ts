@@ -54,7 +54,7 @@ export function makeViewer(overrides: Record<string, unknown> = {}): ProtectView
 }
 
 // A relay with its per-output state and an inputs/outputs/ledSettings core, so tests can exercise output toggles and nested deep-merges. The `as unknown as` cast absorbs
-// the relay's wire reality the base now allows - it reports `host: null` and omits `isConnected` - so a test never reads those off this fixture expecting a wired value.
+// the relay's wire reality the base allows - it reports `host: null` and omits `isConnected` - so a test never reads those off this fixture expecting a wired value.
 export function makeRelay(overrides: Record<string, unknown> = {}): ProtectRelayConfig {
 
   return {

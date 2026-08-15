@@ -12,7 +12,7 @@ subset of the WHATWG/undici `WebSocket` so the dependency is exactly what they n
 a single definition and a test fake written against it drives any of them.
 
 The send-direction transport (the [TalkbackSession](TalkbackSession.md)) is write-only and reads nothing inbound, so it depends on the separate, equally minimal
-`ProtectWritableWebSocket` below rather than this one - the seam is split by direction so neither interface carries a method its consumers never call.
+`ProtectWritableWebSocket` below rather than this one - the surface is split by direction so neither interface carries a method its consumers never call.
 
 ## Properties
 

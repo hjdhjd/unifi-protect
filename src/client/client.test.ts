@@ -204,7 +204,8 @@ describe("ProtectClient.connect", () => {
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
 
       await using client = await connect(agent);
-      const sub = client.on("packet", () => { /* no-op listener; nothing emits in this phase. */ });
+
+      const sub = client.on("packet", () => { /* A no-op listener; nothing in this phase emits a packet event. */ });
 
       assert.equal(typeof sub[Symbol.dispose], "function");
 

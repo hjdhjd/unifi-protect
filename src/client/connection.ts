@@ -78,7 +78,7 @@ export interface ConnectionTransition {
 }
 
 /**
- * The events {@link ConnectionMonitor} publishes on its three-rail surface.
+ * The events {@link ConnectionMonitor} publishes on its state, controller-lifecycle, and throttle rails.
  *
  * - `stateChanged` fires on every connection-state edge.
  * - `controllerLost` fires once when the controller is concluded unreachable, carrying the typed fault.
@@ -150,11 +150,10 @@ export interface ConnectionMonitorOptions {
  * monitor wires once.
  *
  * Both bridges are attached synchronously at build time, before any await, preserving the race-free "subscribe before open" property the composition root relies on. On
- * `relaunch` the subscriptions are disposed *before* the old stream is torn down, so a dying socket's late frames never reach the monitor or the firehose. It listens
- * only to `error`: the `EventStream` routes every unsolicited termination there - a stall, a socket error, and an unsolicited close (the peer dropping a live
- * socket, e.g.
- * a controller reboot, which arrives as a `close` with no socket `error`). A self-initiated close (relaunch / dispose) stays informational on `closed`, so the error rail
- * alone is the failure signal and `closed` needs no handling.
+ * `relaunch` the subscriptions are disposed *before* the old stream is torn down, so a dying socket's late frames never reach the monitor or the firehose. For fault
+ * detection it listens only to `error`, never `closed`: the `EventStream` routes every unsolicited termination there - a stall, a socket error, and an unsolicited close
+ * (the peer dropping a live socket, e.g. a controller reboot, which arrives as a `close` with no socket `error`). A self-initiated close (relaunch / dispose) stays
+ * informational on `closed`, so the error rail alone is the failure signal and `closed` needs no handling.
  */
 class ManagedEventStream implements AsyncDisposable {
 
@@ -523,8 +522,8 @@ export class ConnectionMonitor {
 
   // The guarded recovery sequence: one backoff curve, chosen by fault certainty, that walks out to the steady floor and polls there until the controller returns or the
   // monitor is disposed. The #backoffDelays generator yields the delay before each probe (the staged prefix, then the floor forever), so the single loop is "wait the
-  // next delay, then attempt." The wait ends one of three ways: its delay elapses and we probe on schedule; a reachability wake aborts it (a detected reboot proves the
-  // controller is back, so we probe now rather than sleeping out the rest of the backoff); or disposal aborts it and we end. Recovery therefore polls a slow-to-return
+  // next delay, then attempt." The wait ends when its delay elapses and we probe on schedule, when a reachability wake aborts it (a detected reboot proves the controller
+  // is back, so we probe now rather than sleeping out the rest of the backoff), or when disposal aborts it and we end. Recovery therefore polls a slow-to-return
   // controller for as long as the monitor lives - it never gives up after a handful of failures. The #recovering guard makes re-entrant faults no-ops, so the track is
   // chosen (and the one-shot reboot anticipation consumed) once per episode, inside the guard.
   async #recover(): Promise<void> {
@@ -665,7 +664,7 @@ export class ConnectionMonitor {
 
       // A transient relaunch that recovered before the controller was ever declared unreachable still announced "Reconnecting..." when the relaunch began, so confirm it
       // returned. This is the stream-level past-tense complement of #publishReconnecting's line; the louder controller-level "Recovered the connection" above already
-      // covers the genuine-loss case, so the two are mutually exclusive and each recovery logs exactly one success line.
+      // covers the genuine-loss case, so the branches are mutually exclusive and each recovery logs exactly one success line.
       this.#log.info("Reconnected the UniFi Protect realtime events stream.");
     }
   }
@@ -681,13 +680,11 @@ export class ConnectionMonitor {
     }
   }
 
-  // Watch the controller's self-reported boot time. `upSince` is a noisy measurement of the boot instant (live validation observed millisecond-level
-  // jitter across
+  // Watch the controller's self-reported boot time. `upSince` is a noisy measurement of the boot instant (live validation observed millisecond-level jitter across
   // bootstraps, plausibly because it is recomputed as now - uptime), so a naive change test fires on every refresh. A genuine reboot instead moves the boot time by at
-  // least the prior uptime - minutes to hours - so we treat a change below PROTECT_REBOOT_DETECTION_THRESHOLD as noise and only announce a reboot beyond it. We
-  // still track
-  // the latest value each yield, so accumulated jitter never crosses the floor. This catches a reboot whether the fresh bootstrap arrived via the periodic refresh or a
-  // recovery re-bootstrap.
+  // least the prior uptime - minutes to hours - so we treat a change below PROTECT_REBOOT_DETECTION_THRESHOLD as noise and only announce a reboot beyond it. We still
+  // track the latest value each yield, so accumulated jitter never crosses the floor. This catches a reboot whether the fresh bootstrap arrived via the periodic refresh
+  // or a recovery re-bootstrap.
   async #watchReboots(): Promise<void> {
 
     try {

@@ -62,13 +62,13 @@ function getHeader(name: string, headers: IncomingHttpHeaders): string | null {
  * relogin used when a request comes back 401.
  *
  * The session composes {@link Transport} - it sends its handshake requests through the transport (so login traffic is pooled, timed, throttle-aware, and observable
- * like any other request) using `authRetry: false` so a handshake 401 cannot recurse back into relogin. It exposes two hooks the transport wires in at the
+ * like any other request) using `authRetry: false` so a handshake 401 cannot recurse back into relogin. It exposes the hooks the transport wires in at the
  * composition root: {@link AuthSession.authHeaders} (the cookie + CSRF headers stamped onto every authenticated request) and {@link AuthSession.reauthenticate} (the
  * `onUnauthorized` hook). Because those hooks are plain methods the transport invokes through injected function references, `Transport` never imports `AuthSession`:
  * the dependency flows in one direction only.
  *
- * State is invalid-by-default: {@link AuthSession.isAuthenticated} is true only once both a cookie and a CSRF token are in hand. There is no `Nullable` return on the
- * surface - {@link AuthSession.login} resolves on success and throws {@link ProtectAuthError} on credential failure.
+ * State is invalid-by-default: {@link AuthSession.isAuthenticated} is true only once every session-defining credential the controller requires is in hand.
+ * There is no `Nullable` return on the surface - {@link AuthSession.login} resolves on success and throws {@link ProtectAuthError} on credential failure.
  *
  * @category Transport
  */
@@ -77,8 +77,8 @@ export class AuthSession {
   readonly #log: ProtectLogging;
   readonly #transport: Transport;
 
-  // The session is defined entirely by these three: the bare cookie token, the current CSRF token, and the credentials we logged in with (retained so the relogin
-  // hook can re-run the handshake without the caller re-supplying them). All three are null until a successful login.
+  // The session's cookie token, CSRF token, and the credentials retained from login (kept so the relogin hook can re-run the handshake without the caller
+  // re-supplying them) are each null until a successful login.
   #cookie: string | null = null;
   #credentials: ProtectCredentials | null = null;
   #csrfToken: string | null = null;
@@ -93,7 +93,7 @@ export class AuthSession {
   }
 
   /**
-   * Whether the session currently holds a complete set of credentials (both a session cookie and a CSRF token). Synchronous - safe on a hot path.
+   * Whether the session currently holds a complete set of credentials (a session cookie and a CSRF token). Synchronous - safe on a hot path.
    */
   get isAuthenticated(): boolean {
 

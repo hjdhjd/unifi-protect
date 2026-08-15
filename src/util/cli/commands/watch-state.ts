@@ -38,7 +38,7 @@ const USAGE = [
   "  ufp watch state \"Front Door\" --json     # one device's changes as JSON"
 ].join("\n");
 
-// A device category's two selectors (the full set and the connected-only subset) plus its display label. Typed against the config-record union so every category
+// A device category's selectors - the full set and the connected-only subset - plus its display label. Typed against the config-record union so every category
 // shares one shape; each concrete selector's narrower return type is assignable here by return-type covariance.
 interface CategorySelectors {
 
@@ -68,7 +68,7 @@ const FACTS: Record<string, (state: ProtectState) => boolean | string | null> = 
   isAdmin: selectIsAdmin
 };
 
-// One observed change, in both renderable and JSON form, so the command body stays agnostic to which target family produced it.
+// One observed change, carrying its own renderable and JSON forms, so the command body stays agnostic to which target family produced it.
 interface Change {
 
   json: unknown;
@@ -76,6 +76,7 @@ interface Change {
 }
 
 // The current wall-clock time as a compact HH:MM:SS.mmm stamp - enough to correlate changes without the date noise of a full ISO string on every line.
+// `slice(11, 23)` extracts that time-of-day portion from the ISO 8601 string, dropping the date prefix and the trailing "Z".
 function timestamp(): string {
 
   return new Date().toISOString().slice(11, 23);

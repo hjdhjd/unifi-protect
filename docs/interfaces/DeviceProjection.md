@@ -11,7 +11,7 @@ what every device category adds: a stable `id`, the `modelKey` tag, the `name` /
 (every Protect device type exposes a reboot endpoint).
 
 Commands are **write-through**: `update` PATCHes the controller and returns the same live handle, but does *not* fold the response into the store. State advances
-solely through the reducer's two universal inputs - the realtime event stream and the bootstrap refresh failsafe - so the issuer learns of its own change the way every
+solely through the reducer's universal inputs - the realtime event stream and the bootstrap refresh failsafe - so the issuer learns of its own change the way every
 other subscriber does (the controller broadcasts the resulting `devicePatched` to all WebSocket subscribers). The consequence is that a projection reflects a command's
 effect once the stream (or the next refresh) delivers it, not synchronously after the `await`; consumers `observe()` rather than read-after-write.
 

@@ -87,7 +87,7 @@ export function createCliLogger(opts: { debug?: boolean; stream?: OutputStream }
  *
  * @returns A connected client.
  *
- * @throws {@link CliError} when credentials cannot be loaded, or the typed `FatalError` the library throws on a failed connect.
+ * @throws {@link CliError} when credentials cannot be loaded, or the typed `ProtectError` the library throws on a failed connect.
  *
  * @category CLI
  */
@@ -95,7 +95,8 @@ export async function openClient(opts: OpenClientOptions = {}): Promise<ProtectC
 
   const credentials = await loadCredentials({ ...((opts.cwd !== undefined) && { cwd: opts.cwd }), ...((opts.home !== undefined) && { home: opts.home }) });
 
-  // Use the caller's logger if it supplied one; otherwise build the standard stderr logger, honoring --debug. Either way the library logs land on stderr, never stdout.
+  // Use the caller's logger if it supplied one; otherwise build the standard stderr logger, honoring --debug. The stderr-only guarantee holds for the
+  // default logger; a caller-supplied logger writes wherever the caller implemented it to write.
   const log = opts.log ?? createCliLogger({ debug: opts.debug ?? false });
 
   return ProtectClient.connect({

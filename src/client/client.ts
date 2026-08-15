@@ -9,12 +9,14 @@
  * leaked connection pool) before the error propagates.
  *
  * The client *composes* its subsystems rather than inheriting from any of them. It owns a {@link Transport}, an {@link AuthSession}, a {@link StateStore}, a {@link
- * DeviceRegistry}, and a private {@link EventBus} - and exposes a deliberately small surface over them:
+ * DeviceRegistry}, a {@link ConnectionMonitor}, a {@link LivestreamPool}, and a private {@link EventBus} - and exposes a deliberately small surface over them:
  *
  * - `state` is the data layer: synchronous `snapshot()` and live `observe(selector)` over config records.
  * - `cameras` / `camera(id)` (and the other device accessors) are the device layer: live {@link DeviceProjection} handles built by the registry. They live on the
  *   client, not on `state`, because a projection is Layer 3 - it needs the client - while `state` stays a pure generic engine.
  * - `transport` is the documented escape hatch for raw API calls the typed surface does not yet cover.
+ * - `connection` is the connection-state layer: the observable {@link ConnectionMonitor} - FSM, reboot detection, throttle/stall folding, and auto-recovery of the
+ *   realtime events channel.
  * - `on` / `once` / `stream` are the rail-based event surface, delegated to the private bus; the realtime firehose rides the `packet` rail (see `events()`).
  *
  * @module ProtectClient

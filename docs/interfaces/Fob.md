@@ -7,8 +7,8 @@
 # Interface: Fob
 
 A fob projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from [DeviceProjection](DeviceProjection.md). A fob is an input device: its
-security-action button presses arrive as occurrences on the event firehose, and its away/arm state is read through the device record (`awayState`, `pendingActionType`,
-`wirelessConnectionState.functionButtonPressedAt`), so it adds no fob-specific commands.
+security-action button presses arrive as occurrences on the event firehose, its away/arm state (`awayState`, `pendingActionType`) is read through the device record,
+and its last button press time is also available synchronously via `wirelessConnectionState.functionButtonPressedAt`, so it adds no fob-specific commands.
 
 ## Extends
 

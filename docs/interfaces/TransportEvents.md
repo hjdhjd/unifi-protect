@@ -6,8 +6,9 @@
 
 # Interface: TransportEvents
 
-The events the [Transport](Transport.md) publishes on its three-rail surface. Both are parameterless: a consumer that needs the cooldown duration reads it from the
-[ProtectThrottledError](../classes/ProtectThrottledError.md) thrown by `send`, and a consumer that needs richer detail subscribes to the `unifi-protect:http:throttle:*` diagnostics channels.
+The events the [Transport](Transport.md) publishes on its three-rail surface. Every event here is parameterless: a consumer that needs the cooldown duration reads it
+from the [ProtectThrottledError](../classes/ProtectThrottledError.md) thrown by `send`, and a consumer that needs richer detail subscribes to the `unifi-protect:http:throttle:*` diagnostics
+channels.
 
 ## Properties
 

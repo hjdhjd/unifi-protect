@@ -618,7 +618,8 @@ describe("reduce - adoption self-contradiction normalization", () => {
 
   // The controller's own MAC and the capture-derived flagged devices from the 2026-07-12 SuperLink defect: a relay and a sensor that report isAdoptedByOther true while
   // their nvrMac still names this very controller. The relay/sensor ids and MACs and the controller MAC are the live values (no colons, the controller's raw format);
-  // synthetic cases below use the colon-delimited fixture MAC convention.
+  // synthetic cases below use the colon-delimited fixture MAC convention, except the foreign-adoption case in (c), which reuses the captured sensor's real MAC to
+  // underline that it is the same physical device now claimed by a different controller.
   const ownMac = "AABBCC000002";
   const flaggedRelay = (): ReturnType<typeof makeRelay> => makeRelay({ id: "de6da9cf942499c89288cc27", isAdopted: true, isAdoptedByOther: true, mac: "AABBCC000000",
     nvrMac: ownMac });
@@ -684,7 +685,7 @@ describe("reduce - adoption self-contradiction normalization", () => {
 
   test("(c) a genuine foreign adoption still evicts, and a migration from own-MAC-flagged to foreign evicts", () => {
 
-    // A device adopted by a genuinely different controller (a foreign nvrMac) is not the contradiction, so it must keep evicting exactly as before.
+    // A device adopted by a genuinely different controller (a foreign nvrMac) is not the contradiction, so it is unaffected by the normalization and still evicts.
     const foreign = makeSensor({ id: "s1", isAdopted: true, isAdoptedByOther: true, mac: "AABBCC000001", nvrMac: "FFEEDDCCBBAA" });
     const foreignState = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), sensors: [foreign] }));
 

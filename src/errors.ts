@@ -236,14 +236,16 @@ export class ProtectProtocolError extends FatalError {
  *
  * @returns Never returns - always throws.
  *
- * @throws {@link ProtectProtocolError} always, naming the unhandled variant's tag.
+ * @throws {@link ProtectProtocolError} always, naming the unhandled variant's `kind` when the variant is an object that carries one, or the variant's coerced
+ * string form otherwise.
  *
  * @category Errors
  */
 export function assertNever(value: never): never {
 
-  // `value` is statically `never`, so we read its runtime shape defensively: an object variant surfaces its `kind` tag, anything else (a bare string such as a
-  // modelKey) surfaces its string form.
+  // `value` is statically `never`, so we read its runtime shape defensively: an object variant carrying a `kind` property surfaces that tag, and anything else -
+  // a bare string such as a modelKey, or an object variant tagged some other way (a `type`-tagged union, for instance) - falls back to its coerced string form,
+  // which for a plain object without a `kind` property is the generic "[object Object]" rather than a name that distinguishes the variant.
   const variant = value as unknown;
   const detail = ((typeof variant === "object") && (variant !== null) && ("kind" in variant)) ? String(variant.kind) : String(variant);
 
@@ -271,9 +273,10 @@ export class ProtectBootstrapError extends FatalError {
 }
 
 /**
- * The stages of the `connect()` sequence, used to tag a {@link ProtectBootstrapError}. The sequence authenticates, fetches the bootstrap document, parses it,
- * then subscribes to the realtime stream; only the fetch and parse stages are wrapped as a bootstrap error, because a login or reachability failure already propagates as
- * its own typed fatal (`ProtectAuthError` / `ProtectNetworkError`).
+ * The stages of the `connect()` sequence, used to tag a {@link ProtectBootstrapError}. The sequence authenticates, fetches the bootstrap document, parses it, then
+ * subscribes to the realtime stream; only the fetch and parse stages are wrapped as a bootstrap error. A login or reachability failure already propagates as its
+ * own typed fatal (`ProtectAuthError` / `ProtectNetworkError`), and a failure to open the realtime subscription propagates unwrapped rather than tagged with any
+ * stage, so `"login"` and `"subscribe"` name stages of the sequence without either one being a tag a caller will observe on a thrown `ProtectBootstrapError`.
  *
  * @category Errors
  */
@@ -281,9 +284,10 @@ export type ProtectBootstrapStage = "fetch" | "login" | "parse" | "subscribe";
 
 /**
  * A pooled livestream reconnected and the controller negotiated a different codec than the one in flight (H.264 to HEVC, or a channel reconfigured mid-stream). Fatal
- * because no fixed-codec consumer can adapt in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as the one
- * terminal a recovering stream can raise, after which the consumer re-subscribes for a fresh stream against the new codec. The `from` / `to` descriptors are the RFC 6381
- * codec strings the two init segments carried, so a consumer can log precisely what changed.
+ * because no fixed-codec consumer can adapt in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as a
+ * terminal a recovering stream can raise - alongside {@link ProtectLivestreamUnavailableError} when the recovery policy gives up instead - after which the consumer
+ * re-subscribes for a fresh stream against the new codec. The `from` / `to` descriptors are the RFC 6381 codec strings the two init segments carried, so a consumer
+ * can log precisely what changed.
  *
  * @category Errors
  */
@@ -305,7 +309,7 @@ export class ProtectCodecChangeError extends FatalError {
 }
 
 /**
- * A pooled livestream's recovery policy gave up. The `phase` names which of the two regimes the pool runs: `establishing` means the first segment never arrived within
+ * A pooled livestream's recovery policy gave up. The `phase` names which regime the pool gave up in: `establishing` means the first segment never arrived within
  * the bounded establishment deadline (the stream that never produced media), and `recovering` means a previously-live stream could not be re-established and the policy
  * elected to stop. Fatal because the policy - the single authority over whether to keep trying - has declared the stream unrecoverable; the consumer re-subscribes if it
  * still wants the stream. `attempts` carries how many consecutive reconnect attempts the episode made before the policy returned `giveUp`.
@@ -351,25 +355,26 @@ export class ProtectUnsupportedError extends FatalError {
 }
 
 /**
- * Project-wide options bag for `util.inspect` calls used in logs, debug dumps, and CLI output. Centralizing the shape here means a future change to the
- * diagnostic formatting (disabling colors when stdout isn't a TTY, bounding `depth`, adding `breakLength` for tight log lines) lands in one place rather than
- * across every call site.
+ * A `util.inspect` options bag for diagnostic formatting - logs, debug dumps, and CLI output: stable colors, unlimited depth, and sorted object keys. A call site
+ * that imports this constant instead of writing its own options literal gets a formatting change (disabling colors when stdout isn't a TTY, bounding `depth`,
+ * adding `breakLength` for tight log lines) for free the next time this bag is updated.
  *
  * @category Utilities
  */
 export const INSPECT_OPTIONS: InspectOptions = { colors: true, depth: null, sorted: true };
 
 /**
- * Predicate for the WebSocket-error-handler suppression rule shared by the realtime events WS and the livestream WS.
+ * Predicate for the WebSocket-error-handler suppression rule shared by every WebSocket subsystem in the library - the realtime events WS, the livestream WS, and
+ * the talkback WS.
  *
- * Both subsystems classify two error shapes as expected disconnects rather than user-actionable errors:
+ * Each subsystem classifies an undici teardown `TypeError` and an `ETIMEDOUT` errno as expected disconnects rather than user-actionable errors:
  *
  * 1. A `TypeError` from undici's internal WebSocket teardown - the error class undici raises when the socket closes mid-frame during a disconnect.
- * 2. An `ETIMEDOUT` errno on the cause chain - the slow-controller path. Both subsystems run their own silence watchdog (the events WS against
- *    `PROTECT_EVENTS_WATCHDOG_TIMEOUT`, a livestream session against its heartbeat timeout) that reports prolonged silence separately; this predicate instead classifies
- *    the socket-level errno, so the two are complementary and logging this disconnect-during-reboot symptom at the error level would be duplicate noise.
+ * 2. An `ETIMEDOUT` errno on the cause chain - the slow-controller path. The events and livestream subsystems each run their own silence watchdog (the events WS
+ *    against `PROTECT_EVENTS_WATCHDOG_TIMEOUT`, a livestream session against its heartbeat timeout) that reports prolonged silence separately; this predicate instead
+ *    classifies the socket-level errno, so the two are complementary and logging this disconnect-during-reboot symptom at the error level would be duplicate noise.
  *
- * Centralizing the predicate means a future addition (`EPIPE`, `ECONNRESET`, etc.) lands in one place and both WebSocket subsystems pick it up identically.
+ * Centralizing the predicate means a future addition (`EPIPE`, `ECONNRESET`, etc.) lands in one place and every WebSocket subsystem picks it up identically.
  *
  * @param error - The error value to classify. Typed `unknown` because WebSocket `ErrorEvent.error` is untyped at the contract level.
  *
@@ -385,7 +390,7 @@ export function isExpectedWsDisconnect(error: unknown): boolean {
 /**
  * Safely resolve an unknown error to a Node `ErrnoException` shape.
  *
- * Two error shapes are recognized:
+ * The following error shapes are recognized:
  *
  * 1. An `Error` whose `cause` chain wraps a Node `ErrnoException`. Undici raises this shape from upstream connection errors (DNS, TCP, TLS), where the surface
  *    error is the generic `TypeError("fetch failed")` and the actual errno data lives one hop down the cause chain.
@@ -394,8 +399,9 @@ export function isExpectedWsDisconnect(error: unknown): boolean {
  * Both shapes are validated to require `code` as a string before returning, guarding against the (rare but legal) case where an Error has a `code` property of a
  * non-string type. A non-string `code` would otherwise satisfy a downstream `code === "ECONNREFUSED"` comparison only by accident of `===` semantics.
  *
- * Anything outside these two shapes (locally thrown TypeErrors with no cause, custom errors without `code`, non-Error throws) returns `undefined`. Callers handle
- * that case by logging the unknown error directly via `util.inspect`.
+ * Anything outside these shapes (locally thrown TypeErrors with no cause, custom errors without `code`, non-Error throws) returns `undefined`. Internal callers
+ * such as `ProtectNetworkError`'s constructor and `isExpectedWsDisconnect` treat that as no matching code and continue past it via optional chaining, rather than
+ * treating the absence as an error condition in its own right.
  *
  * @param error - The error value to inspect. Typed `unknown` because catch bindings and event handlers receive untyped values.
  *

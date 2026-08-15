@@ -8,7 +8,7 @@
 
 Construction options for [StateStore](StateStore.md).
 
-- `refresh` is the only required option: the seam the failsafe calls to fetch a fresh bootstrap. The composition root wires it to a transport request; tests wire a
+- `refresh` is the only required option: the hook the failsafe calls to fetch a fresh bootstrap. The composition root wires it to a transport request; tests wire a
   fake. Injecting a function rather than a `Transport` is what keeps the store at the data layer (it never imports the transport) and deterministically testable.
 - `refreshIntervalMs` defaults to [PROTECT\_BOOTSTRAP\_REFRESH\_INTERVAL](../variables/PROTECT_BOOTSTRAP_REFRESH_INTERVAL.md); pass `false` or a non-positive interval to disable the failsafe entirely (the consumer
   then relies solely on the realtime event stream).

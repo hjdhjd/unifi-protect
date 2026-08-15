@@ -84,9 +84,9 @@ function kindColor(colors: Output["colors"], kind: TypedEvent["kind"]): (text: s
 
       return colors.red;
 
-    // Auth, access, and a fob's security-action button press are all interactions at an entry point - a credential scan, an access-device occurrence, and a deliberate
-    // press on an access credential device - so they share blue as a visual family. They remain distinct kinds (an auth scan is camera-attributed, while an access
-    // occurrence and a button press are device-attributed) and the printed kind label tells them apart, the same latitude tamper and deviceRemoved take with red.
+    // Auth, access, and a security-action button press are all interactions at an entry point - a credential scan, an access-device occurrence, and a deliberate
+    // press on a fob (or a button-equipped sensor) - so they share blue as a visual family. They remain distinct kinds (an auth scan is camera-attributed, while an
+    // access occurrence and a button press are device-attributed) and the printed kind label tells them apart, the same latitude tamper and deviceRemoved take with red.
     case "authDetected":
     case "accessEvent":
     case "buttonPressed":
@@ -255,7 +255,11 @@ const watchEventsHandler: CommandHandler = async (ctx) => {
   }
 };
 
-// The command descriptor: the handler above plus the one-line summary the usage screen lists it by, so the listing derives from the same object that dispatches.
+/**
+ * The command descriptor: the handler above plus the one-line summary the usage screen lists it by, so the listing derives from the same object that dispatches.
+ *
+ * @category CLI
+ */
 export const watchEvents: CommandSpec = {
 
   run: watchEventsHandler,

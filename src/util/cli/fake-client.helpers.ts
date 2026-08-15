@@ -80,9 +80,9 @@ export interface FakeCalls {
   updates: { id: string; patch: unknown }[];
 }
 
-// Build one fake device projection, recording its update/reboot calls. The config record carries exactly the fields the commands read through. The `observations` count
-// is how many times the projection's `observe` yields before ending - 0 (the default) keeps observe a no-op; a positive count drives `watch state`'s single-device
-// branch.
+// Build one fake device projection, recording its update/reboot/special-endpoint calls. The config record carries exactly the fields the commands read through.
+// The `observations` count is how many times the projection's `observe` yields before ending - 0 (the default) keeps observe a no-op; a positive count drives
+// `watch state`'s single-device branch.
 function makeDevice(spec: FakeDeviceSpec, modelKey: string, calls: FakeCalls, observations: number): Record<string, unknown> {
 
   const config = {
@@ -123,10 +123,11 @@ function makeDevice(spec: FakeDeviceSpec, modelKey: string, calls: FakeCalls, ob
         yield device;
       }
     },
-    // The special-endpoint device actions, each an unconditional recording stub: it records the call into its own bucket and resolves. The stubs are deliberately not
-    // gated on any capability flag - the real capability guard lives in the library method (and is tested there), so gating here would falsely simulate a CLI-side guard
-    // the CLI does not have. Every fake device carries every special-endpoint stub; a verb test drives only the one its device class exposes and asserts the sibling
-    // buckets stayed empty.
+    // The special-endpoint device actions - playBuzzer, playSpeaker, toggleOutput, turnOnFlashlight, and unlock - are each an unconditional recording stub: it
+    // records the call into its own bucket and resolves. The stubs are deliberately not gated on any capability flag - the real capability guard lives in the
+    // library method (and is tested there), so gating here would falsely simulate a CLI-side guard the CLI does not have. Every fake device carries every
+    // special-endpoint stub; a verb test drives only the one its device class exposes and asserts the sibling buckets stayed empty. `reboot`, which sits between
+    // these alphabetically, is the one exception: it carries a conditional failure path, documented at its own definition below.
     playBuzzer: (): Promise<void> => {
 
       calls.playBuzzers.push(spec.id);
@@ -229,9 +230,10 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
 /**
  * Build a fake {@link ProtectClient} and a record of the calls commands make against it. Sufficient for unit-testing the CLI commands through the injected `openClient`
  * hook: device collections and lookups, snapshot/livestream/update/reboot, the controller reboot, the realtime firehose, and the derived getters. It is intentionally
- * minimal - tests configure only what the command under test reads - and is cast to `ProtectClient` at the one boundary where a structural fake meets the nominal type.
+ * minimal - tests configure only what the command under test reads - and is cast to the library's nominal types, `ProtectClient` and `ProtectState`, at the boundaries
+ * where the structural fake meets them: the final client cast below, and the snapshot record `state.observe` passes through its selector.
  *
- * @param options - The devices, NVR, derived facts, and scripted events the fake should report.
+ * @param options - The devices, NVR, derived facts, and scripted events/raw packets the fake should report.
  *
  * @returns The fake client and the captured calls.
  *
@@ -259,6 +261,8 @@ export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCa
   const authUserId = authUser?.id ?? null;
   const users = new Map<string, unknown>((authUser === null) ? [] : [[ authUser.id, authUser ]]);
 
+  // Curried so each device collection (cameras, chimes, fobs, and so on) yields its own id-keyed lookup function, one of which backs each of the client's
+  // per-category accessors below.
   const lookup = (collection: Record<string, unknown>[]) => (id: string): Record<string, unknown> | undefined => collection.find((device) => device["id"] === id);
 
   // Project a device collection into the id-keyed config map ProtectState holds, so state.snapshot() is shaped like the real reduced state and info --raw can serialize
@@ -290,6 +294,7 @@ export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCa
     cameras,
     chime: lookup(chimes),
     chimes,
+    // Always healthy: the fake has no network layer to degrade, and no test currently needs an unhealthy or throttled connection to drive.
     connection: { isHealthy: true, isThrottled: false, state: "healthy" },
     controllerName: (options.controllerName === undefined) ? "Fake NVR" : options.controllerName,
     async *events(): AsyncGenerator<TypedEvent> {
@@ -299,9 +304,13 @@ export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCa
         yield event;
       }
     },
+    // `raw: true` has no counterpart in a real bootstrap payload; it exists so a test can assert on it to prove this fresh-fetch path ran, as distinct from
+    // state.snapshot()'s shape.
     fetchBootstrap: (): Promise<unknown> => Promise.resolve({ nvr: (nvr === null) ? null : { name: "Fake NVR", ...nvr }, raw: true }),
     fob: lookup(fobs),
     fobs,
+    // Backs only direct `client.isAdmin` reads (e.g. the info command); `watch state isAdmin` instead resolves through `selectIsAdmin(state.snapshot())`, which
+    // derives from the authUserId/users pair, so a test driving that path configures `authUser`, not `options.isAdmin`.
     isAdmin: options.isAdmin ?? true,
     light: lookup(lights),
     lights,
@@ -335,6 +344,8 @@ export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCa
             return;
           }
 
+          // buildSnapshot's return value is untyped, but its fields are deliberately the same ones the real reducer's ProtectState carries, so the cast to
+          // ProtectState here is a structural-fake-to-nominal-type coercion, the same kind the JSDoc above documents for the final ProtectClient cast.
           yield selector(buildSnapshot() as unknown as ProtectState);
         }
       },
@@ -367,6 +378,9 @@ export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCa
 export function makeCommandContext(options: { args: string[]; client: ProtectClient; signal?: AbortSignal }): { ctx: CommandContext; stdout: () => string } {
 
   const chunks: string[] = [];
+
+  // Mirrors a writable stream's write() contract: push the stringified chunk as a side effect, then return true unconditionally, since the fake never applies
+  // backpressure.
   const write = (chunk: string | Uint8Array): boolean => (chunks.push((typeof chunk === "string") ? chunk : Buffer.from(chunk).toString()), true);
   const stream = { isTTY: false, write };
   const output = new Output({ colorize: false, env: {}, stream });
