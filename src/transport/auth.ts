@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * auth.ts: The authentication session for the UniFi Protect library - the UniFi OS credential handshake, CSRF rotation, and the 401-triggered relogin seam.
+ * auth.ts: The authentication session for the UniFi Protect library - the UniFi OS credential handshake, CSRF rotation, and the 401-triggered relogin hook.
  */
 import type { AuthReloginPayload } from "../diagnostics.ts";
 import type { IncomingHttpHeaders } from "node:http";
@@ -62,9 +62,9 @@ function getHeader(name: string, headers: IncomingHttpHeaders): string | null {
  * relogin used when a request comes back 401.
  *
  * The session composes {@link Transport} - it sends its handshake requests through the transport (so login traffic is pooled, timed, throttle-aware, and observable
- * like any other request) using `authRetry: false` so a handshake 401 cannot recurse back into relogin. It exposes two seams the transport wires in at the
+ * like any other request) using `authRetry: false` so a handshake 401 cannot recurse back into relogin. It exposes two hooks the transport wires in at the
  * composition root: {@link AuthSession.authHeaders} (the cookie + CSRF headers stamped onto every authenticated request) and {@link AuthSession.reauthenticate} (the
- * `onUnauthorized` hook). Because those seams are plain methods the transport invokes through injected function references, `Transport` never imports `AuthSession`:
+ * `onUnauthorized` hook). Because those hooks are plain methods the transport invokes through injected function references, `Transport` never imports `AuthSession`:
  * the dependency flows in one direction only.
  *
  * State is invalid-by-default: {@link AuthSession.isAuthenticated} is true only once both a cookie and a CSRF token are in hand. There is no `Nullable` return on the
@@ -82,6 +82,9 @@ export class AuthSession {
   #cookie: string | null = null;
   #credentials: ProtectCredentials | null = null;
   #csrfToken: string | null = null;
+  // The in-flight coalescing gate for relogin: the promise of the single handshake every overlapping caller shares, cleared when that run settles so no state
+  // crosses from one run to the next.
+  #reauthInFlight: Promise<boolean> | null = null;
 
   constructor(options: AuthSessionOptions) {
 
@@ -99,7 +102,7 @@ export class AuthSession {
 
   /**
    * The headers to stamp on every authenticated request: the session cookie and the CSRF token, each included only when held. Wired into the transport as its
-   * `getAuthHeaders` seam.
+   * `getAuthHeaders` hook.
    *
    * @returns The auth headers, possibly empty before login completes.
    */
@@ -152,12 +155,40 @@ export class AuthSession {
   }
 
   /**
-   * Re-run the handshake with the retained credentials. Wired into the transport as its `onUnauthorized` seam: the transport invokes it when a request returns 401,
+   * Re-run the handshake with the retained credentials. Wired into the transport as its `onUnauthorized` hook: the transport invokes it when a request returns 401,
    * then retries the original request once if this resolves `true`.
    *
-   * @returns `true` if re-authentication succeeded, `false` if there are no retained credentials or the handshake failed.
+   * Concurrent calls coalesce into one handshake. Two requests in flight through one transport can both come back 401 and both invoke this hook, and running two
+   * handshakes against each other would leave the cookie and CSRF token written by whichever finished last, which need not be the one whose token the controller
+   * considers current.
+   *
+   * @returns `true` if re-authentication succeeded, `false` if there are no retained credentials, the handshake failed, or it could not be attempted.
    */
   async reauthenticate(): Promise<boolean> {
+
+    if(this.#reauthInFlight !== null) {
+
+      return this.#reauthInFlight;
+    }
+
+    const attempt = this.#reauthenticateOnce();
+
+    this.#reauthInFlight = attempt;
+
+    try {
+
+      return await attempt;
+    } finally {
+
+      this.#reauthInFlight = null;
+    }
+  }
+
+  // One relogin run, shared by every caller that arrived while it was in flight. It resolves rather than rejects on every path: the transport's hook contract is a
+  // boolean, and the request that tripped the 401 belongs to some unrelated caller which must receive its own 401-derived result rather than an error raised by a
+  // recovery it never asked for. A handshake can genuinely throw here - the transport surfaces network failure as typed errors, and a failing network is often exactly
+  // the weather that produced the 401 - so that throw settles this false and is reported on the channel like any other unsuccessful relogin.
+  async #reauthenticateOnce(): Promise<boolean> {
 
     let success = false;
 
@@ -166,7 +197,14 @@ export class AuthSession {
     if(this.#credentials !== null) {
 
       this.#cookie = null;
-      success = await this.#handshake();
+
+      try {
+
+        success = await this.#handshake();
+      } catch(error) {
+
+        this.#log.debug("The attempt to re-authenticate with the UniFi Protect controller could not be completed.", error);
+      }
     }
 
     // Publish the relogin outcome. This is the only signal a consumer gets for mid-session session recovery, which is otherwise silent - the transport calls this hook
@@ -179,10 +217,27 @@ export class AuthSession {
     return success;
   }
 
+  /* Drop the session cookie after a handshake that did not complete, so a later relogin restarts from a clean slate rather than reusing half-formed state. The
+   * credentials are deliberately kept, because a failed handshake is not a reason to forget who we are.
+   *
+   * The write is conditioned on the session still being the one the handshake started from, for the same reason the success write is: a handshake can settle long
+   * after the session it belongs to has been replaced. A fresh login does not wait behind an in-flight relogin, so a relogin that fails afterward would otherwise
+   * clear a cookie that belongs to the login that replaced it - wiping a live session on the strength of a failure that was never about it.
+   */
+  #clearFailedSession(credentials: ProtectCredentials): void {
+
+    if(this.#credentials !== credentials) {
+
+      return;
+    }
+
+    this.#cookie = null;
+  }
+
   // Run the UniFi OS handshake. Attempt a direct login first; if it fails and we hold no CSRF token, fetch one from the controller root and retry the login once. On
   // success, capture the rotated CSRF token (the controller returns it as X-Updated-CSRF-Token, falling back to X-CSRF-Token) and the bare session cookie. Returns
   // whether a complete session was established. Self-sufficient in its auth headers - it stamps the CSRF token explicitly rather than relying on the transport's
-  // getAuthHeaders seam being wired back to this same session.
+  // getAuthHeaders hook being wired back to this same session.
   async #handshake(signal?: AbortSignal): Promise<boolean> {
 
     const credentials = this.#credentials;
@@ -217,8 +272,7 @@ export class AuthSession {
 
     if(!responseOk(response.statusCode)) {
 
-      // Drop the session (but keep the credentials) so a later relogin restarts the handshake from a clean slate rather than reusing half-formed state.
-      this.#cookie = null;
+      this.#clearFailedSession(credentials);
 
       return false;
     }
@@ -227,6 +281,15 @@ export class AuthSession {
     const cookie = getHeader("set-cookie", response.headers);
 
     if((csrfToken !== null) && (cookie !== null)) {
+
+      /* The controller accepted this login, but the session it belongs to may already be gone: a logout while the request was in flight ends the session
+       * client-side without the controller ever hearing about it, and the login then succeeds regardless. Writing this session would silently re-arm a session the
+       * caller explicitly ended, so a handshake whose credentials are no longer the current ones discards its result instead.
+       */
+      if(this.#credentials !== credentials) {
+
+        return false;
+      }
 
       // Keep only the token=value pair, stripping the cookie's attributes (Path, Expires, HttpOnly, ...) so subsequent requests send the bare value. indexOf +
       // substring keeps the result unambiguously a string, where split(";")[0] would type as string | undefined under noUncheckedIndexedAccess.
@@ -238,7 +301,8 @@ export class AuthSession {
       return true;
     }
 
-    this.#cookie = null;
+    // The controller answered but without both halves of a session, which is a failed handshake however successful the status was.
+    this.#clearFailedSession(credentials);
 
     return false;
   }
