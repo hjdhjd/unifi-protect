@@ -23,7 +23,7 @@ export interface StreamOptions {
 const EVENT_NAME_PREFIX = "ufp:event:";
 
 /**
- * A typed facade over `node:events.EventEmitter` that exposes exactly three subscription shapes - the canonical contract every event-producing subsystem in this
+ * A typed facade over `node:events.EventEmitter` that exposes a fixed set of subscription shapes - the canonical contract every event-producing subsystem in this
  * library presents (`Transport`, `EventStream`, `ConnectionMonitor`, `LivestreamSession`, `ProtectClient`).
  *
  * We *compose* `EventEmitter` rather than *extend* it, for several concrete reasons:
@@ -34,8 +34,8 @@ const EVENT_NAME_PREFIX = "ufp:event:";
  *    host class. Consumers see only the three rails.
  * 3. It aligns subscriptions with the library's `await using` resource-lifetime discipline: a subscription is a resource, and a `Disposable` subscription completes
  *    that alignment.
- * 4. It preserves Node's battle-tested emit machinery - listener-during-emit reentrancy, sync-throw handling, listener self-removal - which has fifteen years of
- *    bug-fixing behind it, without inheriting the surface bloat.
+ * 4. It preserves Node's battle-tested emit machinery - listener-during-emit reentrancy, sync-throw handling, listener self-removal - which has years of
+ *    production bug-fixing behind it, without inheriting the surface bloat.
  *
  * The same internal emitter drives all three rails, so a single {@link emit} notifies every active {@link on} callback, resolves every pending {@link once} promise,
  * and pushes to every open {@link stream} iterator. That is the single-source-of-truth guarantee: there is exactly one fan-out path per event.
@@ -97,7 +97,8 @@ export class EventBus<EventMap extends Record<keyof EventMap, readonly unknown[]
   async once<K extends keyof EventMap & string>(event: K, opts: { signal?: AbortSignal } = {}): Promise<EventMap[K]> {
 
     // node:events' `once` already implements the signal-cancellable, single-shot semantics we want; resolving to the argument array is exactly our tuple shape. We
-    // forward the options object only when a signal is present so we never hand the runtime a literal `{ signal: undefined }` under exactOptionalPropertyTypes.
+    // forward the options object only when a signal is present, mirroring node:events' own default of omitting the options object entirely rather than allocating
+    // one that carries no signal.
     const args = await nextEmission(this.#emitter, EVENT_NAME_PREFIX + event, opts.signal ? { signal: opts.signal } : undefined);
 
     return args as unknown as EventMap[K];

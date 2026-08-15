@@ -19,7 +19,7 @@ const SUBCOMMANDS: Record<string, CommandSpec> = {
   unlock: cameraUnlock
 };
 
-// Group usage, rendered from SUBCOMMANDS through the shared `commandList` helper - the same one the top-level `ufp` screen and the `watch` group use - so the listed
+// Group usage, rendered from SUBCOMMANDS through the shared `commandList` helper - the same helper every command group's usage screen renders through - so the listed
 // subcommands and their summaries cannot drift from what actually dispatches. The "See also" line closes the discoverability gap that a camera's live video feed is
 // addressed under the streaming family (`watch livestream`), not here, even though both act on a camera: the split is by interaction mode, an open-ended subscription
 // versus a bounded action.
@@ -36,8 +36,9 @@ const USAGE = [
 ].join("\n");
 
 /**
- * `ufp camera`. Consumes the first argument as the subcommand and forwards the rest to it, sharing the same context (output, signal). A missing or `--help` subcommand
- * prints the group usage and exits zero; an unknown subcommand is a usage error (exit 2), its diagnostic listing the valid subcommands read from the dispatch table.
+ * `ufp camera`. Consumes the first argument as the subcommand and forwards the rest to it, sharing the same context (output, signal).
+ * A missing subcommand, or one of "help", "-h", or "--help", prints the group usage and exits zero; an unknown subcommand is a usage error (exit 2), its
+ * diagnostic listing the valid subcommands read from the dispatch table.
  *
  * @category CLI
  */

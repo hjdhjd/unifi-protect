@@ -6,8 +6,8 @@
 
 # Interface: TalkbackSession
 
-One talkback WebSocket, write-only. Constructed atomically via the static `connect()` (the constructor is private): it negotiates the URL, opens the socket,
-and resolves to a live session or throws a typed `FatalError` - there is no half-open session. Feed it audio with [TalkbackSession.send](#send) and dispose it (or abort
+One talkback WebSocket, write-only. Constructed atomically via the static `connect()` (the constructor is private): it negotiates the URL, opens the socket, and
+resolves to a live session or throws a typed `ProtectError` - there is no half-open session. Feed it audio with [TalkbackSession.send](#send) and dispose it (or abort
 its signal) to close.
 
 ## Implements
@@ -94,5 +94,7 @@ A promise that resolves when the source is exhausted.
 
 #### Throws
 
-[ProtectNetworkError](../classes/ProtectNetworkError.md) on a socket failure mid-drain or a buffer-ceiling overrun; [ProtectAbortedError](../classes/ProtectAbortedError.md) when the per-send `opts.signal` aborts or
-  the session's own caller signal aborts mid-drain; any error the source itself raises propagates unwrapped.
+[ProtectNetworkError](../classes/ProtectNetworkError.md) on a socket failure mid-drain, a buffer-ceiling overrun, or a call made while the session is not live (never
+  connected, or already closed/faulted); [ProtectAbortedError](../classes/ProtectAbortedError.md) when the per-send `opts.signal` aborts, the session's own caller signal aborts
+  mid-drain, or when send() is called after an earlier caller-signal abort already tore the session down; any error the source itself raises
+  propagates unwrapped.

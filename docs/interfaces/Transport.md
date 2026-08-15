@@ -13,12 +13,13 @@ The breaker is the canonical three-state model - `closed -> open -> half-open ->
 
 - **closed:** normal operation. Each completed request books an outcome; a 2xx resets the consecutive-failure count, a non-2xx or transport exception increments
   it. Crossing [PROTECT\_API\_ERROR\_LIMIT](../variables/PROTECT_API_ERROR_LIMIT.md) consecutive failures trips the breaker open.
-- **open:** for [PROTECT\_API\_RETRY\_INTERVAL](../variables/PROTECT_API_RETRY_INTERVAL.md) seconds, `send` throws [ProtectThrottledError](../classes/ProtectThrottledError.md) before dispatching - no traffic reaches the controller.
+- **open:** for [PROTECT\_API\_RETRY\_INTERVAL](../variables/PROTECT_API_RETRY_INTERVAL.md) seconds, `send` throws [ProtectThrottledError](../classes/ProtectThrottledError.md) before dispatching, except a `probe: true` request (the
+  `ConnectionMonitor`'s recovery trial), which bypasses the cooldown gate and is booked exactly as a natural half-open attempt would be.
 - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first success closes the breaker (and emits `throttleExited`
   only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
 
 Reachability lives here; session validity lives in `AuthSession`. The breaker never calls login to probe recovery - the next real request is
-the probe, and the independent 401-relogin concern is the injected `onUnauthorized` seam. The clock is injected so every transition is deterministically testable.
+the probe, and the independent 401-relogin concern is the injected `onUnauthorized` hook. The clock is injected so every transition is deterministically testable.
 
 ## Implements
 

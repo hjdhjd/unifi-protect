@@ -68,8 +68,9 @@ const TIMESTAMP_BYTES = 8;
 
 /**
  * The deterministic lifecycle of a livestream session. The transitions are: `idle -> connecting` (construction begins; the URL is negotiated and the socket built),
- * `connecting -> handshaking` (WebSocket `open`), `handshaking -> live` (first init segment received and cached), `any -> closing` (error, abort, watchdog, or external
- * close), `closing -> closed` (socket fully closed, owned agent destroyed, resources released).
+ * `connecting -> handshaking` (WebSocket `open`), `handshaking -> live` (first init segment received and cached), `any -> closing` (a self-initiated teardown: error,
+ * abort, or watchdog stall), `closing -> closed` (socket fully closed, owned agent destroyed, resources released) - a peer-initiated close reaches `closed` directly,
+ * without passing through `closing`.
  *
  * @category Transport
  */
@@ -141,9 +142,10 @@ export interface ResolvedLivestreamSpec {
  * - `init` carries the FTYP+MOOV initialization segment and its RFC 6381 codec descriptor - everything a decoder needs before the media flows.
  * - `media` carries one complete fMP4 fragment. `moof` and `mdat` are **zero-copy `subarray` views** into `data` (no byte copy), for a consumer that wants the boxes
  *   at the lowest usable level; carrying a one-buffer-many-views model onto the single yielded item rather than re-emitting the same bytes on separate items.
- *   `timestamps` is present only when the consumer opted in via the `timestamps` stream option; it is one decode timestamp per frame (faithful to the wire's array,
- *   not a lossy scalar), and stays within JavaScript's safe-integer range because the session always negotiates `rebaseTimestampsToZero`, which is what makes `number`
- *   exact here rather than `bigint`. `discontinuity` is present (and `true`) only on the first media segment delivered after a genuine reconnect, and absent otherwise.
+ *   `timestamps` is present only when the consumer opted in via `LivestreamSpec`'s `timestamps` field; it is one decode timestamp per frame (faithful to the wire's
+ *   array, not a lossy scalar), and stays within JavaScript's safe-integer range because the session always negotiates `rebaseTimestampsToZero`, which is what makes
+ *   `number` exact here rather than `bigint`. `discontinuity` is present (and `true`) only on the first media segment delivered after a genuine reconnect, and absent
+ *   otherwise.
  *   It marks a timeline discontinuity: because the session always negotiates `rebaseTimestampsToZero`, a reconnect restarts the `tfdt` baseMediaDecodeTime near zero - a
  *   backward jump relative to the prior segments - so a consumer maintaining a decode timeline (an FFmpeg pipe, an MSE-style source buffer) should treat a
  *   marked segment as a splice point: flush and resume at this clean keyframe. A consumer that does not maintain a cross-segment timeline ignores it. The session itself
@@ -162,8 +164,10 @@ export type Segment =
  * - `closed` fires once when the WebSocket closes (naturally, on error, or on a watchdog stall), carrying the close frame's code and reason, plus the optional typed
  *   {@link ProtectError} cause an initiated teardown recorded - a caller abort, a failed negotiation, a socket error, or the watchdog stall - and omitted for a plain
  *   or spontaneous close.
- * - `error` carries a typed {@link ProtectError} - a {@link ProtectStallError} from the watchdog, or a {@link ProtectNetworkError} from a negotiation or socket failure.
- *   The error *type* is what a subscriber acts on.
+ * - `error` carries a typed {@link ProtectError}: the watchdog always emits a {@link ProtectStallError}, and a negotiation or socket failure typically wraps as a
+ *   {@link ProtectNetworkError} - but when the injected `resolveUrl` hook throws an already-typed {@link ProtectError}, that instance passes through onto this rail
+ *   unwrapped, so a negotiation failure can also surface a {@link ProtectStallError} or another {@link ProtectError} subtype. The error *type* is what a subscriber acts
+ *   on.
  *
  * @category Transport
  */
@@ -181,7 +185,9 @@ export interface LivestreamSessionEvents {
  * - `resolveUrl` is the negotiation hook: given the request params, it returns the controller-minted, host-rewritten WebSocket URL. The composition root wires it to a
  *   transport-backed GET; tests pass a one-line fake.
  * - `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s; omit it for the default undici-backed factory, inject it in tests.
- * - `signal` cancels the connect attempt - if it aborts before or during connection, the session tears down.
+ * - `signal` cancels the connect attempt and, once live, the session - if it aborts at any point, the session tears down.
+ * - `clock` is the watchdog's time source; it defaults to the wall clock, and tests inject a fake to drive the silence watchdog deterministically.
+ * - `log` is the destination for the session's diagnostic output; it defaults to a no-op logger, so a caller that never provides one incurs no logging cost.
  *
  * @category Transport
  */
@@ -425,8 +431,9 @@ export class LivestreamSession implements AsyncDisposable {
     await this.close();
   }
 
-  // Negotiate the URL and open the socket. This is the connecting phase: any failure (negotiation 4xx/5xx, network, abort) lands on the error rail and tears down,
-  // exactly as a socket failure later would, so the consumer sees one uniform failure path for the whole connect attempt.
+  // Negotiate the URL and open the socket. This is the connecting phase: a negotiation or network failure lands on the error rail and tears down, exactly as a socket
+  // failure later would, so the consumer sees one uniform failure path for the whole connect attempt. An abort tears the session down through the same `#shutdown` path
+  // but never emits on the error rail - it surfaces only as the `closeCause` and the `closed` payload's cause.
   async #connect(signal?: AbortSignal): Promise<void> {
 
     // An already-aborted caller signal tears us down in the constructor before this runs; bail without touching state so we never negotiate or build a socket.
@@ -481,8 +488,8 @@ export class LivestreamSession implements AsyncDisposable {
 
     this.#ws.binaryType = "arraybuffer";
 
-    // All listeners bind to the controller's signal, so one abort() detaches them together. close and error are `once` - a socket reports each terminal condition a
-    // single time - while message stays live for the connection's lifetime.
+    // All listeners bind to the controller's signal, so one abort() detaches them together. open, close, and error are `once` - each fires at most a single time -
+    // while message stays live for the connection's lifetime.
     const wsSignal = this.#controller.signal;
 
     this.#ws.addEventListener("open", () => this.#onOpen(), { once: true, signal: wsSignal });
@@ -493,7 +500,10 @@ export class LivestreamSession implements AsyncDisposable {
 
   // Build the controller request params from the resolved spec. This is the library's single source for the livestream wire protocol's request shape. We always rebase
   // timestamps to zero (so any opted-in decode timestamps stay within safe-integer range as `number`) and never use the wall clock (so timestamps stay monotonic decode
-  // timestamps, which every fMP4 consumer downstream expects). `extendedVideoMetadata` is requested only when the consumer asked for timestamps.
+  // timestamps, which every fMP4 consumer downstream expects). `extendedVideoMetadata` is requested only when the consumer asked for timestamps. `allowPartialGOP` and
+  // `progressive` are sent unconditionally as empty-value flags, since presence alone is what the controller reads: `allowPartialGOP` asks it to emit a fragment every
+  // `fragmentDurationMillis` instead of waiting for a full GOP's keyframe boundary, and `progressive` asks it to stream each fragment as it is produced instead of
+  // batching them - both match the segment-paced, frame-by-frame protocol this session decodes as bytes arrive.
   #buildParams(): URLSearchParams {
 
     return new URLSearchParams({
@@ -711,7 +721,6 @@ export class LivestreamSession implements AsyncDisposable {
     this.#bus.emit("segment", segment);
   }
 
-  // Sum the byte lengths of a box's accumulated chunks.
   #sumChunks(chunks: readonly Buffer[]): number {
 
     let total = 0;
@@ -761,7 +770,8 @@ export class LivestreamSession implements AsyncDisposable {
   // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - destroying the owned agent (in #onClose) is what guarantees the
   // underlying connection is released even if the close frame never completes, or if we tear down before the socket was ever built (negotiation abort). An initiated
   // teardown that knows why it closed hands the typed cause here; it is recorded only when none is set yet, so the first cause wins and a later trigger never overwrites
-  // it.
+  // it. `code` classifies the teardown for the `closed` event's consumers using the RFC 6455 status codes, rather than an actual close frame value: 1000 marks every
+  // self-initiated teardown (an explicit close(), an aborted signal), and 1006 marks a failure-driven one (a negotiation failure, a socket error, a stalled heartbeat).
   #shutdown(code: number, reason: string, cause: ProtectError | null = null): void {
 
     this.#closeCause ??= cause;

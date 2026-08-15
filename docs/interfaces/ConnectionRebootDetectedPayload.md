@@ -6,8 +6,8 @@
 
 # Interface: ConnectionRebootDetectedPayload
 
-Payload published on [channels.connectionRebootDetected](../variables/channels.md#property-connectionrebootdetected). The controller's own self-reported boot times are the wire-level reboot signal; no heuristics are
-involved.
+Payload published on [channels.connectionRebootDetected](../variables/channels.md#property-connectionrebootdetected). The controller's own self-reported boot time (`upSince`) is the underlying wire-level signal; a
+threshold-based comparison across bootstraps distinguishes a genuine reboot from measurement jitter in that value.
 
 ## Properties
 

@@ -185,7 +185,11 @@ function shallowEqualArrays<T>(a: readonly T[], b: readonly T[]): boolean {
  *
  * The single closure slot assumes calls progress with the latest state - true for `observe` (it only ever evaluates against the just-committed state) and for
  * `snapshot()`-based reads. A caller replaying an *older* snapshot would thrash the slot (and lose the reference-stability optimization), but never get a wrong answer:
- * the derived value is always correct for the state passed in; only the memo's effectiveness degrades.
+ * the derived value is always correct for the state passed in; only the memo's effectiveness degrades. The same assumption extends across stores, not just across
+ * calls: `cameras`, `chimes`, and the rest of this file's per-collection selectors (and the `deviceSelectors` catalog built from them) are constructed once when the
+ * module loads rather than once per `StateStore`, so every store running in the same process shares one slot. Interleaved calls from two stores can overwrite `last`
+ * with the other store's array - each call still returns a value that is correct for the state it was given, but the reference-stability guarantee `adoptedIds` exists
+ * to provide is lost for whichever store's array got overwritten.
  *
  * @typeParam T - The array element type.
  *
@@ -274,7 +278,7 @@ function collectionSelectors<T extends DeviceCollectionRecord>(pick: (state: Pro
   return { adoptedIds, all, byId, online };
 }
 
-// One selector quartet per device collection. The exported selectors below are thin, named aliases onto these.
+// One selector quartet per device collection, assembled into the deviceSelectors catalog exported below.
 const cameras = collectionSelectors<ProtectCameraConfig>((state) => state.cameras);
 const chimes = collectionSelectors<ProtectChimeConfig>((state) => state.chimes);
 const fobs = collectionSelectors<ProtectFobConfig>((state) => state.fobs);
@@ -316,7 +320,7 @@ const _configMapKeysExact: ConfigMapKeysExact = true;
 /**
  * The category-keyed selector catalog: one {@link CollectionSelectors} quartet per {@link DeviceCollectionKey}, each exactly typed to its category's config record. The
  * single surface a consumer reaches every device collection's selectors through - `deviceSelectors.camera.all`, `deviceSelectors[key].byId(id)`, and the rest - so the
- * two memo regimes this module documents (map-identity for the record views, content memoization for `adoptedIds`) reach every category through one entry rather than a
+ * map-identity and content-memoization regimes this module documents reach every category through one entry rather than a
  * flat export per category. The mapped type pins each entry to its own config record, so `deviceSelectors.camera.all` returns `readonly ProtectCameraConfig[]` while
  * generic iteration over the key set stays fully typed.
  *
@@ -366,7 +370,7 @@ function hasAdminPermission(user: ProtectNvrUserConfig): boolean {
   });
 }
 
-// Memoize the admin verdict on the authenticated user's record identity. observers re-run every selector on every dispatch, and the user record's reference is stable
+// Memoize the admin verdict on the authenticated user's record identity. Observers re-run every selector on every dispatch, and the user record's reference is stable
 // across dispatches that did not change it (structural sharing), so this turns the common case - the user is unchanged - into a single WeakMap lookup instead of a
 // permission re-parse. A boolean needs no memoization for dedup correctness (the value is its own Object.is key); this is purely the per-dispatch performance choice.
 const isAdminCache = new WeakMap<ProtectNvrUserConfig, boolean>();
@@ -389,8 +393,8 @@ export function selectAuthUser(state: ProtectState): ProtectNvrUserConfig | null
 
 /**
  * Whether the authenticated session has Super Admin (camera-write) privileges. Derived from the session user's record and the controller's permission grammar; `false`
- * before the first bootstrap or when the session's user is absent. Re-evaluated whenever the user's record changes, so a role change at the controller surfaces on the
- * next bootstrap refresh.
+ * before the first bootstrap or when the session's user is absent. Re-evaluated whenever the user's record changes, so a role change at the controller surfaces as
+ * soon as the record next changes, whether through a realtime `user` patch (the common, low-latency path) or a periodic bootstrap refresh (the failsafe).
  *
  * @param state - The current state.
  *

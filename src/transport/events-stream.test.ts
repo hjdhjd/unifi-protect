@@ -1,7 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events-stream.test.ts: Tests for EventStream - the single decode site, the three-rail fan-out, schema-drift surfacing, decode-failure resilience, the silence
- * watchdog, and teardown. Driven through an injected fake WebSocket and a fake Clock, so the realtime stream is exercised deterministically without a live controller.
+ * events-stream.test.ts: Tests for EventStream - the connection handshake (open, pre-open close, and caller-signal abort before open), the single decode site,
+ * the three-rail fan-out, schema-drift surfacing, decode-failure resilience, the silence watchdog, and teardown. Driven through an injected fake WebSocket and a
+ * fake Clock, so the realtime stream is exercised deterministically without a live controller.
  */
 import { ProtectAbortedError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";

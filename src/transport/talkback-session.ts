@@ -7,8 +7,9 @@
 /**
  * `TalkbackSession` is the **send-direction** return-audio channel: the consumer's audio pushed to a camera's speaker (two-way audio / "talkback"). It is the reverse of
  * the livestream, but its structural sibling is **{@link EventStream}, not {@link LivestreamSession}**. The distinction is deliberate - `LivestreamSession` is
- * lazy-constructed only because its pool needs synchronous map registration so concurrent early subscribers can share one in-flight session, a constraint talkback (per
- * call, never shared) does not have. So talkback follows `EventStream`'s atomic `static connect()`: ready or throws, no half-open. It is *simpler* than both siblings: no
+ * constructed non-atomically only because its pool needs synchronous map registration so concurrent early subscribers can share one in-flight session, a constraint
+ * talkback (per call, never shared) does not have. So talkback follows `EventStream`'s atomic `static connect()`: ready or throws, no half-open. It is *simpler* than
+ * both siblings: no
  * frame decoder, no init-segment cache, no segment rail, and **no `EventBus`, no watchdog, no `Clock`, no recovery loop**. The channel is write-only, the bytes are
  * opaque, and there is no inbound stream to time out or reconnect mid-sentence (silently replaying stale buffered audio into a live conversation is worse than a clean
  * end).
@@ -74,8 +75,8 @@ export interface TalkbackSessionOptions {
 }
 
 /**
- * One talkback WebSocket, write-only. Constructed atomically via the static `connect()` (the constructor is private): it negotiates the URL, opens the socket,
- * and resolves to a live session or throws a typed `FatalError` - there is no half-open session. Feed it audio with {@link TalkbackSession.send} and dispose it (or abort
+ * One talkback WebSocket, write-only. Constructed atomically via the static `connect()` (the constructor is private): it negotiates the URL, opens the socket, and
+ * resolves to a live session or throws a typed `ProtectError` - there is no half-open session. Feed it audio with {@link TalkbackSession.send} and dispose it (or abort
  * its signal) to close.
  *
  * @category Transport
@@ -174,7 +175,7 @@ export class TalkbackSession implements AsyncDisposable {
 
   /**
    * Open a talkback session and wait for it to connect. Atomic: it negotiates the WebSocket URL, opens the socket, and returns a live session, or throws a typed
-   * `FatalError` - there is no half-open session a caller must clean up.
+   * `ProtectError` - there is no half-open session a caller must clean up.
    *
    * @param options - The session options.
    *
@@ -211,8 +212,10 @@ export class TalkbackSession implements AsyncDisposable {
    *
    * @returns A promise that resolves when the source is exhausted.
    *
-   * @throws {@link ProtectNetworkError} on a socket failure mid-drain or a buffer-ceiling overrun; {@link ProtectAbortedError} when the per-send `opts.signal` aborts or
-   *   the session's own caller signal aborts mid-drain; any error the source itself raises propagates unwrapped.
+   * @throws {@link ProtectNetworkError} on a socket failure mid-drain, a buffer-ceiling overrun, or a call made while the session is not live (never
+   *   connected, or already closed/faulted); {@link ProtectAbortedError} when the per-send `opts.signal` aborts, the session's own caller signal aborts
+   *   mid-drain, or when send() is called after an earlier caller-signal abort already tore the session down; any error the source itself raises
+   *   propagates unwrapped.
    */
   async send(source: AsyncIterable<Uint8Array>, opts: { signal?: AbortSignal } = {}): Promise<void> {
 

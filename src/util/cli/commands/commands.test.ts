@@ -427,7 +427,7 @@ describe("watch events", () => {
 
     const out = stdout();
 
-    // The regression that motivated lifting attribution into the library: a tamper event must match a camera --device filter, not be silently dropped.
+    // A tamper event is camera-attributed, so it must match a camera --device filter by name or id rather than being silently dropped.
     assert.match(out, /tamperDetected/);
   });
 
@@ -467,7 +467,7 @@ describe("watch events", () => {
 
     const out = stdout();
 
-    // The smartDetect detail suffix lists the detected object classes and carries the occurrence id, the same suffix shape doctor and fixture replay depend on.
+    // The smartDetect detail suffix lists the detected object classes and carries the occurrence id.
     assert.match(out, /smartDetect/);
     assert.match(out, /Front Door/);
     assert.match(out, /objects=person,vehicle/);
@@ -643,6 +643,8 @@ describe("camera talkback", () => {
         })
       };
 
+      // The camera and dispose stub above cover only what cameraTalkback.run reads, so the return value is cast directly to the nominal ProtectClient
+      // type at this boundary, the same structural-fake-to-nominal coercion makeFakeClient documents for its own cast.
       return { camera: (token: string) => (token === "c1") ? camera : undefined, cameras: [camera], chimes: [], fobs: [], lights: [], relays: [], sensors: [],
         viewers: [], [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve() } as unknown as ProtectClient;
     };
@@ -734,6 +736,8 @@ describe("watch livestream", () => {
         name: "Cam"
       };
 
+      // The camera stub above covers only what watchLivestream.run reads, so the return value is cast directly to the nominal ProtectClient type at
+      // this boundary, the same structural-fake-to-nominal coercion makeFakeClient documents for its own cast.
       return { camera: (token: string) => (token === "c1") ? camera : undefined, cameras: [camera], chimes: [], fobs: [], lights: [], relays: [], sensors: [],
         viewers: [], [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve() } as unknown as ProtectClient;
     };
@@ -791,6 +795,9 @@ describe("watch livestream", () => {
       modelKey: "camera",
       name: "Cam"
     };
+
+    // The camera stub above covers only what watchLivestream.run reads, so the client wrapping it is cast directly to the nominal ProtectClient type
+    // at this boundary, the same structural-fake-to-nominal coercion makeFakeClient documents for its own cast.
     const client = { camera: (token: string) => (token === "c1") ? camera : undefined, cameras: [camera], chimes: [], fobs: [], lights: [], relays: [], sensors: [],
       viewers: [], [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve() } as unknown as ProtectClient;
     const { ctx, stdout } = makeCommandContext({ args: [ "c1", "--json", "--count", "1" ], client });
@@ -872,6 +879,9 @@ describe("watch livestream", () => {
       modelKey: "camera",
       name: "Cam"
     };
+
+    // The camera stub above covers only what watchLivestream.run reads, so the client wrapping it is cast directly to the nominal ProtectClient type
+    // at this boundary, the same structural-fake-to-nominal coercion makeFakeClient documents for its own cast.
     const client = { camera: (token: string) => (token === "c1") ? camera : undefined, cameras: [camera], chimes: [], fobs: [], lights: [], relays: [], sensors: [],
       viewers: [], [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve() } as unknown as ProtectClient;
     const { ctx, stdout } = makeCommandContext({ args: ["c1"], client });
@@ -1046,6 +1056,9 @@ describe("reboot", () => {
 
     // A category whose single online camera's reboot rejects with ProtectAbortedError - the Ctrl-C surfacing the bulk loop must rethrow rather than swallow-and-continue.
     const camera = { id: "c1", isOnline: true, modelKey: "camera", name: "Cam", reboot: (): Promise<void> => Promise.reject(new ProtectAbortedError("aborted")) };
+
+    // The camera stub above covers only what reboot.run reads for this bulk-loop path, so the client wrapping it is cast directly to the nominal
+    // ProtectClient type at this boundary, the same structural-fake-to-nominal coercion makeFakeClient documents for its own cast.
     const client = { camera: (token: string) => (token === "c1") ? camera : undefined, cameras: [camera], chimes: [], controllerName: "NVR", fobs: [], lights: [],
       reboot: (): Promise<void> => Promise.resolve(), relays: [], sensors: [], state: { snapshot: (): Record<string, unknown> => ({ nvr: { name: "NVR" } }) },
       viewers: [], [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve() } as unknown as ProtectClient;
@@ -1276,6 +1289,9 @@ describe("camera unlock", () => {
     // propagate so the entry point renders it as a calm one-line message. It does NOT prove any CLI-side guarding; there is none, and the guard is tested in the library.
     const camera = { id: "c1", modelKey: "camera", name: "Front Door",
       unlock: (): Promise<void> => Promise.reject(new ProtectUnsupportedError("no lock", { feature: "supportUnlock" })) };
+
+    // The camera stub above covers only what cameraUnlock.run reads, so the client wrapping it is cast directly to the nominal ProtectClient type at
+    // this boundary, the same structural-fake-to-nominal coercion makeFakeClient documents for its own cast.
     const client = { camera: (token: string) => (token === "c1") ? camera : undefined, cameras: [camera], chimes: [], fobs: [], lights: [], relays: [], sensors: [],
       viewers: [], [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve() } as unknown as ProtectClient;
     const { ctx } = makeCommandContext({ args: ["Front Door"], client });
@@ -1522,7 +1538,8 @@ describe("doctor", () => {
     const realOpen = ctx.openClient;
 
     // doctor subscribes to every channel before it opens the client, so publishing inside the opener (before the fake resolves) lands on those subscriptions. The two
-    // unmodeledCollection signals drive the known:true (recognized) vs known:false (drift) split; the events/http signals make the diagnostics-channels check pass.
+    // unmodeledCollection signals drive the known:true (recognized) vs known:false (drift) split; the schemaUnknownModelKey signal adds a second genuine-drift
+    // signal alongside the known:false collection, so the check's warn status reflects both; the events/http signals make the diagnostics-channels check pass.
     ctx.openClient = (opts?: { debug?: boolean; refreshIntervalMs?: number | false; signal?: AbortSignal }): Promise<ProtectClient> => {
 
       channels.schemaUnmodeledCollection.publish({ collection: "aiports", count: 1, exampleId: "a1", known: true, modelKey: "aiport" });

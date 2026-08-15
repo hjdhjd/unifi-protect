@@ -55,7 +55,8 @@ export type OpenClient = (opts?: { debug?: boolean; refreshIntervalMs?: number |
 
 /**
  * The behavior half of a CLI command: it does its work and resolves, or throws (a {@link CliError} for an expected failure, a library `ProtectError` for a controller
- * failure). The entry point renders the throw and sets the exit code, so a handler never calls `process.exit` itself.
+ * failure). For the common case, the entry point renders the throw and sets the exit code, so a handler never calls `process.exit` itself. A handler that aggregates
+ * several independent checks into one resolved result - `ufp doctor` - sets `process.exitCode` directly instead, since no single throw could represent the outcome.
  *
  * @category CLI
  */
@@ -77,7 +78,7 @@ export interface CommandSpec {
 /**
  * Render a command table as aligned `name  summary` lines for a usage screen's "Commands:" / "Subcommands:" block, sorted by command name (code unit).
  * Each summary is read off its {@link CommandSpec}, so the listing derives from the same dispatch table - it cannot drift from the commands that actually run.
- * The top-level `ufp` screen and the `watch` group both render their lists through this one helper.
+ * Every command group - the top-level `ufp` screen and each subcommand group - renders its list through this one helper.
  *
  * @param table - The command (or subcommand) dispatch table.
  *
@@ -150,8 +151,8 @@ export function parsePositiveInt(value: string, flag: string): number {
 }
 
 /**
- * Parse a CLI option value as a non-negative integer (`--channel`, `--lens`), where zero is a valid choice (channel 0, lens 0 are the defaults). Fails with a precise
- * message rather than letting a bad value become `NaN`.
+ * Parse a CLI option value as a non-negative integer (`--channel`, `--lens`), where zero is a valid choice: `--channel` defaults to 0, while an absent `--lens`
+ * selects the channel-based livestream source rather than an implicit lens value. Fails with a precise message rather than letting a bad value become `NaN`.
  *
  * @param value - The raw flag value.
  * @param flag  - The flag name, for the error message.
@@ -448,8 +449,8 @@ export function matchesEvent(filter: EventFilter, event: TypedEvent, resolveName
 
 /**
  * The raw filter flags as parsed from the command line, for `ufp watch raw`. The raw firehose matches on a {@link RawPacket}'s wire header rather than a classified
- * event, so its axes are `modelKey` and `action` (the header's two axes) plus `device` (the header's `id`, resolved to a name like the event filter's). Each
- * has an exclude form. {@link buildRawFilter} compiles this into the matcher {@link matchesRawPacket} uses.
+ * event, so its axes are `modelKey` and `action`, taken directly from the header, plus `device` (the header's `id`, resolved to a name like the event filter's).
+ * Each has an exclude form. {@link buildRawFilter} compiles this into the matcher {@link matchesRawPacket} uses.
  *
  * @category CLI
  */

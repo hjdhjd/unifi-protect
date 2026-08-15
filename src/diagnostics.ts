@@ -14,8 +14,9 @@ import diagnosticsChannel from "node:diagnostics_channel";
  * listening (publishers gate on `channel.hasSubscribers` before building a payload), and adaptable to any backend - a consumer can bridge any channel to OpenTelemetry,
  * Pino, a metrics counter, or the `ufp diagnostics` CLI command.
  *
- * Channel names follow a stable `unifi-protect:<subsystem>:<event>:<phase>` taxonomy. This module declares every channel exactly once; subsystems import the publisher
- * they need from here rather than re-deriving the channel name string, so a rename is a single edit and a typo is impossible at the call site.
+ * Channel names follow a `unifi-protect:<subsystem>:<event>[:<phase>]` taxonomy; the phase segment is present only when the event name doesn't already carry a
+ * terminal state of its own. This module declares every channel exactly once; subsystems import the publisher they need from here rather than re-deriving the
+ * channel name string, so a rename is a single edit and a typo is impossible at the call site.
  *
  * This module is the single source of truth for the channel set. Each channel is declared with its payload type, so a consumer's `subscribe` handler is typed and the
  * generated reference `docs/variables/channels.md` (via `npm run build-docs`) links each channel to its payload. Adding a channel touches both: the typed, doc-commented
@@ -66,7 +67,9 @@ export const channels = {
   /** The transport left its throttle cooldown and resumed normal operation. */
   httpThrottleExited: diagnosticsChannel.channel<Record<string, never>>("unifi-protect:http:throttle:exited"),
 
-  /** A pooled livestream reconnected and the controller negotiated a different codec than the one in flight - the one terminal a recovering stream raises. */
+  /** A pooled livestream reconnected and the controller negotiated a different codec than the one in flight - one of the terminal errors a recovering stream
+   * can raise.
+   */
   livestreamCodecChanged: diagnosticsChannel.channel<LivestreamCodecChangedPayload>("unifi-protect:livestream:codec:changed"),
 
   /** A pooled livestream's recovery policy gave up. What an opt-in consumer self-heal observer (a user-gated camera reboot) watches; the library reboots nothing. */
@@ -140,8 +143,8 @@ export interface AuthReloginPayload {
 }
 
 /**
- * Payload published on {@link channels.connectionRebootDetected}. The controller's own self-reported boot times are the wire-level reboot signal; no heuristics are
- * involved.
+ * Payload published on {@link channels.connectionRebootDetected}. The controller's own self-reported boot time (`upSince`) is the underlying wire-level signal; a
+ * threshold-based comparison across bootstraps distinguishes a genuine reboot from measurement jitter in that value.
  *
  * @category Diagnostics
  */

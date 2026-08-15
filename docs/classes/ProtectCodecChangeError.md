@@ -7,9 +7,10 @@
 # Class: ProtectCodecChangeError
 
 A pooled livestream reconnected and the controller negotiated a different codec than the one in flight (H.264 to HEVC, or a channel reconfigured mid-stream). Fatal
-because no fixed-codec consumer can adapt in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as the one
-terminal a recovering stream can raise, after which the consumer re-subscribes for a fresh stream against the new codec. The `from` / `to` descriptors are the RFC 6381
-codec strings the two init segments carried, so a consumer can log precisely what changed.
+because no fixed-codec consumer can adapt in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as a
+terminal a recovering stream can raise - alongside [ProtectLivestreamUnavailableError](ProtectLivestreamUnavailableError.md) when the recovery policy gives up instead - after which the consumer
+re-subscribes for a fresh stream against the new codec. The `from` / `to` descriptors are the RFC 6381 codec strings the two init segments carried, so a consumer
+can log precisely what changed.
 
 ## Extends
 

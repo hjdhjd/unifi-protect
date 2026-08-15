@@ -17,8 +17,8 @@ import { silentLog } from "../testing.helpers.ts";
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
 
-// Yield the event loop so the session's async connect (negotiate then build the socket, attach listeners, then the fake's queued open) settles and the session reaches
-// live.
+// Yield one turn of the event loop so whatever async step is already in flight - a send's drain parked on its next source pull, or a connect() still awaiting a
+// resolver - advances to the point the test needs to observe, without asserting where the session or the drain ultimately lands.
 function tick(): Promise<void> {
 
   return new Promise<void>((resolve) => setImmediate(resolve));

@@ -6,7 +6,7 @@
 
 # Interface: ConnectionEvents
 
-The events [ConnectionMonitor](ConnectionMonitor.md) publishes on its three-rail surface.
+The events [ConnectionMonitor](ConnectionMonitor.md) publishes on its state, controller-lifecycle, and throttle rails.
 
 - `stateChanged` fires on every connection-state edge.
 - `controllerLost` fires once when the controller is concluded unreachable, carrying the typed fault.

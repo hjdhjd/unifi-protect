@@ -26,7 +26,7 @@ export interface ProtectWebSocket {
 
 /**
  * The minimal *send-direction* WebSocket surface the {@link TalkbackSession} consumes - the write-direction sibling of {@link ProtectWebSocket}. It writes opaque audio
- * bytes (`send`) and reads `bufferedAmount` as its structural-backpressure safety bound, but never reads inbound frames, so it has no `message` listener and no
+ * bytes (`send`) and reads `bufferedAmount` as its only backpressure signal, but never reads inbound frames, so it has no `message` listener and no
  * `binaryType` (a write-only socket has no inbound binary to type). It shares the `open` / `close` / `error` listener shape and the close/error payload types with the
  * receive-direction surface, but it is a distinct interface rather than an extension of it: talkback's listener set is not a superset of the receive one (it drops
  * `message`), so the two diverge cleanly instead of one bolting unused surface onto the other. undici's `WebSocket` structurally satisfies this, so the default factory
@@ -82,7 +82,7 @@ export interface ProtectWebSocketErrorEvent {
 
 /**
  * The listener-registration options the transports use - a subset of the standard `addEventListener` options. `signal` is how a single `AbortController` detaches every
- * listener at once, the shared teardown primitive both the events stream and the livestream session rely on.
+ * listener at once, the shared teardown primitive every WebSocket-owning transport relies on.
  *
  * @category Transport
  */

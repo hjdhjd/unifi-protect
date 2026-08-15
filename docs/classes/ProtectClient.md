@@ -658,7 +658,7 @@ Connect to a Protect controller. Logs in, fetches the initial bootstrap, seeds t
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`ConnectOptions`](../interfaces/ConnectOptions.md) | The controller address, credentials, and optional seams (logger, clock, refresh interval, injected dispatcher, abort signal). |
+| `opts` | [`ConnectOptions`](../interfaces/ConnectOptions.md) | The controller address, credentials, and optional overrides (logger, clock, refresh interval, injected dispatcher, abort signal). |
 
 #### Returns
 

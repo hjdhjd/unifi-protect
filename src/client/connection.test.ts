@@ -328,7 +328,7 @@ describe("ConnectionMonitor", () => {
       await settle();
 
       // The controller reports upSince as a noisy measurement (observed millisecond jitter across bootstraps), not a stable epoch. A change below the noise floor
-      // (PROTECT_REBOOT_DETECTION_THRESHOLD) is measurement noise, not a reboot, so none of these jittered values is reported - this is the live-validation fix.
+      // (PROTECT_REBOOT_DETECTION_THRESHOLD) is measurement noise, not a reboot, so none of these jittered values is reported.
       for(const jittered of [ 1003, 999, 1004, 1001 ]) {
 
         store.dispatch({ data: makeBootstrap({ nvr: makeNvr({ upSince: jittered }) }), kind: "bootstrapLoaded" });
@@ -860,9 +860,9 @@ describe("ConnectionMonitor", () => {
       await expectAt(() => monitor.state === "healthy", { message: "expected relaunch to complete" });
       assert.equal(streams.length, 2, "a fresh socket was built for the relaunch");
 
-      // On the new socket, an unmodeled frame (garage) the classifier drops; on the old socket, one that must not leak. This single assertion guards three regressions
-      // at once: the raw bridge re-attaching on relaunch (else rawSunk is empty), the old socket detaching (else rawSunk has two), and the raw rail still carrying the
-      // frames the typed rail drops after a recovery (the rail's reason to exist) - exactly the breakage a packet-only relaunch test would miss.
+      // On the new socket, an unmodeled frame (garage) the classifier drops; on the old socket, one that must not leak. This single assertion guards several
+      // regressions at once: the raw bridge re-attaching on relaunch (else rawSunk is empty), the old socket detaching (else rawSunk has two), and the raw rail
+      // still carrying the frames the typed rail drops after a recovery (the rail's reason to exist) - exactly the breakage a packet-only relaunch test would miss.
       streams[1]?.emitMessage(encode({ action: "add", id: "g1", modelKey: "garage" }, { id: "g1" }));
       streams[0]?.emitMessage(encode({ action: "add", id: "g2", modelKey: "garage" }, { id: "g2" }));
 

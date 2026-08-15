@@ -10,8 +10,10 @@ import type { ProtectLogging } from "../logging.ts";
 import { Transport } from "./http.ts";
 import { fakeClock } from "../testing.helpers.ts";
 
-// The bundle a test drives: the agent (for intercept setup and teardown), the interceptable pool bound to the controller origin, the transport under test, the fake
-// clock that advances breaker time, and the host string for building request URLs.
+/**
+ * The bundle a test drives: the agent (for intercept setup and teardown), the interceptable pool bound to the controller origin, the transport under test, the
+ * fake clock that advances breaker time, and the host string for building request URLs.
+ */
 export interface MockTransport {
 
   agent: MockAgent;
@@ -21,8 +23,10 @@ export interface MockTransport {
   transport: Transport;
 }
 
-// Build a Transport backed by a MockAgent and a fake clock. Optional dependencies (getAuthHeaders, onUnauthorized, log) are forwarded only when supplied so the
-// transport sees them absent rather than literal-undefined under exactOptionalPropertyTypes.
+/**
+ * Build a Transport backed by a MockAgent and a fake clock. Optional dependencies (getAuthHeaders, onUnauthorized, log) are added to the options object only
+ * when the caller supplies them, mirroring how every options object in this codebase is built: a key appears only for a value actually given, never as undefined.
+ */
 export function makeMockTransport(options: {
   getAuthHeaders?: () => Record<string, string>;
   host?: string;
@@ -33,6 +37,7 @@ export function makeMockTransport(options: {
   const host = options.host ?? "10.0.0.1";
   const agent = new MockAgent();
 
+  // Disable real network connections so a request that misses every configured intercept fails immediately instead of silently reaching a live host.
   agent.disableNetConnect();
 
   const clock = fakeClock();
@@ -49,7 +54,10 @@ export function makeMockTransport(options: {
   return { agent, clock, host, pool: agent.get("https://" + host), transport };
 }
 
-// Build a fully-qualified URL for a path on the mock controller's origin.
+/**
+ * Build a fully-qualified URL for a path on the mock controller's origin, using the same https scheme and host every test's MockAgent pool is scoped to in
+ * {@link makeMockTransport}, so a mismatched scheme or origin never silently misses the intercept.
+ */
 export function url(host: string, path: string): string {
 
   return "https://" + host + path;

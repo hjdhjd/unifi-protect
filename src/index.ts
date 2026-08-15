@@ -5,8 +5,9 @@
 
 // This file is the consumer contract, and the contract is Layer 3. The surface is curated by one rule, expressed in the type system so it cannot drift:
 //
-//   - `export` a value only for what a consumer constructs, calls as a free function, or tests `instanceof` against: ProtectClient (its static connect()), the error
-//     hierarchy, the selectors, the diagnostics channels, the default logger/clock, and the timing constants.
+//   - `export` a value only for what a consumer constructs, calls as a free function, tests `instanceof` against, or iterates as a vocabulary array: ProtectClient
+//     (its static connect()), the error hierarchy, the selectors, the diagnostics channels, the default logger/clock, the timing constants, and the device-collection
+//     key vocabulary.
 //   - `export type` only for what a consumer receives but never builds: the device projections, the getter-return classes (StateStore / ConnectionMonitor / Transport /
 //     ProtectResponse / LivestreamSubscription), and every event, state, option, and domain type reachable from a public signature. Exporting these as types makes a
 //     second composition path unrepresentable - there is exactly one way to build a client, ProtectClient.connect() - so the single-source-of-truth rule is enforced by
@@ -45,8 +46,9 @@ export type { Clock } from "./clock.ts";
 
 // Protocol - the realtime event taxonomy a consumer reads off the firehose. The pure codec/classifier/reducer functions stay internal; the static `ProtectClient`
 // .decodePacket() / .classifyPacket() methods are the consumer-facing codec entries (the offline counterpart of the rawPackets()/events() rails), so a second
-// free-function path would be the divergence the architecture forbids. `RawPacket` / `ProtectEventHeader` are the element type of the raw firehose
-// (`client.rawPackets()`) and the input/output of those codec statics: the decoded-but-unclassified frame, header plus payload, including ones the classifier drops.
+// free-function path would be the divergence the architecture forbids. `RawPacket` is the element type of the raw firehose (`client.rawPackets()`) and the
+// input/output of those codec statics: the decoded-but-unclassified frame, header plus payload, including ones the classifier drops. `ProtectEventHeader` is the
+// type of that frame's own `header` field, so it travels on the public surface alongside `RawPacket`.
 export type { ProtectEventHeader, RawPacket } from "./protocol/packet.ts";
 export type { LivestreamSource, Segment } from "./transport/livestream-session.ts";
 // The id-keyed device-collection vocabulary - the category key set the selector catalog and every per-category consumer iterate over. A value export (a consumer iterates

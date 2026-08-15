@@ -7,7 +7,7 @@
 # Interface: LivestreamRecoveryExhaustedPayload
 
 Payload published on [channels.livestreamRecoveryExhausted](../variables/channels.md#property-livestreamrecoveryexhausted). `attempts` is the number of consecutive failed reconnect attempts before the policy gave up. The
-consumer's iterator also receives a [ProtectLivestreamUnavailableError](../classes/ProtectLivestreamUnavailableError.md); this channel is the seam an opt-in self-heal observer watches.
+consumer's iterator also receives a [ProtectLivestreamUnavailableError](../classes/ProtectLivestreamUnavailableError.md); this channel is what an opt-in self-heal observer watches.
 
 ## Properties
 

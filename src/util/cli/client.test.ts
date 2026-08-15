@@ -14,6 +14,7 @@ function capture(): { lines: string[]; stream: OutputStream } {
 
   const lines: string[] = [];
 
+  // The write callback always reports capacity by returning true - these tests never simulate stream backpressure, so every chunk is captured unconditionally.
   return { lines, stream: { write: (chunk: string | Uint8Array): boolean => (lines.push((typeof chunk === "string") ? chunk : Buffer.from(chunk).toString()), true) } };
 }
 

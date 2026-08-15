@@ -124,6 +124,7 @@ export class FakeWritableWebSocket implements ProtectWritableWebSocket {
     }
   }
 
+  // Return the listener set for the given event type, creating and caching an empty one on first use.
   #setFor(type: string): Set<ListenerEntry> {
 
     let set = this.#listeners.get(type);

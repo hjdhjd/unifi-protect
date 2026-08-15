@@ -10,7 +10,7 @@ A consumer's handle into a pooled livestream. It is an `AsyncIterable<Segment>` 
 subscription has its **own unbounded queue**: the pool pushes every segment to every subscriber, so one slow consumer cannot stall a fast one, and nothing is dropped.
 
 The stream is **resilient by default**: a recoverable stall or reconnect is invisible to the iterator - it pauses while the underlying session is re-established and
-resumes seamlessly when segments flow again (a same-codec reconnect suppresses the redundant init). The iterator terminates only on these conditions: disposal (a
+resumes uninterrupted when segments flow again (a same-codec reconnect suppresses the redundant init). The iterator terminates only on these conditions: disposal (a
 clean `done`), a codec change across a reconnect (it throws [ProtectCodecChangeError](../classes/ProtectCodecChangeError.md)), and the recovery policy giving up (it throws [ProtectLivestreamUnavailableError](../classes/ProtectLivestreamUnavailableError.md)). A recoverable stall is *not* one of them.
 
 ## Implements

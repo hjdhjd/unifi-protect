@@ -28,8 +28,9 @@ const RETRY_STATUS_CODES = [ 400, 404, 429, 500, 502, 503, 504 ] as const;
 const COOLDOWN_MS = PROTECT_API_RETRY_INTERVAL * 1000;
 
 /**
- * The events the {@link Transport} publishes on its three-rail surface. Both are parameterless: a consumer that needs the cooldown duration reads it from the
- * {@link ProtectThrottledError} thrown by `send`, and a consumer that needs richer detail subscribes to the `unifi-protect:http:throttle:*` diagnostics channels.
+ * The events the {@link Transport} publishes on its three-rail surface. Every event here is parameterless: a consumer that needs the cooldown duration reads it
+ * from the {@link ProtectThrottledError} thrown by `send`, and a consumer that needs richer detail subscribes to the `unifi-protect:http:throttle:*` diagnostics
+ * channels.
  *
  * @category Transport
  */
@@ -63,7 +64,7 @@ export interface RequestOptions {
 }
 
 /**
- * The lower-level {@link Transport.send} options. Both flags follow the same pattern: a special caller opting out of one default send behavior.
+ * The lower-level {@link Transport.send} options. Each flag is a special caller opting out of one default send behavior.
  *
  * - `authRetry` controls the injected 401-relogin hook: the authenticated request path leaves it at its default of `true`, while the `AuthSession` login handshake
  *   passes `false` so its own 401 cannot recurse back into relogin.
@@ -202,7 +203,7 @@ export class ProtectResponse {
    * @throws {@link ProtectProtocolError} if the body is not valid JSON.
    */
   // This is the deliberate decode point where the caller asserts the document's shape - the type parameter exists to carry that assertion to the call site, so its
-  // appearing only in the return position is the intent, not an oversight (the same idiom the platform's own `Response.json()` uses).
+  // appearing only in the return position is the intent, not an oversight.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
   json<T>(): T {
 
@@ -252,7 +253,8 @@ export class ProtectResponse {
  *
  * - **closed:** normal operation. Each completed request books an outcome; a 2xx resets the consecutive-failure count, a non-2xx or transport exception increments
  *   it. Crossing {@link PROTECT_API_ERROR_LIMIT} consecutive failures trips the breaker open.
- * - **open:** for {@link PROTECT_API_RETRY_INTERVAL} seconds, `send` throws {@link ProtectThrottledError} before dispatching - no traffic reaches the controller.
+ * - **open:** for {@link PROTECT_API_RETRY_INTERVAL} seconds, `send` throws {@link ProtectThrottledError} before dispatching, except a `probe: true` request (the
+ *   `ConnectionMonitor`'s recovery trial), which bypasses the cooldown gate and is booked exactly as a natural half-open attempt would be.
  * - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first success closes the breaker (and emits `throttleExited`
  *   only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
@@ -455,8 +457,8 @@ export class Transport implements AsyncDisposable {
     const requestId = randomUUID();
     const timeout = opts.timeout ?? PROTECT_API_TIMEOUT;
 
-    // Compose our timeout deadline with the caller's optional cancellation. #classifyTransportError later tells the two apart by testing whether the caller's own
-    // signal aborted; if it did not, the abort must be our timeout's, since those are the only two signals composed here.
+    // Compose our timeout deadline with the caller's optional cancellation. #classifyTransportError later tells our timeout apart from the caller's cancellation by
+    // checking whether the caller's own signal is the one that aborted; when it is not, the abort is attributed to our timeout instead.
     const timeoutSignal = AbortSignal.timeout(timeout);
     const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, timeoutSignal ]) : timeoutSignal;
 
@@ -547,6 +549,8 @@ export class Transport implements AsyncDisposable {
   // if the caller's signal is aborted it was an explicit cancel, otherwise our timeout won the race.
   #classifyTransportError(error: unknown, callerSignal: AbortSignal | undefined, elapsedMs: number): ProtectAbortedError | ProtectNetworkError | ProtectTimeoutError {
 
+    // AbortSignal.timeout() fires with a DOMException named "TimeoutError" rather than "AbortError", so both names are tested here alongside undici's own
+    // RequestAbortedError, which the pool throws when it aborts an in-flight request on its own - together they cover every shape an abort can take.
     const isAbort = ((error instanceof DOMException) && ((error.name === "AbortError") || (error.name === "TimeoutError"))) ||
       (error instanceof errors.RequestAbortedError);
 
@@ -599,7 +603,9 @@ export class Transport implements AsyncDisposable {
   // interceptor only fires on the transient controller-readiness codes in RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable -
   // conditions in which the controller was not in a state to accept and act on the request - so re-sending a POST does not risk double-applying one that already took
   // effect. PATCH is held out of the set even so, because the config writes it carries are the one place a double-apply would be consequential and the undocumented API
-  // promises nothing about what a repeated write does.
+  // promises nothing about what a repeated write does. The backoff curve itself - five attempts, starting at a 100ms floor and doubling on each attempt up to a
+  // 1500ms cap - is sized to ride out the same transient readiness gaps RETRY_STATUS_CODES targets: a reboot or a momentary load spike on a Protect controller
+  // typically clears within a few seconds, so the curve gives it that room to recover while keeping a caller from stalling through a much longer wait.
   #buildPool(): Dispatcher {
 
     const userAgent: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {

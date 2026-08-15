@@ -7,7 +7,7 @@
 # Interface: ConnectOptions
 
 Options for [ProtectClient.connect](../classes/ProtectClient.md#connect). `host`, `username`, and `password` are the required controller address and credentials; the rest are optional injected
-seams, each defaulted at the composition root:
+dependencies, each defaulted at the composition root:
 
 - `clock` is the time source threaded into every subsystem (transport, store, event stream, livestream pool); it defaults to the wall clock, and tests inject a
   fake to drive timers deterministically.
@@ -18,7 +18,7 @@ seams, each defaulted at the composition root:
   failsafe entirely so the consumer relies solely on the realtime event stream.
 - `signal` cancels the initial login and bootstrap fetch; it is bound only to connect, never to a later recovery relaunch.
 - `webSocket` is the receive-direction [ProtectWebSocket](ProtectWebSocket.md) factory used by the events stream and livestream pool; it defaults to a real socket and is the
-  socket-injection seam for tests. It does not apply to the write-direction talkback socket.
+  socket-injection point for tests. It does not apply to the write-direction talkback socket.
 
 ## Properties
 

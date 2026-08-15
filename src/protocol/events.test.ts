@@ -1,8 +1,11 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events.test.ts: Unit tests for the pure packet classifier. These pin the two-category taxonomy (state transitions vs. activity signals), the single-source rule
- * (activity signals come only from the `event` model key), the stateless self-description rule, and the `null` contract for valid-but-unmodeled packets. The event
- * identity is always the header id, shared across an occurrence's add and finalizing update.
+ * events.test.ts: Unit tests for the pure packet classifier and the model-key vocabulary and event-attribution helpers built around it. These pin the
+ * two-category taxonomy (state transitions vs. activity signals), the single-source rule (activity signals come only from the `event` model key), the
+ * stateless self-description rule, and the `null` contract for valid-but-unmodeled packets. The event identity is always the header id, shared across an
+ * occurrence's add and finalizing update. Alongside the classifier, these tests cover isKnownModelKey and isDeviceModelKey, the wire-vocabulary and
+ * device-vocabulary guards; eventSubjects, which resolves a classified event to the record ids it concerns; and findUnmodeledDeviceCollections, which
+ * flags device-shaped bootstrap collections that fall outside the modeled device set.
  */
 import { classifyPacket, eventSubjects, findUnmodeledDeviceCollections, isDeviceModelKey, isKnownModelKey } from "./events.ts";
 import { describe, test } from "node:test";
@@ -469,7 +472,7 @@ describe("findUnmodeledDeviceCollections", () => {
 
   // A synthetic bootstrap: we spread makeBootstrap()'s result (its overrides parameter is closed to the modeled collections) and add the unmodeled keys. `aiports`,
   // `groups`, and `speakers` are already-named bootstrap fields; `garages` is genuinely out-of-schema and type-checks via the bootstrap's `[key: string]` index
-  // signature. It carries a modeled collection (cameras), a recognized-but-unreduced device class (aiports), genuine drift (garages),
+  // signature. It carries modeled collections (cameras, fobs), a recognized-but-unreduced device class (aiports), genuine drift (garages),
   // a non-device array (groups, no `mac`), and an empty array (speakers). makeCamera supplies the device shape (`mac`+`modelKey`+`id`), so overriding `modelKey`
   // yields a device-shaped record under a non-device key.
   const bootstrap: ProtectNvrBootstrap = {

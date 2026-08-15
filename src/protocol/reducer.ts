@@ -64,15 +64,19 @@ export type ProtectState = Readonly<{
   viewers: ReadonlyMap<string, ProtectViewerConfig>;
 }>;
 
-// The state fields the realtime reducer path writes via mapFieldFor - the maps backed by a StateModelKey. The NVR is excluded (a singleton field, not a map); `ringtones`
-// is excluded because it is reduced bootstrap-only (no `ringtone` realtime packet), so applyBootstrap writes it directly rather than through withDeviceMap. The user and
-// liveview rosters are included alongside the devices, as both are realtime-addressed StateModelKeys. Exported so a downward consumer (the store's adoption scan) can
-// name the field it looks a pre-fold record up in, rather than re-deriving the mapping.
+/**
+ * The state fields the realtime reducer path writes via mapFieldFor - the maps backed by a StateModelKey. The NVR is excluded (a singleton field, not a map); `ringtones`
+ * is excluded because it is reduced bootstrap-only (no `ringtone` realtime packet), so applyBootstrap writes it directly rather than through withDeviceMap. The user and
+ * liveview rosters are included alongside the devices, as both are realtime-addressed StateModelKeys. Exported so a downward consumer (the store's adoption scan) can
+ * name the field it looks a pre-fold record up in, rather than re-deriving the mapping.
+ */
 export type DeviceMapField = "cameras" | "chimes" | "fobs" | "lights" | "liveviews" | "relays" | "sensors" | "users" | "viewers";
 
-// The reduced model keys whose state is stored as a map (every StateModelKey except "nvr", which is the singleton). It lets mapFieldFor return a non-optional
-// DeviceMapField, so the impossible "model key with no map" case is unrepresentable rather than defended against at runtime. Exported alongside mapFieldFor and
-// MAP_BACKED_STATE_MODEL_KEYS as the single source of "which model keys are map-backed collections", shared by the store's adoption scan.
+/**
+ * The reduced model keys whose state is stored as a map (every StateModelKey except "nvr", which is the singleton). It lets mapFieldFor return a non-optional
+ * DeviceMapField, so the impossible "model key with no map" case is unrepresentable rather than defended against at runtime. Exported alongside mapFieldFor and
+ * MAP_BACKED_STATE_MODEL_KEYS as the single source of "which model keys are map-backed collections", shared by the store's adoption scan.
+ */
 export type MapBackedStateModelKey = Exclude<StateModelKey, "nvr">;
 
 // The map-backed state model keys as a runtime list, so both this reducer's adoption normalization and the store's adoption scan iterate one enumeration derived from the
@@ -120,8 +124,8 @@ export function createInitialState(): ProtectState {
  * Advance the state by one typed event. Pure: returns a new state when the event changes something, or the *same reference* when it does not.
  *
  * State transitions advance the model: `bootstrapLoaded` reconciles against a fresh bootstrap, `deviceAdded` upserts a full record, `devicePatched` deep-merges a
- * partial, `deviceRemoved` deletes. Activity signals (`motionDetected`, `smartDetect`, `tamperDetected`, `authDetected`, `doorbellRing`, `accessEvent`)
- * are occurrences rather than state - they reach consumers through the firehose, and the reducer returns the state unchanged for them.
+ * partial, `deviceRemoved` deletes. Activity signals (`accessEvent`, `authDetected`, `buttonPressed`, `doorbellRing`, `motionDetected`, `smartDetect`,
+ * `tamperDetected`) are occurrences rather than state - they reach consumers through the firehose, and the reducer returns the state unchanged for them.
  *
  * @param state - The current state.
  * @param event - The typed event to apply.
@@ -247,6 +251,8 @@ function upsertDevice(state: ProtectState, modelKey: StateModelKey, id: string, 
 
   if(modelKey === "nvr") {
 
+    // The event classifier and the bootstrap loader only ever pair modelKey === "nvr" with an NVR-shaped record, so record's runtime shape is ProtectNvrConfig here
+    // even though the parameter type is the wider ProtectStateRecord - the cast reflects that pairing rather than asserting past what the caller actually supplies.
     return ((state.nvr !== null) && isDeepStrictEqual(state.nvr, record)) ? state : { ...state, nvr: record as ProtectNvrConfig };
   }
 
@@ -282,6 +288,9 @@ function patchDevice(state: ProtectState, modelKey: StateModelKey, id: string, p
 
     // The NVR carries no adoption fields, so this repair is a pass-through; we route it through the same helper for one normalization path rather than a special case.
     const normalizedPatch = normalizeAdoptedByOther(state.nvr, patch, ownMac);
+
+    // normalizedPatch is cast to DeepPartial<ProtectNvrConfig> on the same guarantee as upsertDevice's NVR branch: the event classifier and bootstrap loader only ever
+    // pair modelKey === "nvr" with an NVR-shaped patch, so the parameter's wider DeepPartial<ProtectStateRecord> type understates what the caller actually supplies.
     const patchedNvr = applyDevicePatch(state.nvr, normalizedPatch as DeepPartial<ProtectNvrConfig>);
 
     return Object.is(patchedNvr, state.nvr) ? state : { ...state, nvr: patchedNvr };
@@ -407,10 +416,18 @@ function withDeviceMap(state: ProtectState, field: DeviceMapField, map: DeviceMa
   return { ...state, [field]: map };
 }
 
-// Map a map-backed reduced model key to its backing state field. Total: every value of MapBackedStateModelKey enumerates here, and the exhaustiveness guard on the
-// switch's default arm fails to compile if a new map-backed category is added without updating this mapping. The NVR singleton is excluded from the input type by
-// construction, so the function returns a non-optional DeviceMapField - no defensive null-handling at the call sites. Exported so the store's adoption scan resolves a
-// model key to its pre-fold state field through this one mapping rather than a copy of it.
+/**
+ * Map a map-backed reduced model key to its backing state field. Total: every value of MapBackedStateModelKey enumerates here, and the exhaustiveness guard on the
+ * switch's default arm fails to compile if a new map-backed category is added without updating this mapping. The NVR singleton is excluded from the input type by
+ * construction, so the function returns a non-optional DeviceMapField - no defensive null-handling at the call sites. Exported so the store's adoption scan resolves
+ * a model key to its pre-fold state field through this one mapping rather than a copy of it.
+ *
+ * @param modelKey - The map-backed reduced model key to resolve.
+ *
+ * @returns The state field that backs `modelKey`.
+ *
+ * @category Reducer
+ */
 export function mapFieldFor(modelKey: MapBackedStateModelKey): DeviceMapField {
 
   switch(modelKey) {
@@ -493,7 +510,7 @@ export interface AdoptionView {
  * @param stored   - The record already in state for this id, or undefined when there is none (a first add, or a bootstrap element).
  * @param incoming - The full record (add or bootstrap) or partial patch (update) arriving from the wire.
  *
- * @returns The three-field adoption view.
+ * @returns The merged adoption view.
  *
  * @category Reducer
  */

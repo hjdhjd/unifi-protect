@@ -10,7 +10,7 @@
 type RecoveryPolicy = (context) => RecoveryDecision;
 ```
 
-The single decision authority for a stream's recovery, injected at the pool (the same dependency-inversion seam as `resolveUrl`). Pure: given the library-observable
+The single decision authority for a stream's recovery, injected at the pool (the same dependency inversion as `resolveUrl`). Pure: given the library-observable
 [RecoveryContext](../interfaces/RecoveryContext.md), it returns a [RecoveryDecision](RecoveryDecision.md). The library ships [defaultLivestreamRecoveryPolicy](../functions/defaultLivestreamRecoveryPolicy.md), a health-agnostic default; a consumer
 injects its own to add the controller-health correlation only it can observe.
 

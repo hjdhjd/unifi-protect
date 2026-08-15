@@ -21,7 +21,8 @@ exception is [createStateStore](../functions/createStateStore.md), the test-cons
 asyncDispose: Promise<void>;
 ```
 
-Stop the refresh failsafe and terminate every open observer. Safe to call more than once.
+Stop the refresh failsafe and terminate every open observer. Safe to call more than once. After it resolves the store is inert: nothing dispatches, nothing is
+notified, and a later observation completes immediately rather than registering.
 
 #### Returns
 
@@ -46,7 +47,7 @@ dispatch that left the value unchanged. Pair it with [StateStore.snapshot](#snap
 it changes".
 
 Termination: pass `opts.signal` to end the iteration (the iterator returns cleanly on abort), or simply `break` out of the `for await` - either path unregisters
-the observer. An already-aborted signal yields nothing.
+the observer. An already-aborted signal yields nothing, and so does an observation begun on a disposed store.
 
 #### Type Parameters
 

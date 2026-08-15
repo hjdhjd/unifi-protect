@@ -120,6 +120,7 @@ export class FakeWebSocket implements ProtectWebSocket {
     }
   }
 
+  // Get or create the listener set for a type.
   #setFor(type: string): Set<ListenerEntry> {
 
     let set = this.#listeners.get(type);

@@ -1,8 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * errors.test.ts: Unit tests for the typed error hierarchy. The hierarchy's whole purpose is that a consumer can branch on the abstract base (RecoverableError vs.
- * FatalError) for policy and on the concrete class for handling, so these tests assert the instanceof relationships exhaustively, that each error reports its own
- * class name and chains its cause, that the typed fields are carried, and that the errno-resolution helpers behave across the shapes undici and Node produce.
+ * FatalError) for policy and on the concrete class for handling, so these tests assert the instanceof relationships for every RecoverableError subclass and a
+ * representative sample of FatalError subclasses, that each error reports its own class name, that cause-chaining holds for a representative sample of concrete
+ * classes, that the typed fields are carried, and that the errno-resolution helpers behave across the shapes undici and Node produce.
  */
 import { FatalError, INSPECT_OPTIONS, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectError,
   ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError, RecoverableError,

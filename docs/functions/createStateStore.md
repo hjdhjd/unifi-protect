@@ -19,7 +19,7 @@ this widens only the store's own construction, for tests.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `options` | [`StateStoreOptions`](../interfaces/StateStoreOptions.md) | The store options: the required refresh seam, and the optional clock, initial state, logger, and refresh interval. |
+| `options` | [`StateStoreOptions`](../interfaces/StateStoreOptions.md) | The store options: the required refresh hook, and the optional clock, initial state, logger, and refresh interval. |
 
 ## Returns
 

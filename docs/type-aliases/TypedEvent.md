@@ -104,7 +104,7 @@ It splits into two categories by relationship to state:
   unlike motion's `lastMotion` - so the occurrence is its single source of truth. It is a sibling of `motionDetected`, not a `smartDetect` variant: tamper is not a
   smart object class and carries no `objectTypes`.
 - `authDetected` - a doorbell reported an authentication scan: a fingerprint match (`fingerprintIdentified`) or an NFC card tap (`nfcCardScanned`). Camera-attributed
-  (the doorbell that performed the scan, resolved via the payload `camera` field) and, like `tamperDetected`, a one-way occurrence with no paired state field, so the
+  (the doorbell that performed the scan) and, like `tamperDetected`, a one-way occurrence with no paired state field, so the
   occurrence is its single source of truth. It is decided by its explicit auth `type` *ahead* of the generic `accessEvent` fallback as defensive precedence - live
   captures of both methods confirm auth metadata (`fingerprint`/`nfc`) and the `accessEventId` access marker are disjoint, so a scan is never absorbed as a bare access
   occurrence even were a future firmware to co-stamp it. The `method` the classifier resolved (`"fingerprint"` / `"nfc"`) is lifted onto the event - the consumer reads
@@ -112,6 +112,7 @@ It splits into two categories by relationship to state:
   identity matched stay metadata reads (an unrecognized scan still classifies, carrying e.g. `metadata.fingerprint.ulpId: null`).
 - `doorbellRing` - a doorbell was pressed.
 - `accessEvent` - a UniFi Access occurrence (door, reader, lock), distinguished within the `event` channel by its access metadata.
-- `buttonPressed` - a security-action button was pressed on a fob (or a sensor with a button). Device-attributed (the pressing device, from the
-  payload's `device` field), so it routes by `deviceId` like `accessEvent`; the classifier lifts `button` (which button) and `pressType` (how it was pressed), and
-  the device family rides in `metadata.deviceModelKey` since the wire event type is shared across button-bearing devices.
+- `buttonPressed` - a security-action button was pressed on a fob (or a sensor with a button). Device-attributed (the pressing device, from the payload's
+  `device` field, or the metadata's `sensorId` text when the payload carries no device), so it routes by `deviceId` like `accessEvent`; the classifier lifts
+  `button` (which button) and `pressType` (how it was pressed), and the device family rides in `metadata.deviceModelKey` since the wire event type is shared
+  across button-bearing devices.

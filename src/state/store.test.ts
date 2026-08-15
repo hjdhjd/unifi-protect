@@ -1,8 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * store.test.ts: Unit tests for the observable StateStore - snapshot, the observe/dedup contract, the single dispatch chokepoint, the refresh failsafe (including its
- * invisible-on-no-drift property), the bootstrap-schema tripwire (the schema:unmodeledCollection diagnostics publish and its per-session dedup), and
- * disposal. Driven entirely through a fake clock and a fake refresh hook; no network and no real timers.
+ * invisible-on-no-drift property), the bootstrap-schema tripwire (the schema:unmodeledCollection diagnostics publish and its per-session dedup), the adoption
+ * self-contradiction diagnostics (the ENTER/CLEAR episode tracking and the adoptionContradiction channel publish), and disposal. Driven entirely through a fake
+ * clock and a fake refresh hook; no network and no real timers.
  */
 import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
 import { StateStore, createStateStore } from "./store.ts";

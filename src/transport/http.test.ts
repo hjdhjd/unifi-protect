@@ -1,7 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * http.test.ts: Unit tests for the HTTP transport - the send/request surface, ProtectResponse decoding and ensureOk classification, transport-error classification
- * (timeout vs caller-abort vs network), the auth-header hook and 401-relogin retry, and the full throttle circuit-breaker FSM (closed -> open -> half-open -> closed).
+ * (timeout vs caller-abort vs network), the auth-header hook and 401-relogin retry, the full throttle circuit-breaker FSM (closed -> open -> half-open -> closed),
+ * the diagnostics-channel publishes for request start/end and throttle entered/exited, dispatcher-ownership semantics for an injected versus an owned pool, and
+ * the on/once/stream event-rail surface.
  *
  * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, and a fake Clock advances breaker time
  * without real-time waits. The injected dispatcher and clock let these tests pin the controller's throttle and retry behavior - the established behavioral contract -
