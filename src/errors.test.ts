@@ -184,4 +184,12 @@ describe("assertNever", () => {
     assert.throws(() => assertNever("phantomModelKey" as never),
       (error: unknown) => (error instanceof ProtectProtocolError) && error.message.includes("phantomModelKey"));
   });
+
+  test("throws with the coerced object form when an object variant carries no kind tag", () => {
+
+    // An object tagged some other way (a `type`-tagged union) takes the same fallback branch as a bare value, where String() yields the generic "[object Object]" -
+    // no name distinguishes the variant, which is exactly what the message reports.
+    assert.throws(() => assertNever({ type: "phantomTag" } as never),
+      (error: unknown) => (error instanceof ProtectProtocolError) && error.message.includes("[object Object]"));
+  });
 });
