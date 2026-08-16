@@ -17,6 +17,7 @@ import { makeMockTransport, url } from "./mock-controller.helpers.ts";
 import { Transport } from "./http.ts";
 import assert from "node:assert/strict";
 import { capturingLog } from "../testing.helpers.ts";
+import { createLoopbackHttpsPeer } from "./tls-peer.helpers.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 // The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the fake-clock advances line up with the gate math.
@@ -544,6 +545,56 @@ describe("Transport", () => {
       assert.doesNotThrow(() => transport.reset(), "reset must rebuild the owned pool without throwing");
 
       await assert.doesNotReject(transport[Symbol.asyncDispose]());
+    });
+  });
+
+  describe("certificate verification", () => {
+
+    test("accepts the certificate a controller presents when strict verification is not asked for", async () => {
+
+      // The peer is disposed after the transport, so the pool has released its keepalive connection by the time the server stops listening.
+      await using peer = await createLoopbackHttpsPeer();
+      await using transport = new Transport({ host: peer.host });
+
+      const response = await transport.send(url(peer.host, "/ok"));
+
+      assert.equal(response.statusCode, 200, "the default must reach a controller presenting its own self-signed certificate");
+    });
+
+    test("refuses a certificate that does not verify when strict verification is asked for", async () => {
+
+      await using peer = await createLoopbackHttpsPeer();
+      await using transport = new Transport({ host: peer.host, verifyTls: true });
+
+      /* The same peer and the same request as above, one option apart. A handshake the client will not complete is a connect-phase failure, which the transport
+       * classifies as the reachability fault it is, and the errno lifted from the cause chain is what says the refusal was about the certificate rather than about
+       * reaching the host at all.
+       */
+      await assert.rejects(async () => transport.send(url(peer.host, "/ok")), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+
+        return true;
+      });
+    });
+
+    test("a rebuilt pool keeps the posture the transport was constructed with", async () => {
+
+      // reset() discards the owned pool and builds a fresh one, which is the one lifecycle boundary that could silently drop the certificate posture and leave a
+      // strict transport trusting anything from its next request onward.
+      await using peer = await createLoopbackHttpsPeer();
+      await using transport = new Transport({ host: peer.host, verifyTls: true });
+
+      transport.reset();
+
+      await assert.rejects(async () => transport.send(url(peer.host, "/ok")), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+
+        return true;
+      });
     });
   });
 

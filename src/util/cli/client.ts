@@ -106,6 +106,7 @@ export async function openClient(opts: OpenClientOptions = {}): Promise<ProtectC
     password: credentials.password,
     username: credentials.username,
     ...((opts.refreshIntervalMs !== undefined) && { refreshIntervalMs: opts.refreshIntervalMs }),
-    ...((opts.signal !== undefined) && { signal: opts.signal })
+    ...((opts.signal !== undefined) && { signal: opts.signal }),
+    ...((credentials.verifyTls !== undefined) && { verifyTls: credentials.verifyTls })
   });
 }

@@ -18,6 +18,7 @@ import type { SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
+import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 
 const HOST = "10.0.0.1";
 
@@ -107,6 +108,30 @@ describe("EventStream", () => {
       controller.abort();
 
       await assert.rejects(stream.opened, ProtectAbortedError);
+    });
+  });
+
+  describe("certificate verification", () => {
+
+    test("the upgrade reaches a controller's own certificate when strict verification is not asked for", async () => {
+
+      // A real TLS peer rather than the injected fake: the certificate posture lives on the agent the default factory builds, which an injected socket never reaches.
+      await using peer = await createLoopbackWebSocketPeer();
+      const stream = new EventStream({ clock: fakeClock(), host: peer.host, lastUpdateId: "u0", log: silentLog() });
+
+      await stream.opened;
+      await stream.close();
+    });
+
+    test("the upgrade refuses a certificate that does not verify when strict verification is asked for", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const stream = new EventStream({ clock: fakeClock(), host: peer.host, lastUpdateId: "u0", log: silentLog(), verifyTls: true });
+
+      // The same peer and the same upgrade, one option apart. Asking for verification against a certificate that cannot provide it fails the connect, and a pre-open
+      // failure reaches the caller on the handshake rejection exactly as every other one does.
+      await assert.rejects(stream.opened, ProtectNetworkError);
+      await stream.close();
     });
   });
 

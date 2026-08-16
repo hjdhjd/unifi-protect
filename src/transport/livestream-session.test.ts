@@ -11,10 +11,13 @@ import { fakeClock, silentLog } from "../testing.helpers.ts";
 import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
 import type { LivestreamSpec } from "./livestream-session.ts";
+import type { LivestreamState } from "./livestream-session.ts";
 import { PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT } from "../settings.ts";
 import type { ProtectError } from "../errors.ts";
 import type { Segment } from "./livestream-session.ts";
 import assert from "node:assert/strict";
+import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
+import { setTimeout as delay } from "node:timers/promises";
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
@@ -67,6 +70,23 @@ function collectErrors(session: LivestreamSession): ProtectError[] {
   session.on("error", (error) => received.push(error));
 
   return received;
+}
+
+// Wait for a session driven by a real socket to reach a state, and report the state it actually reached. The session announces `segment`, `error`, and `closed`, but
+// the open handshake has no rail of its own, so the state getter is where it becomes observable - hence a poll rather than an awaited event. Returning the state at
+// the deadline rather than throwing keeps the caller's assertion the thing that reports a mismatch.
+async function whenState(session: LivestreamSession, target: LivestreamState, timeoutMs = 5000): Promise<LivestreamState> {
+
+  const deadline = Date.now() + timeoutMs;
+
+  while((session.state !== target) && (Date.now() < deadline)) {
+
+    // Sequential by intent: this polls one state reading at a time until the session settles or the deadline passes.
+    // eslint-disable-next-line no-await-in-loop
+    await delay(5);
+  }
+
+  return session.state;
 }
 
 describe("LivestreamSession", () => {
@@ -447,6 +467,48 @@ describe("LivestreamSession", () => {
 
       // The ProtectNetworkError the error rail carried is the same object the closure records as its cause.
       assert.ok(Object.is(closeInfo?.cause, errors[0]));
+    });
+  });
+
+  describe("certificate verification", () => {
+
+    test("the upgrade reaches a controller's own certificate when strict verification is not asked for", async () => {
+
+      // A real TLS peer rather than the injected fake: the certificate posture lives on the agent the default factory builds, which an injected socket never reaches.
+      await using peer = await createLoopbackWebSocketPeer();
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+        spec: { cameraId: "cam1" } });
+      const errors = collectErrors(session);
+
+      /* Reaching `handshaking` is the whole TLS-layer proof: the session advances to it on the WebSocket `open` event alone, which the peer grants only after the
+       * handshake completes and the upgrade is answered. Chasing `live` would take synthesized init-segment frames, which is livestream-protocol correctness the
+       * fake-socket suite above already owns, not a certificate question.
+       */
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+      assert.deepEqual(errors, [], "a connection the client accepts must put nothing on the error rail");
+
+      await session.close();
+    });
+
+    test("the upgrade refuses a certificate that does not verify when strict verification is asked for", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+        spec: { cameraId: "cam1" }, verifyTls: true });
+      const errors = collectErrors(session);
+
+      /* The same peer and the same upgrade, one option apart. A handshake the client will not complete is a socket failure, and this session routes every one of those
+       * onto the error rail as the typed reachability fault.
+       *
+       * The rail is raced against the peer's own view rather than awaited alone: a session that ignored the option would complete the handshake and then sit
+       * connected, so waiting only on the rail would report that as a timeout instead of as the refusal that did not happen.
+       */
+      await Promise.race([ session.once("error"), peer.whenHandshakes(1) ]);
+
+      assert.equal(peer.handshakes, 0, "a strict session must refuse the certificate before the handshake completes");
+      assert.ok(errors[0] instanceof ProtectNetworkError);
+
+      await session.close();
     });
   });
 

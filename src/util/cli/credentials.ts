@@ -10,6 +10,8 @@ import { readFile } from "node:fs/promises";
 /**
  * The normalized credentials the CLI connects with. `host` is the bare address {@link ProtectClient.connect} expects (no scheme, port preserved) - we accept the
  * documented `controller` form in the file (which may carry an `https://` scheme) and normalize it here, so the connect path never has to think about schemes.
+ * `verifyTls` is the file's strict-TLS opt-in, carried through to the connect options under the name the library gives it and left off entirely when the file is
+ * silent, so the library's own default decides.
  *
  * @category CLI
  */
@@ -18,6 +20,7 @@ export interface UfpCredentials {
   host: string;
   password: string;
   username: string;
+  verifyTls?: boolean;
 }
 
 /**
@@ -33,12 +36,18 @@ export interface LoadCredentialsOptions {
 }
 
 // The credentials file's on-disk shape. `controller` is the documented field name (a hostname, ip, or full URL); we translate it to the normalized `host` on load.
+// `verifyTls` is optional, and has its own reader below because it is the one field that is not a string.
 interface CredentialsFile {
 
   controller: string;
   password: string;
   username: string;
+  verifyTls?: boolean;
 }
+
+// The file's string-valued fields, which are the ones requireField answers for. Derived from the shape rather than restated, so a field joins the set by its own type,
+// and the boolean field - which has its own reader - cannot be asked for here.
+type CredentialsStringField = { [K in keyof CredentialsFile]-?: NonNullable<CredentialsFile[K]> extends string ? K : never }[keyof CredentialsFile];
 
 // Normalize the configured controller address to the bare host[:port] the connect path wants. A value carrying a scheme is parsed as a URL and reduced to its host
 // (scheme and path dropped, port kept); a bare value has any trailing path stripped. This is what lets ufp.json carry either "https://10.0.0.1" or "10.0.0.1" and behave
@@ -81,13 +90,32 @@ async function readIfPresent(file: string): Promise<string | null> {
 
 // Pull a required, non-empty string field out of the parsed file, or fail with a message that names both the field and where the file came from. Centralized so every
 // required field is validated identically.
-function requireField(record: Record<string, unknown>, key: keyof CredentialsFile, source: string): string {
+function requireField(record: Record<string, unknown>, key: CredentialsStringField, source: string): string {
 
   const value = record[key];
 
   if((typeof value !== "string") || (value.length === 0)) {
 
     throw new CliError("The ufp.json configuration at " + source + " is missing the required \"" + key + "\" field.");
+  }
+
+  return value;
+}
+
+// Read the strict-TLS opt-in. A value that is present must be a boolean rather than anything that could be coerced into one: coercion would read the string "false" as
+// an opt-in, which is the one misreading that silently changes how the connection is trusted.
+function readVerifyTls(record: Record<string, unknown>, source: string): boolean | undefined {
+
+  const value = record["verifyTls"];
+
+  if(value === undefined) {
+
+    return undefined;
+  }
+
+  if(typeof value !== "boolean") {
+
+    throw new CliError("The ufp.json configuration at " + source + " must express its \"verifyTls\" field as a boolean.");
   }
 
   return value;
@@ -150,11 +178,13 @@ export async function loadCredentials(opts: LoadCredentialsOptions = {}): Promis
   }
 
   const record = parsed as Record<string, unknown>;
+  const verifyTls = readVerifyTls(record, source);
 
   return {
 
     host: normalizeHost(requireField(record, "controller", source)),
     password: requireField(record, "password", source),
-    username: requireField(record, "username", source)
+    username: requireField(record, "username", source),
+    ...((verifyTls !== undefined) && { verifyTls })
   };
 }

@@ -13,8 +13,9 @@
  *
  * **The WebSocket is an injected dependency**, exactly like the {@link Transport}'s dispatcher and the {@link StateStore}'s refresh hook. `EventStream` depends on the
  * minimal {@link ProtectWebSocket} interface - only the surface it uses - never undici's full type. The default factory builds undici's `WebSocket` over an owned
- * HTTP/1.1 agent with `rejectUnauthorized: false` (Protect controllers ship self-signed certificates, and a WebSocket upgrade cannot ride the HTTP/2 request pool).
- * Tests inject a fake socket and drive `open` / `message` / `close` / `error` deterministically (undici's `MockAgent` does not mock WebSockets).
+ * HTTP/1.1 agent whose certificate verification follows the `verifyTls` option, permissive by default because Protect controllers ship self-signed certificates (and a
+ * WebSocket upgrade cannot ride the HTTP/2 request pool). Tests inject a fake socket and drive `open` / `message` / `close` / `error` deterministically (undici's
+ * `MockAgent` does not mock WebSockets).
  *
  * **The watchdog detects here; `ConnectionMonitor` responds.** This is the same division as the throttle breaker: the subsystem that owns a resource detects its health
  * condition and emits a typed signal, and the one coordinator responds. `EventStream` stamps `lastMessageAt` on every frame and runs a silence watchdog on the injected
@@ -51,6 +52,8 @@ import { wallClock } from "../clock.ts";
  * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses).
  * - `webSocket` is the injected I/O dependency; omit it to use the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connection attempt - if it aborts before the socket opens, {@link EventStream.opened} rejects and the stream tears down.
+ * - `verifyTls` opts the owned agent into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
+ *   `webSocket` factory builds no agent here, so the option is inert alongside one.
  *
  * @category Transport
  */
@@ -62,6 +65,7 @@ export interface EventStreamOptions {
   lastUpdateId: string;
   log?: ProtectLogging;
   signal?: AbortSignal;
+  verifyTls?: boolean;
   webSocket?: (url: string) => ProtectWebSocket;
 }
 
@@ -139,15 +143,16 @@ export class EventStream implements AsyncDisposable {
 
     const url = "wss://" + options.host + "/proxy/protect/ws/updates?" + new URLSearchParams({ lastUpdateId: options.lastUpdateId }).toString();
 
-    // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that accepts the controller's self-signed certificate.
-    // undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface we model, so it assigns directly - no cast, the interface is honest by construction.
+    // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent whose certificate posture follows `verifyTls`, which
+    // is permissive by default for the controller's self-signed certificate. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface we model,
+    // so it assigns directly - no cast, the interface is honest by construction.
     if(options.webSocket !== undefined) {
 
       this.#ownedAgent = null;
       this.#ws = options.webSocket(url);
     } else {
 
-      const agent = new Agent({ connect: { rejectUnauthorized: false } });
+      const agent = new Agent({ connect: { rejectUnauthorized: options.verifyTls ?? false } });
 
       this.#ownedAgent = agent;
       this.#ws = new WebSocket(url, { dispatcher: agent, headers: options.getAuthHeaders?.() ?? {} });

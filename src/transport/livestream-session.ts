@@ -188,6 +188,8 @@ export interface LivestreamSessionEvents {
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts at any point, the session tears down.
  * - `clock` is the watchdog's time source; it defaults to the wall clock, and tests inject a fake to drive the silence watchdog deterministically.
  * - `log` is the destination for the session's diagnostic output; it defaults to a no-op logger, so a caller that never provides one incurs no logging cost.
+ * - `verifyTls` opts the owned agent into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
+ *   `webSocket` factory builds no agent here, so the option is inert alongside one.
  *
  * @category Transport
  */
@@ -198,6 +200,7 @@ export interface LivestreamSessionOptions {
   resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   signal?: AbortSignal;
   spec: LivestreamSpec;
+  verifyTls?: boolean;
   webSocket?: (url: string) => ProtectWebSocket;
 }
 
@@ -297,6 +300,7 @@ export class LivestreamSession implements AsyncDisposable {
   readonly #log: ProtectLogging;
   readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   readonly #spec: ResolvedLivestreamSpec;
+  readonly #verifyTls: boolean;
   readonly #webSocketFactory: ((url: string) => ProtectWebSocket) | undefined;
 
   // The agent we own only when we built the default WebSocket; null when a factory was injected. Mirrors EventStream: we never destroy what we did not create.
@@ -330,6 +334,7 @@ export class LivestreamSession implements AsyncDisposable {
     this.#log = options.log ?? noopLog;
     this.#resolveUrl = options.resolveUrl;
     this.#spec = resolveLivestreamSpec(options.spec);
+    this.#verifyTls = options.verifyTls ?? false;
     this.#webSocketFactory = options.webSocket;
 
     // The caller's signal cancels the connect attempt. Bound to our own signal too, so it detaches with everything else once we tear down. An already-aborted signal
@@ -472,15 +477,15 @@ export class LivestreamSession implements AsyncDisposable {
       return;
     }
 
-    // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that accepts the controller's self-signed certificate.
-    // The negotiated URL already carries its own authorization token, so - unlike EventStream - no auth headers are stamped on the upgrade. undici's WebSocket
-    // structurally satisfies the minimal ProtectWebSocket surface, so it assigns directly.
+    // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent whose certificate posture follows `verifyTls`, which is
+    // permissive by default for the controller's self-signed certificate. The negotiated URL already carries its own authorization token, so - unlike EventStream - no
+    // auth headers are stamped on the upgrade. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it assigns directly.
     if(this.#webSocketFactory !== undefined) {
 
       this.#ws = this.#webSocketFactory(url);
     } else {
 
-      const agent = new Agent({ connect: { rejectUnauthorized: false } });
+      const agent = new Agent({ connect: { rejectUnauthorized: this.#verifyTls } });
 
       this.#ownedAgent = agent;
       this.#ws = new WebSocket(url, { dispatcher: agent });

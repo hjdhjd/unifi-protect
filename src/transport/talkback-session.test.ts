@@ -12,6 +12,7 @@ import { Readable } from "node:stream";
 import { TalkbackSession } from "./talkback-session.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
+import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 import { silentLog } from "../testing.helpers.ts";
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
@@ -302,6 +303,33 @@ describe("TalkbackSession", () => {
       };
 
       await assert.rejects(session.send(source()), ProtectError);
+    });
+  });
+
+  describe("certificate verification", () => {
+
+    test("the upgrade reaches a controller's own certificate when strict verification is not asked for", async () => {
+
+      // A real TLS peer rather than the injected fake: the certificate posture lives on the agent the default factory builds, which an injected socket never reaches.
+      await using peer = await createLoopbackWebSocketPeer();
+
+      /* connect() is the whole assertion here, and it is a complete one: the session settles its open handshake on the WebSocket `open` event alone, which the peer
+       * grants only once the TLS handshake completes and the upgrade is answered. The channel is write-only, so there is no inbound traffic to wait for beyond it.
+       */
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log: silentLog(),
+        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      assert.equal(session.state, "live");
+    });
+
+    test("the upgrade refuses a certificate that does not verify when strict verification is asked for", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+
+      // The same peer and the same upgrade, one option apart. connect() is atomic, so a handshake the client will not complete surfaces as its rejection - there is
+      // no half-open session to inspect.
+      await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log: silentLog(),
+        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback", verifyTls: true }), ProtectNetworkError);
     });
   });
 
