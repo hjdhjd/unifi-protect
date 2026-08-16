@@ -21,6 +21,7 @@ import type { LivestreamSpec } from "../transport/livestream-session.ts";
 import type { Segment } from "../transport/livestream-session.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
+import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
 
 const SPEC: LivestreamSpec = { cameraId: "cam1", source: { channel: 0, type: "channel" } };
 
@@ -434,6 +435,47 @@ describe("LivestreamPool", () => {
       assert.equal(sockets.length, 2);
       assert.equal(at(sockets, 0).closeRequested, true);
       assert.equal(at(sockets, 1).closeRequested, true);
+    });
+  });
+
+  describe("certificate verification", () => {
+
+    test("the pool hands its certificate posture to the sessions it mints", async () => {
+
+      /* The pool opens no socket of its own - it mints sessions that do - so what is at stake here is the wiring, and a posture the pool accepted but never passed on
+       * would leave a strict pool dialing exactly as a permissive one does. This subscription therefore runs with no injected socket factory, so the session builds
+       * the agent that carries the posture, and it dials the loopback peer through it.
+       *
+       * The peer is the observer, which keeps this off the recovery machinery entirely: a refusing client and an accepting one both open a TCP connection, and only
+       * the accepting one gets a TLS handshake above it. So a severed connection with no completed handshake is the refusal, in the one place it cannot be confused
+       * with anything the policy or the clock did.
+       */
+      await using peer = await createLoopbackWebSocketPeer();
+      await using pool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+        verifyTls: true });
+
+      await using _sub = pool.subscribe(SPEC);
+
+      const connection = await peer.connection(0);
+
+      // Racing the two outcomes rather than awaiting the severance alone: a session that never received the posture would complete the handshake and hold the
+      // connection open, so waiting only on the close would report that as a timeout instead of as the wiring gap it is.
+      await Promise.race([ connection.closed, peer.whenHandshakes(1) ]);
+
+      assert.equal(peer.handshakes, 0, "a session carrying the pool's strict posture must refuse the certificate before the handshake completes");
+    });
+
+    test("the pool's sessions connect normally when strict verification is not asked for", async () => {
+
+      // The same peer, the same pool wiring, one option apart - the control that says the refusal above was the option's doing and not the peer's.
+      await using peer = await createLoopbackWebSocketPeer();
+      await using pool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live" });
+
+      await using _sub = pool.subscribe(SPEC);
+
+      await peer.whenHandshakes(1);
+
+      assert.equal(peer.handshakes, 1);
     });
   });
 

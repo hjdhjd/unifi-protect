@@ -88,6 +88,9 @@ export interface SendOptions extends RequestOptions {
  *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher.
  * - `getAuthHeaders` supplies the cookie + CSRF headers stamped onto every request. `onUnauthorized` is the relogin hook invoked on a 401 before a single retry.
  *   Both point upward at `AuthSession`, so they are passed as plain function references (dependency inversion) rather than an `AuthSession` import.
+ * - `verifyTls` opts the owned pool into strict TLS certificate verification. It defaults to `false`, because a controller presents a self-signed certificate that no
+ *   verification chain accepts; a deployment that has installed a trusted certificate on its controller turns it on. An injected dispatcher brings its own TLS
+ *   settings, so the option reaches only the pool this transport builds for itself.
  *
  * @category Transport
  */
@@ -99,6 +102,7 @@ export interface TransportOptions {
   host: string;
   log?: ProtectLogging;
   onUnauthorized?: () => Promise<boolean>;
+  verifyTls?: boolean;
 }
 
 /**
@@ -272,6 +276,7 @@ export class Transport implements AsyncDisposable {
   readonly #log: ProtectLogging;
   readonly #onUnauthorized: (() => Promise<boolean>) | undefined;
   readonly #ownsDispatcher: boolean;
+  readonly #verifyTls: boolean;
 
   // The breaker's only mutable state: the consecutive-failure count and the timestamp the cooldown last (re-)armed. `null` means the breaker is closed. The
   // dispatcher is reassignable because reset() rebuilds the owned pool.
@@ -286,6 +291,10 @@ export class Transport implements AsyncDisposable {
     this.#host = options.host;
     this.#log = options.log ?? noopLog;
     this.#onUnauthorized = options.onUnauthorized;
+
+    // The certificate posture is settled before the pool is built, because #buildPool reads it. reset() rebuilds the pool from this same field, so a rebuilt pool
+    // carries the posture the transport was constructed with.
+    this.#verifyTls = options.verifyTls ?? false;
 
     // When a dispatcher is injected we adopt it and never touch its lifecycle - the injector owns construction and teardown. Otherwise we build (and own) the pool.
     this.#ownsDispatcher = options.dispatcher === undefined;
@@ -596,16 +605,17 @@ export class Transport implements AsyncDisposable {
     }
   }
 
-  // Build the owned connection pool: self-signed certs accepted (controllers ship them), HTTP/2 enabled and preferred in the ALPN offer so a controller that supports
-  // it negotiates h2 rather than falling back to HTTP/1.1, five concurrent connections, a 60-second client TTL so each pooled connection is recycled roughly once a
-  // minute rather than kept alive indefinitely (bounding how long a keepalive socket to a controller that has since rebooted or silently dropped the link can linger
-  // before it is retired), a fixed user-agent, and the exponential-backoff retry interceptor. The retried set is the conventionally retry-safe verbs plus POST: the
-  // interceptor only fires on the transient controller-readiness codes in RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable -
-  // conditions in which the controller was not in a state to accept and act on the request - so re-sending a POST does not risk double-applying one that already took
-  // effect. PATCH is held out of the set even so, because the config writes it carries are the one place a double-apply would be consequential and the undocumented API
-  // promises nothing about what a repeated write does. The backoff curve itself - five attempts, starting at a 100ms floor and doubling on each attempt up to a
-  // 1500ms cap - is sized to ride out the same transient readiness gaps RETRY_STATUS_CODES targets: a reboot or a momentary load spike on a Protect controller
-  // typically clears within a few seconds, so the curve gives it that room to recover while keeping a caller from stalling through a much longer wait.
+  // Build the owned connection pool: certificate verification follows the `verifyTls` option (permissive by default, since controllers ship self-signed certs), HTTP/2
+  // enabled and preferred in the ALPN offer so a controller that supports it negotiates h2 rather than falling back to HTTP/1.1, five concurrent connections, a
+  // 60-second client TTL so each pooled connection is recycled roughly once a minute rather than kept alive indefinitely (bounding how long a keepalive socket to a
+  // controller that has since rebooted or silently dropped the link can linger before it is retired), a fixed user-agent, and the exponential-backoff retry
+  // interceptor. The retried set is the conventionally retry-safe verbs plus POST: the interceptor only fires on the transient controller-readiness codes in
+  // RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable - conditions in which the controller was not in a state to accept and act on
+  // the request - so re-sending a POST does not risk double-applying one that already took effect. PATCH is held out of the set even so, because the config writes it
+  // carries are the one place a double-apply would be consequential and the undocumented API promises nothing about what a repeated write does. The backoff curve
+  // itself - five attempts, starting at a 100ms floor and doubling on each attempt up to a 1500ms cap - is sized to ride out the same transient readiness gaps
+  // RETRY_STATUS_CODES targets: a reboot or a momentary load spike on a Protect controller typically clears within a few seconds, so the curve gives it that room to
+  // recover while keeping a caller from stalling through a much longer wait.
   #buildPool(): Dispatcher {
 
     const userAgent: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {
@@ -620,7 +630,7 @@ export class Transport implements AsyncDisposable {
       return dispatch(dispatchOptions, handler);
     };
 
-    return new Pool("https://" + this.#host, { allowH2: true, clientTtl: 60000, connect: { preferH2: true, rejectUnauthorized: false }, connections: 5 })
+    return new Pool("https://" + this.#host, { allowH2: true, clientTtl: 60000, connect: { preferH2: true, rejectUnauthorized: this.#verifyTls }, connections: 5 })
       .compose(userAgent, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
         statusCodes: [...RETRY_STATUS_CODES], timeoutFactor: 2 }));
   }

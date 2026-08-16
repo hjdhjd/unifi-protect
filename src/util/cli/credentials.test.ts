@@ -129,4 +129,40 @@ describe("loadCredentials", () => {
       await assert.rejects(loadCredentials({ cwd, home }), CliError);
     });
   });
+
+  test("the strict-TLS opt-in is carried as the file states it, and left absent when the file is silent", async () => {
+
+    await withDirs(async (cwd, home) => {
+
+      const identity = { password: "p", username: "u" };
+
+      await writeFile(path.join(cwd, "ufp.json"), JSON.stringify({ controller: "10.0.0.1", ...identity, verifyTls: true }));
+
+      assert.deepEqual(await loadCredentials({ cwd, home }), { host: "10.0.0.1", ...identity, verifyTls: true });
+
+      // A stated false is carried as stated rather than folded into silence: the two ask the library for the same thing, and only one of them asks on purpose.
+      await writeFile(path.join(cwd, "ufp.json"), JSON.stringify({ controller: "10.0.0.1", ...identity, verifyTls: false }));
+
+      assert.deepEqual(await loadCredentials({ cwd, home }), { host: "10.0.0.1", ...identity, verifyTls: false });
+
+      // Silence leaves the key off the result entirely rather than carrying an undefined one, which is what lets the connect path's conditional spread mean "not asked
+      // for" rather than "asked for nothing".
+      await writeFile(path.join(cwd, "ufp.json"), JSON.stringify({ controller: "10.0.0.1", ...identity }));
+
+      assert.deepEqual(Object.keys(await loadCredentials({ cwd, home })).sort(), [ "host", "password", "username" ]);
+    });
+  });
+
+  test("a non-boolean strict-TLS value is refused rather than coerced", async () => {
+
+    await withDirs(async (cwd, home) => {
+
+      // The string "false" is the case that earns the check: coercing it would read as an opt-in and change how the connection is trusted, so the file is corrected
+      // rather than interpreted.
+      await writeFile(path.join(cwd, "ufp.json"), JSON.stringify({ controller: "10.0.0.1", password: "p", username: "u", verifyTls: "false" }));
+
+      await assert.rejects(loadCredentials({ cwd, home }),
+        (error: unknown) => (error instanceof CliError) && error.message.includes("\"verifyTls\"") && error.message.includes("boolean"));
+    });
+  });
 });

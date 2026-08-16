@@ -69,6 +69,10 @@ import { wallClock } from "../clock.ts";
  * - `refreshIntervalMs` sets the {@link StateStore}'s bootstrap-refresh failsafe cadence; it defaults to the store's interval, and passing `false` disables the
  *   failsafe entirely so the consumer relies solely on the realtime event stream.
  * - `signal` cancels the initial login and bootstrap fetch; it is bound only to connect, never to a later recovery relaunch.
+ * - `verifyTls` requires the controller to present a certificate that verifies, on the request path and every WebSocket alike. It defaults to `false`, because a
+ *   controller presents a self-signed certificate that no verification chain accepts - turn it on where a trusted certificate has been installed on the controller and
+ *   a connection to an impostor should fail rather than proceed. An injected `dispatcher` or `webSocket` factory brings its own TLS settings, so the option reaches
+ *   only the connections this client builds for itself.
  * - `webSocket` is the receive-direction {@link ProtectWebSocket} factory used by the events stream and livestream pool; it defaults to a real socket and is the
  *   socket-injection point for tests. It does not apply to the write-direction talkback socket.
  *
@@ -85,6 +89,7 @@ export interface ConnectOptions {
   refreshIntervalMs?: number | false;
   signal?: AbortSignal;
   username: string;
+  verifyTls?: boolean;
   webSocket?: (url: string) => ProtectWebSocket;
 }
 
@@ -239,7 +244,7 @@ export class ProtectClient implements AsyncDisposable {
   /**
    * Connect to a Protect controller. Logs in, fetches the initial bootstrap, seeds the reducer, and wires the periodic refresh failsafe - all as one atomic operation.
    *
-   * @param opts - The controller address, credentials, and optional overrides (logger, clock, refresh interval, injected dispatcher, abort signal).
+   * @param opts - The controller address, credentials, and optional overrides.
    *
    * @returns A fully-ready client.
    *
@@ -263,7 +268,8 @@ export class ProtectClient implements AsyncDisposable {
       host: opts.host,
       log,
       onUnauthorized: (): Promise<boolean> => auth.reauthenticate(),
-      ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher })
+      ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
+      ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
     });
 
     auth = new AuthSession({ log, transport });
@@ -310,6 +316,7 @@ export class ProtectClient implements AsyncDisposable {
       lastUpdateId,
       log,
       ...((signal !== undefined) && { signal }),
+      ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls }),
       ...((opts.webSocket !== undefined) && { webSocket: opts.webSocket })
     });
 
@@ -334,22 +341,24 @@ export class ProtectClient implements AsyncDisposable {
       log,
       ...((opts.recoveryPolicy !== undefined) && { recoveryPolicy: opts.recoveryPolicy }),
       resolveUrl: livestreamUrlResolver(transport, opts.host),
+      ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls }),
       ...((opts.webSocket !== undefined) && { webSocket: opts.webSocket })
     });
 
     // The talkback factory, bound to the transport-backed talkback URL resolver. Unlike the livestream pool, talkback is exclusive and per-call, so this mints an
     // independent atomic TalkbackSession per invocation rather than fanning out a shared one; the projection passes only its camera id and an optional signal, and the
-    // WebSocket wire knowledge (negotiation path, self-signed agent) stays here in Layer 2. The resolver is built once and closed over. The talkback session uses its own
-    // default (writable) WebSocket factory: the `opts.webSocket` ConnectOptions hook is the receive-direction socket factory (ProtectWebSocket, for the events stream and
-    // livestream pool) and does not fit the write-direction ProtectWritableWebSocket talkback needs, so it is deliberately not threaded here - the send socket is faked
-    // at the TalkbackSession level, not through the full client.
+    // WebSocket wire knowledge (negotiation path, the agent and its certificate posture) stays here in Layer 2. The resolver is built once and closed over. The
+    // talkback session uses its own default (writable) WebSocket factory: the `opts.webSocket` ConnectOptions hook is the receive-direction socket factory
+    // (ProtectWebSocket, for the events stream and livestream pool) and does not fit the write-direction ProtectWritableWebSocket talkback needs, so it is deliberately
+    // not threaded here - the send socket is faked at the TalkbackSession level, not through the full client.
     const resolveTalkbackUrl = talkbackUrlResolver(transport, opts.host);
     const talkback = (params: { cameraId: string }, callOpts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> => TalkbackSession.connect({
 
       cameraId: params.cameraId,
       log,
       resolveUrl: resolveTalkbackUrl,
-      ...((callOpts.signal !== undefined) && { signal: callOpts.signal })
+      ...((callOpts.signal !== undefined) && { signal: callOpts.signal }),
+      ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
     });
 
     // Construct the client now - its constructor builds the ConnectionMonitor, which begins connecting the initial events stream and attaches the packet sink before we

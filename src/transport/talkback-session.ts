@@ -62,6 +62,8 @@ export type TalkbackState = "closed" | "closing" | "connecting" | "live";
  * - `webSocket` is the injected I/O dependency - the write-direction `ProtectWritableWebSocket`, distinct from the receive-direction interface {@link EventStream} /
  *   {@link LivestreamSession} share; omit it for the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts, the session tears down and an in-flight `send` rejects.
+ * - `verifyTls` opts the owned agent into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
+ *   `webSocket` factory builds no agent here, so the option is inert alongside one.
  *
  * @category Transport
  */
@@ -71,6 +73,7 @@ export interface TalkbackSessionOptions {
   log?: ProtectLogging;
   resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   signal?: AbortSignal;
+  verifyTls?: boolean;
   webSocket?: (url: string) => ProtectWritableWebSocket;
 }
 
@@ -92,6 +95,7 @@ export class TalkbackSession implements AsyncDisposable {
   readonly #fault: { promise: Promise<never>; reject: (reason: ProtectError) => void };
   readonly #log: ProtectLogging;
   readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+  readonly #verifyTls: boolean;
   readonly #webSocketFactory: ((url: string) => ProtectWritableWebSocket) | undefined;
 
   // The open handshake, settled exactly once: resolved on the WebSocket `open` event, rejected if the socket closes (or negotiation fails, or the caller's signal aborts)
@@ -119,6 +123,7 @@ export class TalkbackSession implements AsyncDisposable {
     this.#cameraId = options.cameraId;
     this.#log = options.log ?? noopLog;
     this.#resolveUrl = options.resolveUrl;
+    this.#verifyTls = options.verifyTls ?? false;
     this.#webSocketFactory = options.webSocket;
 
     const opened = Promise.withResolvers<undefined>();
@@ -352,14 +357,15 @@ export class TalkbackSession implements AsyncDisposable {
       return;
     }
 
-    // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that accepts the controller's self-signed certificate.
-    // undici's WebSocket structurally satisfies the minimal ProtectWritableWebSocket surface, so it assigns directly - no cast.
+    // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent whose certificate posture follows `verifyTls`, which is
+    // permissive by default for the controller's self-signed certificate. undici's WebSocket structurally satisfies the minimal ProtectWritableWebSocket surface, so it
+    // assigns directly - no cast.
     if(this.#webSocketFactory !== undefined) {
 
       this.#ws = this.#webSocketFactory(url);
     } else {
 
-      const agent = new Agent({ connect: { rejectUnauthorized: false } });
+      const agent = new Agent({ connect: { rejectUnauthorized: this.#verifyTls } });
 
       this.#ownedAgent = agent;
       this.#ws = new WebSocket(url, { dispatcher: agent });

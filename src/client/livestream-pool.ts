@@ -206,7 +206,8 @@ export interface LivestreamSubscribeOptions {
 /**
  * Construction options for {@link LivestreamPool}. `resolveUrl` is the transport-backed negotiation hook (build it with {@link livestreamUrlResolver}, the shared {@link
  * wsEndpointResolver}'s livestream specialization); `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s and threaded down to each session;
- * `recoveryPolicy` is the per-stream recovery decision authority, defaulting to {@link defaultLivestreamRecoveryPolicy}.
+ * `recoveryPolicy` is the per-stream recovery decision authority, defaulting to {@link defaultLivestreamRecoveryPolicy}; `verifyTls` is the strict-TLS opt-in threaded
+ * down to each session's owned agent, defaulting to `false` for the controller's self-signed certificate.
  *
  * @category Client
  */
@@ -216,6 +217,7 @@ export interface LivestreamPoolOptions {
   log?: ProtectLogging;
   recoveryPolicy?: RecoveryPolicy;
   resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+  verifyTls?: boolean;
   webSocket?: (url: string) => ProtectWebSocket;
 }
 
@@ -1257,6 +1259,9 @@ export class LivestreamPool implements AsyncDisposable {
   readonly #recoveryPolicy: RecoveryPolicy;
   readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   readonly #sessions = new Map<string, ManagedSession>();
+  // Carried as the caller stated it rather than resolved to a default here: the pool passes the posture through to each session it mints, and the permissive default
+  // lives at the one place that builds an agent.
+  readonly #verifyTls: boolean | undefined;
   readonly #webSocketFactory: ((url: string) => ProtectWebSocket) | undefined;
 
   constructor(options: LivestreamPoolOptions) {
@@ -1265,6 +1270,7 @@ export class LivestreamPool implements AsyncDisposable {
     this.#log = options.log ?? noopLog;
     this.#recoveryPolicy = options.recoveryPolicy ?? defaultLivestreamRecoveryPolicy;
     this.#resolveUrl = options.resolveUrl;
+    this.#verifyTls = options.verifyTls;
     this.#webSocketFactory = options.webSocket;
   }
 
@@ -1296,6 +1302,7 @@ export class LivestreamPool implements AsyncDisposable {
         log: this.#log,
         resolveUrl: this.#resolveUrl,
         spec,
+        ...((this.#verifyTls !== undefined) && { verifyTls: this.#verifyTls }),
         ...((this.#webSocketFactory !== undefined) && { webSocket: this.#webSocketFactory })
       });
 
