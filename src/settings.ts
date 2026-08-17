@@ -133,3 +133,8 @@ export const PROTECT_LIVESTREAM_SEGMENT_LENGTH = 100;
 // channel. It is a tripwire, not active flow control - there is no timer, consistent with talkback's deliberate absence of a Clock. Sized generously (1 MiB is many
 // seconds of voice audio) so it never trips a legitimate real-time stream and fires only on a genuinely wedged socket or a misbehaving source.
 export const PROTECT_TALKBACK_MAX_BUFFERED_BYTES = 1048576;
+
+// Default observation window, in milliseconds, for `ufp capture`. Fifteen minutes spans several air-quality reading cycles and a handful of device-health patches, so a
+// window left at the default carries enough traffic to characterize a device's cadence rather than just prove it exists. A field user overrides it with --duration when
+// a device reports more slowly, and Ctrl-C ends the window early at any point with the bundle still written.
+export const PROTECT_CAPTURE_DEFAULT_DURATION = 900000;

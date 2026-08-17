@@ -5,9 +5,9 @@
  * events watchdog timeout governs degraded-connection detection, and the heartbeat timeout governs livestream watchdog timing. Pinning them prevents an accidental
  * edit (a misplaced zero, a unit confusion) from silently changing behavior on every consumer.
  */
-import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_EVENTS_WATCHDOG_TIMEOUT,
-  PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS,
-  PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_CAPTURE_DEFAULT_DURATION,
+  PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD,
+  PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -117,5 +117,12 @@ describe("settings", () => {
       assert.ok(value > 0, name + " must be positive, got " + String(value));
       assert.ok(Number.isFinite(value), name + " must be finite, got " + String(value));
     }
+  });
+
+  // The capture window is a documented user-facing default, so it is pinned like the rest: fifteen minutes is long enough to span several air-quality reading cycles,
+  // which is what makes a default-length capture useful for a slow-reporting sensor rather than merely non-empty.
+  test("PROTECT_CAPTURE_DEFAULT_DURATION is 15 minutes", () => {
+
+    assert.equal(PROTECT_CAPTURE_DEFAULT_DURATION, 900000, "the capture window must be 15 minutes expressed in milliseconds");
   });
 });

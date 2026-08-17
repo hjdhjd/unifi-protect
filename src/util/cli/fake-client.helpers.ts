@@ -5,6 +5,7 @@
 import type { PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment, TypedEvent } from "../../index.ts";
 import type { CommandContext } from "./shared.ts";
 import { Output } from "./output/format.ts";
+import { ProtectAbortedError } from "../../index.ts";
 
 // One relay output as the fake surfaces it through `config.outputs`, mirroring the real record's numeric `id` and `"off" | "on"` state - the fields `relay toggle` reads
 // to resolve which output to toggle.
@@ -49,19 +50,86 @@ export interface FakeNvr {
 export interface FakeClientOptions {
 
   authUser?: { id: string; name: string } | null;
+  bootstrap?: unknown;
+  bootstrapHoldsOpen?: boolean;
   cameras?: FakeCameraSpec[];
   chimes?: FakeDeviceSpec[];
   controllerName?: string | null;
   events?: TypedEvent[];
+  eventsError?: Error;
+  eventsHoldOpen?: boolean;
   fobs?: FakeDeviceSpec[];
   isAdmin?: boolean;
   lights?: FakeDeviceSpec[];
   nvr?: FakeNvr | null;
   observations?: number;
   rawPackets?: RawPacket[];
+  rawPacketsError?: Error;
+  rawPacketsHoldOpen?: boolean;
   relays?: FakeDeviceSpec[];
   sensors?: FakeDeviceSpec[];
   viewers?: FakeDeviceSpec[];
+}
+
+/**
+ * The device collections a fake can grow after construction, named by the state field each one lives in.
+ *
+ * @category CLI
+ */
+export type FakeDeviceCategory = "cameras" | "chimes" | "fobs" | "lights" | "relays" | "sensors" | "viewers";
+
+/**
+ * What {@link makeFakeClient} hands back: the fake client, the record of calls made against it, and the hook that grows one of its device collections mid-run.
+ *
+ * @category CLI
+ */
+export interface FakeClientHandle {
+
+  adopt: (category: FakeDeviceCategory, spec: FakeDeviceSpec) => void;
+  calls: FakeCalls;
+  client: ProtectClient;
+}
+
+// Wait for a signal and nothing else. A rail that holds open models a controller with nothing more to say: the stream stays live until the window closes, which is what
+// lets a test tell a truncated run apart from one that merely reached the end of its script. With no signal there is nothing to wait for, so the wait is over at once
+// rather than hanging a test forever.
+function holdUntilAborted(signal?: AbortSignal): Promise<void> {
+
+  if((signal === undefined) || signal.aborted) {
+
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve) => {
+
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
+// Drive one scripted rail: yield its elements while the caller's signal is unaborted, then do whatever the rail was configured to do once the script runs out - end,
+// fail with the injected error, or hold open until the window closes. Checking the signal between yields is what makes an aborted run observably shorter than its
+// script, so a truncation test proves truncation rather than natural exhaustion.
+async function *driveRail<T>(elements: readonly T[], opts: { error?: Error; holdOpen?: boolean; signal?: AbortSignal }): AsyncGenerator<T> {
+
+  for(const element of elements) {
+
+    if(opts.signal?.aborted === true) {
+
+      return;
+    }
+
+    yield element;
+  }
+
+  if(opts.error !== undefined) {
+
+    throw opts.error;
+  }
+
+  if(opts.holdOpen === true) {
+
+    await holdUntilAborted(opts.signal);
+  }
 }
 
 // The calls a command made, captured for assertions: device reboots and the controller reboot (by id or "nvr"), update payloads, talkback streams (camera + bytes
@@ -92,6 +160,8 @@ function makeDevice(spec: FakeDeviceSpec, modelKey: string, calls: FakeCalls, ob
     id: spec.id,
     mac: "AABBCC" + spec.id,
     marketName: "Fake " + modelKey,
+    // The real read-through config carries its own class, and the capture inventory reads it from there, so the fake carries it too.
+    modelKey,
     name: spec.name,
     // Surface a relay's outputs through `config.outputs` (as the real read-through config does) so `relay toggle` can resolve single / multi / zero-output cases; a
     // non-relay spec omits it, so the field is present only when a test supplied it.
@@ -239,7 +309,15 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
  *
  * @category CLI
  */
-export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCalls; client: ProtectClient } {
+export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandle {
+
+  // Holding open and failing both claim what a rail does once its script runs out, so a rail configured with both would leave one option silently dead. Refusing at
+  // construction turns that into an obvious test-authoring mistake rather than a quietly ignored setting.
+  if(((options.eventsHoldOpen === true) && (options.eventsError !== undefined)) ||
+    ((options.rawPacketsHoldOpen === true) && (options.rawPacketsError !== undefined))) {
+
+    throw new Error("A fake rail cannot both hold open and fail - the two claim the same behavior after its script runs out.");
+  }
 
   const calls: FakeCalls = { disposed: 0, flashlights: [], playBuzzers: [], playSpeakers: [], reboots: [], talkback: [], toggles: [], unlocks: [], updates: [] };
 
@@ -297,16 +375,29 @@ export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCa
     // Always healthy: the fake has no network layer to degrade, and no test currently needs an unhealthy or throttled connection to drive.
     connection: { isHealthy: true, isThrottled: false, state: "healthy" },
     controllerName: (options.controllerName === undefined) ? "Fake NVR" : options.controllerName,
-    async *events(): AsyncGenerator<TypedEvent> {
+    events: (opts?: { signal?: AbortSignal }): AsyncGenerator<TypedEvent> => driveRail(events, {
 
-      for(const event of events) {
+      ...((options.eventsError !== undefined) && { error: options.eventsError }),
+      ...((options.eventsHoldOpen !== undefined) && { holdOpen: options.eventsHoldOpen }),
+      ...((opts?.signal !== undefined) && { signal: opts.signal })
+    }),
+    // A scripted `bootstrap` stands in for the whole document when a test supplies one; otherwise the default shape below stands. `raw: true` has no counterpart in a
+    // real bootstrap payload - it exists so a test can assert on it to prove this fresh-fetch path ran, as distinct from state.snapshot()'s shape. The signal is
+    // honored the way the real transport honors it, which is what makes an abort-during-fetch test honest rather than a fiction the fake alone could produce.
+    fetchBootstrap: async (opts?: { signal?: AbortSignal }): Promise<unknown> => {
 
-        yield event;
+      if(options.bootstrapHoldsOpen === true) {
+
+        await holdUntilAborted(opts?.signal);
       }
+
+      if(opts?.signal?.aborted === true) {
+
+        throw new ProtectAbortedError("The fake bootstrap fetch was aborted.");
+      }
+
+      return (options.bootstrap === undefined) ? { nvr: (nvr === null) ? null : { name: "Fake NVR", ...nvr }, raw: true } : options.bootstrap;
     },
-    // `raw: true` has no counterpart in a real bootstrap payload; it exists so a test can assert on it to prove this fresh-fetch path ran, as distinct from
-    // state.snapshot()'s shape.
-    fetchBootstrap: (): Promise<unknown> => Promise.resolve({ nvr: (nvr === null) ? null : { name: "Fake NVR", ...nvr }, raw: true }),
     fob: lookup(fobs),
     fobs,
     // Backs only direct `client.isAdmin` reads (e.g. the info command); `watch state isAdmin` instead resolves through `selectIsAdmin(state.snapshot())`, which
@@ -314,13 +405,12 @@ export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCa
     isAdmin: options.isAdmin ?? true,
     light: lookup(lights),
     lights,
-    async *rawPackets(): AsyncGenerator<RawPacket> {
+    rawPackets: (opts?: { signal?: AbortSignal }): AsyncGenerator<RawPacket> => driveRail(rawPackets, {
 
-      for(const packet of rawPackets) {
-
-        yield packet;
-      }
-    },
+      ...((options.rawPacketsError !== undefined) && { error: options.rawPacketsError }),
+      ...((options.rawPacketsHoldOpen !== undefined) && { holdOpen: options.rawPacketsHoldOpen }),
+      ...((opts?.signal !== undefined) && { signal: opts.signal })
+    }),
     reboot: (): Promise<void> => {
 
       calls.reboots.push("nvr");
@@ -362,7 +452,20 @@ export function makeFakeClient(options: FakeClientOptions = {}): { calls: FakeCa
     }
   };
 
-  return { calls, client: client as unknown as ProtectClient };
+  const collections: Record<FakeDeviceCategory, Record<string, unknown>[]> = { cameras, chimes, fobs, lights, relays, sensors, viewers };
+  const categoryModelKeys: Record<FakeDeviceCategory, string> = {
+
+    cameras: "camera", chimes: "chime", fobs: "fob", lights: "light", relays: "relay", sensors: "sensor", viewers: "viewer"
+  };
+
+  // Adopt a device after construction. The snapshot is rebuilt from these collections on every read, so a device pushed here appears in the next `state.snapshot()` and
+  // in none that were already taken - which is what lets a test prove something was read at the end of a run rather than at its start.
+  const adopt = (category: FakeDeviceCategory, spec: FakeDeviceSpec): void => {
+
+    collections[category].push(makeDevice(spec, categoryModelKeys[category], calls, observations));
+  };
+
+  return { adopt, calls, client: client as unknown as ProtectClient };
 }
 
 /**

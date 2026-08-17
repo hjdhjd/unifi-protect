@@ -17,6 +17,7 @@ import { cameraFlashlight } from "./camera-flashlight.ts";
 import { cameraSnapshot } from "./camera-snapshot.ts";
 import { cameraTalkback } from "./camera-talkback.ts";
 import { cameraUnlock } from "./camera-unlock.ts";
+import { capture } from "./capture.ts";
 import { channels } from "../../../index.ts";
 import { chime } from "./chime.ts";
 import { chimePlayBuzzer } from "./chime-play-buzzer.ts";
@@ -1091,6 +1092,7 @@ describe("command help paths", () => {
     [ "camera snapshot", cameraSnapshot, /Usage: ufp camera snapshot/ ],
     [ "camera talkback", cameraTalkback, /Usage: ufp camera talkback/ ],
     [ "camera unlock", cameraUnlock, /Usage: ufp camera unlock/ ],
+    [ "capture", capture, /Usage: ufp capture/ ],
     [ "chime (group)", chime, /Usage: ufp chime <subcommand>/ ],
     [ "chime play-buzzer", chimePlayBuzzer, /Usage: ufp chime play-buzzer/ ],
     [ "chime play-speaker", chimePlaySpeaker, /Usage: ufp chime play-speaker/ ],

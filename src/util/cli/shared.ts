@@ -7,6 +7,7 @@ import { alignedList, compareCodeUnit } from "./output/format.ts";
 import type { Output } from "./output/format.ts";
 import type { ParseArgsOptionsConfig } from "node:util";
 import { ProtectClient } from "../../index.ts";
+import { readFileSync } from "node:fs";
 
 /**
  * A user-facing CLI failure. Carrying an `exitCode` lets the entry point render a clean one-line message to stderr and set the process exit code, rather than dumping a
@@ -216,9 +217,13 @@ export function parseDuration(value: string, flag: string): number {
   return magnitude * unit;
 }
 
-// One axis's compiled match terms. A candidate value satisfies the axis when ANY term matches it (OR within an axis); the filter as a whole requires every present
-// axis to be satisfied (AND across axes). Holding compiled predicates rather than raw strings means the regex/string work happens once at build time, not per event.
-interface CompiledAxis {
+/**
+ * One axis's compiled match terms. A candidate value satisfies the axis when ANY term matches it (OR within an axis); a filter as a whole requires every present axis to
+ * be satisfied (AND across axes). Holding compiled predicates rather than raw strings means the regex and string work happens once at build time, not per event.
+ *
+ * @category CLI
+ */
+export interface CompiledAxis {
 
   predicates: ((value: string) => boolean)[];
 }
@@ -274,9 +279,21 @@ export function compilePattern(pattern: string, mode: MatchMode): (value: string
   return (value: string): boolean => value.toLowerCase() === needle;
 }
 
-// Compile a raw comma-list flag value into an axis, or `undefined` when the flag was absent or empty (an absent axis imposes no constraint). The compiled axis is what
-// the matcher consults; the raw string never reaches the hot path.
-function compileAxis(value: string | undefined, mode: MatchMode): CompiledAxis | undefined {
+/**
+ * Compile a raw comma-list flag value into an axis, or `undefined` when the flag was absent or empty (an absent axis imposes no constraint). The compiled axis is what
+ * the matcher consults; the raw string never reaches the hot path.
+ *
+ * This is the CLI's one matching engine. A command matching on its own axis - `capture --device`, say - compiles it here and tests it with {@link axisMatches}, so
+ * every command's globbing, case handling, and comma-list parsing behave identically and a second hand-rolled matcher never appears.
+ *
+ * @param value - The raw flag text: a comma-separated list of literal terms or `*` / `?` globs.
+ * @param mode  - How a literal term is compared: whole-token equality or substring containment.
+ *
+ * @returns The compiled axis, or `undefined` when the flag imposed no constraint.
+ *
+ * @category CLI
+ */
+export function compileAxis(value: string | undefined, mode: MatchMode): CompiledAxis | undefined {
 
   const terms = parseList(value);
 
@@ -288,9 +305,18 @@ function compileAxis(value: string | undefined, mode: MatchMode): CompiledAxis |
   return { predicates: terms.map((term) => compilePattern(term, mode)) };
 }
 
-// Does any candidate value satisfy this axis? An empty candidate set never satisfies a positive axis (nothing to match) and never trips an exclude axis (nothing to
-// exclude) - the principled rule for an event that simply does not carry that axis (e.g., an activity signal has no `modelKey`).
-function axisMatches(axis: CompiledAxis, candidates: string[]): boolean {
+/**
+ * Does any candidate value satisfy this axis? An empty candidate set never satisfies a positive axis (nothing to match) and never trips an exclude axis (nothing to
+ * exclude) - the principled rule for an event that simply does not carry that axis (an activity signal has no `modelKey`, for one).
+ *
+ * @param axis       - The compiled axis, from {@link compileAxis}.
+ * @param candidates - The values to test - a record's id and name, an event's kind, whatever that axis reads.
+ *
+ * @returns Whether any candidate satisfies the axis.
+ *
+ * @category CLI
+ */
+export function axisMatches(axis: CompiledAxis, candidates: string[]): boolean {
 
   return candidates.some((candidate) => axis.predicates.some((predicate) => predicate(candidate)));
 }
@@ -658,4 +684,30 @@ export function boundedSignal(signal: AbortSignal, durationMs: number | undefine
   }
 
   return AbortSignal.any([ signal, AbortSignal.timeout(durationMs) ]);
+}
+
+/**
+ * This package's own version, read from its `package.json`.
+ *
+ * One home for the question, because two answers would be a way for `ufp --version` and the version a capture bundle records itself under to disagree - and a bundle
+ * whose stated tool version is not the tool that wrote it is worse than one carrying no version at all.
+ *
+ * An unreadable or malformed `package.json` yields `"unknown"` rather than throwing: a missing version is a cosmetic problem, and failing a command over it would turn
+ * one into an outage.
+ *
+ * @returns The package version, or `"unknown"` when it cannot be read.
+ *
+ * @category CLI
+ */
+export function readVersion(): string {
+
+  try {
+
+    const pkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: string };
+
+    return pkg.version ?? "unknown";
+  } catch {
+
+    return "unknown";
+  }
 }

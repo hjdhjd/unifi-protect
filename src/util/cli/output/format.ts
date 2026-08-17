@@ -83,7 +83,7 @@ export class Output {
    */
   json(value: unknown): void {
 
-    this.#stream.write(JSON.stringify(value, sortKeysReplacer) + "\n");
+    this.#stream.write(serializeJson(value) + "\n");
   }
 
   /**
@@ -94,7 +94,7 @@ export class Output {
    */
   jsonPretty(value: unknown): void {
 
-    this.#stream.write(JSON.stringify(value, sortKeysReplacer, 2) + "\n");
+    this.#stream.write(serializeJson(value, { pretty: true }) + "\n");
   }
 
   /**
@@ -163,6 +163,24 @@ export function formatTimestamp(epochMs: number): string {
 export function nowStamp(): string {
 
   return new Date().toISOString().slice(11, 23);
+}
+
+/**
+ * The current wall-clock time as a filesystem-safe, date-qualified stamp: `YYYYMMDD-HHmmss`.
+ *
+ * The counterpart to {@link nowStamp} and deliberately not a substitute for it. A streaming line wants a compact time and no date, because every line shares the day
+ * and the colons read naturally; a filename wants the opposite - the date, so a directory of captures sorts and reads chronologically, and no colons, because a colon
+ * is a path separator on some filesystems and awkward to type on the rest.
+ *
+ * @returns The `YYYYMMDD-HHmmss` stamp for now.
+ *
+ * @category CLI
+ */
+export function fileStamp(): string {
+
+  const iso = new Date().toISOString();
+
+  return iso.slice(0, 10).replaceAll("-", "") + "-" + iso.slice(11, 19).replaceAll(":", "");
 }
 
 /**
@@ -274,6 +292,25 @@ function sortKeysReplacer(_key: string, value: unknown): unknown {
   }
 
   return Object.fromEntries(Object.entries(value).sort(([a], [b]) => compareCodeUnit(a, b)));
+}
+
+/**
+ * Serialize a value to JSON with the CLI's key order.
+ *
+ * Every JSON view the CLI produces goes through here - a streaming NDJSON line, a single-shot pretty dump, a capture bundle written to a file - so all of them sort
+ * object keys the same way and a captured document diffs and replays identically regardless of the order the wire delivered its fields in. `Output.json` and
+ * `Output.jsonPretty` are thin wrappers over this, which is what keeps a file write and a stream write from ever drifting apart.
+ *
+ * @param value - The value to serialize.
+ * @param opts  - `pretty` selects the indented, human-readable form over the compact single-line one.
+ *
+ * @returns The serialized JSON, with no trailing newline.
+ *
+ * @category CLI
+ */
+export function serializeJson(value: unknown, opts: { pretty?: boolean } = {}): string {
+
+  return JSON.stringify(value, sortKeysReplacer, (opts.pretty === true) ? 2 : undefined);
 }
 
 // The control-sequence-introducer pattern for an SGR escape, used to measure and pad colored text by its visible length rather than its byte length.
