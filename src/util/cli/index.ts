@@ -3,18 +3,18 @@
  *
  * index.ts: The ufp CLI entry point - argv dispatch, the single Ctrl-C abort controller, and uniform error rendering. The reference consumer of the library.
  */
-import { CliError, commandList, wireAbortSignal } from "./shared.ts";
+import { CliError, commandList, readVersion, wireAbortSignal } from "./shared.ts";
 import { Output, alignedList } from "./output/format.ts";
 import { ProtectAbortedError, ProtectError } from "../../index.ts";
 import type { CommandSpec } from "./shared.ts";
 import { camera } from "./commands/camera.ts";
+import { capture } from "./commands/capture.ts";
 import { chime } from "./commands/chime.ts";
 import { decode } from "./commands/decode.ts";
 import { diagnostics } from "./commands/diagnostics.ts";
 import { doctor } from "./commands/doctor.ts";
 import { info } from "./commands/info.ts";
 import { openClient } from "./client.ts";
-import { readFileSync } from "node:fs";
 import { reboot } from "./commands/reboot.ts";
 import { relay } from "./commands/relay.ts";
 import { update } from "./commands/update.ts";
@@ -25,6 +25,7 @@ import { watch } from "./commands/watch.ts";
 const COMMANDS: Record<string, CommandSpec> = {
 
   camera,
+  capture,
   chime,
   decode,
   diagnostics,
@@ -47,7 +48,8 @@ const EXAMPLES: readonly (readonly [string, string])[] = [
   [ "ufp watch raw --json", "# the decoded frame firehose, as NDJSON for capture" ],
   [ "ufp camera snapshot <camera>", "# save a current JPEG from a camera" ],
   [ "ufp camera unlock <camera>", "# release a camera's paired Access lock" ],
-  [ "ufp doctor", "# health-check every subsystem against the controller" ]
+  [ "ufp doctor", "# health-check every subsystem against the controller" ],
+  [ "ufp capture --device <name>", "# collect one scrubbed bundle describing what this version does not model" ]
 ];
 
 // Top-level usage. The command list (each command beside its one-line summary) renders through `commandList` from COMMANDS - the same helper the `watch` group uses - so
@@ -69,20 +71,6 @@ function usage(): string {
     "Run \"ufp <command> --help\" for command-specific options.",
     "Credentials are read from ./ufp.json or ~/.ufp.json (\"controller\", \"username\", \"password\")."
   ].join("\n");
-}
-
-// Read the package version for `--version`, relative to this module so it resolves identically whether the CLI runs from source (via --strip-types) or from dist.
-function readVersion(): string {
-
-  try {
-
-    const pkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: string };
-
-    return pkg.version ?? "unknown";
-  } catch {
-
-    return "unknown";
-  }
 }
 
 // Render a thrown value to stderr and set the process exit code. Each case below is deliberate: a CliError or a typed ProtectError is an expected outcome and gets a calm
