@@ -2,6 +2,7 @@
  *
  * client.ts: How the CLI connects - credential-to-client assembly and the stderr-routed logger every command shares.
  */
+import type { InteractivePrompt } from "./credentials.ts";
 import type { OutputStream } from "./output/format.ts";
 import { ProtectClient } from "../../index.ts";
 import type { ProtectLogging } from "../../index.ts";
@@ -79,6 +80,32 @@ export function createCliLogger(opts: { debug?: boolean; stream?: OutputStream }
 }
 
 /**
+ * Decide whether a first run with no configuration file should ask for credentials instead of failing.
+ *
+ * A prompt is appropriate only when there is a person there to answer, which is what both streams reporting as a terminal means. A piped command, a script, and a CI
+ * job all fail on a missing configuration exactly as they always have, because a prompt written into a pipe would hang waiting for an answer nobody is going to type.
+ *
+ * The decision lives here, at the wiring, rather than inside the credential loader: the loader stays deterministic, consulting nothing about the environment it happens
+ * to be running in, and this gate is a pure function of the streams it is handed - which is also what makes it directly testable in both polarities.
+ *
+ * @param opts - The streams to judge, and the Ctrl-C signal the prompt should be cancellable by.
+ *
+ * @returns The interactive option to pass to credential loading, or `undefined` when prompting is not appropriate.
+ *
+ * @category CLI
+ */
+export function resolveInteractivePrompt(opts: { input: InteractivePrompt["input"]; output: InteractivePrompt["output"]; signal?: AbortSignal }):
+  InteractivePrompt | undefined {
+
+  if((opts.input.isTTY !== true) || (opts.output.isTTY !== true)) {
+
+    return undefined;
+  }
+
+  return { input: opts.input, output: opts.output, ...((opts.signal !== undefined) && { signal: opts.signal }) };
+}
+
+/**
  * Load credentials and connect a ready {@link ProtectClient}. The single home for "how the ufp CLI connects" - commands reach it through the injected `ctx.openClient`
  * hook (`await using client = await ctx.openClient({ debug, signal })`, never by importing this opener directly), so the `await using` lifetime is visible at each call
  * site while the credential-loading and connect-assembly live in exactly one place. `log` serves direct library callers; CLI commands leave it to the default logger.
@@ -93,7 +120,15 @@ export function createCliLogger(opts: { debug?: boolean; stream?: OutputStream }
  */
 export async function openClient(opts: OpenClientOptions = {}): Promise<ProtectClient> {
 
-  const credentials = await loadCredentials({ ...((opts.cwd !== undefined) && { cwd: opts.cwd }), ...((opts.home !== undefined) && { home: opts.home }) });
+  // The interactive option is resolved from the real process streams here, so a first run at a terminal is offered a prompt while every other environment keeps the
+  // behavior it has always had.
+  const interactive = resolveInteractivePrompt({ input: process.stdin, output: process.stdout, ...((opts.signal !== undefined) && { signal: opts.signal }) });
+  const credentials = await loadCredentials({
+
+    ...((opts.cwd !== undefined) && { cwd: opts.cwd }),
+    ...((opts.home !== undefined) && { home: opts.home }),
+    ...((interactive !== undefined) && { interactive })
+  });
 
   // Use the caller's logger if it supplied one; otherwise build the standard stderr logger, honoring --debug. The stderr-only guarantee holds for the
   // default logger; a caller-supplied logger writes wherever the caller implemented it to write.
