@@ -517,7 +517,7 @@ export class Transport implements AsyncDisposable {
 
         if(channels.httpThrottleExited.hasSubscribers) {
 
-          channels.httpThrottleExited.publish({});
+          channels.httpThrottleExited.publish();
         }
       }
 

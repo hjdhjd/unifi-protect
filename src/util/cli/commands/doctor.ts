@@ -5,10 +5,11 @@
 import type { Camera, ProtectClient } from "../../../index.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import { DEVICE_CATEGORIES, devicesInCategory } from "../lookup.ts";
+import { channels, subscribeToChannel } from "../../../index.ts";
 import { COMMON_OPTIONS } from "../shared.ts";
 import type { Output } from "../output/format.ts";
-import { channels } from "../../../index.ts";
 import { parseArgs } from "node:util";
+import { subscribeDiagnostics } from "../diagnostics-feed.ts";
 
 const USAGE = [
 
@@ -164,41 +165,28 @@ const doctorHandler: CommandHandler = async (ctx) => {
     }
   };
 
-  // Observe which diagnostics channels fire during the run, and capture any schema-drift signals, by subscribing before we connect so the connect handshake's own
-  // diagnostics are counted.
+  // What the diagnostics observations below accumulate. The sets are declared out here because the checks that report them run further down; the subscriptions that
+  // fill them are established inside the try, ahead of the connect.
   const fired = new Set<string>();
   const unknownModelKeys = new Set<string>();
   const unmodeledDrift = new Set<string>();
   const unmodeledRecognized = new Set<string>();
-  const subscriptions = Object.values(channels).map((channel) => {
-
-    const name = String(channel.name);
-    const handler = (message: unknown): void => {
-
-      fired.add(name);
-
-      if((name === "unifi-protect:schema:unknownModelKey") && (typeof message === "object") && (message !== null) && ("modelKey" in message)) {
-
-        unknownModelKeys.add(String((message).modelKey));
-      }
-
-      // The bootstrap-dimension twin, split by the payload's `known` flag so it mirrors the realtime dimension's severity: a class the library does not recognize at
-      // all (known:false) is genuine drift and warns, while a recognized-but-unreduced class (known:true, e.g. aiport) is named as an informational pass detail.
-      if((name === "unifi-protect:schema:unmodeledCollection") && (typeof message === "object") && (message !== null) && ("modelKey" in message) &&
-        ("known" in message)) {
-
-        ((message).known === true ? unmodeledRecognized : unmodeledDrift).add(String((message).modelKey));
-      }
-    };
-
-    channel.subscribe(handler);
-
-    return { channel, handler };
-  });
 
   let client: ProtectClient | undefined;
 
   try {
+
+    // Observe which channels fire during the run, and capture the schema-drift signals, by subscribing before we connect so the connect handshake's own diagnostics are
+    // counted. The census spans every channel and only needs each name, so it goes through the shared feed; the schema-drift channels are subscribed individually and
+    // typed, so each handler reads its payload's fields directly. Every one of them is a `using` declaration inside this block, so they detach on every exit path and do
+    // so before the `finally` below disposes the client - no handler outlives the run, and none observes what the client's own teardown publishes.
+    using _census = subscribeDiagnostics(Object.values(channels), (name) => fired.add(name));
+    using _unknownModelKeyDrift = subscribeToChannel(channels.schemaUnknownModelKey, (payload) => unknownModelKeys.add(payload.modelKey));
+
+    // The bootstrap-dimension twin, split by the payload's `known` flag so it mirrors the realtime dimension's severity: a class the library does not recognize at
+    // all (known:false) is genuine drift and warns, while a recognized-but-unreduced class (known:true, e.g. aiport) is named as an informational pass detail.
+    using _unmodeledCollectionDrift = subscribeToChannel(channels.schemaUnmodeledCollection,
+      (payload) => (payload.known ? unmodeledRecognized : unmodeledDrift).add(payload.modelKey));
 
     // The connect itself is the first check; a failure here aborts the rest (there is nothing to test without a client).
     try {
@@ -318,11 +306,6 @@ const doctorHandler: CommandHandler = async (ctx) => {
 
     process.exitCode = ok ? 0 : 1;
   } finally {
-
-    for(const { channel, handler } of subscriptions) {
-
-      channel.unsubscribe(handler);
-    }
 
     if(client !== undefined) {
 

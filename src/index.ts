@@ -87,20 +87,22 @@ export type { Viewer } from "./devices/viewer.ts";
 // (ConnectionMonitor, LivestreamSubscription) and its method signatures is a type.
 export { ProtectClient } from "./client/client.ts";
 export type { ConnectOptions, ProtectClientEvents } from "./client/client.ts";
-export type { ConnectionEvents, ConnectionMonitor, ConnectionState, ConnectionTransition } from "./client/connection.ts";
+export type { ConnectionEvents, ConnectionMonitor, ConnectionState, ConnectionTransition, ThrottleSource } from "./client/connection.ts";
 // Livestream pool - the subscription handle a consumer receives (a type), the recovery-policy contract a consumer's injected `recoveryPolicy` is written against (types),
 // and the library's default policy a consumer may delegate to when composing its own (a value).
 export { defaultLivestreamRecoveryPolicy } from "./client/livestream-pool.ts";
 export type { LivestreamSubscribeOptions, LivestreamSubscription, LivestreamSubscriptionState, LivestreamSubscriptionStats, RecoveryContext, RecoveryDecision,
   RecoveryPolicy } from "./client/livestream-pool.ts";
 
-// Diagnostics - the named observability channels (subscribed by a consumer) and their payload shapes. Part of the public contract.
-export { channels } from "./diagnostics.ts";
-export type { AdoptionContradictionPayload, AuthReloginPayload, ConnectionRebootDetectedPayload, ConnectionTransitionPayload, EventsClosedPayload, EventsPacketPayload,
+// Diagnostics - the named observability channels (subscribed by a consumer through `subscribeToChannel`), the typed channel shape they are declared with, and their
+// payload types. Part of the public contract.
+export { channels, subscribeToChannel } from "./diagnostics.ts";
+export type { AdoptionContradictionPayload, AnyProtectDiagnosticsChannel, AuthReloginPayload, ConnectionRebootDetectedPayload, ConnectionTransitionPayload,
+  EventsClosedPayload, EventsPacketPayload,
   EventsReconnectingPayload,
   HttpRequestEndPayload, HttpRequestStartPayload, HttpThrottleEnteredPayload, LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload,
   LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload,
-  LivestreamStallDetectedPayload, LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload,
+  LivestreamStallDetectedPayload, LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload, ProtectDiagnosticsChannel,
   SchemaUnknownModelKeyPayload, SchemaUnmodeledCollectionPayload, TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "./diagnostics.ts";
 
 // Settings - the externally observable timing and retry constants behind the ConnectOptions defaults, exposed as documented reference values.
