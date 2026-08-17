@@ -29,14 +29,15 @@ import { assertNever } from "../errors.ts";
 export const DEVICE_COLLECTION_KEYS = [ "camera", "chime", "fob", "light", "relay", "sensor", "viewer" ] as const;
 
 // Tier 1 - addressable via a REST endpoint and surfaced as a Layer-3 projection identity: the device collections plus the NVR singleton.
-const DEVICE_MODEL_KEYS = [ ...DEVICE_COLLECTION_KEYS, "nvr" ] as const;
+/** @internal */
+export const DEVICE_MODEL_KEYS = [ ...DEVICE_COLLECTION_KEYS, "nvr" ] as const;
 
 // Tier 2 - the model keys the reducer folds into ProtectState from the realtime stream: every device, the user roster, and the liveview collection. `user` and `liveview`
 // are reduced (their realtime updates carry permission/role and liveview changes we want reflected immediately) but are not device-addressed, so each is a StateModelKey
 // without being a DeviceModelKey. Note this is the *realtime-reduced* set: `ringtones` is also reduced into ProtectState but bootstrap-only (the controller emits no
 // `ringtone` packet), so it is deliberately not here and not in KNOWN_MODEL_KEYS - leaving schema:unknownModelKey armed as a tripwire if that ever changes.
 /** @internal */
-const STATE_MODEL_KEYS = [ ...DEVICE_MODEL_KEYS, "liveview", "user" ] as const;
+export const STATE_MODEL_KEYS = [ ...DEVICE_MODEL_KEYS, "liveview", "user" ] as const;
 
 // Tier 3 - every model key the controller is observed to emit on the realtime stream: the reduced set, the `event` activity channel, and the recognized-but-unmodeled
 // keys the controller broadcasts but the library does not fold into state - the `group`/`bridge` collections, the newer device classes (`aiport`, `aiprocessor`,
@@ -44,7 +45,9 @@ const STATE_MODEL_KEYS = [ ...DEVICE_MODEL_KEYS, "liveview", "user" ] as const;
 // consumer needs it - `relay` is one such promoted key, modeled as a DeviceModelKey. Membership in this set is what makes the schema:unknownModelKey diagnostic
 // honest - a key in this set is known even when we do not reduce it, so the diagnostic fires only for a key outside it (genuine wire drift). This set beyond the
 // collections was confirmed by a schema-drift sweep against a real controller; `doorlock` and `ringtone` remain deliberately absent, as neither is observed in practice.
-const KNOWN_MODEL_KEYS = [ ...STATE_MODEL_KEYS, "activeSessionStat", "aiport", "aiprocessor", "bridge", "event", "group", "linkstation", "smartDetectObject" ] as const;
+/** @internal */
+export const KNOWN_MODEL_KEYS = [ ...STATE_MODEL_KEYS, "activeSessionStat", "aiport", "aiprocessor", "bridge", "event", "group", "linkstation",
+  "smartDetectObject" ] as const;
 
 /**
  * The id-keyed device collections - every `DeviceModelKey` except the NVR singleton. The vocabulary the device selectors, the projections, and every per-category
@@ -154,12 +157,31 @@ export type TypedEvent =
 // The auth wire types map to their resolved `AuthMethod` rather than a bare membership list: under `noUncheckedIndexedAccess` a lookup returns `AuthMethod | undefined`,
 // so this map is both the "is this an auth type?" test and the method resolution - no parallel list-and-switch to keep in sync, and a new auth type is a single entry
 // whose value the `AuthMethod` union must admit (a closed-by-construction extension point, not an open passthrough).
+// The controller's user login/session audit record, which it emits on every authentication (this library's own `connect()` included). The classifier deliberately does
+// not model it - the wire makes a login and a software unlock indistinguishable, as the note in `classifyActivity` explains - but it is a type the library recognizes,
+// so it is named here and carried into KNOWN_EVENT_TYPES below. Without it, every login would read as an unrecognized wire type to a consumer checking against that
+// vocabulary.
+const ACCESS_EVENT_TYPE = "access";
 const AUTH_EVENT_METHODS: Readonly<Record<string, AuthMethod>> = { fingerprintIdentified: "fingerprint", nfcCardScanned: "nfc" };
 const MOTION_EVENT_TYPE = "motion";
 const RING_EVENT_TYPE = "ring";
 const SENSOR_BUTTON_EVENT_TYPE = "sensorButtonPressed";
 const SMART_EVENT_TYPES: readonly string[] = [ "smartAudioDetect", "smartDetectLine", "smartDetectZone" ];
 const TAMPER_EVENT_TYPE = "smartDetectTamper";
+
+/**
+ * Every `type` value the library recognizes on an `event`-modelKey payload, assembled from the individual constants above so each of those stays the single source of
+ * its own value. Recognition is broader than modeling: `access` is recognized here while the classifier declines to lift it into an occurrence, because a type the
+ * library knows about is not wire drift even when it produces no event.
+ *
+ * The realtime classifier does not consult this array - it branches on the individual constants, which is what lets each occurrence carry its own resolution logic.
+ * This exists for a consumer asking the different question "is this a wire type the library has seen before?", which is what separates protocol evolution from
+ * ordinary traffic.
+ *
+ * @internal
+ */
+export const KNOWN_EVENT_TYPES: readonly string[] = [ ACCESS_EVENT_TYPE, ...Object.keys(AUTH_EVENT_METHODS), MOTION_EVENT_TYPE, RING_EVENT_TYPE,
+  SENSOR_BUTTON_EVENT_TYPE, ...SMART_EVENT_TYPES, TAMPER_EVENT_TYPE ];
 
 /**
  * Classify a decoded {@link RawPacket} into a {@link TypedEvent}, or `null` if the packet is valid but describes something the library does not model.

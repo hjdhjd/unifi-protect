@@ -65,7 +65,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/util/cli/index.js',0o755)\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/util/cli/index.js',0o755)\" && node --strip-types src/build/generate-manifest.ts",
     "build-docs": "node -e \"for(const p of ['docs/classes', 'docs/functions', 'docs/interfaces', 'docs/modules', 'docs/type-aliases', 'docs/variables', 'docs/README.md'])require('node:fs').rmSync(p,{force:true,recursive:true})\" && npx typedoc",
     "clean": "node -e \"require('node:fs').rmSync('dist',{force:true,recursive:true})\"",
     "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs \"src/**/*.ts\"",

@@ -15,3 +15,7 @@
 src/**/*.test.ts
 src/**/*.helpers.ts
 src/**/*.fixtures.ts
+
+# The build tooling is not part of the package. The manifest generator imports the TypeScript compiler, which is a development dependency, so shipping its source would
+# put a module a consumer's install cannot resolve inside the tarball. Its product - dist/schema-manifest.json - ships; the thing that produced it does not.
+src/build/**
