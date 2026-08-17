@@ -12,6 +12,7 @@
     "dist",
     "node_modules",
     "scripts",
+    "src/build",
     "test"
   ],
   "extends": "./tsconfig.json",
