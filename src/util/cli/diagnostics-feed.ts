@@ -4,9 +4,10 @@
  * and `ufp watch livestream --diagnostics` (the livestream channels, to stderr). One definition of how a diagnostics event is colored, formatted, and subscribed, so the
  * two commands never drift.
  */
-import type { Channel } from "node:diagnostics_channel";
+import type { AnyProtectDiagnosticsChannel } from "../../index.ts";
 import type { Output } from "./output/format.ts";
 import { nowStamp } from "./output/format.ts";
+import { subscribeToChannel } from "../../index.ts";
 
 // Color a channel name by its subsystem (the second colon-delimited segment of "unifi-protect:<subsystem>:..."), so a glance separates http from events from a schema
 // signal. Unknown subsystems fall back to gray.
@@ -60,22 +61,16 @@ export function renderDiagnostic(output: Output, name: string, message: unknown,
  *
  * @category CLI
  */
-export function subscribeDiagnostics(selected: readonly Channel[], onMessage: (name: string, message: unknown) => void): Disposable {
+export function subscribeDiagnostics(selected: readonly AnyProtectDiagnosticsChannel[], onMessage: (name: string, message: unknown) => void): Disposable {
 
-  const subscriptions = selected.map((channel) => {
+  // A `DisposableStack` is the aggregate: each per-channel handle goes in, and disposing the stack detaches every one of them. The channels here carry different payload
+  // types, so this is the generic arm of `subscribeToChannel` - the payload reaches `onMessage` as `unknown`, which is what a feed that renders whatever arrives wants.
+  const stack = new DisposableStack();
 
-    const handler = (message: unknown): void => onMessage(String(channel.name), message);
+  for(const channel of selected) {
 
-    channel.subscribe(handler);
+    stack.use(subscribeToChannel(channel, (message) => onMessage(String(channel.name), message)));
+  }
 
-    return { channel, handler };
-  });
-
-  return { [Symbol.dispose](): void {
-
-    for(const { channel, handler } of subscriptions) {
-
-      channel.unsubscribe(handler);
-    }
-  } };
+  return stack;
 }

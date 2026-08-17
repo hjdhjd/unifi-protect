@@ -725,7 +725,7 @@ describe("watch livestream", () => {
 
           async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
 
-            channels.livestreamCodecChanged.publish({ from: "avc1.640028", key: "c1:0:0:100:4096:false", to: "hev1.1.6.L150.90" });
+            channels.livestreamCodecChanged.publish({ cameraId: "c1", from: "avc1.640028", key: "c1:0:0:100:4096:false", to: "hev1.1.6.L150.90" });
 
             yield { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), type: "init" };
           },
