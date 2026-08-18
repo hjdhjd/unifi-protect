@@ -17,6 +17,10 @@ dependencies, each defaulted at the composition root:
 - `refreshIntervalMs` sets the [StateStore](StateStore.md)'s bootstrap-refresh failsafe cadence; it defaults to the store's interval, and passing `false` disables the
   failsafe entirely so the consumer relies solely on the realtime event stream.
 - `signal` cancels the initial login and bootstrap fetch; it is bound only to connect, never to a later recovery relaunch.
+- `verifyTls` requires the controller to present a certificate that verifies, on the request path and every WebSocket alike. It defaults to `false`, because a
+  controller presents a self-signed certificate that no verification chain accepts - turn it on where a trusted certificate has been installed on the controller and
+  a connection to an impostor should fail rather than proceed. An injected `dispatcher` or `webSocket` factory brings its own TLS settings, so the option reaches
+  only the connections this client builds for itself.
 - `webSocket` is the receive-direction [ProtectWebSocket](ProtectWebSocket.md) factory used by the events stream and livestream pool; it defaults to a real socket and is the
   socket-injection point for tests. It does not apply to the write-direction talkback socket.
 
@@ -33,4 +37,5 @@ dependencies, each defaulted at the composition root:
 | <a id="refreshintervalms"></a> `refreshIntervalMs?` | `number` \| `false` |
 | <a id="signal"></a> `signal?` | `AbortSignal` |
 | <a id="username"></a> `username` | `string` |
+| <a id="verifytls"></a> `verifyTls?` | `boolean` |
 | <a id="websocket"></a> `webSocket?` | (`url`) => [`ProtectWebSocket`](ProtectWebSocket.md) |

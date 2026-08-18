@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.3.0 (2026-08-18)
+  * New feature: `ufp capture`, a one-command support workflow for new and unrecognized hardware - it watches the controller against the schema this version was built with and writes a single scrubbed, self-contained bundle describing anything the controller reports that this library does not model, together with the traffic that evidences it. Every identifying value is replaced by a stable pseudonym before anything is written, so the bundle can be sent on as-is.
+  * New feature: a build-generated schema manifest ships in the package - the field-path trees, model-key vocabulary, and event-type vocabulary this version knows, generated from the type definitions at build time. It is what `ufp capture` diffs the controller against, so updating the types to support a new device silences that device's novelty automatically.
+  * New feature: `verifyTls`, an opt-in connect option for strict TLS certificate validation, applied to the request pool and every WebSocket the library opens. It defaults to `false`, preserving today's behavior for the self-signed certificates controllers ship, and the `ufp` CLI reads it from `ufp.json` as `verifyTls`.
+  * Improvement: typed subscriptions for the diagnostics channels - `subscribeToChannel()` returns a `Disposable` and types the handler's payload from the channel it observes, with `ProtectDiagnosticsChannel`, `AnyProtectDiagnosticsChannel`, and `ThrottleSource` joining the exported surface.
+  * Improvement: the `ufp` CLI now prompts for the controller address and credentials on a first run at a terminal when no `ufp.json` exists, and offers to save them - scripted and headless use is unchanged.
+  * Fix: a state observation begun after the client has been disposed now completes immediately, and a disposed client quietly ignores any updates that arrive afterward.
+  * Fix: when the session reauthenticates, overlapping attempts now share a single handshake, and a relogin that crosses paths with a logout or a fresh login defers to the newer session.
+  * Housekeeping.
+
 ## 5.2.0 (2026-07-19)
   * Breaking change: the flat per-category selector exports (`selectCameras`, `selectOnlineCameras`, `selectAdoptedCameraIds`, `selectCamera`, and their siblings across every device category) are replaced by `deviceSelectors`, a single category-keyed selector catalog - one exactly-typed selector set per device category (`all`, `online`, `adoptedIds`, `byId`), with the collection vocabulary (`DeviceCollectionKey`, `DEVICE_COLLECTION_KEYS`) exported alongside it. Consumers using the `client.cameras` / `client.camera(id)` projections are unaffected.
   * Improvement: `livestreamAudioSampleRate`, an exported helper returning the audio sample rate a camera's livestream delivers - 48 kHz on a doorbell, 16 kHz on everything else - so consumers can configure a downstream audio pipeline from the camera's capabilities instead of hardcoding the rates.
