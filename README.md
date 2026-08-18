@@ -103,13 +103,13 @@ for await (const segment of live) {
 }
 ```
 
-## Guides
+## Documentation
 
-- **[Recipes](https://github.com/hjdhjd/unifi-protect/blob/main/docs/guides/recipes.md)** - the common composition patterns: streaming, observing state changes, RTSP enablement, qualified names, privilege gating, typed errors, and connection health.
-- **[Diagnostics](https://github.com/hjdhjd/unifi-protect/blob/main/docs/guides/diagnostics.md)** - the `node:diagnostics_channel` observability surface: every named channel, its payload shape, and how to subscribe.
-- **[Migrating from v4](https://github.com/hjdhjd/unifi-protect/blob/main/docs/guides/migrating-from-v4.md)** - a complete v4-to-v5 API mapping: what moved, what changed shape, and what was removed (and what to do instead).
+- **[API reference](https://github.com/hjdhjd/unifi-protect/blob/main/docs/README.md)** - the complete rendered API documentation: every class, function, type, and variable in the public surface.
+- **[Diagnostics channels](https://github.com/hjdhjd/unifi-protect/blob/main/docs/variables/channels.md)** - the `node:diagnostics_channel` observability surface: every named channel and its payload shape.
+- **[Migrating from v4](https://github.com/hjdhjd/unifi-protect/blob/main/docs/Changelog.md#500-2026-07-08)** - the 5.0.0 changelog entry enumerates every breaking change and what to do instead.
 
-The [`ufp` CLI](https://github.com/hjdhjd/unifi-protect/tree/main/src/util/cli) is the canonical reference consumer - it exercises every API surface against real hardware using the exact idioms in the guides (`await using`, `AbortSignal` for Ctrl-C, typed errors, async iteration). Read it alongside the guides; `ufp doctor` is also the quickest "is my install healthy?" probe.
+The [`ufp` CLI](https://github.com/hjdhjd/unifi-protect/tree/main/src/util/cli) is the canonical reference consumer - it exercises every API surface against real hardware using the exact idioms above (`await using`, `AbortSignal` for Ctrl-C, typed errors, async iteration). Read it to see the library in practice; `ufp doctor` is also the quickest "is my install healthy?" probe.
 
 ## Why use this library for UniFi Protect support?
 
