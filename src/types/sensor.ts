@@ -34,6 +34,7 @@ export interface ProtectSensorAirQualityInterface {
   aqi: ProtectAirQualityMetricInterface;
   co2: ProtectAirQualityMetricInterface;
   humidity: ProtectAirQualityMetricInterface;
+  nox: ProtectAirQualityMetricInterface;
   pm10p0: ProtectAirQualityMetricInterface;
   pm1p0: ProtectAirQualityMetricInterface;
   pm2p5: ProtectAirQualityMetricInterface;
@@ -60,6 +61,7 @@ export interface ProtectSensorAirQualitySettingsInterface {
   nightModeEnabled: boolean;
   nightModeEndTime: string;
   nightModeStartTime: string;
+  noxSettings: ProtectAirQualityThresholdSettingsInterface;
   pm10p0Settings: ProtectAirQualityThresholdSettingsInterface;
   pm1p0Settings: ProtectAirQualityThresholdSettingsInterface;
   pm2p5Settings: ProtectAirQualityThresholdSettingsInterface;
