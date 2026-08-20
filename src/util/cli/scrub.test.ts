@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * scrub.test.ts: Unit tests for the capture scrub - referential consistency in both directions, key-over-shape precedence, key redaction, URL credential stripping,
- * the base64 wrapper exemption, and the promise that the input is never modified.
+ * scrub.test.ts: Unit tests for the capture scrub - referential consistency in both directions, key-over-shape precedence, coordinate and locale replacement, key
+ * redaction, URL credential stripping, the base64 wrapper exemption, and the promise that the input is never modified.
  */
 import { createScrubContext, scrub } from "./scrub.ts";
 import { describe, test } from "node:test";
@@ -63,6 +63,31 @@ describe("scrub", () => {
     assert.deepEqual(scrubbed({ accessKey: "" }), { accessKey: "" });
   });
 
+  test("both spellings of a stream alias are cleared", () => {
+
+    // A channel record carries the alias under two names, and either one opens the stream on its own, so clearing whichever spelling a catalog happened to list first
+    // would leave the stream reachable through the other.
+    const result = scrubbed({ internalRtspAlias: "7NqBpVeZvJcXmR2t", rtspAlias: "kL9mQwErTyUiOp3a" }) as { internalRtspAlias: string; rtspAlias: string };
+
+    assert.ok(result.internalRtspAlias.startsWith("REDACTED-"));
+    assert.ok(!result.internalRtspAlias.includes("NqBpVeZ"));
+    assert.ok(result.rtspAlias.startsWith("REDACTED-"));
+    assert.ok(!result.rtspAlias.includes("mQwErTy"));
+  });
+
+  test("a share link is cleared whole rather than stripped of credentials", () => {
+
+    // The case that separates the two ways a URL can be handled. A share link's capability lives in the path, so the credential stripping that reaches only a URL's
+    // authority would hand back a working link. It is a secret by key, which clears the whole value and keeps its length.
+    const link = "https://share.ui.com/v/9fT2xKqL8mNbVc4z";
+    const result = scrubbed({ shareLink: link }) as { shareLink: string };
+
+    assert.equal(result.shareLink.length, link.length, "the length survives so a bundle still shows how long the real link was");
+    assert.ok(result.shareLink.startsWith("REDACTED-"));
+    assert.ok(!result.shareLink.includes("9fT2xKqL8mNbVc4z"), "the capability in the path does not survive");
+    assert.ok(!result.shareLink.includes("https://"), "the whole value is cleared, so nothing is left that still reads as a link");
+  });
+
   test("the key decides ahead of the value's shape", () => {
 
     // A device someone named after an address is a name, not an address. Without this precedence the bundle would show a device called "192.0.2.1".
@@ -77,6 +102,35 @@ describe("scrub", () => {
 
     assert.ok(result.name.startsWith("Test Device "));
     assert.ok(result.ssid.startsWith("Test ssid "));
+  });
+
+  test("a door label and a greeting label are pseudonymized under their own hints", () => {
+
+    // Labels an operator typed, under keys whose values have no shape a fallback rule could recognize. Each is its own entity, so each keeps its own hint and the
+    // bundle still reads as a door and a greeting rather than two anonymous tokens.
+    const result = scrubbed({ doorName: "Side Entrance", greetingBroadcastName: "Welcome Home" }) as { doorName: string; greetingBroadcastName: string };
+
+    assert.match(result.doorName, /^Test doorName \d+$/);
+    assert.match(result.greetingBroadcastName, /^Test greetingBroadcastName \d+$/);
+  });
+
+  test("a device's own name and the copies of it elsewhere resolve to one stand-in", () => {
+
+    // A camera reports the name of the access point it is attached to, and the client reports the NVR's name as the controller name. Each is a copy of a `name`
+    // recorded on another record, so every spelling has to land on the same stand-in or the bundle would stop showing which device is which.
+    const context = createScrubContext();
+    const result = scrub({ camera: { apName: "Garage AP" }, controllerName: "Hubble", nvr: { name: "Hubble" }, ports: [{ name: "Garage AP" }] }, context) as {
+
+      camera: { apName: string };
+      controllerName: string;
+      nvr: { name: string };
+      ports: [{ name: string }];
+    };
+
+    assert.equal(result.camera.apName, result.ports[0].name, "an access point reads the same from its own record and from the camera reporting it");
+    assert.equal(result.controllerName, result.nvr.name, "the controller name reads the same as the NVR record it is taken from");
+    assert.notEqual(result.camera.apName, "Garage AP");
+    assert.notEqual(result.controllerName, "Hubble");
   });
 
   test("a login is pseudonymized under every spelling that names one", () => {
@@ -108,6 +162,22 @@ describe("scrub", () => {
     assert.notEqual(result.user.localUsername, "operator");
   });
 
+  test("the account behind a shared stream is the login its user record names", () => {
+
+    // A shared stream records who shared it, which is the same account the user list carries. Both take the login regime, so the bundle still shows that the share
+    // belongs to that person without either spelling of the account surviving.
+    const context = createScrubContext();
+    const result = scrub({ streamSharing: { sharedByUser: "operator" }, users: [{ localUsername: "operator" }] }, context) as {
+
+      streamSharing: { sharedByUser: string };
+      users: [{ localUsername: string }];
+    };
+
+    assert.match(result.streamSharing.sharedByUser, /^Test username \d+$/);
+    assert.equal(result.streamSharing.sharedByUser, result.users[0].localUsername);
+    assert.notEqual(result.streamSharing.sharedByUser, "operator");
+  });
+
   test("an email-shaped login takes the name path rather than the email path", () => {
 
     // Key precedence where it matters most: a controller lets an account be named by its email address, and routing those logins through the email category while
@@ -123,6 +193,25 @@ describe("scrub", () => {
 
     assert.match(result.connectionHost, /^192\.0\.2\.\d+$/, "addresses land in the range reserved for documentation");
     assert.match(result.host, /^host-\d+\.test\.local$/);
+  });
+
+  test("a host key the controller spells its own way is still resolved by shape", () => {
+
+    // A bare shortname carries no shape at all, so nothing but the key can catch it, and the address of the camera that last saw motion is a host under a name that
+    // reads like an event field.
+    const result = scrubbed({ hostShortname: "protect-nvr", lastMotionCameraAddress: "10.0.0.44" }) as { hostShortname: string; lastMotionCameraAddress: string };
+
+    assert.match(result.hostShortname, /^host-\d+\.test\.local$/);
+    assert.match(result.lastMotionCameraAddress, /^192\.0\.2\.\d+$/);
+  });
+
+  test("an array of hosts resolves each element by its own shape", () => {
+
+    // Elements inherit the key their array arrived under, so a mixed list is judged the way each single value would be - the address as an address, the name as a name.
+    const result = scrubbed({ hosts: [ "10.0.0.1", "protect.example.com" ] }) as { hosts: string[] };
+
+    assert.match(result.hosts[0] ?? "", /^192\.0\.2\.\d+$/);
+    assert.match(result.hosts[1] ?? "", /^host-\d+\.test\.local$/);
   });
 
   test("an identifying object key is replaced along with the values", () => {
@@ -203,6 +292,61 @@ describe("scrub", () => {
     assert.notEqual(result.id, uuid);
     assert.equal(result.sha1.length, sha.length);
     assert.notEqual(result.sha1, sha);
+  });
+
+  test("a hardware serial takes a same-length opaque replacement", () => {
+
+    // A serial names one physical unit for its whole life, and the formats vary by device, so the replacement is sized to whatever it replaced rather than to any fixed
+    // digest width. The controller spells the field both ways.
+    const unitSerial = "UBNTX1234567";
+    const result = scrubbed({ serial: unitSerial, serialNumber: "UBNT-9911" }) as { serial: string; serialNumber: string };
+
+    assert.equal(result.serial.length, unitSerial.length);
+    assert.notEqual(result.serial, unitSerial);
+    assert.equal(result.serialNumber.length, "UBNT-9911".length);
+    assert.notEqual(result.serialNumber, "UBNT-9911");
+  });
+
+  test("the site's locale is replaced by fixed placeholders", () => {
+
+    // An IANA timezone names a city and a country code names a country, so both are location under another name. There is one of each per site and nothing points at
+    // them, so a conventional value says as much as a minted pseudonym would.
+    assert.deepEqual(scrubbed({ countryCode: "US", timezone: "America/New_York" }), { countryCode: "ZZ", timezone: "Etc/UTC" });
+  });
+
+  test("a coordinate is zeroed while the numbers beside it are untouched", () => {
+
+    // A position is identity carried as numbers, which no string rule can reach. The neighbors are the other half of the promise: a settings block mixes coordinates
+    // with ordinary readings, and replacing those would destroy evidence while protecting nothing.
+    const result = scrubbed({ locationSettings: { isAway: false, latitude: 40.741895, longitude: -73.989308, radius: 200 } }) as {
+
+      locationSettings: { isAway: boolean; latitude: number; longitude: number; radius: number };
+    };
+
+    assert.equal(result.locationSettings.latitude, 0);
+    assert.equal(result.locationSettings.longitude, 0);
+    assert.equal(result.locationSettings.radius, 200, "a number under any other key is evidence, not identity");
+    assert.equal(result.locationSettings.isAway, false);
+  });
+
+  test("a coordinate that was never set stays null", () => {
+
+    // A user's geofencing position is null until the feature is used. Null is not a position, so it comes through as itself rather than as a zero that would read as
+    // one.
+    const document = { location: { isAway: false, latitude: null, longitude: null } };
+
+    assert.deepEqual(scrubbed(document), document);
+  });
+
+  test("an object under a coordinate key is walked rather than replaced", () => {
+
+    // The coordinate rule reads the value's type as well as its key, so it can never stand in front of the structural paths. An implementation keyed on the name alone
+    // would answer zero here and drop everything the object carried.
+    const result = scrubbed({ latitude: { mac: "AABBCCDDEEFF", precision: 4 } }) as { latitude: { mac: string; precision: number } };
+
+    assert.equal(result.latitude.precision, 4);
+    assert.match(result.latitude.mac, /^[0-9A-F]{12}$/, "the walk went into the object and pseudonymized what was inside it");
+    assert.notEqual(result.latitude.mac, "AABBCCDDEEFF");
   });
 
   test("values with nothing to hide pass through", () => {
