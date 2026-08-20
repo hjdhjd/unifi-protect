@@ -7,6 +7,7 @@ import { COMMON_OPTIONS, CliError } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import { DEVICE_CATEGORIES, allDevices, devicesInCategory, isDeviceCategory } from "../lookup.ts";
 import type { ProtectClient, ProtectState } from "../../../index.ts";
+import { createScrubContext, scrub } from "../scrub.ts";
 import { formatDuration, formatTimestamp } from "../output/format.ts";
 import type { Output } from "../output/format.ts";
 import { parseArgs } from "node:util";
@@ -14,7 +15,7 @@ import { selectAuthUser } from "../../../index.ts";
 
 const USAGE = [
 
-  "Usage: ufp info [category] [--json] [--raw] [--bootstrap] [--debug]",
+  "Usage: ufp info [category] [--json] [--raw] [--bootstrap] [--scrub] [--debug]",
   "",
   "Show the controller summary and a device inventory.",
   "",
@@ -25,13 +26,15 @@ const USAGE = [
   "  --json      Emit the curated summary (controller, devices, identity) as a JSON object instead of a table.",
   "  --raw       Dump the full reduced state - every modeled record, uncurated - as JSON (a superset of --json; ignores any category).",
   "  --bootstrap Dump the controller's raw bootstrap JSON - the full payload, not the modeled state (a fresh fetch; keys sorted; ignores any category).",
+  "  --scrub     Pseudonymize identifying values in the JSON views so a dump can be shared - one value reads as one stand-in throughout a run.",
   "  --debug     Emit the library's debug logging to stderr.",
   "  -h, --help  Show this help.",
   "",
   "Examples:",
-  "  ufp info                         # controller summary + every device category",
-  "  ufp info cameras                 # just the camera inventory",
-  "  ufp info --bootstrap | jq 'keys' # every top-level key the controller reports, modeled or not"
+  "  ufp info                                       # controller summary + every device category",
+  "  ufp info cameras                               # just the camera inventory",
+  "  ufp info --bootstrap | jq 'keys'               # every top-level key the controller reports, modeled or not",
+  "  ufp info --bootstrap --scrub > controller.json # a dump that is safe to send on: no real names, addresses, or coordinates"
 ].join("\n");
 
 // The columns of the per-category device table, in display order.
@@ -154,14 +157,15 @@ function serializeState(state: ProtectState): Record<string, unknown> {
  * `ufp info`. Connects, reads the current state synchronously through the client's getters, and prints one of four views: the human-readable summary (default), the
  * curated JSON summary (`--json`), the full reduced state (`--raw`), or the controller's raw bootstrap JSON (`--bootstrap`). An optional `category` narrows the
  * summary / `--json` inventory to one device class. A one-shot read, so the bootstrap-refresh failsafe is disabled - we want the state as of connect, then we leave.
- * `--bootstrap` issues its own fresh fetch on top of that connect-time state.
+ * `--bootstrap` issues its own fresh fetch on top of that connect-time state. `--scrub` pseudonymizes the identifying values in whichever JSON view was asked for, so
+ * the result can be shared; it applies to those three views alone, and pairing it with the human-readable summary is a usage error.
  *
  * @category CLI
  */
 const infoHandler: CommandHandler = async (ctx) => {
 
   const { positionals, values } = parseArgs({ allowPositionals: true, args: ctx.args,
-    options: { ...COMMON_OPTIONS, bootstrap: { type: "boolean" }, json: { type: "boolean" }, raw: { type: "boolean" } }, strict: true });
+    options: { ...COMMON_OPTIONS, bootstrap: { type: "boolean" }, json: { type: "boolean" }, raw: { type: "boolean" }, scrub: { type: "boolean" } }, strict: true });
 
   if(values.help === true) {
 
@@ -179,13 +183,29 @@ const infoHandler: CommandHandler = async (ctx) => {
     throw new CliError("Unknown category \"" + categoryArg + "\". Expected one of: " + DEVICE_CATEGORIES.join(", ") + ".", { exitCode: 2 });
   }
 
+  // The scrub replaces values inside a JSON document, so it has nothing to act on in the human-readable summary. Asking for both is a usage error rather than a flag
+  // that is quietly ignored, on the same reasoning as the unknown category above.
+  if((values.scrub === true) && (values.bootstrap !== true) && (values.json !== true) && (values.raw !== true)) {
+
+    throw new CliError("The --scrub option applies to the JSON views. Add --json, --raw, or --bootstrap.", { exitCode: 2 });
+  }
+
   await using client = await ctx.openClient({ debug: values.debug === true, refreshIntervalMs: false, signal: ctx.signal });
+
+  /* Every JSON view leaves through this one boundary, so scrubbing is a single decision made where a document becomes output rather than a rule each branch below has
+   * to remember. One context per invocation is what makes a value read as the same stand-in everywhere it appears in the emitted document.
+   *
+   * Order matters for the state dump: the scrub walks plain objects and carries anything else through untouched, so a `Map` handed to it directly would survive to the
+   * serializer and render as `{}`. The `--raw` branch therefore scrubs what `serializeState` produced, never the snapshot itself.
+   */
+  const context = (values.scrub === true) ? createScrubContext() : undefined;
+  const emit = (document: unknown): void => ctx.output.jsonPretty((context === undefined) ? document : scrub(document, context));
 
   // The raw controller bootstrap, fetched fresh - the full payload, not the modeled state, its keys sorted by the Output serializer like every JSON view (so it is "raw"
   // in the sense of uncurated, not a byte-for-byte reproduction of wire field order). Highest precedence since it is the most explicit request and a distinct fetch.
   if(values.bootstrap === true) {
 
-    ctx.output.jsonPretty(await client.fetchBootstrap({ signal: ctx.signal }));
+    emit(await client.fetchBootstrap({ signal: ctx.signal }));
 
     return;
   }
@@ -193,14 +213,14 @@ const infoHandler: CommandHandler = async (ctx) => {
   // The full reduced state, uncurated - every modeled record as the store holds it.
   if(values.raw === true) {
 
-    ctx.output.jsonPretty(serializeState(client.state.snapshot()));
+    emit(serializeState(client.state.snapshot()));
 
     return;
   }
 
   if(values.json === true) {
 
-    ctx.output.jsonPretty(buildJson(client, categoryArg));
+    emit(buildJson(client, categoryArg));
 
     return;
   }
