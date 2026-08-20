@@ -79,6 +79,44 @@ describe("scrub", () => {
     assert.ok(result.ssid.startsWith("Test ssid "));
   });
 
+  test("a login is pseudonymized under every spelling that names one", () => {
+
+    const result = scrubbed({ localUsername: "operator", userName: "ubnt", username: "homebridge" }) as {
+
+      localUsername: string;
+      userName: string;
+      username: string;
+    };
+
+    assert.match(result.localUsername, /^Test username \d+$/);
+    assert.match(result.userName, /^Test username \d+$/);
+    assert.match(result.username, /^Test username \d+$/);
+  });
+
+  test("one login is one stand-in across the spellings that name it", () => {
+
+    // The cross-reference a bundle is read for: an activity frame attributing something to an account has to still point at that account's record afterward, which it
+    // only does if both spellings of the login resolve to the same pseudonym.
+    const context = createScrubContext();
+    const result = scrub({ event: { metadata: { userName: "operator" } }, user: { localUsername: "operator" } }, context) as {
+
+      event: { metadata: { userName: string } };
+      user: { localUsername: string };
+    };
+
+    assert.equal(result.user.localUsername, result.event.metadata.userName);
+    assert.notEqual(result.user.localUsername, "operator");
+  });
+
+  test("an email-shaped login takes the name path rather than the email path", () => {
+
+    // Key precedence where it matters most: a controller lets an account be named by its email address, and routing those logins through the email category while
+    // the plain ones went through the name category would break the cross-reference between them.
+    const result = scrubbed({ localUsername: "operator@example.org" }) as { localUsername: string };
+
+    assert.match(result.localUsername, /^Test username \d+$/);
+  });
+
   test("a host key resolves by shape to an address or a hostname", () => {
 
     const result = scrubbed({ connectionHost: "10.0.0.5", host: "controller.example.com" }) as { connectionHost: string; host: string };
