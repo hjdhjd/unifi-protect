@@ -15,6 +15,9 @@
  * address. Failing that, the value's own shape decides, which is what catches identifying values under keys no catalog anticipated - including fields on device classes
  * this version of the library has never seen, which is exactly the traffic a capture exists to collect.
  *
+ * Numbers are otherwise left alone, with one exception. A latitude or a longitude carries a site's or a person's position, identity the string rules can never reach, so
+ * a number arriving under a coordinate key becomes zero - the field stays numeric, and it points nowhere a real installation could be.
+ *
  * Replacements are chosen to stay in their original shape: MACs stay MAC-shaped and locally administered, addresses land in the range reserved for documentation, UUIDs
  * stay UUID-shaped, and cleared secrets keep their original length. A consumer reading the bundle sees data that still parses and still lines up.
  *
@@ -37,30 +40,59 @@ export interface ScrubContext {
   readonly replacements: Map<ScrubCategory, Map<string, string>>;
 }
 
-// Keys whose values are secrets regardless of what they look like. Cleared rather than pseudonymized.
+// Keys whose values are secrets regardless of what they look like. Cleared rather than pseudonymized. A stream alias and a share link belong here even though they read
+// as ordinary strings: each one grants access to a camera's stream on its own, and the wire spells the alias two ways, so clearing only one of them would leave the
+// stream reachable. A share link carries its capability in the URL path, which is why it is cleared whole rather than left to the credential stripping that only
+// reaches a URL's authority.
 const SECRET_KEYS: ReadonlySet<string> = new Set([
 
-  "accessKey", "anonymousDeviceId", "credentials", "hardwareId", "hashedPassword", "homekitSetupCode", "homekitSetupPayload", "macTouched", "pairingCode", "password",
-  "pin", "privateKey", "psk", "publicKey", "rtspAlias", "secret", "ssoToken", "tlsCertificate", "tlsKey", "token", "wifiPassword"
+  "accessKey", "anonymousDeviceId", "credentials", "hardwareId", "hashedPassword", "homekitSetupCode", "homekitSetupPayload", "internalRtspAlias", "macTouched",
+  "pairingCode", "password", "pin", "privateKey", "psk", "publicKey", "rtspAlias", "secret", "shareLink", "ssoToken", "tlsCertificate", "tlsKey", "token",
+  "wifiPassword"
 ]);
 
-// Keys carrying a display name a person chose. Pseudonymized to a readable stand-in, so a bundle still reads as a system rather than a wall of tokens.
-const NAME_KEYS: ReadonlySet<string> = new Set([ "displayName", "firstName", "fullName", "label", "lastName", "loginName", "name", "ssid" ]);
+// Keys carrying a display name a person chose. Pseudonymized to a readable stand-in, so a bundle still reads as a system rather than a wall of tokens. Every entry is a
+// label chosen by a person or an operator - a door, a greeting, a stream, a support file - which is identity no shape rule can recognize, since the text is arbitrary.
+const NAME_KEYS: ReadonlySet<string> = new Set([
+
+  "apName", "controllerName", "displayName", "doorName", "firstName", "foreignPgDumpConsoleName", "fullName", "globalAlarmManagerScopeNames",
+  "greetingBroadcastName", "label", "lastName", "localStreamName", "loginName", "name", "ssid", "supportFileName"
+]);
+
+// The name keys that are, by construction, a copy of a device name recorded under `name` somewhere else in the same document: an access point's own record carries the
+// `apName` a camera reports, and the controller name is the NVR record's own name. They share one hint below so the copy and the original resolve to the same stand-in
+// and the cross-reference between the two records survives.
+const DEVICE_NAME_KEYS: ReadonlySet<string> = new Set([ "apName", "controllerName", "name" ]);
 
 // Keys carrying a login someone signs in with. A login is a display-name-class value, so it takes the name regime rather than a category of its own - and the wire
-// spells the same concept several ways, a user record naming it one way and an activity frame's metadata another, so all the spellings share one hint below and one
-// account keeps one stand-in across them.
-const USERNAME_KEYS: ReadonlySet<string> = new Set([ "localUsername", "userName", "username" ]);
+// spells the same concept several ways, a user record naming it one way, an activity frame's metadata another, and a shared stream naming the account that shared it,
+// so all the spellings share one hint below and one account keeps one stand-in across them.
+const USERNAME_KEYS: ReadonlySet<string> = new Set([ "localUsername", "sharedByUser", "userName", "username" ]);
 
-// Keys carrying an address or a hostname. The value's own shape picks which of the two it is.
-const HOST_KEYS: ReadonlySet<string> = new Set([ "connectionHost", "externalHost", "host", "internalHost", "publicIp", "rtspHost" ]);
+// Keys carrying an address or a hostname. The value's own shape picks which of the two it is, and an array under one of these keys resolves element by element, so a
+// `hosts` list of mixed addresses and names comes out mixed the same way.
+const HOST_KEYS: ReadonlySet<string> = new Set([
+
+  "connectionHost", "externalHost", "host", "hostShortname", "hosts", "internalHost", "lastMotionCameraAddress", "publicIp", "rtspHost"
+]);
 
 // Keys carrying a hardware address. `anonymousId` is MAC-shaped on the wire and belongs here, while the similarly named `anonymousDeviceId` is an opaque token and is
 // cleared as a secret above - close names, different shapes, different handling.
 const MAC_KEYS: ReadonlySet<string> = new Set([ "anonymousId", "bridgeMac", "mac" ]);
 
-// Keys carrying a checksum. Not sensitive in themselves, but they identify exact firmware and file contents, so they are replaced with same-length stand-ins.
-const HASH_KEYS: ReadonlySet<string> = new Set([ "checksum", "fingerprint", "md5", "sha1", "sha256" ]);
+// Keys carrying a checksum or a hardware serial. Not sensitive in themselves, but they identify exact firmware, file contents, and individual units, so they are replaced
+// with same-length stand-ins - a width that fits arbitrary serial formats as readily as fixed-width digests. `serialNumber` is an observed wire spelling that the types
+// do not declare; the scrub reads wire keys, so the catalog rightly covers what a controller sends rather than only what the library models.
+const HASH_KEYS: ReadonlySet<string> = new Set([ "checksum", "fingerprint", "md5", "serial", "serialNumber", "sha1", "sha256" ]);
+
+// Keys carrying the site's locale, each replaced by a fixed placeholder rather than a minted pseudonym. An IANA timezone names a city and a country code names a country,
+// so both are location by another route...but they are one-per-site properties with nothing cross-referencing them, so a conventional stand-in carries everything a
+// pseudonym would while reading as obviously synthetic. "ZZ" is the ISO 3166 code reserved for private use, and "Etc/UTC" is the zone that names no place.
+const LOCALE_KEYS: ReadonlyMap<string, string> = new Map([ [ "countryCode", "ZZ" ], [ "timezone", "Etc/UTC" ] ]);
+
+// Keys carrying a geographic position, and the module's one rule that reads a number. A coordinate is identity expressed numerically, so no string rule can reach it; the
+// replacement is a fixed zero rather than a pseudonym, for the same reason the locale keys take one - a position has no cross-reference worth preserving.
+const COORDINATE_KEYS: ReadonlySet<string> = new Set([ "latitude", "longitude" ]);
 
 // Shape guards, each anchored so it recognizes a value that is entirely of that shape rather than one that merely contains it.
 const MAC_PATTERN = /^[0-9a-fA-F]{12}$|^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
@@ -149,11 +181,12 @@ function scrubEmail(context: ScrubContext, value: string): string {
 // A synthetic display name, seeded by the key it arrived under so the result reads as what it is - a `name` becomes "Test Device 1" and an `ssid` becomes "Test ssid 1".
 // The memory is keyed by hint and value together, because the same text under two different keys deserves two differently-worded stand-ins.
 //
-// A login is the exception: every spelling of one collapses onto the single `username` hint, so one account referenced from a user record and from an event's
-// metadata shares a stand-in and the cross-reference between the two survives the scrub.
+// Two families are the exception, each because its several spellings name one thing. Every spelling of a login collapses onto the single `username` hint, so one account
+// referenced from a user record and from an event's metadata shares a stand-in; every spelling of a device's own name collapses onto the `Device` hint, so a camera's
+// `apName` and that access point's own record read as one device. Both cross-references survive the scrub because of it.
 function scrubName(context: ScrubContext, value: string, key: string): string {
 
-  const hint = USERNAME_KEYS.has(key) ? "username" : ((key === "name") ? "Device" : key);
+  const hint = USERNAME_KEYS.has(key) ? "username" : (DEVICE_NAME_KEYS.has(key) ? "Device" : key);
 
   return remember(context, "name", hint + "|" + value, (index) => "Test " + hint + " " + (index + 1).toString());
 }
@@ -256,6 +289,14 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
 
       return scrubHash(context, stripped);
     }
+
+    // A locale value is answered from the fixed table rather than the replacement memory, so the lookup doubles as the test for whether this is a locale key at all.
+    const locale = LOCALE_KEYS.get(key);
+
+    if(locale !== undefined) {
+
+      return locale;
+    }
   }
 
   // Shape decides for everything the catalogs above do not name. This is what covers fields on device classes the library has never seen, which is the whole reason a
@@ -330,6 +371,13 @@ function scrubValue(value: unknown, context: ScrubContext, key: string | undefin
   if(typeof value === "string") {
 
     return scrubString(context, value, key);
+  }
+
+  // The one numeric replacement. Gating on the number type as well as the key is what keeps it from shadowing anything else: a null coordinate still returns null below,
+  // a string one still follows the string rules above, and an object or an array under the same key still takes its structural path.
+  if((typeof value === "number") && (key !== undefined) && COORDINATE_KEYS.has(key)) {
+
+    return 0;
   }
 
   if((value === null) || (value === undefined) || ArrayBuffer.isView(value)) {
