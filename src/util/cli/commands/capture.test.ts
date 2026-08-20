@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * capture.test.ts: Unit tests for `ufp capture` - the bundle it writes, what each rail keeps and excludes, mid-window subject growth, the dedup and its granularity,
- * the finalize-time inventory read, the three-phase Ctrl-C contract, and the end-to-end scrub.
+ * the exemplar snapshots of what the manifest describes no shape for, the finalize-time inventory read, the three-phase Ctrl-C contract, and the end-to-end scrub.
  *
  * These live beside the command rather than in the shared commands.test.ts because the fixtures a capture run needs - a manifest, a bootstrap, two scripted rails, and
  * a temporary directory to write into - would dwarf the per-command blocks there. The command's --help path stays in that file's shared table with every other command.
@@ -13,6 +13,7 @@ import { describe, test } from "node:test";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import type { FakeClientOptions } from "../fake-client.helpers.ts";
+import { PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } from "../../../settings.ts";
 import assert from "node:assert/strict";
 import { createCaptureHandler } from "./capture.ts";
 import { loadSchemaManifest } from "../manifest.ts";
@@ -74,6 +75,7 @@ interface Bundle {
   inventory: { id: string; modelKey: string }[];
   novelty: { collection?: string; kind: string; occurrenceCount: number; path?: string; recordId?: string }[];
   run: { controller: { firmwareVersion: string | null; version: string | null }; manifestVersion: string; mode: string; selection: Record<string, string[]> };
+  unmodeled: { collection: string; kept: Record<string, unknown>[]; seen: number }[];
 }
 
 // Build a raw frame.
@@ -313,6 +315,41 @@ describe("capture", () => {
 
     assert.equal(fields.length, 2);
     assert.deepEqual(fields.map((entry) => entry.recordId).sort(), [ "s1", "s2" ]);
+  });
+
+  test("a collection the manifest describes no shape for reaches the bundle as capped, scrubbed exemplars", async () => {
+
+    /* The class a capture is most often run to understand: the manifest carries `aiports` as raw JSON, so nothing inside one can ever be a field-level finding and
+     * these records are the only thing a reader could model the class from.
+     *
+     * Read from the written file rather than from the snapshot function's own return, because that is the only place the two things this asserts are both visible: that
+     * the run passes the shared exemplar cap rather than shipping the roster, and that the exemplars went through the bundle's one scrub like every other value.
+     */
+    const bootstrap = { ...CLEAN_BOOTSTRAP, aiports: [
+
+      { id: "a1", mac: "AABBCCDDEE07", name: "Front Port" },
+      { id: "a2", mac: "AABBCCDDEE08", name: "Side Port" },
+      { id: "a3", mac: "AABBCCDDEE09", name: "Back Port" },
+      { id: "a4", mac: "AABBCCDDEE0A", name: "Roof Port" }
+    ] };
+
+    const { bundle } = await runCapture({ bootstrap });
+    const entry = bundle.unmodeled.find((snapshot) => snapshot.collection === "aiports");
+    const exemplar = entry?.kept[0];
+
+    assert.equal(entry?.seen, 4, "the count says how many records the exemplars were drawn from, so a truncated snapshot never reads as a complete one");
+    assert.equal(entry?.kept.length, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
+
+    assert.notEqual(exemplar?.["mac"], "AABBCCDDEE07", "the real address never reaches the bundle");
+    assert.match(String(exemplar?.["mac"]), /^[0-9A-F]{12}$/, "the replacement is still address-shaped");
+    assert.match(String(exemplar?.["name"]), /^Test Device \d+$/);
+  });
+
+  test("a bootstrap the manifest describes entirely carries an empty snapshot list", async () => {
+
+    const { bundle } = await runCapture({});
+
+    assert.deepEqual(bundle.unmodeled, []);
   });
 
   test("one scrub context spans the whole bundle, so an identifier reads the same wherever it surfaces", async () => {

@@ -138,3 +138,8 @@ export const PROTECT_TALKBACK_MAX_BUFFERED_BYTES = 1048576;
 // window left at the default carries enough traffic to characterize a device's cadence rather than just prove it exists. A field user overrides it with --duration when
 // a device reports more slowly, and Ctrl-C ends the window early at any point with the bundle still written.
 export const PROTECT_CAPTURE_DEFAULT_DURATION = 900000;
+
+// How many records of an unmodeled bootstrap collection `ufp capture` carries as shape evidence. Modeling a device class this library has never seen takes a couple of
+// examples of what one of its records looks like - enough to show which fields vary between units and which are fixed - never a roster of every unit at a site, which
+// would grow a bundle without teaching a reader anything more about the shape. The entry's own seen count records how many records were elided.
+export const PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS = 3;
