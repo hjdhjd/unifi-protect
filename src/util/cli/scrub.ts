@@ -47,6 +47,11 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
 // Keys carrying a display name a person chose. Pseudonymized to a readable stand-in, so a bundle still reads as a system rather than a wall of tokens.
 const NAME_KEYS: ReadonlySet<string> = new Set([ "displayName", "firstName", "fullName", "label", "lastName", "loginName", "name", "ssid" ]);
 
+// Keys carrying a login someone signs in with. A login is a display-name-class value, so it takes the name regime rather than a category of its own - and the wire
+// spells the same concept several ways, a user record naming it one way and an activity frame's metadata another, so all the spellings share one hint below and one
+// account keeps one stand-in across them.
+const USERNAME_KEYS: ReadonlySet<string> = new Set([ "localUsername", "userName", "username" ]);
+
 // Keys carrying an address or a hostname. The value's own shape picks which of the two it is.
 const HOST_KEYS: ReadonlySet<string> = new Set([ "connectionHost", "externalHost", "host", "internalHost", "publicIp", "rtspHost" ]);
 
@@ -143,9 +148,12 @@ function scrubEmail(context: ScrubContext, value: string): string {
 
 // A synthetic display name, seeded by the key it arrived under so the result reads as what it is - a `name` becomes "Test Device 1" and an `ssid` becomes "Test ssid 1".
 // The memory is keyed by hint and value together, because the same text under two different keys deserves two differently-worded stand-ins.
+//
+// A login is the exception: every spelling of one collapses onto the single `username` hint, so one account referenced from a user record and from an event's
+// metadata shares a stand-in and the cross-reference between the two survives the scrub.
 function scrubName(context: ScrubContext, value: string, key: string): string {
 
-  const hint = (key === "name") ? "Device" : key;
+  const hint = USERNAME_KEYS.has(key) ? "username" : ((key === "name") ? "Device" : key);
 
   return remember(context, "name", hint + "|" + value, (index) => "Test " + hint + " " + (index + 1).toString());
 }
@@ -229,7 +237,7 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
       return scrubToken(context, stripped);
     }
 
-    if(NAME_KEYS.has(key)) {
+    if(NAME_KEYS.has(key) || USERNAME_KEYS.has(key)) {
 
       return scrubName(context, stripped, key);
     }
