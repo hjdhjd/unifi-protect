@@ -9,7 +9,7 @@ import { PROTECT_CAPTURE_DEFAULT_DURATION, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } 
 import { channels, subscribeToChannel } from "../../../index.ts";
 import { createScrubContext, scrub } from "../scrub.ts";
 import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, snapshotUnmodeled } from "../manifest.ts";
-import { fileStamp, serializeJson } from "../output/format.ts";
+import { fileStamp, formatDuration, serializeJson } from "../output/format.ts";
 import type { AnyProtectDiagnosticsChannel } from "../../../index.ts";
 import { DEVICE_CATEGORIES } from "../lookup.ts";
 import { ProtectClient } from "../../../index.ts";
@@ -441,8 +441,7 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
 
     const mode = (device === undefined) ? "discovery" : "targeted";
 
-    ctx.output.line("Watching for " + Math.round(durationMs / 1000).toString() + "s. Trigger the device you want understood - press its button, breathe on it, " +
-      "walk past it - then wait for this to finish. Press Ctrl-C to stop early.");
+    ctx.output.line("Watching for " + formatDuration(durationMs) + ". Use the device so its telemetry is captured. Press Ctrl-C to stop early.");
 
     if(window.novelty.size > 0) {
 

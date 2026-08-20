@@ -154,6 +154,93 @@ describe("info", () => {
 
     await assert.rejects(info.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
   });
+
+  test("--bootstrap --scrub emits a dump with no real identifiers, coordinates included", async () => {
+
+    // The share-safely promise driven through the command's own path rather than the module's. The coordinates are the part no string rule could reach, so they are
+    // asserted beside the names and addresses...and so is the ordinary setting sitting next to them, because the coordinate rule has to leave that one alone.
+    const bootstrap = {
+
+      cameras: [{ host: "10.0.0.7", mac: "112233445566", name: "Front Door" }],
+      nvr: { locationSettings: { latitude: 40.741895, longitude: -73.989308, radius: 200 }, mac: "112233445567", name: "Hubble" }
+    };
+    const { client } = makeFakeClient({ bootstrap });
+    const { ctx, stdout } = makeCommandContext({ args: [ "--bootstrap", "--scrub" ], client });
+
+    await info.run(ctx);
+
+    const out = stdout();
+    const parsed = JSON.parse(out) as {
+
+      cameras: [{ host: string; mac: string; name: string }];
+      nvr: { locationSettings: { latitude: number; longitude: number; radius: number } };
+    };
+
+    assert.doesNotMatch(out, /Front Door|Hubble|11223344|10\.0\.0\.7/, "nothing identifying survives anywhere in the emitted document");
+    assert.match(parsed.cameras[0].mac, /^[0-9A-F]{12}$/, "the stand-in is still address-shaped");
+    assert.match(parsed.cameras[0].name, /^Test Device \d+$/);
+    assert.match(parsed.cameras[0].host, /^192\.0\.2\.\d+$/);
+    assert.equal(parsed.nvr.locationSettings.latitude, 0);
+    assert.equal(parsed.nvr.locationSettings.longitude, 0);
+    assert.equal(parsed.nvr.locationSettings.radius, 200, "the settings beside the coordinates are evidence and come through untouched");
+  });
+
+  test("--raw --scrub pseudonymizes the state dump while collections still serialize as arrays", async () => {
+
+    // The state holds its collections as Maps, which the scrub carries through untouched for the serializer to then render as `{}`. Scrubbing what the serializer
+    // produced rather than the snapshot is what keeps the dump readable, so the array shape is asserted beside the pseudonyms.
+    const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
+    const { ctx, stdout } = makeCommandContext({ args: [ "--raw", "--scrub" ], client });
+
+    await info.run(ctx);
+
+    const out = stdout();
+    const parsed = JSON.parse(out) as { cameras: { mac: string; name: string }[]; nvr: { host: string } };
+
+    assert.ok(Array.isArray(parsed.cameras), "collections serialize as arrays, not empty maps");
+    assert.equal(parsed.cameras.length, 1);
+    assert.doesNotMatch(out, /Front Door/, "the camera's name does not survive the dump");
+    assert.match(parsed.cameras[0]?.name ?? "", /^Test Device \d+$/);
+    assert.match(parsed.nvr.host, /^192\.0\.2\.\d+$/);
+  });
+
+  test("--json --scrub pseudonymizes the curated summary, one value reading as one thing", async () => {
+
+    // The fake derives a device's mac from its id, so this camera id makes the camera and the NVR report one address - the input a referential check needs. The
+    // controller name is the other half: it is a copy of the NVR record's own name, and both have to land on the same stand-in.
+    const { client } = makeFakeClient({ cameras: [{ id: "DDEEFF", name: "Front Door" }], controllerName: "Hubble", nvr: { mac: "AABBCCDDEEFF", name: "Hubble" } });
+    const { ctx, stdout } = makeCommandContext({ args: [ "--json", "--scrub" ], client });
+
+    await info.run(ctx);
+
+    const out = stdout();
+    const parsed = JSON.parse(out) as { controller: { mac: string; name: string }; controllerName: string; devices: { mac: string; name: string }[] };
+
+    assert.doesNotMatch(out, /Hubble|Front Door/, "no real name survives the summary");
+    assert.match(parsed.controllerName, /^Test Device \d+$/);
+    assert.equal(parsed.controllerName, parsed.controller.name, "the controller name reads the same as the NVR record it is taken from");
+    assert.equal(parsed.controller.mac, parsed.devices[0]?.mac, "one address is one stand-in across the controller block and the device record");
+    assert.match(parsed.controller.mac, /^[0-9A-F]{12}$/);
+  });
+
+  test("--scrub without a JSON view is a usage error", async () => {
+
+    const { client } = makeFakeClient();
+    const { ctx } = makeCommandContext({ args: ["--scrub"], client });
+
+    await assert.rejects(info.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+  });
+
+  test("--scrub --help prints usage rather than rejecting", async () => {
+
+    // The help early return runs ahead of every validation, so asking for help never has to be a well-formed invocation.
+    const { client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: [ "--scrub", "--help" ], client });
+
+    await info.run(ctx);
+
+    assert.match(stdout(), /Usage: ufp info .*\[--scrub\]/);
+  });
 });
 
 describe("watch raw", () => {
