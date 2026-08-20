@@ -1,6 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * manifest.ts: The schema manifest - the known-surface vocabulary the build generates, the loader that validates it, and the diff that reports wire novelty against it.
+ * manifest.ts: The schema manifest - the known-surface vocabulary the build generates, the loader that validates it, the diff that reports wire novelty against it, and
+ * the exemplar records that evidence what it does not model.
  */
 import { CliError } from "./shared.ts";
 import type { RawPacket } from "../../index.ts";
@@ -191,6 +192,21 @@ export interface UnknownModelKeyFinding {
  * @category CLI
  */
 export type NoveltyFinding = UnknownCollectionFinding | UnknownEventTypeFinding | UnknownFieldFinding | UnknownModelKeyFinding;
+
+/**
+ * A few records from a bootstrap member no shape is declared for, and how many the controller actually sent.
+ *
+ * A novelty finding says that something is unmodeled; this says what it looks like. `kept` holds the exemplars, `seen` holds the size of the collection they were drawn
+ * from, so a reader knows whether three records are the whole story or the first three of forty.
+ *
+ * @category CLI
+ */
+export interface UnmodeledSnapshot {
+
+  collection: string;
+  kept: unknown[];
+  seen: number;
+}
 
 /**
  * The identity of a finding - what makes two observations the same finding rather than two.
@@ -427,6 +443,69 @@ export function diffBootstrap(manifest: SchemaManifest, bootstrap: unknown): Nov
   }
 
   return findings;
+}
+
+/**
+ * Take exemplar records from every bootstrap member the manifest describes no shape for.
+ *
+ * {@link diffBootstrap} reports that a collection is unmodeled; this carries the evidence of what is in it. Both cases matter: a member the manifest has never heard of
+ * at all, and one the library carries as raw JSON without describing. Neither can produce a field-level finding - there is no declared shape to be undeclared against -
+ * so without a sample of the records themselves, the very device class a capture was run to understand contributes nothing a reader could model it from.
+ *
+ * A few records rather than the collection: exemplars show which fields vary between units and which are fixed, while a roster only inflates the bundle. `seen` records
+ * what was elided, so a truncated snapshot never reads as a complete one.
+ *
+ * The bootstrap arrives as `unknown` and is read structurally, the same posture {@link diffBootstrap} takes and for the same reason: casting it to the library's own
+ * bootstrap type would assert exactly what a document collected for its unmodeled parts cannot be assumed to satisfy.
+ *
+ * The exemplars are the controller's records verbatim, so a caller that publishes them scrubs them: `ufp capture` scrubs the assembled bundle in one pass, which puts
+ * these records under the same replacement memory as the frames and the inventory and keeps every cross-reference between them intact.
+ *
+ * @param manifest - The loaded manifest to check against.
+ * @param bootstrap - A parsed bootstrap document.
+ * @param limit - How many records to keep from each collection.
+ *
+ * @returns One entry per unmodeled member, in the order the bootstrap presented its keys. A member holding an empty collection contributes none.
+ *
+ * @category CLI
+ */
+export function snapshotUnmodeled(manifest: SchemaManifest, bootstrap: unknown, limit: number): UnmodeledSnapshot[] {
+
+  const snapshots: UnmodeledSnapshot[] = [];
+
+  if(!isPlainObject(bootstrap)) {
+
+    return snapshots;
+  }
+
+  for(const [ key, value ] of Object.entries(bootstrap)) {
+
+    const node = manifest.records[key];
+
+    // A described member is already modeled, and its records are reported field by field by the diff instead.
+    if((node !== undefined) && (node.kind !== "opaque")) {
+
+      continue;
+    }
+
+    if(Array.isArray(value)) {
+
+      // An empty collection is the controller saying it has none of these, which is worth nothing as shape evidence.
+      if(value.length === 0) {
+
+        continue;
+      }
+
+      snapshots.push({ collection: key, kept: value.slice(0, limit), seen: value.length });
+
+      continue;
+    }
+
+    // A member that is not a collection is one record - the singleton shape a bootstrap uses for a lone object, and equally the scalar an unmodeled member sometimes is.
+    snapshots.push({ collection: key, kept: [value], seen: 1 });
+  }
+
+  return snapshots;
 }
 
 /**

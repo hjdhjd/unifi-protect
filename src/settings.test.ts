@@ -6,8 +6,9 @@
  * edit (a misplaced zero, a unit confusion) from silently changing behavior on every consumer.
  */
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_CAPTURE_DEFAULT_DURATION,
-  PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD,
-  PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
+  PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
+  PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
+  PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -77,6 +78,13 @@ describe("settings", () => {
     assert.equal(PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, 60000, "the reboot anticipation window must be the documented 60 seconds");
   });
 
+  // The exemplar cap decides how much of an unmodeled collection a capture bundle carries, which is a privacy question as much as a size one: a handful of records
+  // shows the shape of a device class, while a larger sample starts describing the site the bundle came from.
+  test("PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS is 3", () => {
+
+    assert.equal(PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, 3, "a capture must carry three exemplar records of an unmodeled collection");
+  });
+
   // Coherence of the recovery cadence: the unknown track must lead with a prompt probe (its leading zero), every staged backoff delay must be a non-negative integer, and
   // the steady floor must sit below the watchdog and throttle windows so recovery is prompt relative to the failures it responds to. These relationships - not just the
   // individual values - are the contract; a future edit that, say, set the floor above the watchdog would make recovery slower than the detection it answers.
@@ -104,6 +112,7 @@ describe("settings", () => {
       [ "PROTECT_API_RETRY_INTERVAL", PROTECT_API_RETRY_INTERVAL ],
       [ "PROTECT_API_TIMEOUT", PROTECT_API_TIMEOUT ],
       [ "PROTECT_BOOTSTRAP_REFRESH_INTERVAL", PROTECT_BOOTSTRAP_REFRESH_INTERVAL ],
+      [ "PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS", PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS ],
       [ "PROTECT_EVENTS_WATCHDOG_TIMEOUT", PROTECT_EVENTS_WATCHDOG_TIMEOUT ],
       [ "PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT", PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT ],
       [ "PROTECT_REBOOT_ANTICIPATION_WINDOW_MS", PROTECT_REBOOT_ANTICIPATION_WINDOW_MS ],

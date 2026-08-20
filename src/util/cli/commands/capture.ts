@@ -4,14 +4,14 @@
  */
 import { COMMON_OPTIONS, axisMatches, boundedSignal, compileAxis, parseDuration, readVersion } from "../shared.ts";
 import type { CommandHandler, CommandSpec, CompiledAxis } from "../shared.ts";
-import type { NoveltyFinding, SchemaManifest } from "../manifest.ts";
+import type { NoveltyFinding, SchemaManifest, UnmodeledSnapshot } from "../manifest.ts";
+import { PROTECT_CAPTURE_DEFAULT_DURATION, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } from "../../../settings.ts";
 import { channels, subscribeToChannel } from "../../../index.ts";
 import { createScrubContext, scrub } from "../scrub.ts";
-import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey } from "../manifest.ts";
+import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, snapshotUnmodeled } from "../manifest.ts";
 import { fileStamp, serializeJson } from "../output/format.ts";
 import type { AnyProtectDiagnosticsChannel } from "../../../index.ts";
 import { DEVICE_CATEGORIES } from "../lookup.ts";
-import { PROTECT_CAPTURE_DEFAULT_DURATION } from "../../../settings.ts";
 import { ProtectClient } from "../../../index.ts";
 import type { RawPacket } from "../../../index.ts";
 import type { TypedEvent } from "../../../index.ts";
@@ -83,6 +83,7 @@ interface Window {
   rawSeen: number;
   startedAt: number;
   subjects: Map<string, Set<SelectionReason>>;
+  unmodeled: UnmodeledSnapshot[];
 }
 
 // Record a device as one to follow, keeping any reason it was already followed for.
@@ -321,7 +322,7 @@ function readControllerVersions(client: ProtectClient): { firmwareVersion: strin
 }
 
 // Assemble the bundle. The keys are alphabetical because the lint rule that governs every object literal in this package says so, which happens to read well too: the
-// observations come before the evidence, and the run block that describes the capture itself comes last.
+// window's own observations come before the evidence they explain.
 function assembleBundle(window: Window, client: ProtectClient, manifest: SchemaManifest, mode: string, endedAt: number): Record<string, unknown> {
 
   return {
@@ -346,7 +347,8 @@ function assembleBundle(window: Window, client: ProtectClient, manifest: SchemaM
       selection: Object.fromEntries([...window.subjects].map(([ id, reasons ]) => [ id, [...reasons].sort() ])),
       tool: readVersion(),
       window: { durationMs: endedAt - window.startedAt, endedAt, startedAt: window.startedAt }
-    }
+    },
+    unmodeled: window.unmodeled
   };
 }
 
@@ -400,7 +402,8 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
       raw: [],
       rawSeen: 0,
       startedAt: Date.now(),
-      subjects: new Map()
+      subjects: new Map(),
+      unmodeled: []
     };
 
     // Route one channel's publications into a list, stamped against the start of the window. Curried so the two destinations - schema drift and connection health - each
@@ -429,6 +432,11 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
     const bootstrap = await client.fetchBootstrap({ signal: ctx.signal });
 
     accumulate(window, diffBootstrap(manifest, bootstrap));
+
+    // The findings say which collections this version cannot place; the exemplars say what the records in them look like. A class with no described shape produces no
+    // field-level evidence anywhere else in the bundle, so this is the only thing a reader could model one from, and it comes from the same document the diff read.
+    window.unmodeled = snapshotUnmodeled(manifest, bootstrap, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
+
     seedSubjects(window, manifest, bootstrap, device);
 
     const mode = (device === undefined) ? "discovery" : "targeted";

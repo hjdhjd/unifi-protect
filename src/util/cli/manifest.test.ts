@@ -1,11 +1,11 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * manifest.test.ts: Unit tests for the schema manifest's loader (validate-before-trust at the JSON boundary), its novelty diff in both polarities, the finding
- * identity key, and the wire event-type reader.
+ * identity key, the exemplar snapshots of what it does not model, and the wire event-type reader.
  */
 import type { NoveltyFinding, SchemaManifest } from "./manifest.ts";
 import { describe, test } from "node:test";
-import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, parseSchemaManifest } from "./manifest.ts";
+import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, parseSchemaManifest, snapshotUnmodeled } from "./manifest.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { CliError } from "./shared.ts";
 import type { RawPacket } from "../../index.ts";
@@ -200,6 +200,44 @@ describe("schema manifest diff", () => {
     }
 
     assert.deepEqual(diffBootstrap(FIXTURE, "not a bootstrap"), []);
+  });
+});
+
+describe("unmodeled snapshots", () => {
+
+  test("an unmodeled collection contributes exemplars, capped, beside the count they were drawn from", () => {
+
+    // The cap is the point: a site with forty units of a class this version cannot place should teach a reader what one record looks like, not ship the roster. The
+    // count beside them is what keeps the truncation honest, so three exemplars never read as a complete collection.
+    const bootstrap = { aiports: [ { id: "a1" }, { id: "a2" }, { id: "a3" }, { id: "a4" } ] };
+
+    assert.deepEqual(snapshotUnmodeled(FIXTURE, bootstrap, 2), [{ collection: "aiports", kept: [ { id: "a1" }, { id: "a2" } ], seen: 4 }]);
+  });
+
+  test("a member the manifest has never heard of is sampled the same as a declared-but-opaque one", () => {
+
+    // Two ways to be unmodeled - carried as raw JSON, or not carried at all - and neither can produce a field-level finding, so both need exemplars. A member that is
+    // one record rather than a collection is the one exemplar it has.
+    assert.deepEqual(snapshotUnmodeled(FIXTURE, { agreements: { contract: "tos" } }, 3), [{ collection: "agreements", kept: [{ contract: "tos" }], seen: 1 }]);
+  });
+
+  test("a described collection contributes nothing", () => {
+
+    // Its records are modeled, and anything undeclared inside one is reported field by field by the diff instead. Sampling them too would put the site's whole camera
+    // list in a bundle that was asked about what the library does not know.
+    assert.deepEqual(snapshotUnmodeled(FIXTURE, { cameras: [{ id: "c1", mac: "AABBCCDDEEFF", name: "Front Door" }], nvr: { id: "n1" } }, 3), []);
+  });
+
+  test("an empty unmodeled collection contributes nothing", () => {
+
+    // A controller reporting none of a thing is not shape evidence, and an entry with nothing kept would read as a truncation of something.
+    assert.deepEqual(snapshotUnmodeled(FIXTURE, { aiports: [] }, 3), []);
+  });
+
+  test("a bootstrap that is not an object yields nothing", () => {
+
+    // The document is read structurally rather than trusted to be a bootstrap at all, the same posture the diff takes.
+    assert.deepEqual(snapshotUnmodeled(FIXTURE, "not a bootstrap", 3), []);
   });
 });
 
