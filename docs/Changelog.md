@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.3.1 (2026-08-21)
+  * Improvement: a `--scrub` option for the `ufp info` JSON views - `--json`, `--raw`, and `--bootstrap`.
+  * Improvement: when the controller reports a device collection this library does not model at all, the `ufp capture` bundle now carries a few scrubbed example records of it - enough to show what the collection's records look like - together with a count of how many were set aside.
+  * Improvement: the sensor types now include the NOx air-quality metric and its threshold settings.
+  * Fix: the scrub now reaches geographic coordinates, the site's timezone and country code, stream share links and aliases, hardware serial numbers, and additional name and address spellings the wire uses, so a shared bundle or dump carries no site location or stream access.
+  * Housekeeping.
+
 ## 5.3.0 (2026-08-18)
   * New feature: `ufp capture`, a one-command support workflow for new and unrecognized hardware - it watches the controller against the schema this version was built with and writes a single scrubbed, self-contained bundle describing anything the controller reports that this library does not model, together with the traffic that evidences it. Every identifying value is replaced by a stable pseudonym before anything is written, so the bundle can be sent on as-is.
   * New feature: a build-generated schema manifest ships in the package - the field-path trees, model-key vocabulary, and event-type vocabulary this version knows, generated from the type definitions at build time. It is what `ufp capture` diffs the controller against, so updating the types to support a new device silences that device's novelty automatically.
