@@ -155,7 +155,8 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
     signalQuality: number;
     signalStrength: number;
   }>;
-  bridge: string;
+  // A natively-connected sensor has no LoRa bridge (the UP Air Quality is one), and the controller omits the member rather than reporting `null`, so it is optional.
+  bridge?: string;
   bridgeCandidates: ProtectBridgeCandidate[];
   camera: Nullable<string>;
   canSilenceTrouble: boolean;
@@ -170,7 +171,8 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
     button?: ProtectSensorChannelInterface;
     glassBreak?: ProtectSensorChannelInterface;
     humidity?: ProtectSensorChannelInterface;
-    isBidirectional: boolean;
+    // The controller reports an empty `featureFlags` object on the air-quality sensor, so no member of this block is guaranteed present.
+    isBidirectional?: boolean;
     led?: ProtectSensorChannelInterface;
     light?: ProtectSensorChannelInterface;
     micSoundLevel?: ProtectSensorChannelInterface;
