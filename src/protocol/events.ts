@@ -162,6 +162,10 @@ export type TypedEvent =
 // so it is named here and carried into KNOWN_EVENT_TYPES below. Without it, every login would read as an unrecognized wire type to a consumer checking against that
 // vocabulary.
 const ACCESS_EVENT_TYPE = "access";
+// The controller's administrative audit record, emitted when an operator changes the console's own configuration. The classifier declines to lift it for the same
+// reason it declines the login audit above - it describes an operator action rather than anything a device observed, so there is no occurrence to attribute to a
+// camera or a device - but recognizing it here keeps a consumer checking the vocabulary from reading routine console administration as wire drift.
+const ADMIN_ACTIVITY_EVENT_TYPE = "adminActivity";
 const AUTH_EVENT_METHODS: Readonly<Record<string, AuthMethod>> = { fingerprintIdentified: "fingerprint", nfcCardScanned: "nfc" };
 const MOTION_EVENT_TYPE = "motion";
 const RING_EVENT_TYPE = "ring";
@@ -180,8 +184,8 @@ const TAMPER_EVENT_TYPE = "smartDetectTamper";
  *
  * @internal
  */
-export const KNOWN_EVENT_TYPES: readonly string[] = [ ACCESS_EVENT_TYPE, ...Object.keys(AUTH_EVENT_METHODS), MOTION_EVENT_TYPE, RING_EVENT_TYPE,
-  SENSOR_BUTTON_EVENT_TYPE, ...SMART_EVENT_TYPES, TAMPER_EVENT_TYPE ];
+export const KNOWN_EVENT_TYPES: readonly string[] = [ ACCESS_EVENT_TYPE, ADMIN_ACTIVITY_EVENT_TYPE, ...Object.keys(AUTH_EVENT_METHODS), MOTION_EVENT_TYPE,
+  RING_EVENT_TYPE, SENSOR_BUTTON_EVENT_TYPE, ...SMART_EVENT_TYPES, TAMPER_EVENT_TYPE ];
 
 /**
  * Classify a decoded {@link RawPacket} into a {@link TypedEvent}, or `null` if the packet is valid but describes something the library does not model.

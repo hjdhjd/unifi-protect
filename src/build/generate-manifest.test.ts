@@ -154,6 +154,7 @@ describe("generate-manifest", () => {
     // The controller emits this type on every authentication, this library's own connect included. Recognition and modeling are separate questions, and leaving it
     // out of the vocabulary would make every login read as an unrecognized wire type.
     assert.ok(manifest.eventTypes.includes("access"), "the login audit type is recognized");
+    assert.ok(manifest.eventTypes.includes("adminActivity"), "the administrative audit type is recognized");
     assert.ok(manifest.eventTypes.includes("motion"), "the modeled occurrence types are recognized too");
   });
 
