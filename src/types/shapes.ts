@@ -90,6 +90,40 @@ export interface ProtectLedSettingsInterface {
   [key: string]: ProtectKnownJsonValue;
 }
 
+/**
+ * A description of the UniFi Protect video-overlay settings: what the controller burns into a camera's picture, and where. The NVR carries this shape as the global
+ * default and each camera carries its own, with the camera's `useGlobalOverlaySettings` deciding which one applies - so the shape lives here once and both sites
+ * reference it. A member the NVR leaves unset is `null` there while a camera reports it populated, which is why so much of the shape is nullable.
+ */
+export interface ProtectOverlaySettingsInterface {
+
+  // The four corners each hold one overlay segment. Only `topLeft` was observed populated; the other three are inferred to share its shape, since the controller
+  // describes them interchangeably through `capabilities.anchors` and caps them with one `maxSegmentsPerCorner`.
+  bottomLeft: Nullable<{ content: string; orientation: string }>;
+  bottomRight: Nullable<{ content: string; orientation: string }>;
+  cameraName: Nullable<string>;
+  capabilities: Nullable<{
+
+    anchors: string[];
+    maxAreaPercent: number;
+    maxContentLength: number;
+    maxContentLines: number;
+    maxSegmentsPerCorner: number;
+    placeholders: string[];
+  }>;
+  customLogoFileId: Nullable<string>;
+  datetimeFormat: Nullable<string>;
+  deviceId: string;
+  enable: boolean;
+  overlayAreaPercent: Nullable<number>;
+  source: Nullable<string>;
+  testMode: boolean;
+  topLeft: Nullable<{ content: string; orientation: string }>;
+  topRight: Nullable<{ content: string; orientation: string }>;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
 /** @see {@link ProtectSmartZoneInterface} */
 export type ProtectSmartZone = ProtectSmartZoneInterface;
 
@@ -104,3 +138,6 @@ export type ProtectThresholdSettings = ProtectThresholdSettingsInterface;
 
 /** @see {@link ProtectLedSettingsInterface} */
 export type ProtectLedSettings = ProtectLedSettingsInterface;
+
+/** @see {@link ProtectOverlaySettingsInterface} */
+export type ProtectOverlaySettings = ProtectOverlaySettingsInterface;

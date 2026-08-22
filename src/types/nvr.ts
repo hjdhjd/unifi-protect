@@ -7,6 +7,7 @@ import type { ProtectCameraConfig } from "./camera.ts";
 import type { ProtectChimeConfig } from "./chime.ts";
 import type { ProtectFobConfig } from "./fob.ts";
 import type { ProtectLightConfig } from "./light.ts";
+import type { ProtectOverlaySettingsInterface } from "./shapes.ts";
 import type { ProtectRelayConfig } from "./relay.ts";
 import type { ProtectSensorConfig } from "./sensor.ts";
 import type { ProtectSirenConfig } from "./siren.ts";
@@ -25,6 +26,7 @@ import type { ProtectViewerConfig } from "./viewer.ts";
 export interface ProtectNvrBootstrapInterface {
 
   accessKey: string;
+  agreements: ProtectNvrAgreementsInterface;
   aiports: ProtectKnownJsonValue[];
   aiprocessors: ProtectKnownJsonValue[];
   authUserId: string;
@@ -55,7 +57,7 @@ export interface ProtectNvrBootstrapInterface {
 
 /**
  * A description of a UniFi Protect NVR legal-agreement record: the contract identifier, its link, the contract version, and the acceptance status (`null` until the
- * agreement is accepted).
+ * agreement is accepted). One record; {@link ProtectNvrAgreementsInterface} is the container that holds the controller's named agreements.
  */
 export interface ProtectNvrAgreementInterface {
 
@@ -63,6 +65,18 @@ export interface ProtectNvrAgreementInterface {
   actualContractLink: string;
   actualVersion: string;
   status: Nullable<string>;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
+/**
+ * The container holding each of the controller's named legal agreements, every one a {@link ProtectNvrAgreementInterface} record (the singular name is one such
+ * record; this plural one is the set of them). The controller reports the identical shape at the bootstrap's top level and on the NVR record, so both reference this.
+ */
+export interface ProtectNvrAgreementsInterface {
+
+  aiReportingAgreement: ProtectNvrAgreementInterface;
+  smartDetectAgreement: ProtectNvrAgreementInterface;
 
   [key: string]: ProtectKnownJsonValue;
 }
@@ -84,15 +98,22 @@ export interface ProtectNvrAiFeatureToggleInterface {
  */
 export interface ProtectNvrConfigInterface {
 
+  accessMigratedAt: Nullable<number>;
+  accessMigrationStatus: Nullable<string>;
+  accessSwitchBackStatus: Nullable<string>;
   accessVersion: string;
-  agreements: {
-
-    aiReportingAgreement: ProtectNvrAgreementInterface;
-    smartDetectAgreement: ProtectNvrAgreementInterface;
-  };
+  agreements: ProtectNvrAgreementsInterface;
   aiFeatureSettings: {
 
     aiSummarySettings: ProtectNvrAiFeatureToggleInterface;
+    // The same toggle every sibling setting carries, plus this feature's own tuning. The added members were observed only as `null`; a cutoff is a numeric threshold,
+    // while the rest leave their kind genuinely open on the wire.
+    deepUnderstandingSettings: ProtectNvrAiFeatureToggleInterface & {
+
+      describe: ProtectKnownJsonValue;
+      reidCutoffByCamera: ProtectKnownJsonValue;
+      reidCutoffDefault: Nullable<number>;
+    };
     faceEnhanceSettings: ProtectNvrAiFeatureToggleInterface;
     faceRecognitionSettings: ProtectNvrAiFeatureToggleInterface;
     licensePlateRecognitionSettings: ProtectNvrAiFeatureToggleInterface;
@@ -129,6 +150,8 @@ export interface ProtectNvrConfigInterface {
   };
   cameraUtilization: number;
   canAutoUpdate: boolean;
+  canMigrateAccessDevices: boolean;
+  canSwitchBackToAccess: boolean;
   cefSettings: {
 
     enabledCategories: string[];
@@ -170,6 +193,7 @@ export interface ProtectNvrConfigInterface {
     defaultMessageResetTimeoutMs: number;
     defaultMessageText: string;
   };
+  emergencyMode: string;
   enableAutomaticBackups: boolean;
   enableBridgeAutoAdoption: boolean;
   enableCrashReporting: boolean;
@@ -181,13 +205,44 @@ export interface ProtectNvrConfigInterface {
   expansionUnits: ProtectKnownJsonValue[];
   featureFlags: {
 
+    aiFeatureFlag: {
+
+      supportAiSummary: { enabled: boolean };
+      supportFaceEnhancement: { enabled: boolean };
+      supportFaceRecognition: { enabled: boolean };
+      supportImageSearch: { enabled: boolean };
+      supportLicensePlateRecognition: { enabled: boolean };
+      supportMessageProxy: { enabled: boolean };
+      supportPersonReId: { enabled: boolean };
+      supportPoseEstimation: { enabled: boolean };
+      supportRecognizeAnything: { enabled: boolean };
+      supportRetroactiveProcessing: { enabled: boolean };
+      supportTts: { enabled: boolean };
+    };
+    autoRetentionSupported: boolean;
     beta: boolean;
     detectionLabels: boolean;
     dev: boolean;
+    externalAlarmManagerReady: boolean;
+    hasSessionStats: boolean;
     hasTwoWayAudioMediaStreams: boolean;
     homekitPaired: boolean;
+    isCasePresentationSupported: boolean;
+    isRecordingContinuitySupported: boolean;
+    isUnifiCloudStorageSupported: boolean;
+    isVideoSigningSupported: boolean;
+    lastMigratedEventId: Nullable<string>;
+    msApixSupported: boolean;
+    msIdSupport: boolean;
     notificationsV2: boolean;
+    smartDoorAccess: boolean;
+    stackedMigration: boolean;
+    supportAccessAppRingEvent: boolean;
+    supportAccessMigration: boolean;
+    supportAccessPlayback: boolean;
+    supportsExpansionUnits: boolean;
     ulpRoleManagement: boolean;
+    useExternalAlarmManager: boolean;
   };
   firmwareVersion: string;
   foreignPgDumpConsoleName: Nullable<string>;
@@ -196,8 +251,12 @@ export interface ProtectNvrConfigInterface {
   hardDriveState: string;
   hardwareId: string;
   hardwareRevision: string;
+  hasAccessMigrationBackup: boolean;
   hasBackportedRetentionSettings: boolean;
   hasGateway: boolean;
+  hasInternet: boolean;
+  hasMigratableAccessDevices: boolean;
+  hasUnsupportedAccessDevices: boolean;
   homekitError: Nullable<string>;
   homekitSetupCode: Nullable<string>;
   homekitSetupPayload: Nullable<string>;
@@ -214,8 +273,10 @@ export interface ProtectNvrConfigInterface {
   isEdgeDevice: boolean;
   isFullBackupPreparing: boolean;
   isFullBackupReady: boolean;
+  isGapRecoveryEnabled: boolean;
   isHomekitEnabled: boolean;
   isInsightsEnabled: boolean;
+  isInternalOwner: boolean;
   isMigrationFailed: boolean;
   isNetworkInstalled: boolean;
   isPrimary: boolean;
@@ -233,6 +294,7 @@ export interface ProtectNvrConfigInterface {
   isUCoreStacked: boolean;
   isUcoreUpdatable: boolean;
   isUpdating: boolean;
+  isVideoSigningEnabled: boolean;
   isWirelessUplinkEnabled: Nullable<boolean>;
   lastDeviceFWUpdatesCheckedAt: number;
   lastSeen: number;
@@ -259,6 +321,9 @@ export interface ProtectNvrConfigInterface {
   };
   msrServiceState: string;
   name?: string;
+  offlineAccessDevices: ProtectKnownJsonValue[];
+  offlineMigratedAccessDevices: ProtectKnownJsonValue[];
+  overlaySettings: ProtectOverlaySettingsInterface;
   pinCodeSettings: {
 
     pinCodeLengthRange: string;
@@ -266,18 +331,25 @@ export interface ProtectNvrConfigInterface {
   portStatus: ProtectKnownJsonValue[];
   ports: {
 
+    accessHttp: number;
     aiFeatureConsole: number;
     cameraEvents: number;
     cameraHttps: number;
+    devicesWs: number;
     devicesWss: number;
     discoveryClient: number;
+    dsWebServer: number;
+    edgeCameraHttps: number;
     emsCLI: number;
     emsJsonCLI: number;
     emsLiveFLV: number;
+    emsLiveFLVs: number;
     http: number;
     https: number;
     liveWs: number;
     liveWss: number;
+    mspHttp: number;
+    playApplication: number;
     playback: number;
     rtmp: number;
     rtsp: number;
@@ -286,11 +358,17 @@ export interface ProtectNvrConfigInterface {
     tcpBridge: number;
     tcpStreams: number;
     ucore: number;
+    ulp: number;
     ump: number;
+    uosExternalAutomationManager: number;
+    userAssets: number;
   };
   publicIp: string;
   recordingRetentionDurationMs: Nullable<string>;
+  registeredEvidenceKeyId: Nullable<string>;
+  registeredEvidenceKeyValidUntilMs: Nullable<number>;
   releaseChannel: string;
+  serialNumber: string;
   sessionSettings: {
 
     doorbellTimeout: number;
@@ -308,6 +386,7 @@ export interface ProtectNvrConfigInterface {
     enable: boolean;
     faceRecognition: boolean;
     licensePlateRecognition: boolean;
+    precision: string;
   };
   storageAllocationHqPercent: number;
   storageAllocationHqPercentBalanced: number;
@@ -322,7 +401,18 @@ export interface ProtectNvrConfigInterface {
   storageConsoleFailoverSettings: ProtectKnownJsonValue[];
   storageStats: {
 
+    averageCapacity: number;
     capacity: number;
+    recordingDistribution: {
+
+      hq: { bytes: number; percentage: number };
+      lq: { bytes: number; percentage: number };
+      persistent: { bytes: number; percentage: number };
+      reserved: { bytes: number; percentage: number };
+      timelapse: { bytes: number; percentage: number };
+      unused: { bytes: number; percentage: number };
+    };
+    recordingRate: number;
     recordingSpace: {
 
       available: number;
@@ -330,6 +420,7 @@ export interface ProtectNvrConfigInterface {
       used: number;
     };
     remainingCapacity: number;
+    retentionRatioLQ: number;
     storageDistribution: {
 
       recordingTypeDistributions: {
@@ -367,6 +458,7 @@ export interface ProtectNvrConfigInterface {
   ulpVersion: string;
   upSince: number;
   version: string;
+  videoSigningEnabledAt: Nullable<number>;
   voipForbidden: boolean;
   wanIp: string;
   wanPorts: ProtectKnownJsonValue[];
@@ -384,6 +476,14 @@ export interface ProtectNvrSystemInfoInterface {
     averageLoad: number;
     temperature: number;
   };
+  degradation: {
+
+    level: number;
+    loadLevel: string;
+    // Observed only as `null`; the plural names a list, but nothing on the wire describes what an entry holds.
+    pressures: Nullable<ProtectKnownJsonValue[]>;
+    updatedAt: number;
+  };
   memory: {
 
     available: number;
@@ -393,6 +493,7 @@ export interface ProtectNvrSystemInfoInterface {
   storage: {
 
     available: number;
+    capability: string;
     devices: {
 
       healthy: boolean;
@@ -410,6 +511,47 @@ export interface ProtectNvrSystemInfoInterface {
     path: string;
     total: number;
     used: number;
+  };
+  // The disk and volume inventory the console's storage layer reports, in its own snake_case wire vocabulary rather than the camelCase the rest of the API uses. The
+  // `estimate` and `progress` members carry a number only while an operation is running, and read `null` otherwise.
+  ustorage: {
+
+    disks: {
+
+      action: string;
+      ata: string;
+      bad_sector: number;
+      estimate: Nullable<number>;
+      firmware: string;
+      healthy: string;
+      model: string;
+      poweronhrs: number;
+      progress: Nullable<number>;
+      reason: ProtectKnownJsonValue[];
+      rpm: number;
+      sata: string;
+      serial: string;
+      size: number;
+      slot: number;
+      state: string;
+      temperature: number;
+      type: string;
+    }[];
+    hotspare: boolean;
+    raid: string;
+    sdcards: ProtectKnownJsonValue[];
+    space: {
+
+      action: string;
+      device: string;
+      estimate: Nullable<number>;
+      health: string;
+      progress: Nullable<number>;
+      reasons: ProtectKnownJsonValue[];
+      space_type: string;
+      total_bytes: number;
+      used_bytes: number;
+    }[];
   };
 
   [key: string]: ProtectKnownJsonValue;
@@ -437,6 +579,36 @@ export interface ProtectNvrLiveviewConfigInterface {
   [key: string]: ProtectKnownJsonValue;
 }
 
+/* The continuous-archive state a user's OAuth-backed cloud destination reports: the last attempt and its outcome, whether archiving is on, and the destination's own
+ * quota accounting. Every such provider reports the identical shape, so it is declared once here...it stays module-private because it is a nested detail of the user
+ * record rather than a shape a consumer reaches for on its own.
+ */
+interface ProtectNvrUserCloudProviderInterface {
+
+  continuousArchiveConsecutiveFailures: number;
+  continuousArchiveLastAttemptAt: Nullable<number>;
+  continuousArchiveLastFailureAt: Nullable<number>;
+  continuousArchiveLastFailureReason: Nullable<string>;
+  continuousArchiveLastSuccessfulAt: Nullable<number>;
+  continuousArchiveStatus: Nullable<string>;
+  displayName: Nullable<string>;
+  email: Nullable<string>;
+  errors: ProtectKnownJsonValue[];
+  expiresAt: number;
+  isContinuousArchivingEnabled: boolean;
+  retentionPolicy: {
+
+    currentArchiveSizeBytes: Nullable<number>;
+    isStorageInfoSyncing: boolean;
+    maxArchiveSizeGB: Nullable<number>;
+    reservedFreeSpaceGB: Nullable<number>;
+    totalSpaceBytes: Nullable<number>;
+    totalUsedSpaceBytes: Nullable<number>;
+  };
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
 /**
  * A semi-complete description of the UniFi Protect NVR user JSON.
  */
@@ -444,24 +616,74 @@ export interface ProtectNvrUserConfigInterface {
 
   alertRules: ProtectKnownJsonValue[];
   allPermissions: string[];
-  cloudAccount?: {
+  archivingSettings: {
+
+    cameras: ProtectKnownJsonValue[];
+    detections: ProtectKnownJsonValue[];
+    isAllCameras: boolean;
+    isAllDetections: boolean;
+  };
+  // Present on every user record and `null` on any whose account is not linked to the cloud, so the member is required and the object is what is nullable.
+  cloudAccount: Nullable<{
 
     cloudId: string;
     email: string;
     firstName: string;
     id: string;
     lastName: string;
+    // The account's own location record, distinct from the user's `location` state below - a different subject, so the two shapes stay separate. Optional because
+    // only a linked account reports it. The coordinates are numeric by inference: every observation of them came through a capture that nulls coordinates.
+    location?: {
+
+      isAway: boolean;
+      latitude: Nullable<number>;
+      longitude: Nullable<number>;
+      modelKey: string;
+    };
     modelKey: string;
     name: string;
     profileImg: string;
     user: string;
+  }>;
+  cloudProviders: {
+
+    NAS: ProtectKnownJsonValue[];
+    dropbox: ProtectNvrUserCloudProviderInterface;
+    google: ProtectNvrUserCloudProviderInterface;
+    oneDrive: ProtectNvrUserCloudProviderInterface;
+    unifiCloudStorage: {
+
+      continuousArchiveConsecutiveFailures: number;
+      continuousArchiveLastAttemptAt: Nullable<number>;
+      continuousArchiveLastFailureAt: Nullable<number>;
+      continuousArchiveLastFailureReason: Nullable<string>;
+      continuousArchiveLastSuccessfulAt: Nullable<number>;
+      continuousArchiveStatus: Nullable<string>;
+      isContinuousArchivingEnabled: boolean;
+      lastStatusSyncAt: Nullable<number>;
+      quotaLimitBytes: Nullable<number>;
+      subscriptionDataDeletedAt: Nullable<number>;
+      subscriptionDataWillBeDeletedAt: Nullable<number>;
+      subscriptionExpiredAt: Nullable<number>;
+      subscriptionId: Nullable<string>;
+      subscriptionIsActive: Nullable<boolean>;
+      subscriptionRegion: Nullable<string>;
+      subscriptionStatus: Nullable<string>;
+      subscriptionType: Nullable<string>;
+    };
   };
   email: string;
   enableNotifications: boolean;
+  featureFlags: {
+
+    hasCriticalAlarmNotifications: boolean;
+    notificationsV2: boolean;
+  };
   firstName: string;
   groups: string[];
   hasAcceptedInvite: boolean;
   id: string;
+  isAdmin: boolean;
   isOwner: boolean;
   lastLoginIp: Nullable<string>;
   lastLoginTime: Nullable<number>;
@@ -475,7 +697,41 @@ export interface ProtectNvrUserConfigInterface {
   };
   modelKey: "user";
   name: string;
+  notificationSnoozeSettings: {
+
+    deliveryMethods: ProtectKnownJsonValue[];
+    eventTypes: ProtectKnownJsonValue[];
+    excludedDevices: {
+
+      bridges: ProtectKnownJsonValue[];
+      cameras: ProtectKnownJsonValue[];
+      chimes: ProtectKnownJsonValue[];
+      lights: ProtectKnownJsonValue[];
+      sensors: ProtectKnownJsonValue[];
+      viewers: ProtectKnownJsonValue[];
+    };
+    validUntil: number;
+  };
+  // Both were observed as empty objects, so their keys are undeclarable; the open signatures keep whatever the controller puts there readable.
+  notifications: Record<string, ProtectKnownJsonValue>;
+  notificationsV2: Record<string, ProtectKnownJsonValue>;
   permissions: string[];
+  scopes: string[];
+  settings: {
+
+    showFeaturesIntroduction: boolean;
+    smartDetectionHighlightSettings?: {
+
+      cameraID: string;
+      enabledSmartDetectStats: ProtectKnownJsonValue[];
+      enabledSmartDetectTypes: string[];
+    }[];
+    // The web console's own preference blob, written by that app for its own use: its keys are a mix of UI state and record ids, they vary by user and by console
+    // version, and none of them is part of the controller's API contract. Declared open so the shape stays readable without reporting every console preference as
+    // schema drift.
+    web?: Record<string, ProtectKnownJsonValue>;
+  };
+  ucoreUserId: Nullable<string>;
 
   [key: string]: ProtectKnownJsonValue;
 }
@@ -573,6 +829,9 @@ export type ProtectNvrBootstrap = ProtectNvrBootstrapInterface;
 
 /** @see {@link ProtectNvrAgreementInterface} */
 export type ProtectNvrAgreement = ProtectNvrAgreementInterface;
+
+/** @see {@link ProtectNvrAgreementsInterface} */
+export type ProtectNvrAgreements = ProtectNvrAgreementsInterface;
 
 /** @see {@link ProtectNvrAiFeatureToggleInterface} */
 export type ProtectNvrAiFeatureToggle = ProtectNvrAiFeatureToggleInterface;

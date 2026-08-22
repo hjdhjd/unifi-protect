@@ -3,7 +3,7 @@
  * camera.ts: The UniFi Protect camera configuration types, including the camera-specific PTZ axis range and channel, LCD-message, recording-path, and talkback shapes.
  */
 import type { DeepPartial, Nullable, ProtectKnownJsonValue } from "./common.ts";
-import type { ProtectLedSettingsInterface, ProtectSmartZoneInterface } from "./shapes.ts";
+import type { ProtectLedSettingsInterface, ProtectOverlaySettingsInterface, ProtectSmartZoneInterface } from "./shapes.ts";
 import type { ProtectDeviceBaseInterface } from "./base.ts";
 
 /**
@@ -39,6 +39,7 @@ export interface ProtectPtzAxisRangeInterface {
  */
 export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface {
 
+  accessControlPlane: string;
   accessDeviceMetadata?: {
 
     channels: {
@@ -122,6 +123,8 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   currentResolution: string;
   doorbellSession: {
 
+    currentGroupIndex: Nullable<number>;
+    directoryId: Nullable<string>;
     sessionId: Nullable<string>;
     status: Nullable<string>;
   };
@@ -155,6 +158,8 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       maxZones: number;
       rectangleOnly: boolean;
     }>;
+    // Inferred `string[]` element type from the resolution labels the sibling `supportedScalingResolutions` carries; `null` on a camera that cannot downscale.
+    downScaleLevels: Nullable<string[]>;
     downScaleResolutions: number[][];
     excludeZones: {
 
@@ -189,17 +194,21 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     hasLineCrossingCounting: boolean;
     hasLineIn: boolean;
     hasLiveviewTracking: boolean;
+    hasLocalBufferRecording: boolean;
     hasLprReflex: boolean;
     hasLuxCheck: boolean;
     hasManualPersonOfInterest: boolean;
     hasMic: boolean;
+    hasMotionDetection: boolean;
     hasMotionZones: boolean;
+    hasNewOverlay: boolean;
     hasOptimizeIr: boolean;
     hasPackageCamera: boolean;
     hasPackageZoneSupportForPrimaryLens: boolean;
     hasPackageZoneSupportForSecondaryLens: boolean;
     hasPrivacyMask: boolean;
     hasRtc: boolean;
+    hasSafetyZones: boolean;
     hasSdCard: boolean;
     hasSmartDetect: boolean;
     hasSmartZoom: boolean;
@@ -234,6 +243,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     maxScaleDownLevel: number;
     motionAlgorithms: string[];
     mountPositions: string[];
+    overlay: Nullable<{ placeholders: string[] }>;
     pan: ProtectPtzAxisRangeInterface;
     presetMinDuration: Nullable<number>;
     presetTour: boolean;
@@ -241,6 +251,9 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       maxMasks: number;
       rectangleOnly: boolean;
     };
+    radar: boolean;
+    // Observed only as `null`, with nothing in the record to pin even its kind.
+    radarFeatures: ProtectKnownJsonValue;
     reader: {
 
       canAdjustBrightness: boolean;
@@ -255,6 +268,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       supportDoorbellTriggerMethod: boolean;
       supportFloodLed: boolean;
       supportGateStop: boolean;
+      supportGifInterfaceImage: boolean;
       supportGreetings: boolean;
       supportInterfaceDesigner: boolean;
       supportInterfaceDirectory: boolean;
@@ -263,6 +277,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       supportManualDownloadSupportFile: boolean;
       supportManualFirmwareUpdate: boolean;
       supportMic: boolean;
+      supportPinCodeShuffle: boolean;
       supportShowHeading: boolean;
       supportShowInterfaceImage: boolean;
       supportShowStatusBar: boolean;
@@ -270,14 +285,20 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       supportSpeaker: boolean;
       supportSsh: boolean;
       supportStatusLed: boolean;
+      supportStatusSound: boolean;
       supportStreamEncryption: boolean;
+      supportThirdPartySip: boolean;
       supportTwilioSip: boolean;
       supportWelcomeLed: boolean;
     };
     smartDetectAudioTypes: string[];
     smartDetectTypes: string[];
+    // The bounds are optional because they ride `support: true` - a camera that cannot stitch reports the support flag alone and omits all three.
     stitchDistance: {
 
+      default?: number;
+      max?: number;
+      min?: number;
       support: boolean;
     };
     storage: {
@@ -286,6 +307,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       ssdSlotCount: number;
     };
     streamEncryptable: boolean;
+    supportAccessManagedByProtect: boolean;
     supportCustomRingtone: boolean;
     supportDoorAccessConfig: boolean;
     supportFullHdSnapshot: boolean;
@@ -294,6 +316,9 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     supportMinMotionAdaptiveBitrate: boolean;
     supportNfc: boolean;
     supportPtzTrackingTimeout: boolean;
+    supportPtzVehicleTracking: boolean;
+    // Observed only as `null`, with nothing in the record to pin even its kind.
+    teleportState: ProtectKnownJsonValue;
     tilt: ProtectPtzAxisRangeInterface;
     verticalFlipWarning: boolean;
     videoCodecs: string[];
@@ -319,6 +344,8 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     status: string;
     total: number;
   };
+  // Observed only as `null`, with nothing in the record to pin even its kind.
+  fogDetection: ProtectKnownJsonValue;
   greetingSettings: {
 
     greetingBroadcastName: string;
@@ -344,6 +371,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   };
   host: string;
   hqBytesPerDay: number;
+  hqBytesPerDayUpdatedAt: number;
   hubMac: string;
   interfaceSettings: {
 
@@ -365,6 +393,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   isConnected: boolean;
   isDark: boolean;
   isDeleting: boolean;
+  isEntry: boolean;
   isExtenderInstalledEver: boolean;
   isIntercom: boolean;
   isLiveHeatmapEnabled: boolean;
@@ -381,6 +410,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   isRecordingsPausedChangedAt: Nullable<number>;
   isSmartDetected: boolean;
   isThirdPartyCamera: boolean;
+  isTransferringGap: boolean;
   isWaterproofCaseAttached: boolean;
   isWirelessUplinkEnabled: boolean;
   ispSettings: {
@@ -423,6 +453,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     zoomPosition: number;
   };
   lastMotion: number;
+  lastMotionDetectionTypes: string[];
   lastRing: Nullable<number>;
   lcdMessage?: DeepPartial<ProtectCameraLcdMessageConfigInterface>;
   ledSettings: {
@@ -435,6 +466,8 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
 
     id: number;
     video: {
+      continuousStart: number;
+      continuousStartLQ: number;
       recordingEnd: Nullable<number>;
       recordingEndLQ: Nullable<number>;
       recordingStart: Nullable<number>;
@@ -445,6 +478,8 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       timelapseStartLQ: Nullable<number>;
     };
   }[];
+  // Observed only as `null`, with nothing in the record to pin even its kind - the wire gives no clue whether it holds coordinates or a reference to a location record.
+  location: ProtectKnownJsonValue;
   // Inferred `string[]` element type from the field name; `null` on all current cameras.
   lowMemoryDisabledProcesses: Nullable<string[]>;
   lqBytesPerDay: number;
@@ -477,6 +512,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     isNameEnabled: boolean;
     overlayLocation: string;
   };
+  overlaySettings: ProtectOverlaySettingsInterface;
   parentCameraGroupId: Nullable<string>;
   phyRate: number;
   pinCodeSettings: {
@@ -484,6 +520,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     pinCodeLengthRange: string;
     pinCodeShuffle: boolean;
   };
+  poePortNumber: Nullable<number>;
   privacyZones: ProtectKnownJsonValue[];
   ptz: {
 
@@ -501,6 +538,9 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     doorName: Nullable<string>;
     language: string;
     screenOffTimeout: string;
+    showUnlockSchedule: boolean;
+    // Observed as an empty object on every camera, so its keys are undeclarable; the open signature keeps whatever the controller puts there readable.
+    twoFactorAuth: Record<string, ProtectKnownJsonValue>;
     unlockDuration: number;
   };
   receiverGroups: ProtectKnownJsonValue[];
@@ -549,7 +589,14 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     enableTamperDetection: boolean;
     objectTypes: string[];
   };
-  smartDetectZones: (ProtectSmartZoneInterface & { objectTypes: string[] })[];
+  // `triggerAccessTypes` was observed empty on every zone, so its element shape is undeclarable and the array stays opaque per element.
+  smartDetectZones: (ProtectSmartZoneInterface & {
+
+    enableAccessLPOnlyMode: boolean;
+    objectTypes: string[];
+    source: string;
+    triggerAccessTypes: ProtectKnownJsonValue[];
+  })[];
   speakerSettings: {
 
     areSystemSoundsEnabled: boolean;
@@ -560,11 +607,14 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     speakerVolume: number;
     volume: number;
   };
+  // Observed empty on every camera, so the element shape is undeclarable.
+  spatialIntelligenceZones: ProtectKnownJsonValue[];
   stats: {
 
     edgeRecording: {
 
       deviceMac: Nullable<string>;
+      operationMode: Nullable<string>;
       recordMode: string;
       recordStreamNumber: Nullable<number>;
     };
@@ -586,6 +636,12 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     sdCardStorageCapacityMs: Nullable<number>;
     storage: {
 
+      // The channel ids are data rather than schema, so the per-channel breakdown is keyed rather than enumerated.
+      channelStorage: Record<string, {
+
+        rotating: { lockedRecordingsSizeBytes: number; recordingsSizeBytes: number };
+        timelapse: { lockedRecordingsSizeBytes: number; recordingsSizeBytes: number };
+      }>;
       rate: number;
       used: number;
     };
@@ -593,6 +649,8 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     totalStorageCapacityMs: Nullable<number>;
     video: {
 
+      continuousStart: number;
+      continuousStartLQ: number;
       recordingEnd: number;
       recordingEndLQ: number;
       recordingStart: number;
@@ -633,13 +691,27 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   // The camera's own talkback settings (a single object), distinct from the Access-integration talkback channel array nested under `accessDeviceMetadata` above.
   talkbackSettings: ProtectCameraTalkbackConfigInterface;
   template: Nullable<ProtectKnownJsonValue>;
+  // This whole shape describes an ONVIF camera the controller has adopted, so a controller running only Ubiquiti cameras reports every member of it as `null`. The
+  // members below are typed from what each names against ONVIF's own vocabulary - a profile token is a string, the `...Tokens` plurals are lists of them - and the
+  // ones whose kind that leaves genuinely open stay undescribed rather than guessed at.
   thirdPartyCameraInfo: {
 
+    availableProfiles: Nullable<ProtectKnownJsonValue[]>;
+    digitalInput: ProtectKnownJsonValue;
+    digitalInputTokens: Nullable<string[]>;
     enableRtspAudio: Nullable<boolean>;
     errors: ProtectKnownJsonValue[];
     forceTcp: Nullable<boolean>;
     hasAudio: Nullable<boolean>;
+    imaging: ProtectKnownJsonValue;
+    manualProfileOverride: boolean;
+    mediaVersion: Nullable<string>;
+    motionDetection: ProtectKnownJsonValue;
     port: number;
+    profileToken: Nullable<string>;
+    profileTokenLQ: Nullable<string>;
+    relayOutput: ProtectKnownJsonValue;
+    relayOutputTokens: Nullable<string[]>;
     rtspUrl: string;
     rtspUrlLQ: string;
     snapshotUrl: string;
@@ -649,6 +721,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     limit: number;
     side: string;
   };
+  useGlobalOverlaySettings: boolean;
   userConfiguredAp: boolean;
   videoCodec: string;
   videoCodecLastSwitchAt: Nullable<number>;

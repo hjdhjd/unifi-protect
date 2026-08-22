@@ -3,7 +3,7 @@
  * sensor.ts: The UniFi Protect sensor configuration types, including its capability-channel, air-quality, sensitivity, and smoke-status shapes.
  */
 import type { Nullable, ProtectKnownJsonValue } from "./common.ts";
-import type { ProtectAirQualityMetricInterface, ProtectAirQualityThresholdSettingsInterface, ProtectBridgeCandidate,
+import type { ProtectAirQualityMetricInterface, ProtectAirQualityThresholdSettingsInterface, ProtectBridgeCandidate, ProtectLedSettingsInterface,
   ProtectThresholdSettingsInterface } from "./shapes.ts";
 import type { ProtectDeviceBaseInterface, ProtectWirelessConnectionSettingsInterface, ProtectWirelessConnectionStateInterface } from "./base.ts";
 
@@ -143,18 +143,24 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   batteryStatus: {
 
     isLow: boolean;
+    modelKey: string;
     percentage: Nullable<number>;
   };
-  bluetoothConnectionState: {
+  // A sensor that reaches the controller over Bluetooth carries this link telemetry; one without that link reports the whole object as `null` (the UP Air Quality
+  // sensor does), which is why the member is nullable rather than the readings inside it.
+  bluetoothConnectionState: Nullable<{
 
+    modelKey: string;
     signalNoiseRatio: Nullable<number>;
     signalQuality: number;
     signalStrength: number;
-  };
+  }>;
   bridge: string;
   bridgeCandidates: ProtectBridgeCandidate[];
   camera: string;
+  canSilenceTrouble: boolean;
   chosenBridge: Nullable<string>;
+  coAlarmTriggeredAt: Nullable<number>;
   connectionType: string;
   externalLeakDetectedAt: Nullable<number>;
   featureFlags: {
@@ -167,14 +173,18 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
     isBidirectional: boolean;
     led?: ProtectSensorChannelInterface;
     light?: ProtectSensorChannelInterface;
+    micSoundLevel?: ProtectSensorChannelInterface;
     motion?: ProtectSensorChannelInterface;
     open?: ProtectSensorChannelInterface;
     tamper?: ProtectSensorChannelInterface;
     temperature?: ProtectSensorChannelInterface & { range: { max: number; min: number } };
+    testMode?: ProtectSensorChannelInterface;
+    testModeControl?: ProtectSensorChannelInterface;
     waterLeak?: ProtectSensorChannelInterface & { channelNames: string[] };
   };
   functionButtonPressedAt: Nullable<number>;
   glassBreakSettings: ProtectSensorSensitivitySettingsInterface;
+  glassBreakTriggeredAt: Nullable<number>;
   hasCustomSensitivityWhenArmed: boolean;
   // Unlike the relay - its closest LoRa-bridged sibling, which reports `host: null` and omits `isConnected` - a bridge-paired sensor is still reported by the controller
   // with a concrete host and a connection boolean, so both re-narrow from the shared base's widened forms back to their always-present shapes here (the wireless and
@@ -184,17 +194,17 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   isConnected: boolean;
   isMotionDetected: boolean;
   isOpened: Nullable<boolean>;
+  isTestModeActive: boolean;
   leakDetectedAt: Nullable<number>;
   leakSettings: {
 
     isExternalEnabled: boolean;
     isInternalEnabled: boolean;
   };
-  ledSettings: {
-
-    isEnabled: boolean;
-  };
+  ledSettings: ProtectLedSettingsInterface & { activityFeedback: boolean };
   lightSettings: ProtectThresholdSettingsInterface;
+  // Observed only as `null`; a sound level is a numeric reading, and only a sensor advertising the `micSoundLevel` capability channel populates it.
+  micSoundLevel: Nullable<number>;
   modelKey: "sensor";
   // `Nullable` because a sensor without motion capability reports this as `null` rather than a timestamp; only motion-capable models populate it.
   motionDetectedAt: Nullable<number>;
@@ -203,6 +213,13 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   // `Nullable` because only an open/close-capable sensor populates it; other sensor models report `null`.
   openStatusChangedAt: Nullable<number>;
   scheduleMode: string;
+  sensorWidget: {
+
+    // Observed only as `null`; the plural names the set of metrics the widget shows, but nothing on the wire describes an entry.
+    enabledMetrics: Nullable<ProtectKnownJsonValue[]>;
+    isEnabled: boolean;
+  };
+  smokeAlarmTriggeredAt: Nullable<number>;
   smokeStatus: Nullable<ProtectSensorSmokeStatusInterface>;
   stats?: {
 
@@ -212,6 +229,7 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   };
   tamperingDetectedAt: Nullable<number>;
   temperatureSettings: ProtectThresholdSettingsInterface;
+  testModeExpiresAt: Nullable<number>;
   troubleSilencedAt: Nullable<number>;
   updateInterval: number;
   wirelessConnectionSettings: ProtectWirelessConnectionSettingsInterface;

@@ -107,6 +107,24 @@ describe("generate-manifest", () => {
     assert.ok(manifest.modelKeys.known.includes("siren"), "the siren is a recognized wire model key");
   });
 
+  test("the bootstrap's top-level agreements container resolves through the shared interface", () => {
+
+    // The controller reports the identical agreements container at the bootstrap's top level and on the NVR record, and one interface serves both. Resolving the
+    // acceptance status through it proves the shared declaration is what landed rather than a same-named shape that happens to sit in the right place.
+    const agreements = manifest.records["agreements"];
+
+    assert.equal(agreements?.kind, "object", "the agreements container is described rather than absent");
+    assert.deepEqual(nodeAt(agreements ?? { kind: "opaque" }, "aiReportingAgreement.status"), { kind: "primitive", types: [ "null", "string" ] },
+      "an agreement's acceptance status is null until it is accepted");
+  });
+
+  test("a user tree declares a nullable identifier as both of its JSON types", () => {
+
+    const ucoreUserId = nodeAt(manifest.records["users"] ?? { kind: "opaque" }, "ucoreUserId");
+
+    assert.deepEqual(ucoreUserId, { kind: "primitive", types: [ "null", "string" ] }, "an identifier absent on a local-only account declares both JSON types");
+  });
+
   test("the collections the library carries but does not describe are opaque", () => {
 
     for(const collection of [ "aiports", "aiprocessors", "bridges", "linkstations" ]) {
