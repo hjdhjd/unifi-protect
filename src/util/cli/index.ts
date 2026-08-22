@@ -44,6 +44,7 @@ const EXAMPLES: readonly (readonly [string, string])[] = [
 
   [ "ufp info", "# the controller summary and full device inventory" ],
   [ "ufp info --bootstrap | jq", "# the full controller bootstrap (uncurated, not the modeled state)" ],
+  [ "ufp info --bootstrap --scrub > controller.json", "# a scrubbed bootstrap, safe to share for support and modeling" ],
   [ "ufp watch events", "# stream realtime events as they happen" ],
   [ "ufp watch raw --json", "# the decoded frame firehose, as NDJSON for capture" ],
   [ "ufp camera snapshot <camera>", "# save a current JPEG from a camera" ],
