@@ -26,6 +26,7 @@ export type * from "./nvr.ts";
 export type * from "./relay.ts";
 export type * from "./sensor.ts";
 export type * from "./shapes.ts";
+export type * from "./siren.ts";
 export type * from "./viewer.ts";
 
 import type { ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectNvrUserConfig } from "./nvr.ts";

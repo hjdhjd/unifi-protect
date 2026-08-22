@@ -41,12 +41,12 @@ export const STATE_MODEL_KEYS = [ ...DEVICE_MODEL_KEYS, "liveview", "user" ] as 
 
 // Tier 3 - every model key the controller is observed to emit on the realtime stream: the reduced set, the `event` activity channel, and the recognized-but-unmodeled
 // keys the controller broadcasts but the library does not fold into state - the `group`/`bridge` collections, the newer device classes (`aiport`, `aiprocessor`,
-// `linkstation`), and detection/session telemetry (`smartDetectObject`, `activeSessionStat`). A device-shaped key here can become a reduced StateModelKey when a
+// `linkstation`, `siren`), and detection/session telemetry (`smartDetectObject`, `activeSessionStat`). A device-shaped key here can become a reduced StateModelKey when a
 // consumer needs it - `relay` is one such promoted key, modeled as a DeviceModelKey. Membership in this set is what makes the schema:unknownModelKey diagnostic
 // honest - a key in this set is known even when we do not reduce it, so the diagnostic fires only for a key outside it (genuine wire drift). This set beyond the
 // collections was confirmed by a schema-drift sweep against a real controller; `doorlock` and `ringtone` remain deliberately absent, as neither is observed in practice.
 /** @internal */
-export const KNOWN_MODEL_KEYS = [ ...STATE_MODEL_KEYS, "activeSessionStat", "aiport", "aiprocessor", "bridge", "event", "group", "linkstation",
+export const KNOWN_MODEL_KEYS = [ ...STATE_MODEL_KEYS, "activeSessionStat", "aiport", "aiprocessor", "bridge", "event", "group", "linkstation", "siren",
   "smartDetectObject" ] as const;
 
 /**

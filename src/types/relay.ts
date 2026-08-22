@@ -4,6 +4,7 @@
  */
 import type { Nullable, ProtectKnownJsonValue } from "./common.ts";
 import type { ProtectDeviceBaseInterface, ProtectWirelessConnectionSettingsInterface, ProtectWirelessConnectionStateInterface } from "./base.ts";
+import type { ProtectLedSettingsInterface } from "./shapes.ts";
 
 /**
  * The UniFi Protect relay configuration types: the LoRa relay's device record, its per-output latching-switch shapes, and the input shapes that map an external trigger
@@ -20,10 +21,11 @@ import type { ProtectDeviceBaseInterface, ProtectWirelessConnectionSettingsInter
  */
 export interface ProtectRelayConfigInterface extends ProtectDeviceBaseInterface {
 
-  // Nullable here because the relay reports `connectionType: null` on the wire, whereas the sibling LoRa devices (fob, sensor) always report a string and narrow it.
+  // Nullable here because the relay reports `connectionType: null` on the wire, whereas the sibling device classes that carry the member always report a string and
+  // narrow it.
   connectionType: Nullable<string>;
   inputs: ProtectRelayInputConfigInterface[];
-  ledSettings: { isEnabled: boolean };
+  ledSettings: ProtectLedSettingsInterface;
   modelKey: "relay";
   outputs: ProtectRelayOutputConfigInterface[];
   wirelessConnectionSettings: ProtectWirelessConnectionSettingsInterface;

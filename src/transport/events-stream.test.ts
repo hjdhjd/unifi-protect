@@ -369,11 +369,12 @@ describe("EventStream", () => {
 
       try {
 
-        // `group` and `bridge` are known wire model keys the library recognizes but deliberately does not reduce into state - they classify to null but are not drift, so
-        // they must stay silent on the diagnostic. This is the honest-diagnostic guarantee: schema:unknownModelKey fires only for genuinely novel keys. (`liveview` is
-        // itself a reduced StateModelKey, so it produces a packet and is exercised in the reducer/classifier tests rather than here.)
+        // `group`, `bridge`, and `siren` are known wire model keys the library recognizes but deliberately does not reduce into state - they classify to null but are not
+        // drift, so they must stay silent on the diagnostic. This is the honest-diagnostic guarantee: schema:unknownModelKey fires only for genuinely novel keys.
+        // (`liveview` is itself a reduced StateModelKey, so it produces a packet and is exercised in the reducer/classifier tests rather than here.)
         ws.emitMessage(encode({ action: "update", id: "br1", modelKey: "bridge" }, { name: "Front" }));
         ws.emitMessage(encode({ action: "add", id: "g1", modelKey: "group" }, { id: "g1" }));
+        ws.emitMessage(encode({ action: "update", id: "sr1", modelKey: "siren" }, { volume: 100 }));
 
         assert.equal(packets.length, 0);
         assert.equal(drift.length, 0, "a recognized-but-unmodeled key must not fire the schema-drift diagnostic");

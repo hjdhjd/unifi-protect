@@ -3,8 +3,8 @@
  * camera.ts: The UniFi Protect camera configuration types, including the camera-specific PTZ axis range and channel, LCD-message, recording-path, and talkback shapes.
  */
 import type { DeepPartial, Nullable, ProtectKnownJsonValue } from "./common.ts";
+import type { ProtectLedSettingsInterface, ProtectSmartZoneInterface } from "./shapes.ts";
 import type { ProtectDeviceBaseInterface } from "./base.ts";
-import type { ProtectSmartZoneInterface } from "./shapes.ts";
 
 /**
  * The UniFi Protect camera configuration types: the camera record itself and the camera-scoped value-shapes it composes - the PTZ axis range (a camera mechanism), the
@@ -66,10 +66,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       supportMicManagement: boolean;
       supportUnlock: boolean;
     };
-    ledSettings: {
-
-      isEnabled: boolean;
-    };
+    ledSettings: ProtectLedSettingsInterface;
     micVolume: number;
     pairedInfo: {
 

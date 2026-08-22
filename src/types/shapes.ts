@@ -79,6 +79,17 @@ export interface ProtectBridgeCandidate {
   [key: string]: ProtectKnownJsonValue;
 }
 
+/**
+ * A description of a UniFi Protect device's status-LED settings. Several device classes expose the identical toggle for their indicator LED, so the shape lives here
+ * once rather than as a copy in each device's file; a class whose LED carries additional settings intersects this with them.
+ */
+export interface ProtectLedSettingsInterface {
+
+  isEnabled: boolean;
+
+  [key: string]: ProtectKnownJsonValue;
+}
+
 /** @see {@link ProtectSmartZoneInterface} */
 export type ProtectSmartZone = ProtectSmartZoneInterface;
 
@@ -90,3 +101,6 @@ export type ProtectAirQualityThresholdSettings = ProtectAirQualityThresholdSetti
 
 /** @see {@link ProtectThresholdSettingsInterface} */
 export type ProtectThresholdSettings = ProtectThresholdSettingsInterface;
+
+/** @see {@link ProtectLedSettingsInterface} */
+export type ProtectLedSettings = ProtectLedSettingsInterface;

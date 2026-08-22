@@ -9,6 +9,7 @@ import type { ProtectFobConfig } from "./fob.ts";
 import type { ProtectLightConfig } from "./light.ts";
 import type { ProtectRelayConfig } from "./relay.ts";
 import type { ProtectSensorConfig } from "./sensor.ts";
+import type { ProtectSirenConfig } from "./siren.ts";
 import type { ProtectViewerConfig } from "./viewer.ts";
 
 /**
@@ -44,7 +45,7 @@ export interface ProtectNvrBootstrapInterface {
   relays: ProtectRelayConfig[];
   ringtones: ProtectRingtoneConfigInterface[];
   sensors: ProtectSensorConfig[];
-  sirens: ProtectKnownJsonValue[];
+  sirens: ProtectSirenConfig[];
   speakers: ProtectKnownJsonValue[];
   users: ProtectNvrUserConfig[];
   viewers: ProtectViewerConfig[];

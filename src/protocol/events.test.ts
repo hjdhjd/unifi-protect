@@ -7,10 +7,10 @@
  * device-vocabulary guards; eventSubjects, which resolves a classified event to the record ids it concerns; and findUnmodeledDeviceCollections, which
  * flags device-shaped bootstrap collections that fall outside the modeled device set.
  */
+import type { ProtectNvrBootstrap, ProtectSirenConfig } from "../types/index.ts";
 import { classifyPacket, eventSubjects, findUnmodeledDeviceCollections, isDeviceModelKey, isKnownModelKey } from "./events.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeFob } from "../fixtures.helpers.ts";
-import type { ProtectNvrBootstrap } from "../types/index.ts";
 import { ProtectProtocolError } from "../errors.ts";
 import type { RawPacket } from "./packet.ts";
 import type { TypedEvent } from "./events.ts";
@@ -471,16 +471,18 @@ describe("isDeviceModelKey", () => {
 describe("findUnmodeledDeviceCollections", () => {
 
   // A synthetic bootstrap: we spread makeBootstrap()'s result (its overrides parameter is closed to the modeled collections) and add the unmodeled keys. `aiports`,
-  // `groups`, and `speakers` are already-named bootstrap fields; `garages` is genuinely out-of-schema and type-checks via the bootstrap's `[key: string]` index
-  // signature. It carries modeled collections (cameras, fobs), a recognized-but-unreduced device class (aiports), genuine drift (garages),
+  // `groups`, `sirens`, and `speakers` are already-named bootstrap fields; `garages` is genuinely out-of-schema and type-checks via the bootstrap's `[key: string]`
+  // index signature. It carries modeled collections (cameras, fobs), recognized-but-unreduced device classes (aiports, sirens), genuine drift (garages),
   // a non-device array (groups, no `mac`), and an empty array (speakers). makeCamera supplies the device shape (`mac`+`modelKey`+`id`), so overriding `modelKey`
-  // yields a device-shaped record under a non-device key.
+  // yields a device-shaped record under a non-device key. The sirens collection carries a typed element, and the scan reads only the device-shaped fields off it, so
+  // the cast keeps the case to what it exercises instead of building a full siren record.
   const bootstrap: ProtectNvrBootstrap = {
 
     ...makeBootstrap({ cameras: [makeCamera({ id: "c1" })], fobs: [makeFob({ id: "fob1", mac: "AA:BB:CC:00:00:30" })] }),
     aiports: [makeCamera({ id: "ap1", mac: "AA:BB:CC:00:00:10", modelKey: "aiport" })],
     garages: [makeCamera({ id: "g1", mac: "AA:BB:CC:00:00:20", modelKey: "garage" })],
     groups: [{ id: "grp1", modelKey: "group", name: "All" }],
+    sirens: [{ id: "sr1", mac: "AA:BB:CC:00:00:40", modelKey: "siren" }] as unknown as ProtectSirenConfig[],
     speakers: []
   };
 
@@ -489,6 +491,16 @@ describe("findUnmodeledDeviceCollections", () => {
     const byCollection = new Map(findUnmodeledDeviceCollections(bootstrap).map((collection) => [ collection.collection, collection ]));
 
     assert.deepEqual(byCollection.get("aiports"), { collection: "aiports", count: 1, exampleId: "ap1", known: true, modelKey: "aiport" });
+  });
+
+  test("reports a typed-but-unreduced device collection with known=true", () => {
+
+    // The siren is declared in the type tier and recognized in the wire vocabulary, yet the reducer does not project it - so its populated collection stays a reported
+    // projection candidate, distinguished from drift only by the known flag. Typing a collection and reducing it are independent choices, and this is the case that
+    // pins them apart.
+    const byCollection = new Map(findUnmodeledDeviceCollections(bootstrap).map((collection) => [ collection.collection, collection ]));
+
+    assert.deepEqual(byCollection.get("sirens"), { collection: "sirens", count: 1, exampleId: "sr1", known: true, modelKey: "siren" });
   });
 
   test("reports genuine drift (an unrecognized device class) with known=false", () => {

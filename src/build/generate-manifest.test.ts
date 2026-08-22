@@ -95,6 +95,18 @@ describe("generate-manifest", () => {
     }
   });
 
+  test("a recognized-but-unreduced device class is described and carried in the wire vocabulary", () => {
+
+    // The siren is typed without being reduced, and the manifest is where the record tree and the wire vocabulary have to agree: an undescribed tree would report every
+    // siren field as novelty, and a missing vocabulary entry would report every siren packet as drift.
+    const sirens = manifest.records["sirens"];
+
+    assert.equal(sirens?.kind, "object", "the siren record tree is described rather than carried opaque");
+    assert.deepEqual(nodeAt(sirens ?? { kind: "opaque" }, "sirenStatus.isActive"), { kind: "primitive", types: ["boolean"] },
+      "the sounder's active flag is a plain boolean rather than a nullable one");
+    assert.ok(manifest.modelKeys.known.includes("siren"), "the siren is a recognized wire model key");
+  });
+
   test("the collections the library carries but does not describe are opaque", () => {
 
     for(const collection of [ "aiports", "aiprocessors", "bridges", "linkstations" ]) {
