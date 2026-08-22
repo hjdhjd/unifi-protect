@@ -191,6 +191,7 @@ describe("generate-manifest", () => {
     // collection to describe. Both are routine traffic, so recognition is what keeps them from reading as wire drift.
     assert.ok(manifest.eventTypes.includes("sensorClosed"), "the entry close occurrence is recognized");
     assert.ok(manifest.eventTypes.includes("sensorMotion"), "the sensor motion occurrence is recognized");
+    assert.ok(manifest.eventTypes.includes("sensorOpened"), "the entry open occurrence is recognized");
     assert.ok(manifest.modelKeys.known.includes("smartDetectObjectGroup"), "the detection group is a recognized wire model key");
   });
 
