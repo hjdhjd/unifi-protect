@@ -6,5 +6,5 @@
 
   "exclude": [ "dist", "node_modules" ],
   "extends": "./node_modules/homebridge-plugin-utils/build/tsconfig.json",
-  "include": [ "eslint.config.mjs", "scripts", "src", "test" ]
+  "include": [ "eslint.config.mjs", "src" ]
 }

@@ -11,9 +11,7 @@
     "**/*.test.ts",
     "dist",
     "node_modules",
-    "scripts",
-    "src/build",
-    "test"
+    "src/build"
   ],
   "extends": "./tsconfig.json",
   "include": [ "src" ]
