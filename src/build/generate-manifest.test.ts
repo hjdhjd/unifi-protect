@@ -185,6 +185,15 @@ describe("generate-manifest", () => {
     assert.ok(manifest.eventTypes.includes("motion"), "the modeled occurrence types are recognized too");
   });
 
+  test("the recognized vocabularies carry the sensor occurrences and the detection group the classifier declines to model", () => {
+
+    // Sensor activity reaches a consumer as reduced-state transitions rather than as lifted occurrences, and the detection group is realtime-only with no bootstrap
+    // collection to describe. Both are routine traffic, so recognition is what keeps them from reading as wire drift.
+    assert.ok(manifest.eventTypes.includes("sensorClosed"), "the entry close occurrence is recognized");
+    assert.ok(manifest.eventTypes.includes("sensorMotion"), "the sensor motion occurrence is recognized");
+    assert.ok(manifest.modelKeys.known.includes("smartDetectObjectGroup"), "the detection group is a recognized wire model key");
+  });
+
   test("the manifest reports the generating package version", () => {
 
     const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
