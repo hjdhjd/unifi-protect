@@ -80,6 +80,21 @@ describe("generate-manifest", () => {
       "a nullable numeric metric declares both JSON types");
   });
 
+  test("a sensor tree declares its LoRa signal telemetry as nullable", () => {
+
+    // A device carrying the wireless connection state without a live LoRa link reports every signal member as null. Declared as bare numbers they would read as always
+    // present to a consumer, and the manifest is where that widening becomes observable.
+    const signalState = nodeAt(manifest.records["sensors"] ?? { kind: "opaque" }, "wirelessConnectionState.signalState");
+
+    assert.equal(signalState?.kind, "object", "signalState resolves through the shared wireless connection state");
+
+    for(const member of [ "signalNoiseRatio", "signalQuality", "signalStrength" ]) {
+
+      assert.deepEqual((signalState?.kind === "object") ? signalState.fields[member] : undefined, { kind: "primitive", types: [ "null", "number" ] },
+        member + " declares both JSON types");
+    }
+  });
+
   test("the collections the library carries but does not describe are opaque", () => {
 
     for(const collection of [ "aiports", "aiprocessors", "bridges", "linkstations" ]) {

@@ -46,6 +46,9 @@ export interface ProtectWiredConnectionStateInterface {
  * A description of the UniFi Protect device wireless (LoRa) connection state JSON. Carried by long-range radio devices such as the relay: the live link telemetry - the
  * battery status, the bridge it is paired with and the bridges it can hear, the last function-button press time, and the radio signal state (SNR plus signal quality and
  * strength). The candidates are modeled inline rather than as {@link ProtectBridgeCandidate} because the relay's entries omit that type's required `modelKey`.
+ *
+ * The `signalState` members are nullable because a device with no live LoRa link reports them all as `null` while still carrying the shape (the UP Air Quality sensor
+ * and the UP Siren PoE do); a bridge-paired device reports the measured radio telemetry as numbers.
  */
 export interface ProtectWirelessConnectionStateInterface {
 
@@ -59,9 +62,9 @@ export interface ProtectWirelessConnectionStateInterface {
   functionButtonPressedAt: Nullable<number>;
   signalState: {
 
-    signalNoiseRatio: number;
-    signalQuality: number;
-    signalStrength: number;
+    signalNoiseRatio: Nullable<number>;
+    signalQuality: Nullable<number>;
+    signalStrength: Nullable<number>;
   };
 
   [key: string]: ProtectKnownJsonValue;
