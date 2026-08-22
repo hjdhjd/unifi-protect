@@ -719,6 +719,12 @@ export interface ProtectNvrUserConfigInterface {
   scopes: string[];
   settings: {
 
+    // The Android console's own preference blob and the sibling of `web` below: its keys are record ids naming the devices that app holds state for, so they turn over
+    // with the fleet rather than with the API. Declared open for the same reason `web` is - a structural declaration here would report every preference the console
+    // writes as schema drift.
+    android?: Record<string, ProtectKnownJsonValue>;
+    cameraOrder?: string[];
+    dashboardDevices?: string[];
     showFeaturesIntroduction: boolean;
     smartDetectionHighlightSettings?: {
 

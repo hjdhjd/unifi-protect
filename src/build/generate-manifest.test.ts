@@ -95,6 +95,14 @@ describe("generate-manifest", () => {
     }
   });
 
+  test("a sensor tree carries the smoke capability channel", () => {
+
+    // The capability channels are how a consumer tells what a sensor model can report at all, so an undeclared one both hides the capability and reports itself as
+    // novelty on every controller whose fleet includes a smoke-capable sensor.
+    assert.deepEqual(nodeAt(manifest.records["sensors"] ?? { kind: "opaque" }, "featureFlags.smoke.channelCount"), { kind: "primitive", types: ["number"] },
+      "the smoke channel's count resolves through the shared capability-channel shape");
+  });
+
   test("a camera tree declares the members the controller reports as null", () => {
 
     // These pins sit at the distinct tiers a widening has to reach: the shared device base, the camera's own record, and the element shape inside its channel array.

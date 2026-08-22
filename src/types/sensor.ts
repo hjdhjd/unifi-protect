@@ -176,6 +176,7 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
     micSoundLevel?: ProtectSensorChannelInterface;
     motion?: ProtectSensorChannelInterface;
     open?: ProtectSensorChannelInterface;
+    smoke?: ProtectSensorChannelInterface;
     tamper?: ProtectSensorChannelInterface;
     temperature?: ProtectSensorChannelInterface & { range: { max: number; min: number } };
     testMode?: ProtectSensorChannelInterface;
