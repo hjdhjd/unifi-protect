@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * scrub.test.ts: Unit tests for the capture scrub - referential consistency in both directions, key-over-shape precedence, coordinate and locale replacement, key
- * redaction, URL credential stripping, the base64 wrapper exemption, and the promise that the input is never modified.
+ * scrub.test.ts: Unit tests for the capture scrub - referential consistency in both directions, key-over-shape precedence, the text-envelope key inheritance,
+ * coordinate and locale replacement, key redaction, URL credential stripping, the base64 wrapper exemption, and the promise that the input is never modified.
  */
 import { createScrubContext, scrub } from "./scrub.ts";
 import { describe, test } from "node:test";
@@ -131,6 +131,54 @@ describe("scrub", () => {
     assert.equal(result.controllerName, result.nvr.name, "the controller name reads the same as the NVR record it is taken from");
     assert.notEqual(result.camera.apName, "Garage AP");
     assert.notEqual(result.controllerName, "Winterfell");
+  });
+
+  test("a name inside an event frame's text envelope is pseudonymized under the envelope's key", () => {
+
+    // The wire hands a display value to the scrub wrapped in `{ text }`, so the inner string arrives under a key no catalog can responsibly claim. Inheriting the
+    // envelope's key is what puts it back under the name regime.
+    const result = scrubbed({ metadata: { sensorName: { text: "Upstairs Hallway" } } }) as { metadata: { sensorName: { text: string } } };
+
+    assert.match(result.metadata.sensorName.text, /^Test Device \d+$/);
+  });
+
+  test("a sensor's own name and the envelope naming it in an event frame resolve to one stand-in", () => {
+
+    // The same text reaches the scrub twice, once as the sensor record's `name` and once wrapped in an event frame's `sensorName` envelope. Both have to land on the
+    // same stand-in or the bundle stops showing which sensor the event belongs to.
+    const context = createScrubContext();
+    const result = scrub({ event: { metadata: { sensorName: { text: "Basement Door" } } }, sensor: { name: "Basement Door" } }, context) as {
+
+      event: { metadata: { sensorName: { text: string } } };
+      sensor: { name: string };
+    };
+
+    assert.equal(result.event.metadata.sensorName.text, result.sensor.name, "the event's envelope reads the same as the sensor record it names");
+    assert.notEqual(result.sensor.name, "Basement Door");
+  });
+
+  test("an envelope under a key no catalog names passes through on its own merits", () => {
+
+    // Inheriting the wrapper's key only changes the outcome where that key is cataloged. A mount type is a fixed vocabulary word and a record id matches none of the
+    // shape rules, so both survive the walk intact and the frame stays readable.
+    const result = scrubbed({ metadata: { mountType: { text: "door" }, sensorId: { text: "61d9e2b04a7c8f0e5d3b1a92" } } }) as {
+
+      metadata: { mountType: { text: string }; sensorId: { text: string } };
+    };
+
+    assert.equal(result.metadata.mountType.text, "door");
+    assert.equal(result.metadata.sensorId.text, "61d9e2b04a7c8f0e5d3b1a92");
+  });
+
+  test("a text member keeps its own key when no wrapper key can lend it one", () => {
+
+    // The inheritance needs a wrapper key to inherit, and a `text` at the top of a document has none. Both cases fall through to the shape rules, which is what keeps
+    // the rule from reaching values that were never envelopes.
+    const nested = scrubbed({ note: { text: "a free-form remark" } }) as { note: { text: string } };
+    const bare = scrubbed({ text: "a free-form remark" }) as { text: string };
+
+    assert.equal(nested.note.text, "a free-form remark");
+    assert.equal(bare.text, "a free-form remark");
   });
 
   test("a login is pseudonymized under every spelling that names one", () => {

@@ -56,13 +56,13 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
 const NAME_KEYS: ReadonlySet<string> = new Set([
 
   "apName", "controllerName", "displayName", "doorName", "firstName", "foreignPgDumpConsoleName", "fullName", "globalAlarmManagerScopeNames",
-  "greetingBroadcastName", "label", "lastName", "localStreamName", "loginName", "name", "ssid", "supportFileName"
+  "greetingBroadcastName", "label", "lastName", "localStreamName", "loginName", "name", "sensorName", "ssid", "supportFileName"
 ]);
 
 // The name keys that are, by construction, a copy of a device name recorded under `name` somewhere else in the same document: an access point's own record carries the
-// `apName` a camera reports, and the controller name is the NVR record's own name. They share one hint below so the copy and the original resolve to the same stand-in
-// and the cross-reference between the two records survives.
-const DEVICE_NAME_KEYS: ReadonlySet<string> = new Set([ "apName", "controllerName", "name" ]);
+// `apName` a camera reports, the controller name is the NVR record's own name, and an event frame's metadata names the sensor whose own record carries the same text
+// under `name`. They share one hint below so the copy and the original resolve to the same stand-in and the cross-reference between the two records survives.
+const DEVICE_NAME_KEYS: ReadonlySet<string> = new Set([ "apName", "controllerName", "name", "sensorName" ]);
 
 // Keys carrying a login someone signs in with. A login is a display-name-class value, so it takes the name regime rather than a category of its own - and the wire
 // spells the same concept several ways, a user record naming it one way, an activity frame's metadata another, and a shared stream naming the account that shared it,
@@ -396,9 +396,15 @@ function scrubValue(value: unknown, context: ScrubContext, key: string | undefin
     const wrapped = isBase64Wrapper(value);
     const scrubbed: Record<string, unknown> = {};
 
+    /* The wire wraps an event frame's display values in a `{ text }` envelope, so the envelope's own key is the semantic subject and the text member inherits it - the
+     * same inheritance an array element takes from its array's key. That is what lets the key catalogs judge a `sensorName` envelope as a name, while an id or a
+     * mount-type envelope passes through on its own merits. A top-level `text` arrives under no wrapper key, so it keeps its own.
+     */
     for(const [ name, inner ] of Object.entries(value)) {
 
-      scrubbed[scrubKey(context, name)] = (wrapped && (name === "bytes")) ? inner : scrubValue(inner, context, name);
+      const memberKey = ((name === "text") && (typeof inner === "string") && (key !== undefined)) ? key : name;
+
+      scrubbed[scrubKey(context, name)] = (wrapped && (name === "bytes")) ? inner : scrubValue(inner, context, memberKey);
     }
 
     return scrubbed;
