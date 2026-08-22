@@ -95,6 +95,25 @@ describe("generate-manifest", () => {
     }
   });
 
+  test("a camera tree declares the members the controller reports as null", () => {
+
+    // These pins sit at the distinct tiers a widening has to reach: the shared device base, the camera's own record, and the element shape inside its channel array.
+    // Declared as bare scalars they read as always present, and a consumer trusting that dereferences a null the controller sends routinely.
+    const cameras = manifest.records["cameras"] ?? { kind: "opaque" };
+
+    assert.deepEqual(nodeAt(cameras, "connectedSince"), { kind: "primitive", types: [ "null", "number" ] },
+      "a base-tier timestamp widens for every device class inheriting it");
+    assert.deepEqual(nodeAt(cameras, "lastMotion"), { kind: "primitive", types: [ "null", "number" ] },
+      "a camera with no motion on record reports no timestamp");
+
+    const channels = nodeAt(cameras, "channels");
+    const channelElement = (channels?.kind === "array") ? channels.element : undefined;
+
+    assert.equal(channels?.kind, "array", "channels resolves to an array of channel shapes");
+    assert.deepEqual((channelElement?.kind === "object") ? channelElement.fields["maxBitrate"] : undefined, { kind: "primitive", types: [ "null", "number" ] },
+      "a channel bitrate ceiling declares both JSON types");
+  });
+
   test("a recognized-but-unreduced device class is described and carried in the wire vocabulary", () => {
 
     // The siren is typed without being reduced, and the manifest is where the record tree and the wire vocabulary have to agree: an undescribed tree would report every

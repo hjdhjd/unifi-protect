@@ -56,9 +56,9 @@ export interface ProtectAirQualityThresholdSettingsInterface {
  */
 export interface ProtectThresholdSettingsInterface {
 
-  highThreshold: number;
+  highThreshold: Nullable<number>;
   isEnabled: boolean;
-  lowThreshold: number;
+  lowThreshold: Nullable<number>;
   margin: number;
 
   [key: string]: ProtectKnownJsonValue;

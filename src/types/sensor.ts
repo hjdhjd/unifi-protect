@@ -66,7 +66,7 @@ export interface ProtectSensorAirQualitySettingsInterface {
   pm1p0Settings: ProtectAirQualityThresholdSettingsInterface;
   pm2p5Settings: ProtectAirQualityThresholdSettingsInterface;
   pm4p0Settings: ProtectAirQualityThresholdSettingsInterface;
-  readingInterval: number;
+  readingInterval: Nullable<number>;
   ringLedBrightness: number;
   ringLedMetric: number;
   temperatureSettings: ProtectAirQualityThresholdSettingsInterface;
@@ -157,7 +157,7 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   }>;
   bridge: string;
   bridgeCandidates: ProtectBridgeCandidate[];
-  camera: string;
+  camera: Nullable<string>;
   canSilenceTrouble: boolean;
   chosenBridge: Nullable<string>;
   coAlarmTriggeredAt: Nullable<number>;
@@ -186,11 +186,11 @@ export interface ProtectSensorConfigInterface extends ProtectDeviceBaseInterface
   glassBreakSettings: ProtectSensorSensitivitySettingsInterface;
   glassBreakTriggeredAt: Nullable<number>;
   hasCustomSensitivityWhenArmed: boolean;
-  // Unlike the relay - its closest LoRa-bridged sibling, which reports `host: null` and omits `isConnected` - a bridge-paired sensor is still reported by the controller
-  // with a concrete host and a connection boolean, so both re-narrow from the shared base's widened forms back to their always-present shapes here (the wireless and
-  // bridge fields below describe the LoRa link and do not displace them).
-  host: string;
   humiditySettings: ProtectThresholdSettingsInterface;
+  // Unlike the relay - its closest LoRa-bridged sibling, which omits `isConnected` entirely - a bridge-paired sensor is always reported with a connection boolean, so it
+  // re-narrows from the shared base's optional form back to its always-present shape here (the wireless and bridge fields below describe the LoRa link and do not
+  // displace it). `host` takes no such re-narrowing: the controller reports it as `null` on a sensor it reaches only through a bridge, so the base's nullable form is
+  // the honest one.
   isConnected: boolean;
   isMotionDetected: boolean;
   isOpened: Nullable<boolean>;

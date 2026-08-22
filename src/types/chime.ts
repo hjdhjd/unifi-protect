@@ -16,8 +16,8 @@ import type { ProtectDeviceBaseInterface } from "./base.ts";
  */
 export interface ProtectChimeConfigInterface extends ProtectDeviceBaseInterface {
 
-  apMac: string;
-  apMgmtIp: string;
+  apMac: Nullable<string>;
+  apMgmtIp: Nullable<string>;
   apRssi: Nullable<string>;
   cameraIds: string[];
   elementInfo: Nullable<string>;

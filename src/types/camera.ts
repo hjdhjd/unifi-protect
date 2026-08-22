@@ -54,12 +54,12 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       width: number;
     }[];
 
-    connectedSince: number;
+    connectedSince: Nullable<number>;
     disableRecordingByDefault: boolean;
     doorInfo: {
 
       canLock: boolean;
-      lockState: string;
+      lockState: Nullable<string>;
     };
     featureFlags: {
 
@@ -72,8 +72,8 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     pairedInfo: {
 
       guid: Nullable<string>;
-      name: string;
-      uri: string;
+      name: Nullable<string>;
+      uri: Nullable<string>;
     };
     speakerSettings: {
 
@@ -100,7 +100,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     panTiltMotorFaults: string[];
     tiltThermal: number;
   };
-  apMac: string;
+  apMac: Nullable<string>;
   apMgmtIp: Nullable<string>;
   apRssi: Nullable<string>;
   audioBitrate: number;
@@ -225,10 +225,10 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
       extender: {
 
         flashRange: Nullable<number>;
-        hasFlash: boolean;
-        hasIR: boolean;
-        hasRadar: boolean;
-        isAttached: boolean;
+        hasFlash: Nullable<boolean>;
+        hasIR: Nullable<boolean>;
+        hasRadar: Nullable<boolean>;
+        isAttached: Nullable<boolean>;
         radarRangeMax: Nullable<number>;
         radarRangeMin: Nullable<number>;
       };
@@ -240,7 +240,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     isPtz: boolean;
     lensModel: Nullable<string>;
     lensType: Nullable<string>;
-    maxScaleDownLevel: number;
+    maxScaleDownLevel: Nullable<number>;
     motionAlgorithms: string[];
     mountPositions: string[];
     overlay: Nullable<{ placeholders: string[] }>;
@@ -248,7 +248,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     presetMinDuration: Nullable<number>;
     presetTour: boolean;
     privacyMaskCapability: {
-      maxMasks: number;
+      maxMasks: Nullable<number>;
       rectangleOnly: boolean;
     };
     radar: boolean;
@@ -338,10 +338,10 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   };
   fingerprintState: {
 
-    fingerprintId: string;
+    fingerprintId: Nullable<string>;
     free: number;
-    progress: string;
-    status: string;
+    progress: Nullable<string>;
+    status: Nullable<string>;
     total: number;
   };
   // Observed only as `null`, with nothing in the record to pin even its kind.
@@ -370,9 +370,9 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     talkbackSettingsActive: boolean;
   };
   host: string;
-  hqBytesPerDay: number;
-  hqBytesPerDayUpdatedAt: number;
-  hubMac: string;
+  hqBytesPerDay: Nullable<number>;
+  hqBytesPerDayUpdatedAt: Nullable<number>;
+  hubMac: Nullable<string>;
   interfaceSettings: {
 
     bgImageId: Nullable<string>;
@@ -442,7 +442,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     isLdcEnabled: boolean;
     isPauseMotionEnabled: boolean;
     isSmokeCoverModeEnabled: boolean;
-    mountPosition: string;
+    mountPosition: Nullable<string>;
     saturation: number;
     sceneMode: string;
     sharpness: number;
@@ -452,7 +452,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     wdr: number;
     zoomPosition: number;
   };
-  lastMotion: number;
+  lastMotion: Nullable<number>;
   lastMotionDetectionTypes: string[];
   lastRing: Nullable<number>;
   lcdMessage?: DeepPartial<ProtectCameraLcdMessageConfigInterface>;
@@ -466,8 +466,8 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
 
     id: number;
     video: {
-      continuousStart: number;
-      continuousStartLQ: number;
+      continuousStart: Nullable<number>;
+      continuousStartLQ: Nullable<number>;
       recordingEnd: Nullable<number>;
       recordingEndLQ: Nullable<number>;
       recordingStart: Nullable<number>;
@@ -482,7 +482,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   location: ProtectKnownJsonValue;
   // Inferred `string[]` element type from the field name; `null` on all current cameras.
   lowMemoryDisabledProcesses: Nullable<string[]>;
-  lqBytesPerDay: number;
+  lqBytesPerDay: Nullable<number>;
   micVolume: number;
   modelKey: "camera";
   motionZones: ProtectSmartZoneInterface[];
@@ -494,9 +494,9 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   };
   nfcState: {
 
-    cardId: string;
+    cardId: Nullable<string>;
     isUACard: boolean;
-    lastSeen: number;
+    lastSeen: Nullable<number>;
     mode: string;
   };
   optimizeIrSettings: {
@@ -514,7 +514,7 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   };
   overlaySettings: ProtectOverlaySettingsInterface;
   parentCameraGroupId: Nullable<string>;
-  phyRate: number;
+  phyRate: Nullable<number>;
   pinCodeSettings: {
 
     pinCodeLengthRange: string;
@@ -642,23 +642,23 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
         rotating: { lockedRecordingsSizeBytes: number; recordingsSizeBytes: number };
         timelapse: { lockedRecordingsSizeBytes: number; recordingsSizeBytes: number };
       }>;
-      rate: number;
-      used: number;
+      rate: Nullable<number>;
+      used: Nullable<number>;
     };
     storageSlots: ProtectKnownJsonValue[];
     totalStorageCapacityMs: Nullable<number>;
     video: {
 
-      continuousStart: number;
-      continuousStartLQ: number;
-      recordingEnd: number;
-      recordingEndLQ: number;
-      recordingStart: number;
-      recordingStartLQ: number;
-      timelapseEnd: number;
-      timelapseEndLQ: number;
-      timelapseStart: number;
-      timelapseStartLQ: number;
+      continuousStart: Nullable<number>;
+      continuousStartLQ: Nullable<number>;
+      recordingEnd: Nullable<number>;
+      recordingEndLQ: Nullable<number>;
+      recordingStart: Nullable<number>;
+      recordingStartLQ: Nullable<number>;
+      timelapseEnd: Nullable<number>;
+      timelapseEndLQ: Nullable<number>;
+      timelapseStart: Nullable<number>;
+      timelapseStartLQ: Nullable<number>;
     };
     wifi: {
 
@@ -707,14 +707,14 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
     manualProfileOverride: boolean;
     mediaVersion: Nullable<string>;
     motionDetection: ProtectKnownJsonValue;
-    port: number;
+    port: Nullable<number>;
     profileToken: Nullable<string>;
     profileTokenLQ: Nullable<string>;
     relayOutput: ProtectKnownJsonValue;
     relayOutputTokens: Nullable<string[]>;
-    rtspUrl: string;
-    rtspUrlLQ: string;
-    snapshotUrl: string;
+    rtspUrl: Nullable<string>;
+    rtspUrlLQ: Nullable<string>;
+    snapshotUrl: Nullable<string>;
   };
   tiltLimitsOfPrivacyZones: {
 
@@ -726,11 +726,11 @@ export interface ProtectCameraConfigInterface extends ProtectDeviceBaseInterface
   videoCodec: string;
   videoCodecLastSwitchAt: Nullable<number>;
   videoCodecState: number;
-  videoCodecSwitchingSince: number;
+  videoCodecSwitchingSince: Nullable<number>;
   videoInputMode: Nullable<string>;
   videoMode: string;
   videoReconfigurationInProgress: boolean;
-  voltage: number;
+  voltage: Nullable<number>;
 }
 
 /**
@@ -750,10 +750,10 @@ export interface ProtectCameraChannelConfigInterface {
   internalRtspAlias: Nullable<string>;
   isInternalRtspEnabled: boolean;
   isRtspEnabled: boolean;
-  maxBitrate: number;
-  minBitrate: number;
-  minClientAdaptiveBitRate: number;
-  minMotionAdaptiveBitRate: number;
+  maxBitrate: Nullable<number>;
+  minBitrate: Nullable<number>;
+  minClientAdaptiveBitRate: Nullable<number>;
+  minMotionAdaptiveBitRate: Nullable<number>;
   name: string;
   rtspAlias: string;
   validBitrateRangeMargin: Nullable<number>;
@@ -798,8 +798,8 @@ export interface ProtectCameraTalkbackConfigInterface {
   bindPort: number;
   bitsPerSample: number;
   channels: number;
-  filterAddr: string;
-  filterPort: number;
+  filterAddr: Nullable<string>;
+  filterPort: Nullable<number>;
   quality: number;
   samplingRate: number;
   typeFmt: string;

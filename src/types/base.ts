@@ -91,10 +91,10 @@ export interface ProtectDeviceBaseInterface {
 
   anonymousDeviceId: Nullable<string>;
   canAdopt: boolean;
-  connectedSince: number;
+  connectedSince: Nullable<number>;
   connectionHost: Nullable<string>;
   displayName: string;
-  firmwareBuild: string;
+  firmwareBuild: Nullable<string>;
   firmwareVersion: Nullable<string>;
   fwUpdateState: Nullable<string>;
   globalAlarmManagerScopeNames: string[];
@@ -122,7 +122,7 @@ export interface ProtectDeviceBaseInterface {
   lastDisconnect: Nullable<number>;
   lastSeen: number;
   latestFirmwareSizeBytes: Nullable<number>;
-  latestFirmwareVersion: string;
+  latestFirmwareVersion: Nullable<string>;
   mac: string;
   marketName: string;
   minFirmwareVersion: string;
@@ -142,7 +142,7 @@ export interface ProtectDeviceBaseInterface {
   type: string;
   upSince: number;
   uplinkDevice: Nullable<string>;
-  uptime: number;
+  uptime: Nullable<number>;
   // Every device reports both connection states: a genuinely wired device carries a negotiated `wiredConnectionState.phyRate` and an all-null `wifiConnectionState`,
   // while a Wi-Fi or LoRa device reports the inverse, so both are always present even when one is entirely null.
   wifiConnectionState: ProtectWifiConnectionStateInterface;

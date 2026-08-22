@@ -101,7 +101,7 @@ export interface ProtectNvrConfigInterface {
   accessMigratedAt: Nullable<number>;
   accessMigrationStatus: Nullable<string>;
   accessSwitchBackStatus: Nullable<string>;
-  accessVersion: string;
+  accessVersion: Nullable<string>;
   agreements: ProtectNvrAgreementsInterface;
   aiFeatureSettings: {
 
@@ -672,7 +672,7 @@ export interface ProtectNvrUserConfigInterface {
       subscriptionType: Nullable<string>;
     };
   };
-  email: string;
+  email: Nullable<string>;
   enableNotifications: boolean;
   featureFlags: {
 
@@ -687,8 +687,8 @@ export interface ProtectNvrUserConfigInterface {
   isOwner: boolean;
   lastLoginIp: Nullable<string>;
   lastLoginTime: Nullable<number>;
-  lastName: string;
-  localUsername: string;
+  lastName: Nullable<string>;
+  localUsername: Nullable<string>;
   location?: {
 
     isAway: boolean;
