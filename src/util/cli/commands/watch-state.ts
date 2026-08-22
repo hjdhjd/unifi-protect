@@ -18,7 +18,7 @@ const USAGE = [
   "Observe a slice of reduced controller state and print on every change.",
   "",
   "Targets:",
-  "  cameras | lights | sensors | chimes | viewers | relays   A device category (use --online to watch only connected devices).",
+  "  cameras | lights | sensors | chimes | viewers | fobs | relays   A device category (use --online to watch only connected devices).",
   "  isAdmin | controllerName                                 A controller fact derived from state.",
   "  <device id or name>                                      A single device.",
   "",

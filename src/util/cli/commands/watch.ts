@@ -52,7 +52,7 @@ const watchHandler: CommandHandler = async (ctx) => {
 
   if(command === undefined) {
 
-    throw new CliError("Unknown watch subcommand \"" + subcommand + "\". Expected events, raw, state, or livestream.", { exitCode: 2 });
+    throw new CliError("Unknown watch subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort().join(", ") + ".", { exitCode: 2 });
   }
 
   await command.run({ ...ctx, args: rest });

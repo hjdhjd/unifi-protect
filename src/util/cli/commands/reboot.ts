@@ -18,7 +18,7 @@ const USAGE = [
   "",
   "Targets:",
   "  <device id or name>                                     Reboot that device (it drops and re-adopts).",
-  "  cameras | lights | sensors | chimes | viewers | relays  Reboot every connected device of that class.",
+  "  cameras | lights | sensors | chimes | viewers | fobs | relays  Reboot every connected device of that class.",
   "  nvr                                                     Reboot the whole controller/console - every device drops; the library recovers automatically.",
   "",
   "An exact device id or name always wins over a category word, so a device named like a category is never mistaken for the class.",
