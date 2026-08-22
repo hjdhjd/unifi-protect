@@ -14,7 +14,7 @@
 
 `unifi-protect` is a TypeScript library that connects to and communicates with the Ubiquiti UniFi Protect API and ecosystem. [UniFi Protect](https://ui.com/camera-security) is [Ubiquiti's](https://www.ui.com) video security platform, with rich camera, doorbell, and NVR controller hardware options for you to choose from, as well as an app you can use to view, configure, and manage your cameras and doorbells.
 
-It is ESM-only, Node 22.18+, and built around a single insight: the controller's state is a reducer over a typed realtime packet stream, with a periodic re-bootstrap as a permanent failsafe. You connect once, then read live device projections, observe state as it changes, subscribe to a typed event firehose, and stream cameras through a shared livestream pool - all with typed errors and `await using` resource cleanup.
+It is ESM-only, Node 22.20+, and built around a single insight: the controller's state is a reducer over a typed realtime packet stream, with a periodic re-bootstrap as a permanent failsafe. You connect once, then read live device projections, observe state as it changes, subscribe to a typed event firehose, and stream cameras through a shared livestream pool - all with typed errors and `await using` resource cleanup.
 
 ## Installation
 
@@ -88,7 +88,7 @@ try {
 }
 ```
 
-`RecoverableError` (throttle, timeout, network, abort, stall, lag) means "you may retry or defer"; `FatalError` (auth, authorization, request, protocol, bootstrap) means "propagate." Connection health - throttling, controller reboots, automatic recovery after an outage - is observable on `client.connection`.
+`RecoverableError` (throttle, timeout, network, abort, stall) means "you may retry or defer"; `FatalError` (auth, authorization, request, protocol, bootstrap) means "propagate." Connection health - throttling, controller reboots, automatic recovery after an outage - is observable on `client.connection`.
 
 ## Livestreaming
 
