@@ -68,7 +68,7 @@
     "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/util/cli/index.js',0o755)\" && node src/build/generate-manifest.ts",
     "build-docs": "node -e \"for(const p of ['docs/classes', 'docs/functions', 'docs/interfaces', 'docs/modules', 'docs/type-aliases', 'docs/variables', 'docs/README.md'])require('node:fs').rmSync(p,{force:true,recursive:true})\" && npx typedoc",
     "clean": "node -e \"require('node:fs').rmSync('dist',{force:true,recursive:true})\"",
-    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"-1\"} eslint.config.mjs \"src/**/*.ts\"",
+    "lint": "eslint --max-warnings=${ESLINT_MAX_WARNINGS:-\"0\"} eslint.config.mjs \"src/**/*.ts\"",
     "postpublish": "npm run clean",
     "prepublishOnly": "npm run lint && npm run typecheck && npm run build",
     "test": "node --test --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-exclude='src/**/*.test.ts' --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=85 --test-timeout=15000 \"src/**/*.test.ts\"",
