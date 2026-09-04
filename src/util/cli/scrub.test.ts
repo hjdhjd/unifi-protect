@@ -181,6 +181,68 @@ describe("scrub", () => {
     assert.equal(bare.text, "a free-form remark");
   });
 
+  test("the overlay's camera name and the camera's own name resolve to one stand-in", () => {
+
+    // A camera's overlay renders the camera's own name, so the same text reaches the scrub twice. Both have to land on the same stand-in or the overlay would caption
+    // the video with a camera the rest of the bundle does not contain.
+    const context = createScrubContext();
+    const result = scrub({ camera: { name: "Side Yard", overlaySettings: { cameraName: "Side Yard" } } }, context) as {
+
+      camera: { name: string; overlaySettings: { cameraName: string } };
+    };
+
+    assert.equal(result.camera.overlaySettings.cameraName, result.camera.name, "the overlay reads the same as the camera record it renders");
+    assert.notEqual(result.camera.name, "Side Yard");
+    assert.notEqual(result.camera.overlaySettings.cameraName, "Side Yard");
+  });
+
+  test("operator-authored text takes the name regime under its own key", () => {
+
+    // Every string here is a line someone typed, which has no shape a fallback rule could recognize, so the key it arrived under is the only thing that can claim it.
+    // The siblings carrying the wire's own vocabulary have to survive that, or the bundle stops showing how the feature was configured.
+    const document = {
+
+      doorbellSettings: {
+
+        allMessages: [{ text: "LEAVE PACKAGE AT DOOR", type: "LEAVE_PACKAGE_AT_DOOR" }],
+        customMessages: ["Please use the side door"],
+        defaultMessageText: "WELCOME"
+      },
+      lcdMessage: { duration: 60, resetAt: null, text: "Back in five minutes", type: "CUSTOM_MESSAGE" },
+      overlaySettings: { topLeft: { content: "{Datetime} {CameraName}", orientation: "horizontal" } }
+    };
+    const result = scrubbed(document) as {
+
+      doorbellSettings: { allMessages: [{ text: string; type: string }]; customMessages: [string]; defaultMessageText: string };
+      lcdMessage: { duration: number; text: string; type: string };
+      overlaySettings: { topLeft: { content: string; orientation: string } };
+    };
+
+    assert.match(result.doorbellSettings.allMessages[0].text, /^Test allMessages \d+$/);
+    assert.equal(result.doorbellSettings.allMessages[0].type, "LEAVE_PACKAGE_AT_DOOR", "the message type is a fixed vocabulary word and survives the walk");
+    assert.match(result.doorbellSettings.customMessages[0], /^Test customMessages \d+$/);
+    assert.match(result.doorbellSettings.defaultMessageText, /^Test defaultMessageText \d+$/);
+    assert.match(result.lcdMessage.text, /^Test lcdMessage \d+$/);
+    assert.equal(result.lcdMessage.type, "CUSTOM_MESSAGE");
+    assert.equal(result.lcdMessage.duration, 60, "a duration is a number no rule reaches");
+    assert.match(result.overlaySettings.topLeft.content, /^Test content \d+$/);
+    assert.equal(result.overlaySettings.topLeft.orientation, "horizontal");
+  });
+
+  test("a user's saved searches are pseudonymized one search at a time", () => {
+
+    // The search history is a bare array of phrases a person typed, and each element inherits the key its array arrived under, so the list comes out as many stand-ins
+    // rather than collapsing onto one.
+    const result = scrubbed({ settings: { web: { AI_SEARCH_RECENT_SEARCHES: [ "mail truck", "person at the front door" ] } } }) as {
+
+      settings: { web: { AI_SEARCH_RECENT_SEARCHES: [ string, string ] } };
+    };
+
+    assert.match(result.settings.web.AI_SEARCH_RECENT_SEARCHES[0], /^Test AI_SEARCH_RECENT_SEARCHES \d+$/);
+    assert.match(result.settings.web.AI_SEARCH_RECENT_SEARCHES[1], /^Test AI_SEARCH_RECENT_SEARCHES \d+$/);
+    assert.notEqual(result.settings.web.AI_SEARCH_RECENT_SEARCHES[0], result.settings.web.AI_SEARCH_RECENT_SEARCHES[1]);
+  });
+
   test("a login is pseudonymized under every spelling that names one", () => {
 
     const result = scrubbed({ localUsername: "operator", userName: "ubnt", username: "homebridge" }) as {

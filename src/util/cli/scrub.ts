@@ -51,18 +51,23 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
   "wifiPassword"
 ]);
 
-// Keys carrying a display name a person chose. Pseudonymized to a readable stand-in, so a bundle still reads as a system rather than a wall of tokens. Every entry is a
-// label chosen by a person or an operator - a door, a greeting, a stream, a support file - which is identity no shape rule can recognize, since the text is arbitrary.
+// Keys carrying a display name a person chose, or a line a person wrote. Pseudonymized to a readable stand-in, so a bundle still reads as a system rather than a wall
+// of tokens. Every entry is a label or a line an operator authored - a door, a greeting, a stream, a support file, an overlay corner's text, the doorbell's custom,
+// stock, and default messages, a camera's LCD message, a user's saved AI search history - which is identity no shape rule can recognize, since the text is arbitrary.
+// A key holding an array of such strings, or a `{ text }` envelope under it, resolves through this catalog by the inheritance rules below: an array element takes the
+// key its array arrived under, and a `text` member takes its wrapper's key.
 const NAME_KEYS: ReadonlySet<string> = new Set([
 
-  "apName", "controllerName", "displayName", "doorName", "firstName", "foreignPgDumpConsoleName", "fullName", "globalAlarmManagerScopeNames",
-  "greetingBroadcastName", "label", "lastName", "localStreamName", "loginName", "name", "sensorName", "ssid", "supportFileName"
+  "AI_SEARCH_RECENT_SEARCHES", "allMessages", "apName", "cameraName", "content", "controllerName", "customMessages", "defaultMessageText", "displayName",
+  "doorName", "firstName", "foreignPgDumpConsoleName", "fullName", "globalAlarmManagerScopeNames", "greetingBroadcastName", "label", "lastName", "lcdMessage",
+  "localStreamName", "loginName", "name", "sensorName", "ssid", "supportFileName"
 ]);
 
 // The name keys that are, by construction, a copy of a device name recorded under `name` somewhere else in the same document: an access point's own record carries the
-// `apName` a camera reports, the controller name is the NVR record's own name, and an event frame's metadata names the sensor whose own record carries the same text
-// under `name`. They share one hint below so the copy and the original resolve to the same stand-in and the cross-reference between the two records survives.
-const DEVICE_NAME_KEYS: ReadonlySet<string> = new Set([ "apName", "controllerName", "name", "sensorName" ]);
+// `apName` a camera reports, an overlay's `cameraName` is the camera's own name as the overlay renders it, the controller name is the NVR record's own name, and an
+// event frame's metadata names the sensor whose own record carries the same text under `name`. They share one hint below so the copy and the original resolve to the
+// same stand-in and the cross-reference between the two records survives.
+const DEVICE_NAME_KEYS: ReadonlySet<string> = new Set([ "apName", "cameraName", "controllerName", "name", "sensorName" ]);
 
 // Keys carrying a login someone signs in with. A login is a display-name-class value, so it takes the name regime rather than a category of its own - and the wire
 // spells the same concept several ways, a user record naming it one way, an activity frame's metadata another, and a shared stream naming the account that shared it,
