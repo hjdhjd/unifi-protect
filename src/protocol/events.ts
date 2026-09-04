@@ -171,13 +171,14 @@ const AUTH_EVENT_METHODS: Readonly<Record<string, AuthMethod>> = { fingerprintId
 const MOTION_EVENT_TYPE = "motion";
 const RING_EVENT_TYPE = "ring";
 const SENSOR_BUTTON_EVENT_TYPE = "sensorButtonPressed";
-// The sensor's own occurrence records: a motion occurrence and the entry open and close occurrences, each device-attributed and carrying sensor metadata. The
-// classifier does not lift any of them, because sensor activity is already modeled in the sensor's reduced state - `isMotionDetected`/`motionDetectedAt` and
-// `isOpened`/`openStatusChangedAt`, arriving as `devicePatched` transitions - so lifting them would restate a change the consumer already receives. Recognizing them
-// here keeps the vocabulary honest, so routine sensor traffic never reads as wire drift.
+// The sensor's own occurrence records: a motion occurrence, the entry open and close occurrences, and a smoke detector's self-test occurrence, each
+// device-attributed and carrying sensor metadata. The classifier does not lift any of them, because sensor activity is already modeled in the sensor's reduced state -
+// `isMotionDetected`/`motionDetectedAt`, `isOpened`/`openStatusChangedAt`, and `smokeStatus.testing`, arriving as `devicePatched` transitions - so lifting them would
+// restate a change the consumer already receives. Recognizing them here keeps the vocabulary honest, so routine sensor traffic never reads as wire drift.
 const SENSOR_CLOSED_EVENT_TYPE = "sensorClosed";
 const SENSOR_MOTION_EVENT_TYPE = "sensorMotion";
 const SENSOR_OPENED_EVENT_TYPE = "sensorOpened";
+const SENSOR_SMOKE_TEST_EVENT_TYPE = "sensorSmokeTest";
 const SMART_EVENT_TYPES: readonly string[] = [ "smartAudioDetect", "smartDetectLine", "smartDetectZone" ];
 const TAMPER_EVENT_TYPE = "smartDetectTamper";
 
@@ -193,7 +194,8 @@ const TAMPER_EVENT_TYPE = "smartDetectTamper";
  * @internal
  */
 export const KNOWN_EVENT_TYPES: readonly string[] = [ ACCESS_EVENT_TYPE, ADMIN_ACTIVITY_EVENT_TYPE, ...Object.keys(AUTH_EVENT_METHODS), MOTION_EVENT_TYPE,
-  RING_EVENT_TYPE, SENSOR_BUTTON_EVENT_TYPE, SENSOR_CLOSED_EVENT_TYPE, SENSOR_MOTION_EVENT_TYPE, SENSOR_OPENED_EVENT_TYPE, ...SMART_EVENT_TYPES, TAMPER_EVENT_TYPE ];
+  RING_EVENT_TYPE, SENSOR_BUTTON_EVENT_TYPE, SENSOR_CLOSED_EVENT_TYPE, SENSOR_MOTION_EVENT_TYPE, SENSOR_OPENED_EVENT_TYPE, SENSOR_SMOKE_TEST_EVENT_TYPE,
+  ...SMART_EVENT_TYPES, TAMPER_EVENT_TYPE ];
 
 /**
  * Classify a decoded {@link RawPacket} into a {@link TypedEvent}, or `null` if the packet is valid but describes something the library does not model.
