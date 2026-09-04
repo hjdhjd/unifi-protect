@@ -139,7 +139,8 @@ export const PROTECT_TALKBACK_MAX_BUFFERED_BYTES = 1048576;
 // a device reports more slowly, and Ctrl-C ends the window early at any point with the bundle still written.
 export const PROTECT_CAPTURE_DEFAULT_DURATION = 900000;
 
-// How many records of an unmodeled bootstrap collection `ufp capture` carries as shape evidence. Modeling a device class this library has never seen takes a couple of
-// examples of what one of its records looks like - enough to show which fields vary between units and which are fixed - never a roster of every unit at a site, which
-// would grow a bundle without teaching a reader anything more about the shape. The entry's own seen count records how many records were elided.
+// How many records `ufp capture` carries as shape evidence for each group it samples - a bootstrap collection the manifest describes no shape for, or the records of a
+// described collection that share one set of members it does not declare. Modeling something this library has not seen takes a couple of examples of what one of its
+// records looks like - enough to show which fields vary between units and which are fixed - never a roster of every unit at a site, which would grow a bundle without
+// teaching a reader anything more about the shape. The entry's own seen count records how many records were elided.
 export const PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS = 3;

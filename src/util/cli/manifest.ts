@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * manifest.ts: The schema manifest - the known-surface vocabulary the build generates, the loader that validates it, the diff that reports wire novelty against it, and
- * the exemplar records that evidence what it does not model.
+ * the exemplar records that evidence what it does not model, whole collections and undeclared members alike.
  */
 import { CliError } from "./shared.ts";
 import type { RawPacket } from "../../index.ts";
@@ -205,6 +205,26 @@ export interface UnmodeledSnapshot {
 
   collection: string;
   kept: unknown[];
+  seen: number;
+}
+
+/**
+ * A few records of a described collection that carry members its shape does not declare, grouped by the set of undeclared members they share.
+ *
+ * A field-level finding says that a member is undeclared and names the path and the type observed under it; this says what the record around it looks like. The grouping
+ * is by that shared set rather than by collection because a sample of a collection is a roster: twenty environmental sensors reporting the same three new members are
+ * one shape and want sampling once, while a detector reporting a different set is its own shape and wants exemplars of its own, whatever position its record holds in
+ * the collection. The observed type belongs to a member for the same reason - a fleet reporting a member as null on half its units and as a populated object on the
+ * rest is two shapes, and a group keyed on the path alone would sample the null ones and call that the shape. `kept` holds the exemplars, capped, and `seen` holds how
+ * many records carry exactly this set, so a reader knows whether the exemplars are the whole story.
+ *
+ * @category CLI
+ */
+export interface UndeclaredSnapshot {
+
+  collection: string;
+  kept: unknown[];
+  members: { observedType: ObservedJsonType; path: string }[];
   seen: number;
 }
 
@@ -506,6 +526,117 @@ export function snapshotUnmodeled(manifest: SchemaManifest, bootstrap: unknown, 
   }
 
   return snapshots;
+}
+
+// The undeclared members one record's walk found: each finding's path and the type observed under it, de-duplicated and ordered. Two records carrying the same members
+// produce the same list whatever order they happened to list them in, which is what lets the list stand as a group key. The de-duplication is not cosmetic: an
+// undeclared field inside two entries of a declared dictionary produces one finding per entry, and the dictionary hop collapses both paths to the same wildcard form.
+// Every finding a record walk produces is an unknownField - the only kind walkNode emits - so the narrowing reads the two fields rather than asserting that.
+function undeclaredMembersOf(findings: NoveltyFinding[]): UndeclaredSnapshot["members"] {
+
+  const members = new Map<string, UndeclaredSnapshot["members"][number]>();
+
+  for(const finding of findings) {
+
+    if(finding.kind !== "unknownField") {
+
+      continue;
+    }
+
+    members.set(JSON.stringify([ finding.path, finding.observedType ]), { observedType: finding.observedType, path: finding.path });
+  }
+
+  return [...members.values()].sort((left, right) => {
+
+    if(left.path !== right.path) {
+
+      return (left.path < right.path) ? -1 : 1;
+    }
+
+    return (left.observedType < right.observedType) ? -1 : 1;
+  });
+}
+
+/**
+ * Take exemplar records from every described collection whose records carry members it does not declare.
+ *
+ * {@link diffBootstrap} reports that a member is undeclared and names its path and the type observed under it, then stops: the walk does not descend into something it
+ * has no shape for, so the values behind that path reach a capture only if the member happens to change during the window. A device that lands inside a collection this
+ * library does model - a new sensor class among the sensors - is exactly the case that leaves a reader holding paths and no record, and these exemplars are what close
+ * it.
+ *
+ * The grouping is by the set of undeclared members a record carries rather than by the collection it sits in, so what comes back is evidence rather than a roster and
+ * a distinct set is sampled on its own whatever position its records hold. {@link UndeclaredSnapshot} carries that argument in full.
+ *
+ * The bootstrap is walked a second time rather than joining the diff's findings back to their records by id: a join needs an id every record may not carry, and a
+ * lookup this walk makes redundant. One more pass over a document already in memory costs milliseconds once per capture, and it keeps the two samplers parallel and
+ * each readable on its own.
+ *
+ * The exemplars are the controller's records verbatim, so a caller that publishes them scrubs them: `ufp capture` scrubs the assembled bundle in one pass, which puts
+ * these records under the same replacement memory as the frames and the inventory and keeps every cross-reference between them intact.
+ *
+ * @param manifest - The loaded manifest to check against.
+ * @param bootstrap - A parsed bootstrap document.
+ * @param limit - How many records to keep from each group.
+ *
+ * @returns One entry per set of undeclared members, in the order the bootstrap presented the records carrying it. A record with nothing undeclared contributes none.
+ *
+ * @category CLI
+ */
+export function snapshotUndeclared(manifest: SchemaManifest, bootstrap: unknown, limit: number): UndeclaredSnapshot[] {
+
+  const groups = new Map<string, UndeclaredSnapshot>();
+
+  if(!isPlainObject(bootstrap)) {
+
+    return [];
+  }
+
+  for(const [ key, value ] of Object.entries(bootstrap)) {
+
+    const node = manifest.records[key];
+
+    // A member with no described shape belongs to snapshotUnmodeled, which samples it whole: nothing inside one can be undeclared against a shape that does not exist.
+    if((node === undefined) || (node.kind === "opaque")) {
+
+      continue;
+    }
+
+    // A bootstrap member holds either a collection of records or the one record a singleton member is.
+    const records: unknown[] = Array.isArray(value) ? value : [value];
+
+    for(const record of records) {
+
+      const findings: NoveltyFinding[] = [];
+
+      walkRecord(node, record, key, findings);
+
+      const members = undeclaredMembersOf(findings);
+
+      if(members.length === 0) {
+
+        continue;
+      }
+
+      /* The group is the collection and the member set together, serialized as an ordered tuple for the reason `noveltyKey` gives: a delimiter-joined key collides
+       * whenever a field path contains the delimiter, and field paths are exactly the values that would. The map's insertion order carries through to the returned
+       * array, so the groups arrive in the order the bootstrap presented the first record of each.
+       */
+      const groupKey = JSON.stringify([ key, members ]);
+      const group = groups.get(groupKey) ?? { collection: key, kept: [], members, seen: 0 };
+
+      group.seen += 1;
+
+      if(group.kept.length < limit) {
+
+        group.kept.push(record);
+      }
+
+      groups.set(groupKey, group);
+    }
+  }
+
+  return [...groups.values()];
 }
 
 /**

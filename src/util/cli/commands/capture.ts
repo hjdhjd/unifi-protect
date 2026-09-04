@@ -4,11 +4,11 @@
  */
 import { COMMON_OPTIONS, axisMatches, boundedSignal, compileAxis, parseDuration, readVersion } from "../shared.ts";
 import type { CommandHandler, CommandSpec, CompiledAxis } from "../shared.ts";
-import type { NoveltyFinding, SchemaManifest, UnmodeledSnapshot } from "../manifest.ts";
+import type { NoveltyFinding, SchemaManifest, UndeclaredSnapshot, UnmodeledSnapshot } from "../manifest.ts";
 import { PROTECT_CAPTURE_DEFAULT_DURATION, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } from "../../../settings.ts";
 import { channels, subscribeToChannel } from "../../../index.ts";
 import { createScrubContext, scrub } from "../scrub.ts";
-import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, snapshotUnmodeled } from "../manifest.ts";
+import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, snapshotUndeclared, snapshotUnmodeled } from "../manifest.ts";
 import { fileStamp, formatDuration, serializeJson } from "../output/format.ts";
 import type { AnyProtectDiagnosticsChannel } from "../../../index.ts";
 import { DEVICE_CATEGORIES } from "../lookup.ts";
@@ -25,8 +25,8 @@ const USAGE = [
   "",
   "Watch the controller against the schema this package was built with, and write one scrubbed, self-contained bundle describing anything",
   "it says that this library does not model - an unrecognized device class, an undeclared field, an unknown event type - together with the",
-  "traffic that evidences it. Every identifying value is replaced by a stable pseudonym before anything is written, so the bundle can be",
-  "sent on as-is.",
+  "traffic and the example records that evidence it. Every identifying value is replaced by a stable pseudonym before anything is written,",
+  "so the bundle can be sent on as-is.",
   "",
   "Options:",
   "  --device <list>   Also follow these devices by name or id (substring or * / ? globs), whether or not they look new.",
@@ -83,6 +83,7 @@ interface Window {
   rawSeen: number;
   startedAt: number;
   subjects: Map<string, Set<SelectionReason>>;
+  undeclared: UndeclaredSnapshot[];
   unmodeled: UnmodeledSnapshot[];
 }
 
@@ -348,6 +349,7 @@ function assembleBundle(window: Window, client: ProtectClient, manifest: SchemaM
       tool: readVersion(),
       window: { durationMs: endedAt - window.startedAt, endedAt, startedAt: window.startedAt }
     },
+    undeclared: window.undeclared,
     unmodeled: window.unmodeled
   };
 }
@@ -403,6 +405,7 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
       rawSeen: 0,
       startedAt: Date.now(),
       subjects: new Map(),
+      undeclared: [],
       unmodeled: []
     };
 
@@ -433,9 +436,14 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
 
     accumulate(window, diffBootstrap(manifest, bootstrap));
 
-    // The findings say which collections this version cannot place; the exemplars say what the records in them look like. A class with no described shape produces no
-    // field-level evidence anywhere else in the bundle, so this is the only thing a reader could model one from, and it comes from the same document the diff read.
+    /* The findings say which collections this version cannot place and which members inside a described one it cannot account for; the two snapshots say what the
+     * records look like - whole records for a collection with no shape, and for a described collection the records that share one set of undeclared members. A class
+     * with no described shape produces no field-level evidence anywhere else in the bundle, and an undeclared member's values reach the bundle only if the member
+     * happens to change during the window, so a new device inside a known collection arrives with its values rather than costing a reader a separate bootstrap dump.
+     * Both read the same document the diff read.
+     */
     window.unmodeled = snapshotUnmodeled(manifest, bootstrap, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
+    window.undeclared = snapshotUndeclared(manifest, bootstrap, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
 
     seedSubjects(window, manifest, bootstrap, device);
 

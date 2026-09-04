@@ -5,7 +5,8 @@
  */
 import type { NoveltyFinding, SchemaManifest } from "./manifest.ts";
 import { describe, test } from "node:test";
-import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, parseSchemaManifest, snapshotUnmodeled } from "./manifest.ts";
+import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, parseSchemaManifest, snapshotUndeclared,
+  snapshotUnmodeled } from "./manifest.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { CliError } from "./shared.ts";
 import type { RawPacket } from "../../index.ts";
@@ -238,6 +239,122 @@ describe("unmodeled snapshots", () => {
 
     // The document is read structurally rather than trusted to be a bootstrap at all, the same posture the diff takes.
     assert.deepEqual(snapshotUnmodeled(FIXTURE, "not a bootstrap", 3), []);
+  });
+});
+
+describe("undeclared snapshots", () => {
+
+  test("records sharing one set of undeclared members are one group, capped, beside the count that share it", () => {
+
+    // The group is the shape rather than the collection: four sensors reporting the same new member are one thing to model, so the sample is capped and the count
+    // beside it says how many carried the set. A per-collection cap would fail exactly here, because the new unit need not sit among a collection's first few records.
+    const bootstrap = { sensors: [
+
+      { id: "s1", mac: "AABBCCDDEE01", smokeStatus: { ready: true } },
+      { id: "s2", mac: "AABBCCDDEE02", smokeStatus: { ready: true } },
+      { id: "s3", mac: "AABBCCDDEE03", smokeStatus: { ready: true } },
+      { id: "s4", mac: "AABBCCDDEE04", smokeStatus: { ready: true } }
+    ] };
+
+    assert.deepEqual(snapshotUndeclared(FIXTURE, bootstrap, 2), [{ collection: "sensors", kept: [
+
+      { id: "s1", mac: "AABBCCDDEE01", smokeStatus: { ready: true } },
+      { id: "s2", mac: "AABBCCDDEE02", smokeStatus: { ready: true } }
+    ], members: [{ observedType: "object", path: "smokeStatus" }], seen: 4 }]);
+  });
+
+  test("two distinct sets of undeclared members are two groups", () => {
+
+    // A superset is a different shape rather than more of the same one, so it earns its own entry and its own exemplar instead of joining the first group's count.
+    const bootstrap = { sensors: [
+
+      { id: "s1", mac: "AABBCCDDEE01", smokeStatus: { ready: true } },
+      { featureFlags: { smoke: { channelCount: 1 } }, id: "s2", mac: "AABBCCDDEE02", smokeStatus: { ready: true } }
+    ] };
+
+    assert.deepEqual(snapshotUndeclared(FIXTURE, bootstrap, 3), [
+
+      { collection: "sensors", kept: [{ id: "s1", mac: "AABBCCDDEE01", smokeStatus: { ready: true } }], members: [{ observedType: "object", path: "smokeStatus" }],
+        seen: 1 },
+      { collection: "sensors", kept: [{ featureFlags: { smoke: { channelCount: 1 } }, id: "s2", mac: "AABBCCDDEE02", smokeStatus: { ready: true } }],
+        members: [ { observedType: "object", path: "featureFlags" }, { observedType: "object", path: "smokeStatus" } ], seen: 1 }
+    ]);
+  });
+
+  test("the same undeclared member observed as null on one record and populated on another is two groups", () => {
+
+    // The type observed under a path is part of the member, because a fleet reporting a member as null on most of its units and as a populated object on the rest is
+    // two shapes. Keyed on the path alone the two collapse, and the exemplars a reader is handed are the null ones - the form that teaches nothing about the member.
+    const bootstrap = { sensors: [
+
+      { id: "s1", mac: "AABBCCDDEE01", smokeStatus: null },
+      { id: "s2", mac: "AABBCCDDEE02", smokeStatus: { ready: true } }
+    ] };
+
+    assert.deepEqual(snapshotUndeclared(FIXTURE, bootstrap, 3), [
+
+      { collection: "sensors", kept: [{ id: "s1", mac: "AABBCCDDEE01", smokeStatus: null }], members: [{ observedType: "null", path: "smokeStatus" }], seen: 1 },
+      { collection: "sensors", kept: [{ id: "s2", mac: "AABBCCDDEE02", smokeStatus: { ready: true } }], members: [{ observedType: "object", path: "smokeStatus" }],
+        seen: 1 }
+    ]);
+  });
+
+  test("a nested undeclared path groups by its full dotted path", () => {
+
+    // A new field inside a declared block is the member, named by the path that reaches it, so two records differing only in where the field sits are two shapes.
+    const bootstrap = { cameras: [{ channels: [{ extra: true, id: 1 }], id: "c1", mac: "AABBCCDDEE01", name: "Front Door" }] };
+
+    assert.deepEqual(snapshotUndeclared(FIXTURE, bootstrap, 3), [{ collection: "cameras", kept: [
+
+      { channels: [{ extra: true, id: 1 }], id: "c1", mac: "AABBCCDDEE01", name: "Front Door" }
+    ], members: [{ observedType: "boolean", path: "channels[].extra" }], seen: 1 }]);
+  });
+
+  test("an undeclared field inside several dictionary entries is one shared member per observed type, ordered by type", () => {
+
+    /* A dictionary's keys are data, so the walk collapses them to one wildcard segment and three entries carrying the same new field produce three findings on one
+     * path. They de-duplicate to one member per type observed under it, and the string-valued entry is listed first so that a sort by path alone would leave it
+     * where insertion order put it, against an ordering that puts the number ahead of it.
+     */
+    const bootstrap = { nvr: { capacity: { high: { extra: "a", max: 1 }, low: { extra: 1, max: 2 }, mid: { extra: 2, max: 3 } }, id: "n1", mac: "AABBCCDDEE00",
+      name: "Controller" } };
+
+    assert.deepEqual(snapshotUndeclared(FIXTURE, bootstrap, 3), [{ collection: "nvr", kept: [
+
+      { capacity: { high: { extra: "a", max: 1 }, low: { extra: 1, max: 2 }, mid: { extra: 2, max: 3 } }, id: "n1", mac: "AABBCCDDEE00", name: "Controller" }
+    ], members: [ { observedType: "number", path: "capacity.*.extra" }, { observedType: "string", path: "capacity.*.extra" } ], seen: 1 }]);
+  });
+
+  test("the singleton member is one record", () => {
+
+    // A bootstrap member holding one record rather than a collection contributes the one record it is, which is how the controller's own new fields reach a bundle.
+    const bootstrap = { nvr: { extra: 1, id: "n1", mac: "AABBCCDDEE00", name: "Controller" } };
+
+    assert.deepEqual(snapshotUndeclared(FIXTURE, bootstrap, 3), [{ collection: "nvr", kept: [{ extra: 1, id: "n1", mac: "AABBCCDDEE00", name: "Controller" }],
+      members: [{ observedType: "number", path: "extra" }], seen: 1 }]);
+  });
+
+  test("a record with nothing undeclared contributes nothing", () => {
+
+    // The sampler answers what the manifest cannot describe. A record it describes completely is already modeled, and sampling it would put the site's own inventory
+    // into a bundle that was asked about what the library does not know.
+    const bootstrap = { cameras: [{ id: "c1", mac: "AABBCCDDEE01", name: "Front Door" }], sensors: [{ airQuality: { aqi: 12 }, id: "s1", mac: "AABBCCDDEE02" }] };
+
+    assert.deepEqual(snapshotUndeclared(FIXTURE, bootstrap, 3), []);
+  });
+
+  test("an unmodeled member is left to the unmodeled sampler", () => {
+
+    // Nothing inside a member with no described shape can be undeclared against it, so both ways of being unmodeled - carried as raw JSON, or not carried at all -
+    // belong to the sibling sampler and contribute nothing here.
+    assert.deepEqual(snapshotUndeclared(FIXTURE, { aiports: [{ id: "a1" }] }, 3), []);
+    assert.deepEqual(snapshotUndeclared(FIXTURE, { agreements: { contract: "tos" } }, 3), []);
+  });
+
+  test("a bootstrap that is not an object yields no groups", () => {
+
+    // The document is read structurally rather than trusted to be a bootstrap at all, the same posture the diff and the sibling sampler take.
+    assert.deepEqual(snapshotUndeclared(FIXTURE, "not a bootstrap", 3), []);
   });
 });
 

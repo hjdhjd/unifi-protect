@@ -75,6 +75,7 @@ interface Bundle {
   inventory: { id: string; modelKey: string }[];
   novelty: { collection?: string; kind: string; occurrenceCount: number; path?: string; recordId?: string }[];
   run: { controller: { firmwareVersion: string | null; version: string | null }; manifestVersion: string; mode: string; selection: Record<string, string[]> };
+  undeclared: { collection: string; kept: Record<string, unknown>[]; members: { observedType: string; path: string }[]; seen: number }[];
   unmodeled: { collection: string; kept: Record<string, unknown>[]; seen: number }[];
 }
 
@@ -345,11 +346,43 @@ describe("capture", () => {
     assert.match(String(exemplar?.["name"]), /^Test Device \d+$/);
   });
 
-  test("a bootstrap the manifest describes entirely carries an empty snapshot list", async () => {
+  test("records carrying undeclared members reach the bundle as capped, scrubbed exemplars grouped by what they share", async () => {
+
+    /* The gap this closes: a device landing inside a collection the manifest does describe reaches the bundle as findings naming each undeclared path and the type
+     * observed under it, and nothing more, because the diff does not descend into a member it has no shape for. The exemplars carry the record around those paths.
+     *
+     * Read from the written file rather than from the sampler's own return, because that is the only place the two things this asserts are both visible: that the run
+     * passes the shared exemplar cap rather than shipping the roster, and that the exemplars went through the bundle's one scrub like every other value.
+     */
+    const bootstrap = { ...CLEAN_BOOTSTRAP, sensors: [
+
+      { airQuality: { aqi: 12 }, id: "s1", mac: "AABBCCDDEE02", name: "Air One", smokeStatus: { ready: true } },
+      { airQuality: { aqi: 13 }, id: "s2", mac: "AABBCCDDEE03", name: "Air Two", smokeStatus: { ready: true } },
+      { airQuality: { aqi: 14 }, id: "s3", mac: "AABBCCDDEE04", name: "Air Three", smokeStatus: { ready: true } },
+      { airQuality: { aqi: 15 }, id: "s4", mac: "AABBCCDDEE05", name: "Air Four", smokeStatus: { ready: true } }
+    ] };
+
+    const { bundle } = await runCapture({ bootstrap });
+    const entry = bundle.undeclared[0];
+    const exemplar = entry?.kept[0];
+
+    assert.equal(bundle.undeclared.length, 1, "four sensors reporting the same new member are one shape, sampled once");
+    assert.equal(entry?.collection, "sensors");
+    assert.deepEqual(entry?.members, [{ observedType: "object", path: "smokeStatus" }]);
+    assert.equal(entry?.seen, 4, "the count says how many records share the set, so a truncated sample never reads as a complete one");
+    assert.equal(entry?.kept.length, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
+
+    assert.notEqual(exemplar?.["mac"], "AABBCCDDEE02", "the real address never reaches the bundle");
+    assert.match(String(exemplar?.["mac"]), /^[0-9A-F]{12}$/, "the replacement is still address-shaped");
+    assert.match(String(exemplar?.["name"]), /^Test Device \d+$/);
+  });
+
+  test("a bootstrap the manifest describes entirely carries empty snapshot lists", async () => {
 
     const { bundle } = await runCapture({});
 
     assert.deepEqual(bundle.unmodeled, []);
+    assert.deepEqual(bundle.undeclared, []);
   });
 
   test("one scrub context spans the whole bundle, so an identifier reads the same wherever it surfaces", async () => {
