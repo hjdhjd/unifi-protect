@@ -356,7 +356,7 @@ describe("StateStore", () => {
 
   describe("adoption self-contradiction diagnostics", () => {
 
-    // The controller's own MAC and the capture-derived flagged sensor from the 2026-07-12 SuperLink defect, plus its coherent counterpart.
+    // The controller's own MAC and a flagged sensor that reports isAdoptedByOther true while its nvrMac still names this controller, plus its coherent counterpart.
     const ownMac = "AABBCC000002";
     const controller = (): ReturnType<typeof makeNvr> => makeNvr({ mac: ownMac });
     const flaggedSensor = (): ReturnType<typeof makeSensor> => makeSensor({ id: "s1", isAdopted: true, isAdoptedByOther: true, mac: "AABBCC000001", nvrMac: ownMac });
