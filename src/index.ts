@@ -58,6 +58,10 @@ export type { LivestreamDescription, LivestreamInit, LivestreamTrack } from "./p
 // the runtime array to reach a category's selectors) plus its type; `DeviceModelKey` stays internal, since the collection vocabulary is the consumer-facing surface.
 export { DEVICE_COLLECTION_KEYS } from "./protocol/events.ts";
 export type { AuthMethod, DeviceCollectionKey, SmartDetectType, StateModelKey, TypedEvent } from "./protocol/events.ts";
+// The hardware-address vocabulary - the test for whether a value is a device address at all, and the fold that spells one address one way. Value exports: a
+// consumer calls both as free functions. A consumer keys its own devices by the folded spelling because the controller varies the case of one device's address
+// from one record to the next, so a map keyed on the text as it arrived splits a single device in two the first time the case changes.
+export { isMacAddress, normalizeMacAddress } from "./protocol/address.ts";
 // Talkback - the send-direction two-way-audio session a consumer receives from `camera.talkback()` and its lifecycle-state type. Type-only: a consumer never constructs
 // one (the camera factory does), drives it through `send`/`close`/dispose, and reads `state`.
 export type { TalkbackSession, TalkbackState } from "./transport/talkback-session.ts";
