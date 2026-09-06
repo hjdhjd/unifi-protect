@@ -21,6 +21,9 @@ export interface FakeDeviceSpec {
 
   id: string;
   name: string;
+  // The members the controller is known to leave out on some units. A listed member is left out of the fake's config record, so a command's fallback for an absent
+  // member is exercised.
+  omits?: readonly ("marketName" | "type")[];
   online?: boolean;
   outputs?: FakeRelayOutput[];
   rebootFails?: boolean;
@@ -153,13 +156,15 @@ export interface FakeCalls {
 // `watch state`'s single-device branch.
 function makeDevice(spec: FakeDeviceSpec, modelKey: string, calls: FakeCalls, observations: number): Record<string, unknown> {
 
+  const omitted = new Set(spec.omits ?? []);
+
   const config = {
 
     displayName: spec.name,
     firmwareVersion: "1.0.0",
     id: spec.id,
     mac: "AABBCC" + spec.id,
-    marketName: "Fake " + modelKey,
+    ...(!omitted.has("marketName") && { marketName: "Fake " + modelKey }),
     // The real read-through config carries its own class, and the capture inventory reads it from there, so the fake carries it too.
     modelKey,
     name: spec.name,
@@ -167,7 +172,7 @@ function makeDevice(spec: FakeDeviceSpec, modelKey: string, calls: FakeCalls, ob
     // non-relay spec omits it, so the field is present only when a test supplied it.
     ...((spec.outputs !== undefined) && { outputs: spec.outputs }),
     state: (spec.online ?? true) ? "CONNECTED" : "DISCONNECTED",
-    type: "FAKE"
+    ...(!omitted.has("type") && { type: "FAKE" })
   };
 
   // We build the device into a named const first so its `observe` generator can close over it, then return that same reference - the generator only reads `device` when

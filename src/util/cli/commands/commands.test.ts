@@ -66,6 +66,21 @@ describe("info", () => {
     assert.equal(calls.disposed, 1, "the client must be disposed via await using");
   });
 
+  test("the inventory row falls back to the hardware type and then to unknown when the controller omits the market name", async () => {
+
+    // The controller leaves the market name off some units and the hardware type off others, so one camera stands in for each case the model column renders.
+    const { client } = makeFakeClient({ cameras: [ { id: "c1", name: "Front Door", omits: ["marketName"] },
+      { id: "c2", name: "Side Yard", omits: [ "marketName", "type" ] } ] });
+    const { ctx, stdout } = makeCommandContext({ args: [], client });
+
+    await info.run(ctx);
+
+    const out = stdout();
+
+    assert.match(out, /Front Door.*FAKE/, "a unit without a market name shows its hardware type in the model column");
+    assert.match(out, /Side Yard.*unknown/, "a unit without either member shows unknown in the model column");
+  });
+
   test("--json emits a structured summary", async () => {
 
     const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }], controllerName: "Winterfell" });

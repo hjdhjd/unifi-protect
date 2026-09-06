@@ -47,11 +47,13 @@ function onlineLabel(output: Output, isOnline: boolean): string {
   return isOnline ? output.colors.green("online") : output.colors.red("offline");
 }
 
-// One inventory row for a device: name, id, market model name, colored connectivity, and firmware. All fields come from the live config record the projection reads
-// through to, so the inventory reflects current state.
+// One inventory row for a device: name, id, market model name (or the hardware type, or unknown, when the controller omits them), colored connectivity, and firmware.
+// All fields come from the live config record the projection reads through to, so the inventory reflects current state.
 function deviceRow(output: Output, device: AnyDevice): string[] {
 
-  return [ device.name, device.id, device.config.marketName, onlineLabel(output, device.isOnline), device.config.firmwareVersion ?? "unknown" ];
+  const model = device.config.marketName ?? device.config.type ?? "unknown";
+
+  return [ device.name, device.id, model, onlineLabel(output, device.isOnline), device.config.firmwareVersion ?? "unknown" ];
 }
 
 // Render the human-readable summary: a controller header, then a table per device category - or, when a `category` is given, only that one class. The category list is

@@ -125,7 +125,10 @@ export interface ProtectDeviceBaseInterface {
   latestFirmwareSizeBytes: Nullable<number>;
   latestFirmwareVersion: Nullable<string>;
   mac: string;
-  marketName: string;
+  // The controller omits `marketName` on some units and `type` on others: a field fleet on Protect 7.2.105 reported both. Neither member has a device class the
+  // controller reliably reports it for, so both are optional on the base and no device class re-narrows them. A consumer renders a device's model as the market
+  // name with the hardware type as its fallback.
+  marketName?: string;
   minFirmwareVersion: string;
   name?: string;
   nvrMac: string;
@@ -140,7 +143,8 @@ export interface ProtectDeviceBaseInterface {
   supportFileName: Nullable<string>;
   supportFileState: Nullable<string>;
   sysid: Nullable<string>;
-  type: string;
+  // Optional for the reason the note on `marketName` gives.
+  type?: string;
   upSince: number;
   uplinkDevice: Nullable<string>;
   uptime: Nullable<number>;
