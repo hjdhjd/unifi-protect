@@ -100,7 +100,9 @@ export interface ProtectSensorSensitivitySettingsInterface {
  * readings.
  *
  * The controller reports the block on sensors of every model: across a field fleet it is populated on air-quality and environmental units and `null` on other units
- * of those same models, so its presence says nothing about whether a sensor has smoke hardware. The capability signal is `featureFlags.alarmTypes`.
+ * of those same models, so its presence says nothing about whether a sensor has smoke hardware. Neither does `featureFlags.alarmTypes`: that advertisement names
+ * the alarm kinds a unit deals in, and an environmental unit with no detector hardware advertises smoke and CO because it listens for those alarm sounds. The
+ * model family is the hardware signal.
  */
 export interface ProtectSensorSmokeStatusInterface {
 
