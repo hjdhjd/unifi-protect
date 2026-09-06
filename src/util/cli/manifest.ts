@@ -340,7 +340,7 @@ function recordIdOf(record: unknown): string {
 interface WalkContext {
 
   collection: string;
-  findings: NoveltyFinding[];
+  findings: UnknownFieldFinding[];
   recordId: string;
 }
 
@@ -406,9 +406,13 @@ function walkNode(node: SchemaNode, value: unknown, path: string, ctx: WalkConte
 }
 
 // Walk one record against its collection's tree. The record's own id attributes every finding it produces, so two units of the same collection stay distinguishable.
-function walkRecord(node: SchemaNode, record: unknown, collection: string, findings: NoveltyFinding[]): void {
+function walkRecord(node: SchemaNode, record: unknown, collection: string): UnknownFieldFinding[] {
+
+  const findings: UnknownFieldFinding[] = [];
 
   walkNode(node, record, "", { collection, findings, recordId: recordIdOf(record) });
+
+  return findings;
 }
 
 /**
@@ -453,13 +457,13 @@ export function diffBootstrap(manifest: SchemaManifest, bootstrap: unknown): Nov
 
       for(const element of value) {
 
-        walkRecord(node, element, key, findings);
+        findings.push(...walkRecord(node, element, key));
       }
 
       continue;
     }
 
-    walkRecord(node, value, key, findings);
+    findings.push(...walkRecord(node, value, key));
   }
 
   return findings;
@@ -531,17 +535,11 @@ export function snapshotUnmodeled(manifest: SchemaManifest, bootstrap: unknown, 
 // The undeclared members one record's walk found: each finding's path and the type observed under it, de-duplicated and ordered. Two records carrying the same members
 // produce the same list whatever order they happened to list them in, which is what lets the list stand as a group key. The de-duplication is not cosmetic: an
 // undeclared field inside two entries of a declared dictionary produces one finding per entry, and the dictionary hop collapses both paths to the same wildcard form.
-// Every finding a record walk produces is an unknownField - the only kind walkNode emits - so the narrowing reads the two fields rather than asserting that.
-function undeclaredMembersOf(findings: NoveltyFinding[]): UndeclaredSnapshot["members"] {
+function undeclaredMembersOf(findings: readonly UnknownFieldFinding[]): UndeclaredSnapshot["members"] {
 
   const members = new Map<string, UndeclaredSnapshot["members"][number]>();
 
   for(const finding of findings) {
-
-    if(finding.kind !== "unknownField") {
-
-      continue;
-    }
 
     members.set(JSON.stringify([ finding.path, finding.observedType ]), { observedType: finding.observedType, path: finding.path });
   }
@@ -607,11 +605,7 @@ export function snapshotUndeclared(manifest: SchemaManifest, bootstrap: unknown,
 
     for(const record of records) {
 
-      const findings: NoveltyFinding[] = [];
-
-      walkRecord(node, record, key, findings);
-
-      const members = undeclaredMembersOf(findings);
+      const members = undeclaredMembersOf(walkRecord(node, record, key));
 
       if(members.length === 0) {
 
@@ -668,7 +662,7 @@ export function diffRecord(manifest: SchemaManifest, subject: { modelKey: string
     return [];
   }
 
-  const findings: NoveltyFinding[] = [];
+  const findings: UnknownFieldFinding[] = [];
 
   // The frame header's id attributes the findings rather than the payload's own, because a partial update carries the record's fields without necessarily repeating
   // its identity.
