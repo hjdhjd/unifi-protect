@@ -4,9 +4,9 @@
  */
 import { COMMON_OPTIONS, CliError, boundedSignal, parseDuration, parsePositiveInt, take } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
+import { DEVICE_CATEGORIES, findDevice, isDeviceCategory } from "../lookup.ts";
 import type { ProtectClient, ProtectDeviceConfig, ProtectState } from "../../../index.ts";
 import { deviceSelectors, isDeviceOnline, selectControllerName, selectIsAdmin } from "../../../index.ts";
-import { findDevice, isDeviceCategory } from "../lookup.ts";
 import type { DeviceCategory } from "../lookup.ts";
 import type { Output } from "../output/format.ts";
 import { parseArgs } from "node:util";
@@ -18,7 +18,7 @@ const USAGE = [
   "Observe a slice of reduced controller state and print on every change.",
   "",
   "Targets:",
-  "  cameras | lights | sensors | chimes | viewers | fobs | relays   A device category (use --online to watch only connected devices).",
+  "  " + DEVICE_CATEGORIES.join(" | ") + "   A device category (use --online to watch only connected devices).",
   "  isAdmin | controllerName                                 A controller fact derived from state.",
   "  <device id or name>                                      A single device.",
   "",

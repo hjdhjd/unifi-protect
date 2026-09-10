@@ -4,7 +4,7 @@
  */
 import { COMMON_OPTIONS, CliError } from "../shared.ts";
 import type { CommandContext, CommandHandler, CommandSpec } from "../shared.ts";
-import { devicesInCategory, findDeviceMatches, isDeviceCategory } from "../lookup.ts";
+import { DEVICE_CATEGORIES, devicesInCategory, findDeviceMatches, isDeviceCategory } from "../lookup.ts";
 import type { DeviceCategory } from "../lookup.ts";
 import { ProtectAbortedError } from "../../../index.ts";
 import type { ProtectClient } from "../../../index.ts";
@@ -18,7 +18,7 @@ const USAGE = [
   "",
   "Targets:",
   "  <device id or name>                                     Reboot that device (it drops and re-adopts).",
-  "  cameras | lights | sensors | chimes | viewers | fobs | relays  Reboot every connected device of that class.",
+  "  " + DEVICE_CATEGORIES.join(" | ") + "  Reboot every connected device of that class.",
   "  nvr                                                     Reboot the whole controller/console - every device drops; the library recovers automatically.",
   "",
   "An exact device id or name always wins over a category word, so a device named like a category is never mistaken for the class.",

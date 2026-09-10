@@ -20,7 +20,7 @@ const USAGE = [
   "Show the controller summary and a device inventory.",
   "",
   "Arguments:",
-  "  category    One of cameras, lights, sensors, chimes, viewers, fobs, relays - narrows the inventory to that class (default + --json views). Omit for everything.",
+  "  category    One of " + DEVICE_CATEGORIES.join(", ") + " - narrows the inventory to that class (default + --json views). Omit for everything.",
   "",
   "Options:",
   "  --json      Emit the curated summary (controller, devices, identity) as a JSON object instead of a table.",
