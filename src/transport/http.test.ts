@@ -5,21 +5,24 @@
  * the diagnostics-channel publishes for request start/end and throttle entered/exited, dispatcher-ownership semantics for an injected versus an owned pool, and
  * the on/once/stream event-rail surface.
  *
- * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, and a fake Clock advances breaker time
- * without real-time waits. The injected dispatcher and clock let these tests pin the controller's throttle and retry behavior - the established behavioral contract -
- * exactly and without flakiness.
+ * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, a fake Clock advances breaker time
+ * without real-time waits, and the rows that need a real connection open a loopback server of their own. The injected dispatcher and clock let these tests
+ * assert the controller's throttle and retry behavior - the established behavioral contract - exactly and without flakiness.
  */
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../settings.ts";
+import { Pool, errors } from "undici";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectThrottledError,
   ProtectTimeoutError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
+import type { AddressInfo } from "node:net";
 import type { MockTransport } from "./mock-controller.helpers.ts";
 import type { SendOptions } from "./http.ts";
 import { Transport } from "./http.ts";
 import assert from "node:assert/strict";
 import { capturingLog } from "../testing.helpers.ts";
 import { createLoopbackHttpsPeer } from "./tls-peer.helpers.ts";
+import { createServer } from "node:http";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 // The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the fake-clock advances line up with the gate math.
@@ -296,6 +299,109 @@ describe("Transport", () => {
 
       await assert.rejects(transport.send(url(host, "/x")), { code: "ECONNREFUSED", constructor: ProtectNetworkError });
     });
+
+    test("a caller abort that carries a reason surfaces as ProtectAbortedError", async () => {
+
+      const reason = new Error("The talkback session was stopped.");
+      const error = await sendCancelled(makeMockTransport(), { reason });
+
+      // Undici rethrows a truthy reason as it is, so the reason itself is what the classifier recognizes and what the cause carries.
+      assert.ok(error instanceof ProtectAbortedError);
+      assert.ok(Object.is(error.cause, reason));
+    });
+
+    test("a deadline the caller supplies as its signal surfaces as ProtectAbortedError", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
+
+      await assert.rejects(transport.send(url(host, "/slow"), { signal: AbortSignal.timeout(20) }), ProtectAbortedError);
+    });
+
+    test("a failure that is no abort stays a failure though the caller aborts before it lands", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const controller = new AbortController();
+      const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT - 1);
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT - 1);
+
+      // The mock dispatcher delivers the error inside the send call and queues the rejection, so the abort on the next line lands first and causes no rejection of
+      // its own: the caller's signal reads aborted by the time the failure is classified.
+      const pending = transport.send(url(host, "/x"), { signal: controller.signal });
+
+      controller.abort();
+
+      await assert.rejects(pending, { code: "ECONNREFUSED", constructor: ProtectNetworkError });
+      assert.equal(transport.isThrottled, true);
+    });
+
+    test("a deadline that fired first is ours though the caller has aborted since", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const controller = new AbortController();
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT - 1);
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(new DOMException("The deadline lapsed.", "TimeoutError"));
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT - 1);
+
+      // The row above's shape with the value our own deadline throws: the caller's abort lands after it, and is not what ended the request.
+      const pending = transport.send(url(host, "/x"), { signal: controller.signal });
+
+      controller.abort();
+
+      await assert.rejects(pending, ProtectTimeoutError);
+      assert.equal(transport.isThrottled, true);
+    });
+
+    test("an in-flight cancel with a falsy reason surfaces as ProtectAbortedError on a real connection, marked cancelled", async () => {
+
+      // A real connection pool, because the mock dispatcher reports a falsy reason as a TypeError where undici's own client substitutes its RequestAbortedError. The
+      // server accepts the request and never answers, so the request stays in flight until its caller aborts it.
+      const seen = Promise.withResolvers<undefined>();
+      const server = createServer(() => seen.resolve(undefined));
+
+      await new Promise<undefined>((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
+
+      const origin = "http://127.0.0.1:" + String((server.address() as AddressInfo).port);
+      const dispatcher = new Pool(origin);
+      const transport = new Transport({ dispatcher, host: new URL(origin).host });
+      const ends: { cancelled?: true }[] = [];
+      const onEnd = (message: unknown): void => void ends.push(message as { cancelled?: true });
+
+      diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+
+      try {
+
+        const controller = new AbortController();
+        const pending = transport.send(origin + "/x", { signal: controller.signal });
+
+        await seen.promise;
+        controller.abort("");
+
+        await assert.rejects(pending, (error: unknown) => {
+
+          assert.ok(error instanceof ProtectAbortedError);
+          assert.ok(error.cause instanceof errors.RequestAbortedError);
+
+          return true;
+        });
+
+        // The same reading drives the booking and the marker, so the marker shows the falsy reason was read as the caller's cancel and not booked.
+        assert.equal(ends.at(-1)?.cancelled, true);
+      } finally {
+
+        diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
+        await dispatcher.close();
+        server.closeAllConnections();
+        await new Promise<undefined>((resolve) => server.close(() => resolve(undefined)));
+      }
+    });
   });
 
   describe("throttle circuit breaker", () => {
@@ -456,6 +562,23 @@ describe("Transport", () => {
       await sendCancelled(mock);
 
       // A cancel that booked a failure would have tripped the breaker here, and one that booked a success would leave the next failure short of the threshold.
+      assert.equal(transport.isThrottled, false);
+
+      await transport.send(url(host, "/f"));
+
+      assert.equal(transport.isThrottled, true);
+    });
+
+    test("a cancel that carries a reason books no outcome", async () => {
+
+      const mock = makeMockTransport();
+      const { host, pool, transport } = mock;
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT - 1);
+      await sendCancelled(mock, { reason: new Error("The talkback session was stopped.") });
+
       assert.equal(transport.isThrottled, false);
 
       await transport.send(url(host, "/f"));
@@ -653,6 +776,47 @@ describe("Transport", () => {
       assert.equal(ends[0]?.host, configuredHost, "the failure-path end payload still carries the configured controller host");
       assert.equal(ends[0]?.statusCode, undefined, "a transport-level failure carries no status code");
       assert.ok((ends[0]?.error ?? "").length > 0, "a transport-level failure carries an error message");
+    });
+
+    test("marks a cancelled request on the end payload and no other", async () => {
+
+      const ends: { cancelled?: true; error?: string }[] = [];
+      const onEnd = (message: unknown): void => void ends.push(message as { cancelled?: true; error?: string });
+
+      diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+
+      try {
+
+        const mock = makeMockTransport();
+        const { host, pool, transport } = mock;
+        const controller = new AbortController();
+
+        await sendCancelled(mock);
+
+        // A deadline of ours that fired before the caller aborted is our timeout, not the caller's cancel.
+        pool.intercept({ method: "GET", path: "/x" }).replyWithError(new DOMException("The deadline lapsed.", "TimeoutError"));
+
+        const pending = transport.send(url(host, "/x"), { signal: controller.signal });
+
+        controller.abort();
+
+        await assert.rejects(pending, ProtectTimeoutError);
+
+        // A deadline the caller supplied that lapses in flight is a controller that did not answer in time, not a cancel.
+        pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
+
+        await assert.rejects(transport.send(url(host, "/slow"), { signal: AbortSignal.timeout(20) }), ProtectAbortedError);
+      } finally {
+
+        diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
+      }
+
+      const [ cancelled, ours, lapsed ] = ends;
+
+      assert.equal(ends.length, 3);
+      assert.equal(cancelled?.cancelled, true);
+      assert.equal(Object.hasOwn(ours ?? {}, "cancelled"), false);
+      assert.equal(Object.hasOwn(lapsed ?? {}, "cancelled"), false);
     });
 
     test("publishes throttle entered and exited around the breaker lifecycle", async () => {

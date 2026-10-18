@@ -492,8 +492,8 @@ export class Transport implements AsyncDisposable {
     const requestId = randomUUID();
     const timeout = opts.timeout ?? PROTECT_API_TIMEOUT;
 
-    // Compose our timeout deadline with the caller's optional cancellation. #classifyTransportError later tells our timeout apart from the caller's cancellation by
-    // checking whether the caller's own signal is the one that aborted; when it is not, the abort is attributed to our timeout instead.
+    // Compose our timeout deadline with the caller's optional cancellation. #classifyTransportError later tells the caller's cancellation from our timeout by what
+    // undici threw: the caller's own abort reason, or undici's RequestAbortedError when that reason is falsy, is the caller's cancel, and any other abort is ours.
     const timeoutSignal = AbortSignal.timeout(timeout);
     const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, timeoutSignal ]) : timeoutSignal;
 
@@ -519,7 +519,8 @@ export class Transport implements AsyncDisposable {
 
       const classified = this.#classifyTransportError(error, opts.signal, this.#clock.now() - startedAt);
 
-      this.#publishEnd({ durationMs: this.#clock.now() - startedAt, error: classified.message, method, requestId, url });
+      this.#publishEnd({ ...(callerCancelled(classified, opts.signal) && { cancelled: true }), durationMs: this.#clock.now() - startedAt,
+        error: classified.message, method, requestId, url });
 
       throw classified;
     }
@@ -580,21 +581,26 @@ export class Transport implements AsyncDisposable {
     }
   }
 
-  // Classify an undici exception into the typed hierarchy. The abort branch distinguishes our deadline from the caller's cancellation by asking which signal fired:
-  // if the caller's signal is aborted it was an explicit cancel, otherwise our timeout won the race.
+  // Classify an undici exception into the typed hierarchy. The caller's cancellation is recognized by what was thrown rather than by the caller's signal state
+  // alone, so a failure of any other shape stays what it is even when the caller aborts after it; an abort that is not the caller's is our own deadline.
   #classifyTransportError(error: unknown, callerSignal: AbortSignal | undefined, elapsedMs: number): ProtectAbortedError | ProtectNetworkError | ProtectTimeoutError {
 
-    // AbortSignal.timeout() fires with a DOMException named "TimeoutError" rather than "AbortError", so both names are tested here alongside undici's own
-    // RequestAbortedError, which the pool throws when it aborts an in-flight request on its own - together they cover every shape an abort can take.
+    // The shapes an abort of ours takes: our deadline fires through AbortSignal.timeout(), whose DOMException is named "TimeoutError" rather than "AbortError", so
+    // both names are tested, alongside undici's own RequestAbortedError, which the pool throws when it aborts an in-flight request on its own.
     const isAbort = ((error instanceof DOMException) && ((error.name === "AbortError") || (error.name === "TimeoutError"))) ||
       (error instanceof errors.RequestAbortedError);
 
+    // The caller's cancellation: the caller's signal has aborted, and what undici threw is that abort. Undici rethrows a truthy reason as it is and substitutes
+    // its own RequestAbortedError for a falsy one, so both are tested. A deadline of ours that fired first matches neither, and stays ours even when the caller
+    // aborts a moment later.
+    if((callerSignal?.aborted === true) &&
+      ((error === callerSignal.reason) || (!callerSignal.reason && (error instanceof errors.RequestAbortedError)))) {
+
+      return new ProtectAbortedError("The request was aborted by the caller's signal.", { cause: error });
+    }
+
+    // Any other abort is our own deadline.
     if(isAbort) {
-
-      if(callerSignal?.aborted) {
-
-        return new ProtectAbortedError("The request was aborted by the caller's signal.", { cause: error });
-      }
 
       return new ProtectTimeoutError("The UniFi Protect controller did not respond before the request deadline elapsed.", { cause: error, elapsedMs });
     }

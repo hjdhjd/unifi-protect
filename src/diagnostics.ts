@@ -94,7 +94,7 @@ export const channels = {
   /** The realtime events WebSocket is reconnecting. */
   eventsReconnecting: typed<EventsReconnectingPayload>("unifi-protect:events:reconnecting"),
 
-  /** An HTTP request completed (success or failure). */
+  /** An HTTP request ended: it received a response, it failed, or its caller cancelled it. */
   httpRequestEnd: typed<HttpRequestEndPayload>("unifi-protect:http:request:end"),
 
   /** An HTTP request was dispatched. */
@@ -280,13 +280,15 @@ export interface EventsReconnectingPayload {
 }
 
 /**
- * Payload published on {@link channels.httpRequestEnd}. `error` is present only when the request failed; `statusCode` is absent when the failure was transport-level (no
- * response was received).
+ * Payload published on {@link channels.httpRequestEnd}. `statusCode` is present when a response was received and read to its end, whatever its status, and `error`
+ * otherwise: the request failed at the transport level, before or while its response was read, or its caller cancelled it, which `cancelled` marks.
  *
  * @category Diagnostics
  */
 export interface HttpRequestEndPayload {
 
+  /** Present, and `true`, only when the request ended because its caller chose to cancel it, so a consumer tells a cancel from a failure without reading the message. */
+  cancelled?: true;
   durationMs: number;
   error?: string;
 

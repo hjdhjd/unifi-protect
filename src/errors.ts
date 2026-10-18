@@ -70,8 +70,8 @@ export class ProtectThrottledError extends RecoverableError {
 
 /**
  * Our own request deadline elapsed before the controller responded. Distinct from {@link ProtectAbortedError}: this fires when the library's internal
- * `AbortSignal.timeout()` wins the race, whereas an aborted error fires when the caller's signal wins. The transport tells the two apart by checking whether the
- * caller's own `AbortSignal` is already aborted: if it is, the cancellation came from the caller; if not, the library's timeout won.
+ * `AbortSignal.timeout()` wins the race, whereas an aborted error fires when the caller's signal wins. The transport tells the two apart by what was thrown - the
+ * caller's own abort, whatever reason it carries, or the library's deadline - never by whether the caller's signal happens to read aborted once the failure arrives.
  *
  * @category Errors
  */
