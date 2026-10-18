@@ -205,6 +205,43 @@ describe("StateStore", () => {
       await done;
     });
 
+    test("keeps a sub-record observer silent across a refresh that drifted an unrelated field, and wakes it when its own slice drifts", async () => {
+
+      const clock = fakeClock();
+      let overrides: Record<string, unknown> = { id: "c1", lastMotion: 0 };
+      const bootstrapFor = (): ReturnType<typeof makeBootstrap> => makeBootstrap({ cameras: [makeCamera(overrides)] });
+      const store = new StateStore({ clock, refresh: () => Promise.resolve(bootstrapFor()), refreshIntervalMs: 1000 });
+
+      store.dispatch({ data: bootstrapFor(), kind: "bootstrapLoaded" });
+
+      const ac = new AbortController();
+      const { done, values } = collect(store.observe((state) => state.cameras.get("c1")?.featureFlags, { signal: ac.signal }));
+
+      await delay(0);
+
+      // Drift lastMotion alone: the camera record takes a new reference, but its featureFlags object keeps its own, so the observer stays silent.
+      overrides = { id: "c1", lastMotion: 999 };
+
+      const bootstrapIdBefore = store.snapshot().bootstrapId;
+
+      await clock.tick();
+      await expectAt(() => store.snapshot().bootstrapId === (bootstrapIdBefore + 1));
+      await delay(5);
+      assert.equal(store.snapshot().cameras.get("c1")?.lastMotion, 999, "the refresh applied the drifted scalar");
+      assert.equal(values.length, 0, "a refresh that drifted an unrelated field must not wake a featureFlags observer");
+
+      // Drift featureFlags itself: the observer wakes exactly once with the new slice.
+      overrides = { featureFlags: { hasMotionZones: false, smartDetectTypes: ["person"] }, id: "c1", lastMotion: 999 };
+      await clock.tick();
+      await expectAt(() => values.length === 1);
+      await delay(5);
+      assert.equal(values.length, 1, "a featureFlags drift wakes the observer once");
+      assert.equal(values[0]?.hasMotionZones, false);
+
+      ac.abort();
+      await done;
+    });
+
     test("survives a refresh failure and recovers on the next tick", async () => {
 
       const clock = fakeClock();

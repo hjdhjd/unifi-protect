@@ -1,9 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * reducer.test.ts: Unit tests for the pure state reducer. These tests pin the three guarantees the observation layer depends on - immutability, structural sharing, and
+ * reducer.test.ts: Unit tests for the pure state reducer. These tests hold the three guarantees the observation layer depends on - immutability, structural sharing, and
  * no-op fidelity (same value in, same reference out) - because a regression in any of them would silently either churn observers or suppress real notifications.
- * Coverage is exhaustive by design for the reconciliation surface: every merge rule and every reconciliation outcome (zero drift, partial drift, full replacement) is
- * asserted, and every event-kind category is representatively exercised.
+ * The reconciliation surface is covered rule by rule: each merge rule and each reconciliation outcome (zero drift, partial drift, full replacement, the nested sharing
+ * of a drifted record) has a row that reddens when it regresses, and every event-kind category is representatively exercised.
  */
 import { applyBootstrap, applyDevicePatch, createInitialState, reduce } from "./reducer.ts";
 import { describe, test } from "node:test";
@@ -98,6 +98,18 @@ describe("applyDevicePatch", () => {
     assert.equal(next.top, "unchanged");
   });
 
+  test("a patch that introduces a key whose value is undefined is a change that adds the key", () => {
+
+    const device: { a: number; b?: undefined } = { a: 1 };
+    const next = applyDevicePatch(device, { b: undefined });
+    const withKey = { a: 1, b: undefined };
+
+    assert.ok(!Object.is(next, device), "a key the device lacks is a change even when the patch sets it to undefined");
+    assert.equal(Object.hasOwn(next, "b"), true, "the added key is an own key of the result despite its undefined value");
+    assert.equal(next.a, 1, "the untouched key is carried forward");
+    assert.ok(Object.is(applyDevicePatch(withKey, { b: undefined }), withKey), "the same patch onto a device that already carries the key is a no-op");
+  });
+
   test("an explicit null clears a field", () => {
 
     const device = { value: "present" as string | null };
@@ -179,7 +191,7 @@ describe("reduce - device transitions", () => {
     assert.ok(Object.is(next.cameras.get(camera.id), camera), "the stored record is the event's data reference");
   });
 
-  test("deviceAdded for an existing id replaces the record wholesale (upsert)", () => {
+  test("deviceAdded for an existing id takes the new record's values (upsert)", () => {
 
     const initial = stateWithCamera(makeCamera({ name: "Old" }));
     const replacement = makeCamera({ name: "New" });
@@ -189,6 +201,19 @@ describe("reduce - device transitions", () => {
     assert.equal(next.cameras.get("camera-1")?.name, "New");
   });
 
+  test("deviceAdded for an existing id drops a key the re-sent record omits", () => {
+
+    // The re-sent record differs from the stored one only by the key it omits, so a merge would keep that key and only a by-value replace drops it.
+    const initial = stateWithCamera(makeCamera({ marketName: "G4 Pro" }));
+    const next = reduce(initial, { data: makeCamera(), id: "camera-1", kind: "deviceAdded", modelKey: "camera" });
+    const before = initial.cameras.get("camera-1");
+    const after = next.cameras.get("camera-1");
+
+    assert.ok(!Object.is(after, before), "the stored record takes a new reference");
+    assert.equal(Object.hasOwn(after ?? {}, "marketName"), false, "the key the re-sent record omits is absent");
+    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
+  });
+
   test("deviceAdded re-sending an identical record is a no-op", () => {
 
     const camera = makeCamera();
@@ -196,6 +221,18 @@ describe("reduce - device transitions", () => {
     const next = reduce(initial, { data: makeCamera(), id: "camera-1", kind: "deviceAdded", modelKey: "camera" });
 
     assert.ok(Object.is(next, initial), "an identical add must not churn state");
+  });
+
+  test("deviceAdded of a record drifted in one scalar keeps the unchanged nested object's reference", () => {
+
+    const initial = stateWithCamera();
+    const next = reduce(initial, { data: makeCamera({ lastMotion: 999 }), id: "camera-1", kind: "deviceAdded", modelKey: "camera" });
+    const before = initial.cameras.get("camera-1");
+    const after = next.cameras.get("camera-1");
+
+    assert.ok(!Object.is(after, before), "the drifted camera takes a new top-level reference");
+    assert.equal(after?.lastMotion, 999, "the drifted scalar reads the upserted value");
+    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
   });
 
   test("devicePatched deep-merges a partial onto an existing device", () => {
@@ -387,6 +424,26 @@ describe("reduce - NVR transitions", () => {
     assert.ok(Object.is(next, initial));
   });
 
+  test("deviceAdded with an nvr drifted in lastSeen keeps the unchanged ports reference", () => {
+
+    const initial = reduce(createInitialState(), { data: makeNvr({ lastSeen: 1 }), id: "nvr-1", kind: "deviceAdded", modelKey: "nvr" });
+    const next = reduce(initial, { data: makeNvr({ lastSeen: 2 }), id: "nvr-1", kind: "deviceAdded", modelKey: "nvr" });
+
+    assert.ok(!Object.is(next.nvr, initial.nvr), "the drifted NVR takes a new top-level reference");
+    assert.equal(next.nvr?.lastSeen, 2, "the drifted lastSeen reads the upserted value");
+    assert.ok(Object.is(next.nvr?.ports, initial.nvr?.ports), "the unchanged ports object keeps its reference");
+  });
+
+  test("deviceAdded with an nvr that omits a key drops it from the singleton", () => {
+
+    const initial = reduce(createInitialState(), { data: makeNvr({ nickname: "Garage" }), id: "nvr-1", kind: "deviceAdded", modelKey: "nvr" });
+    const next = reduce(initial, { data: makeNvr(), id: "nvr-1", kind: "deviceAdded", modelKey: "nvr" });
+
+    assert.ok(!Object.is(next.nvr, initial.nvr), "the NVR that lost a key takes a new top-level reference");
+    assert.equal(Object.hasOwn(next.nvr ?? {}, "nickname"), false, "the key the re-sent record omits is absent");
+    assert.ok(Object.is(next.nvr?.ports, initial.nvr?.ports), "the unchanged ports object keeps its reference");
+  });
+
   test("devicePatched with modelKey nvr merges onto the singleton", () => {
 
     const initial = reduce(createInitialState(), { data: makeNvr({ name: "Old" }), id: "nvr-1", kind: "deviceAdded", modelKey: "nvr" });
@@ -524,6 +581,158 @@ describe("applyBootstrap", () => {
 
     assert.equal(next.nvr?.upSince, 2);
     assert.ok(!Object.is(next.nvr, initial.nvr));
+  });
+
+  test("a drifted record keeps the references of its unchanged nested object and array and reads the new scalar", () => {
+
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera()] }));
+    const next = applyBootstrap(initial, makeBootstrap({ cameras: [makeCamera({ lastMotion: 999 })] }));
+    const before = initial.cameras.get("camera-1");
+    const after = next.cameras.get("camera-1");
+
+    assert.ok(!Object.is(after, before), "the drifted camera takes a new top-level reference");
+    assert.equal(after?.lastMotion, 999, "the drifted scalar reads the bootstrap's value");
+    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
+    assert.ok(Object.is(after?.channels, before?.channels), "the unchanged channels array keeps its reference");
+  });
+
+  test("an array that changed one element is taken whole from the bootstrap while the unchanged nested object keeps its reference", () => {
+
+    const channels = [ { id: 0, name: "High" }, { id: 1, name: "Low" } ];
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera()] }));
+    const next = applyBootstrap(initial, makeBootstrap({ cameras: [makeCamera({ channels })] }));
+    const before = initial.cameras.get("camera-1");
+    const after = next.cameras.get("camera-1");
+
+    assert.ok(!Object.is(after?.channels, before?.channels), "the changed channels array takes a new reference");
+    assert.ok(Object.is(after?.channels, channels), "an array is a leaf, so the bootstrap's own array is stored whole");
+    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
+  });
+
+  test("a key absent from the bootstrap's record is dropped, at the top level and in a nested object", () => {
+
+    // The stored featureFlags and the bootstrap's hold the same number of keys but differ in one, so only the key sets, never a size difference, tell them apart.
+    const featureFlags = { hasLuxCheck: true, smartDetectTypes: ["person"] };
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ featureFlags, marketName: "G4 Pro" })] }));
+    const next = applyBootstrap(initial, makeBootstrap({ cameras: [makeCamera()] }));
+    const after = next.cameras.get("camera-1");
+
+    assert.equal(Object.hasOwn(after ?? {}, "marketName"), false, "the top-level key the bootstrap dropped is absent");
+    assert.equal(Object.hasOwn(after?.featureFlags ?? {}, "hasLuxCheck"), false, "the nested key the bootstrap dropped is absent");
+    assert.deepEqual(after, makeCamera(), "the stored record reads exactly the bootstrap's record");
+  });
+
+  test("an NVR drifted in lastSeen alone keeps its unchanged ports reference", () => {
+
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ nvr: makeNvr({ lastSeen: 1 }) }));
+    const next = applyBootstrap(initial, makeBootstrap({ nvr: makeNvr({ lastSeen: 2 }) }));
+
+    assert.ok(!Object.is(next.nvr, initial.nvr), "the drifted NVR takes a new top-level reference");
+    assert.equal(next.nvr?.lastSeen, 2, "the drifted lastSeen reads the bootstrap's value");
+    assert.ok(Object.is(next.nvr?.ports, initial.nvr?.ports), "the unchanged ports object keeps its reference");
+  });
+
+  test("an NVR that lost a key in the bootstrap drops it and keeps its unchanged ports reference", () => {
+
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ nvr: makeNvr({ nickname: "Garage" }) }));
+    const next = applyBootstrap(initial, makeBootstrap({ nvr: makeNvr() }));
+
+    assert.ok(!Object.is(next.nvr, initial.nvr), "the NVR that lost a key takes a new top-level reference");
+    assert.equal(Object.hasOwn(next.nvr ?? {}, "nickname"), false, "the key the bootstrap dropped is absent");
+    assert.ok(Object.is(next.nvr?.ports, initial.nvr?.ports), "the unchanged ports object keeps its reference");
+  });
+
+  test("a record whose only change is a dropped key takes a new reference without it, at the top level and in a nested object", () => {
+
+    // The dropped key is each form's only change, so only the difference between the key sets marks the object that lost it as changed.
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ marketName: "G4 Pro" })] }));
+    const next = applyBootstrap(initial, makeBootstrap({ cameras: [makeCamera()] }));
+    const before = initial.cameras.get("camera-1");
+    const after = next.cameras.get("camera-1");
+
+    assert.ok(!Object.is(after, before), "a record that only lost a key takes a new reference");
+    assert.equal(Object.hasOwn(after ?? {}, "marketName"), false, "the dropped top-level key is absent");
+    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
+    assert.ok(Object.is(after?.channels, before?.channels), "the unchanged channels array keeps its reference");
+
+    // The nested form: the stored featureFlags carries one key beyond the default, and every other field of the record holds.
+    const featureFlags = { hasLuxCheck: true, hasMotionZones: true, smartDetectTypes: ["person"] };
+    const nestedInitial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ featureFlags })] }));
+    const nestedNext = applyBootstrap(nestedInitial, makeBootstrap({ cameras: [makeCamera()] }));
+    const nestedBefore = nestedInitial.cameras.get("camera-1");
+    const nestedAfter = nestedNext.cameras.get("camera-1");
+
+    assert.ok(!Object.is(nestedAfter?.featureFlags, nestedBefore?.featureFlags), "a nested object that only lost a key takes a new reference");
+    assert.equal(Object.hasOwn(nestedAfter?.featureFlags ?? {}, "hasLuxCheck"), false, "the dropped nested key is absent");
+    assert.ok(Object.is(nestedAfter?.channels, nestedBefore?.channels), "the unchanged channels array keeps its reference");
+  });
+
+  test("a change two levels down rebuilds only its path and keeps its unchanged nested members", () => {
+
+    // The camera type declares no settings object, so the row reads each stored record back through this one narrowing.
+    interface SettingsCamera {
+
+      featureFlags: object;
+      settings: { audio: object; video: { contrast: number } };
+    }
+
+    const stored = (state: ProtectState): SettingsCamera => state.cameras.get("camera-1") as unknown as SettingsCamera;
+    const camera = (brightness: number): ReturnType<typeof makeCamera> => makeCamera({ settings: { audio: { volume: 10 }, video: { brightness, contrast: 50 } } });
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [camera(50)] }));
+    const next = applyBootstrap(initial, makeBootstrap({ cameras: [camera(60)] }));
+    const before = stored(initial);
+    const after = stored(next);
+
+    assert.ok(!Object.is(after, before), "the drifted camera takes a new top-level reference");
+    assert.ok(!Object.is(after.settings, before.settings), "settings, on the path to the change, takes a new reference");
+    assert.ok(!Object.is(after.settings.video, before.settings.video), "settings.video, which holds the change, takes a new reference");
+    assert.ok(Object.is(after.settings.audio, before.settings.audio), "the unchanged settings.audio object keeps its reference");
+    assert.ok(Object.is(after.featureFlags, before.featureFlags), "the unchanged featureFlags object keeps its reference");
+    assert.equal(after.settings.video.contrast, 50, "the unchanged contrast leaf is carried forward");
+  });
+
+  test("a field that flips between null and an object takes the bootstrap's value whole in each direction", () => {
+
+    const lcdMessage = { text: "Hello", type: "CUSTOM_MESSAGE" };
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ lcdMessage: null })] }));
+    const toObject = applyBootstrap(initial, makeBootstrap({ cameras: [makeCamera({ lcdMessage })] }));
+    const toNull = applyBootstrap(toObject, makeBootstrap({ cameras: [makeCamera({ lcdMessage: null })] }));
+    const featureFlags = initial.cameras.get("camera-1")?.featureFlags;
+
+    assert.ok(Object.is(toObject.cameras.get("camera-1")?.lcdMessage, lcdMessage), "null to an object stores the bootstrap's own object");
+    assert.ok(Object.is(toObject.cameras.get("camera-1")?.featureFlags, featureFlags), "the unchanged featureFlags object keeps its reference");
+    assert.equal(toNull.cameras.get("camera-1")?.lcdMessage, null, "an object to null stores null");
+    assert.ok(Object.is(toNull.cameras.get("camera-1")?.featureFlags, featureFlags), "the unchanged featureFlags object keeps its reference");
+  });
+
+  test("a nested object whose keys reorder without a value change keeps its reference", () => {
+
+    // Key order alone would pass the whole-record compare, which ignores it, so lastMotion drifts to send the record through the reconcile, which then walks
+    // featureFlags with its keys reversed.
+    // eslint-disable-next-line sort-keys -- the row's subject is key order, so this object holds the default's keys in the opposite order.
+    const featureFlags = { smartDetectTypes: ["person"], hasMotionZones: true };
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ featureFlags })] }));
+    const next = applyBootstrap(initial, makeBootstrap({ cameras: [makeCamera({ lastMotion: 999 })] }));
+    const before = initial.cameras.get("camera-1");
+    const after = next.cameras.get("camera-1");
+
+    assert.ok(!Object.is(after, before), "the drifted camera takes a new top-level reference");
+    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "featureFlags, equal in value with its keys reordered, keeps its reference");
+  });
+
+  test("a new key whose value is undefined counts as a change, so a same-size key set that swapped one key for it drops the old key", () => {
+
+    // The key sets match in size, as each record carries one key beyond the default, and nickname's undefined value compares equal to its absence from the stored
+    // record, so only nickname being a new key marks the record as changed. An undefined-valued fixture override is still an own key of the record it spreads into.
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ marketName: "G4 Pro" })] }));
+    const next = applyBootstrap(initial, makeBootstrap({ cameras: [makeCamera({ nickname: undefined })] }));
+    const before = initial.cameras.get("camera-1");
+    const after = next.cameras.get("camera-1");
+
+    assert.ok(!Object.is(after, before), "a record that swapped a key for an undefined-valued one takes a new reference");
+    assert.equal(Object.hasOwn(after ?? {}, "marketName"), false, "the swapped-out key is absent");
+    assert.equal(Object.hasOwn(after ?? {}, "nickname"), true, "the new key is an own key of the stored record despite its undefined value");
+    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
   });
 });
 
@@ -756,5 +965,19 @@ describe("reduce - adoption self-contradiction normalization", () => {
     const resent = reduce(added, { data: flaggedRelay(), id: record.id, kind: "deviceAdded", modelKey: "relay" });
 
     assert.ok(Object.is(resent, added), "an identical flagged re-send is a whole-state no-op");
+  });
+
+  test("(f2) a drifted flagged re-send is normalized before it is reconciled, so the stored record stays clean and keeps its unchanged nested references", () => {
+
+    const record = flaggedRelay();
+    const added = reduce(seeded(), { data: record, id: record.id, kind: "deviceAdded", modelKey: "relay" });
+    const drifted = reduce(added, { data: { ...flaggedRelay(), name: "Drifted" }, id: record.id, kind: "deviceAdded", modelKey: "relay" });
+    const before = added.relays.get(record.id);
+    const after = drifted.relays.get(record.id);
+
+    assert.equal(after?.isAdoptedByOther, false, "the drifted re-send, still flagged on the wire, enters state normalized");
+    assert.equal(after?.name, "Drifted", "the drifted name reads the re-sent value");
+    assert.ok(!Object.is(after, before), "the drifted record takes a new reference");
+    assert.ok(Object.is(after?.ledSettings, before?.ledSettings), "the unchanged ledSettings object keeps the first record's reference");
   });
 });

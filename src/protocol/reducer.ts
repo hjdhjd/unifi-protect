@@ -15,7 +15,8 @@
  *
  * - **Immutability.** No function here mutates its input. Every step returns either the same reference (nothing changed) or a new one (something did).
  * - **Structural sharing.** A change rebuilds only the path from the root to the changed node; every untouched device, map, and nested object keeps its existing
- *   reference. This is what makes `Object.is`-based change detection in selectors and observers both correct and nearly free.
+ *   reference. The rule holds on the bootstrap path too: a record a refresh drifted keeps each nested object and array whose value did not change. This is what
+ *   makes `Object.is`-based change detection in selectors and observers both correct and nearly free.
  * - **No-op fidelity.** A patch, upsert, removal, or full re-bootstrap that changes nothing by *value* returns the same reference by *identity*. This is the
  *   property that makes "the 120-second refresh is invisible when nothing drifted" hold.
  *
@@ -203,9 +204,10 @@ export function applyDevicePatch<T>(device: T, patch: DeepPartial<T>): T {
 
 /**
  * Atomically reconcile the state against a fresh bootstrap. Each device present in the bootstrap is matched against the current state: an unchanged device keeps its
- * existing reference (so selectors and observers see no change), a changed device takes the new reference, and a device absent from the bootstrap is dropped. A map
- * with no net change keeps its own reference, so a refresh that finds zero drift produces zero observer notifications. `bootstrapId` always increments - it counts
- * applied bootstraps and guarantees each mints a fresh state reference for the store's dispatch gate, internal bookkeeping no device observer reads.
+ * existing reference (so selectors and observers see no change), a changed device takes a new reference that keeps every unchanged nested object and array of the
+ * existing record, and a device absent from the bootstrap is dropped. A map with no net change keeps its own reference, so a refresh that finds zero drift produces
+ * zero observer notifications. `bootstrapId` always increments - it counts applied bootstraps and guarantees each mints a fresh state reference for the store's
+ * dispatch gate, internal bookkeeping no device observer reads.
  *
  * @param state     - The current state.
  * @param bootstrap - The freshly fetched bootstrap document.
@@ -221,7 +223,9 @@ export function applyBootstrap(state: ProtectState, bootstrap: ProtectNvrBootstr
   // the original bootstrap is left untouched for the wire-faithful surfaces. Because the repair happens ahead of the comparison, a re-normalized repeat of an
   // already-normalized record compares equal by value and reconcileMap preserves its map and record identity - no re-mint for the hours the controller defect repeats.
   const source = normalizeBootstrapAdoption(bootstrap);
-  const nvr = ((state.nvr !== null) && isDeepStrictEqual(state.nvr, source.nvr)) ? state.nvr : source.nvr;
+
+  // The NVR singleton follows reconcileMap's rule: taken as is when none is stored yet, kept when value-equal, and reconciled against the stored record when it drifted.
+  const nvr = (state.nvr === null) ? source.nvr : (isDeepStrictEqual(state.nvr, source.nvr) ? state.nvr : reconcileRecord(state.nvr, source.nvr));
 
   return {
 
@@ -242,7 +246,8 @@ export function applyBootstrap(state: ProtectState, bootstrap: ProtectNvrBootstr
 }
 
 // Upsert a full device record: insert a new id, or replace an existing one. A re-sent identical record is a no-op (the existing reference is kept), so a realtime `add`
-// carrying unchanged data produces no churn. This path serves the `deviceAdded` action only; a bootstrap reconciles through `reconcileMap` instead.
+// carrying unchanged data produces no churn, and a changed record is reconciled against the existing one by the bootstrap path's rule (reconcileRecord), so it keeps
+// every unchanged nested object and array. This path serves the `deviceAdded` action only; a bootstrap reconciles through `reconcileMap` instead.
 function upsertDevice(state: ProtectState, modelKey: StateModelKey, id: string, data: ProtectStateRecord): ProtectState {
 
   // Repair the incoming full record on its way in, as a copy, before either comparison below sees it. A full record is self-describing, so the detector reads its own
@@ -253,7 +258,12 @@ function upsertDevice(state: ProtectState, modelKey: StateModelKey, id: string, 
 
     // The event classifier and the bootstrap loader only ever pair modelKey === "nvr" with an NVR-shaped record, so record's runtime shape is ProtectNvrConfig here
     // even though the parameter type is the wider ProtectStateRecord - the cast reflects that pairing rather than asserting past what the caller actually supplies.
-    return ((state.nvr !== null) && isDeepStrictEqual(state.nvr, record)) ? state : { ...state, nvr: record as ProtectNvrConfig };
+    if((state.nvr !== null) && isDeepStrictEqual(state.nvr, record)) {
+
+      return state;
+    }
+
+    return { ...state, nvr: ((state.nvr !== null) ? reconcileRecord(state.nvr, record) : record) as ProtectNvrConfig };
   }
 
   // modelKey is now narrowed by TypeScript to MapBackedStateModelKey - the nvr singleton was handled above, so every remaining value maps to a real DeviceMapField.
@@ -268,7 +278,7 @@ function upsertDevice(state: ProtectState, modelKey: StateModelKey, id: string, 
 
   const next = new Map(current);
 
-  next.set(id, record);
+  next.set(id, (existing !== undefined) ? reconcileRecord(existing, record) : record);
 
   return withDeviceMap(state, field, next);
 }
@@ -350,7 +360,9 @@ function removeDevice(state: ProtectState, modelKey: StateModelKey, id: string):
 
 // Reconcile one device map against the bootstrap's device array. Generic over the concrete config type so each map keeps its precise typing (no widening, no casts).
 // Reuses an existing record reference when it is value-equal to its bootstrap counterpart, and returns the existing map reference outright when nothing in it changed
-// (no additions, removals, or value changes), so a drift-free refresh notifies no observer.
+// (no additions, removals, or value changes), so a drift-free refresh notifies no observer. A drifted record is reconciled against the existing one, so it shares every
+// unchanged nested object and array and an observer of one of those slices stays asleep. The whole-record compare stays in front of that walk, so a drift-free
+// refresh costs one compare per record and only a record that failed it pays for the walk.
 function reconcileMap<T extends { id: string }>(existing: ReadonlyMap<string, T>, devices: readonly T[]): ReadonlyMap<string, T> {
 
   // A size mismatch means a device was added or removed, which is necessarily a change. We seed `changed` from it so the same-size-but-different-membership case is
@@ -367,7 +379,7 @@ function reconcileMap<T extends { id: string }>(existing: ReadonlyMap<string, T>
       next.set(device.id, prior);
     } else {
 
-      next.set(device.id, device);
+      next.set(device.id, (prior !== undefined) ? reconcileRecord(prior, device) : device);
       changed = true;
     }
   }
@@ -407,6 +419,36 @@ function mergeObjects(device: Record<string, unknown>, patch: Record<string, unk
   }
 
   return result ?? device;
+}
+
+// Recursive reconcile backing the bootstrap and upsert paths, run only on a record that already failed its whole-record compare. Object onto object reconciles key by
+// key over the incoming object's keys, so a nested object whose value did not change comes back as its prior reference. Anything else - an array, a primitive, null,
+// or a type mismatch - is a leaf, kept whole when value-equal and otherwise taken whole from the incoming record, exactly as mergeObjects treats one. It differs from
+// mergeObjects in what an absent key means: a patch is a partial that merges, so a key it does not name is kept, while a full record states the whole device, so a
+// key it omits is dropped. The prior reference comes back only when the key sets match and every value came back as its prior reference.
+function reconcileRecord<T>(prior: T, incoming: T): T {
+
+  if(!isPlainObject(prior) || !isPlainObject(incoming)) {
+
+    return isDeepStrictEqual(prior, incoming) ? prior : incoming;
+  }
+
+  const keys = Object.keys(incoming);
+  const result: Record<string, unknown> = {};
+  let isChange = keys.length !== Object.keys(prior).length;
+
+  for(const key of keys) {
+
+    // A key the prior object carries reconciles against its prior value. A key it lacks is new: its value is taken as is and counted as a change even when it is
+    // `undefined`, which the value compare alone would miss, so key sets of the same size that differ still read as a change.
+    const isNew = !Object.hasOwn(prior, key);
+    const nextValue = isNew ? incoming[key] : reconcileRecord(prior[key], incoming[key]);
+
+    isChange ||= isNew || !Object.is(nextValue, prior[key]);
+    result[key] = nextValue;
+  }
+
+  return (isChange ? result : prior) as T;
 }
 
 // Produce a new state with one device map replaced. The value-type widening to DeviceMap is sound at runtime - every id maps to its correct concrete config - and is
