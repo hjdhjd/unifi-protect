@@ -13,17 +13,11 @@ import { TalkbackSession } from "./talkback-session.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 import { silentLog } from "../testing.helpers.ts";
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
-
-// Yield one turn of the event loop so whatever async step is already in flight - a send's drain parked on its next source pull, or a connect() still awaiting a
-// resolver - advances to the point the test needs to observe, without asserting where the session or the drain ultimately lands.
-function tick(): Promise<void> {
-
-  return new Promise<void>((resolve) => setImmediate(resolve));
-}
 
 // Connect a session over a fake socket that auto-opens, returning the live session and the fake socket the test drives. The factory assigns `ws` synchronously before
 // returning, so it is set by the time the auto-open microtask fires and `connect()` resolves.
@@ -219,7 +213,7 @@ describe("TalkbackSession", () => {
       const sending = session.send(parkingSource(Buffer.from("a")));
 
       // Let the drain send the first chunk and park on the source's second pull, then fault the socket: the send must unpark and reject.
-      await tick();
+      await settle();
       assert.deepEqual(sentText(ws), ["a"]);
 
       ws.emitError(new Error("socket boom"));
@@ -233,7 +227,7 @@ describe("TalkbackSession", () => {
       const { session, ws } = await openSession();
       const sending = session.send(parkingSource(Buffer.from("a")));
 
-      await tick();
+      await settle();
       ws.emitClose(1006, "dropped");
 
       await assert.rejects(sending, ProtectNetworkError);
@@ -261,7 +255,7 @@ describe("TalkbackSession", () => {
       const controller = new AbortController();
       const sending = session.send(parkingSource(Buffer.from("a")), { signal: controller.signal });
 
-      await tick();
+      await settle();
       controller.abort();
 
       await assert.rejects(sending, ProtectAbortedError);
@@ -397,7 +391,7 @@ describe("TalkbackSession", () => {
         webSocket: () => new FakeWritableWebSocket({ autoOpen: false })
       });
 
-      await tick();
+      await settle();
       controller.abort();
 
       await assert.rejects(connecting, ProtectAbortedError);
@@ -416,7 +410,7 @@ describe("TalkbackSession", () => {
       // already-aborted-before-connect teardown above.
       const sending = session.send(parkingSource(Buffer.from("a")));
 
-      await tick();
+      await settle();
       controller.abort();
 
       await assert.rejects(sending, ProtectAbortedError);

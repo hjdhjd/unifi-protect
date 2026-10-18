@@ -34,13 +34,12 @@
  * @module TalkbackSession
  */
 import { Agent, WebSocket } from "undici";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, isExpectedWsDisconnect } from "../errors.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWritableWebSocket } from "./ws.ts";
 import { channels } from "../diagnostics.ts";
-import { isExpectedWsDisconnect } from "../errors.ts";
 import { noopLog } from "../logging.ts";
 
 /**

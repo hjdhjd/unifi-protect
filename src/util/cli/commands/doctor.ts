@@ -180,12 +180,12 @@ const doctorHandler: CommandHandler = async (ctx) => {
     // counted. The census spans every channel and only needs each name, so it goes through the shared feed; the schema-drift channels are subscribed individually and
     // typed, so each handler reads its payload's fields directly. Every one of them is a `using` declaration inside this block, so they detach on every exit path and do
     // so before the `finally` below disposes the client - no handler outlives the run, and none observes what the client's own teardown publishes.
-    using _census = subscribeDiagnostics(Object.values(channels), (name) => fired.add(name));
-    using _unknownModelKeyDrift = subscribeToChannel(channels.schemaUnknownModelKey, (payload) => unknownModelKeys.add(payload.modelKey));
+    using census = subscribeDiagnostics(Object.values(channels), (name) => fired.add(name));
+    using unknownModelKeyDrift = subscribeToChannel(channels.schemaUnknownModelKey, (payload) => unknownModelKeys.add(payload.modelKey));
 
     // The bootstrap-dimension twin, split by the payload's `known` flag so it mirrors the realtime dimension's severity: a class the library does not recognize at
     // all (known:false) is genuine drift and warns, while a recognized-but-unreduced class (known:true, e.g. aiport) is named as an informational pass detail.
-    using _unmodeledCollectionDrift = subscribeToChannel(channels.schemaUnmodeledCollection,
+    using unmodeledCollectionDrift = subscribeToChannel(channels.schemaUnmodeledCollection,
       (payload) => (payload.known ? unmodeledRecognized : unmodeledDrift).add(payload.modelKey));
 
     // The connect itself is the first check; a failure here aborts the rest (there is nothing to test without a client).

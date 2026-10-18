@@ -84,7 +84,7 @@ describe("diagnostics rails", () => {
     // The subscription's lifetime is the function's: it is established on entry and detached on the way out, with no teardown bookkeeping of its own.
     const observeOnce = (): void => {
 
-      using _sub = subscribeToChannel(channels.authRelogin, (payload) => seen.push(payload.success));
+      using subscription = subscribeToChannel(channels.authRelogin, (payload) => seen.push(payload.success));
 
       channels.authRelogin.publish({ success: true });
     };

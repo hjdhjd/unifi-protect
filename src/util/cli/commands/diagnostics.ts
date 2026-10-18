@@ -70,7 +70,7 @@ const diagnosticsHandler: CommandHandler = async (ctx) => {
   // Subscribe before connecting, so the connect handshake's own http/events diagnostics are captured rather than missed. The feed is a Disposable, so it detaches every
   // handler at function scope exit - after the client below disposes, capturing its teardown diagnostics too. The render + subscribe mechanism is shared with
   // `ufp watch livestream --diagnostics`.
-  using _feed = subscribeDiagnostics(selected, (name, message) => {
+  using feed = subscribeDiagnostics(selected, (name, message) => {
 
     renderDiagnostic(output, name, message);
 
@@ -97,7 +97,7 @@ const diagnosticsHandler: CommandHandler = async (ctx) => {
 
   try {
 
-    await using _client = await ctx.openClient({ debug: values.debug === true, signal: ctx.signal });
+    await using client = await ctx.openClient({ debug: values.debug === true, signal: ctx.signal });
 
     output.line(output.colors.dim("Subscribed to " + selected.length.toString() + " diagnostics channel(s); waiting for activity. Press Ctrl-C to stop."));
 

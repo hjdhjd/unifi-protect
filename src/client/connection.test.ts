@@ -171,9 +171,18 @@ function harness(options: { initialUpSince?: number; log?: ProtectLogging; throt
 
   monitor.on("controllerLost", (reason): void => void events.lost.push(reason));
   monitor.on("controllerRebooted", (info): void => void events.rebooted.push(info));
-  monitor.on("controllerRecovered", (): void => void events.recovered++);
-  monitor.on("throttleEntered", (): void => void events.throttleEntered++);
-  monitor.on("throttleExited", (): void => void events.throttleExited++);
+  monitor.on("controllerRecovered", (): void => {
+
+    events.recovered++;
+  });
+  monitor.on("throttleEntered", (): void => {
+
+    events.throttleEntered++;
+  });
+  monitor.on("throttleExited", (): void => {
+
+    events.throttleExited++;
+  });
   monitor.on("stateChanged", (transition): void => void events.transitions.push(transition));
 
   return {
@@ -182,9 +191,18 @@ function harness(options: { initialUpSince?: number; log?: ProtectLogging; throt
     control: {
 
       reBootstrapCalls: (): number => reBootstrapCalls,
-      setNextUpSince: (value: number): void => void (nextUpSince = value),
-      setReBootstrapError: (error: Error | null): void => void (reBootstrapError = error),
-      setVerifyError: (error: Error | null): void => void (verifyError = error),
+      setNextUpSince: (value: number): void => {
+
+        nextUpSince = value;
+      },
+      setReBootstrapError: (error: Error | null): void => {
+
+        reBootstrapError = error;
+      },
+      setVerifyError: (error: Error | null): void => {
+
+        verifyError = error;
+      },
       verifyCalls: (): number => verifyCalls
     },
     events,

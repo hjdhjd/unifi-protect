@@ -164,8 +164,14 @@ describe("loadCredentials", () => {
       // rather than interpreted.
       await writeFile(path.join(cwd, "ufp.json"), JSON.stringify({ controller: "10.0.0.1", password: "p", username: "u", verifyTls: "false" }));
 
-      await assert.rejects(loadCredentials({ cwd, home }),
-        (error: unknown) => (error instanceof CliError) && error.message.includes("\"verifyTls\"") && error.message.includes("boolean"));
+      await assert.rejects(loadCredentials({ cwd, home }), (error: unknown): boolean => {
+
+        assert.ok(error instanceof CliError, "the failure is a CLI error");
+        assert.match(error.message, /"verifyTls"/);
+        assert.match(error.message, /boolean/);
+
+        return true;
+      });
     });
   });
 });
@@ -193,7 +199,7 @@ function scriptedPrompt(answers: readonly string[], opts: { onPrompt?: () => voi
 
   const output = new Writable({
 
-    write(chunk: Buffer, encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
 
       const rendered = chunk.toString();
 
@@ -278,7 +284,7 @@ describe("loadCredentials interactive prompt", () => {
       assert.deepEqual(await loadCredentials({ cwd, home, interactive }), { host: "10.0.0.5", password: "hunter2", username: "admin" });
 
       // Declining has to mean declining: a run that saved anyway would put a file on disk the operator explicitly said no to.
-      await assert.rejects(stat(path.join(home, ".ufp.json")), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT");
+      await assert.rejects(stat(path.join(home, ".ufp.json")), { code: "ENOENT" });
     });
   });
 

@@ -8,6 +8,7 @@ import { access, constants } from "node:fs/promises";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { assertNoUnhandledRejections, capturingLog, expectAt, fakeClock, silentLog, withTempDir } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
+import { settle } from "homebridge-plugin-utils/testing";
 
 describe("silentLog", () => {
 
@@ -137,8 +138,7 @@ describe("withTempDir", () => {
     await assert.rejects(
 
       async () => access(capturedPath ?? "", constants.F_OK),
-      (error: unknown) => (error instanceof Error) && ("code" in error) && ((error as NodeJS.ErrnoException).code === "ENOENT"),
-      "temp directory must be removed once the callback resolves"
+      { code: "ENOENT", constructor: Error }
     );
   });
 
@@ -164,8 +164,7 @@ describe("withTempDir", () => {
     await assert.rejects(
 
       async () => access(capturedPath ?? "", constants.F_OK),
-      (error: unknown) => (error instanceof Error) && ("code" in error) && ((error as NodeJS.ErrnoException).code === "ENOENT"),
-      "temp directory must be removed even when the callback throws"
+      { code: "ENOENT", constructor: Error }
     );
   });
 
@@ -455,8 +454,8 @@ describe("fakeClock", () => {
       }
     })();
 
-    // Start consumer B after a setImmediate (a turn of the event loop) so consumer A's await registers first.
-    await new Promise((resolve) => setImmediate(resolve));
+    // Start consumer B after one macrotask turn so consumer A's await registers first.
+    await settle();
 
     const consumerBLoop = (async (): Promise<void> => {
 
@@ -472,7 +471,7 @@ describe("fakeClock", () => {
       }
     })();
 
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
 
     // First tick releases consumer A (registered first); second tick releases consumer B.
     await clock.tick();
@@ -516,7 +515,7 @@ describe("fakeClock", () => {
       }
     })();
 
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
 
     const loopB = (async (): Promise<void> => {
 
@@ -532,7 +531,7 @@ describe("fakeClock", () => {
       }
     })();
 
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
 
     // Abort A's signal. The waiter from A should be removed from the queue.
     clockA.abort();
@@ -553,11 +552,14 @@ describe("fakeClock", () => {
     const clock = fakeClock();
     let resolved = false;
 
-    const pending = clock.wait(100, { signal: fakeAbort.signal }).then(() => void (resolved = true));
+    const pending = clock.wait(100, { signal: fakeAbort.signal }).then(() => {
+
+      resolved = true;
+    });
 
     // Advancing short of the deadline leaves the wait pending.
     clock.advance(99);
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
     assert.equal(resolved, false, "wait stays pending until the clock reaches its deadline");
 
     // Crossing the deadline resolves it.
@@ -577,7 +579,7 @@ describe("fakeClock", () => {
 
     // One advance past all three deadlines fires them all, ordered by deadline rather than registration.
     clock.advance(300);
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
 
     assert.deepEqual(fired, [ 100, 200, 300 ], "due waits resolve in deadline order");
   });
@@ -594,7 +596,7 @@ describe("fakeClock", () => {
 
     // Advancing past the shorter deadline (120000) but not the longer one fires only that wait, leaving the 300000 wait pending.
     clock.advance(120000);
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
 
     assert.deepEqual(clock.pendingWaits(), [300000], "a fired wait is removed from the pending list, the not-yet-due one remains");
   });
@@ -607,13 +609,13 @@ describe("fakeClock", () => {
     const pending = clock.wait(100, { signal: controller.signal });
 
     controller.abort();
-    await assert.rejects(pending, (error: unknown) => (error as Error).name === "AbortError", "an aborted wait rejects with an AbortError");
+    await assert.rejects(pending, { name: "AbortError" });
 
     assert.deepEqual(clock.pendingWaits(), [], "the aborted wait is removed from the pending list");
 
     // A subsequent advance past the original deadline must not re-fire the already-rejected wait.
     clock.advance(1000);
-    await new Promise((resolve) => setImmediate(resolve));
+    await settle();
   });
 
   test("wait with an already-aborted signal rejects immediately without registering", async () => {
@@ -623,7 +625,7 @@ describe("fakeClock", () => {
 
     controller.abort();
 
-    await assert.rejects(clock.wait(100, { signal: controller.signal }), (error: unknown) => (error as Error).name === "AbortError");
+    await assert.rejects(clock.wait(100, { signal: controller.signal }), { name: "AbortError" });
     assert.deepEqual(clock.pendingWaits(), [], "a pre-aborted wait never enters the pending list");
   });
 });

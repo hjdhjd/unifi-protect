@@ -425,8 +425,7 @@ describe("loadSchemaManifest", () => {
 
     await withDir(async (dir) => {
 
-      await assert.rejects(() => loadSchemaManifest(path.join(dir, "absent.json")),
-        (error: unknown) => (error instanceof CliError) && error.message.includes("Run \"npm run build\""));
+      await assert.rejects(() => loadSchemaManifest(path.join(dir, "absent.json")), { constructor: CliError, message: /Run "npm run build"/ });
     });
   });
 
@@ -436,8 +435,7 @@ describe("loadSchemaManifest", () => {
     // run yet" and gets that hint, while anything else is a real problem and must not be reported as a missing build artifact.
     await withDir(async (dir) => {
 
-      await assert.rejects(() => loadSchemaManifest(dir),
-        (error: unknown) => (error instanceof CliError) && error.message.includes("Unable to read the schema manifest"));
+      await assert.rejects(() => loadSchemaManifest(dir), { constructor: CliError, message: /Unable to read the schema manifest/ });
     });
   });
 });
@@ -473,7 +471,13 @@ describe("parseSchemaManifest", () => {
 
     test("rejects " + name, () => {
 
-      assert.throws(() => parseSchemaManifest(text, "fixture.json"), (error: unknown) => (error instanceof CliError) && error.message.includes(expected));
+      assert.throws(() => parseSchemaManifest(text, "fixture.json"), (error: unknown): boolean => {
+
+        assert.ok(error instanceof CliError, "the failure is a CLI error");
+        assert.ok(error.message.includes(expected), "the message names the defect");
+
+        return true;
+      });
     });
   }
 
@@ -486,7 +490,7 @@ describe("parseSchemaManifest", () => {
       airQuality: { fields: { aqi: { kind: "primitive", types: ["integer"] } }, kind: "object", open: false }
     }, kind: "object", open: true } } });
 
-    assert.throws(() => parseSchemaManifest(text, "fixture.json"), (error: unknown) => (error instanceof CliError) &&
-      error.message.includes("the primitive node at \"sensors.airQuality.aqi\" declares a type outside the JSON scalar types"));
+    assert.throws(() => parseSchemaManifest(text, "fixture.json"),
+      { constructor: CliError, message: /the primitive node at "sensors\.airQuality\.aqi" declares a type outside the JSON scalar types/ });
   });
 });

@@ -174,22 +174,19 @@ describe("assertNever", () => {
   test("throws a ProtectProtocolError naming an object variant's kind tag", () => {
 
     // The reducer and event-attribution switches reach this only when untyped code smuggles in an unmodeled variant; we surface the tag for diagnosis.
-    assert.throws(() => assertNever({ kind: "ghostKind" } as never),
-      (error: unknown) => (error instanceof ProtectProtocolError) && error.message.includes("ghostKind"));
+    assert.throws(() => assertNever({ kind: "ghostKind" } as never), { constructor: ProtectProtocolError, message: /ghostKind/ });
   });
 
   test("throws naming a bare value when the variant has no kind tag", () => {
 
     // The modelKey switch passes a bare string, not an object - the fallback branch surfaces its string form rather than a useless `undefined`.
-    assert.throws(() => assertNever("phantomModelKey" as never),
-      (error: unknown) => (error instanceof ProtectProtocolError) && error.message.includes("phantomModelKey"));
+    assert.throws(() => assertNever("phantomModelKey" as never), { constructor: ProtectProtocolError, message: /phantomModelKey/ });
   });
 
   test("throws with the coerced object form when an object variant carries no kind tag", () => {
 
     // An object tagged some other way (a `type`-tagged union) takes the same fallback branch as a bare value, where String() yields the generic "[object Object]" -
     // no name distinguishes the variant, which is exactly what the message reports.
-    assert.throws(() => assertNever({ type: "phantomTag" } as never),
-      (error: unknown) => (error instanceof ProtectProtocolError) && error.message.includes("[object Object]"));
+    assert.throws(() => assertNever({ type: "phantomTag" } as never), { constructor: ProtectProtocolError, message: /\[object Object\]/ });
   });
 });

@@ -225,7 +225,7 @@ async function promptForCredentials(interactive: InteractivePrompt, home: string
 
   const gate = new Writable({
 
-    write(chunk: Buffer, encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
 
       if(!masked) {
 

@@ -46,7 +46,7 @@ describe("EventBus", () => {
 
       {
 
-        using _subscription = bus.on("ping", (count) => received.push(count));
+        using subscription = bus.on("ping", (count) => received.push(count));
 
         bus.emit("ping", 1);
       }
@@ -72,8 +72,8 @@ describe("EventBus", () => {
       const first: number[] = [];
       const second: number[] = [];
 
-      using _s1 = bus.on("ping", (count) => first.push(count));
-      using _s2 = bus.on("ping", (count) => second.push(count));
+      using firstSubscription = bus.on("ping", (count) => first.push(count));
+      using secondSubscription = bus.on("ping", (count) => second.push(count));
 
       bus.emit("ping", 7);
 
@@ -87,7 +87,7 @@ describe("EventBus", () => {
 
       assert.equal(bus.emit("ping", 1), false, "emit with no listeners returns false");
 
-      using _subscription = bus.on("ping", () => { /* no-op */ });
+      using subscription = bus.on("ping", () => { /* no-op */ });
 
       assert.equal(bus.emit("ping", 1), true, "emit with a listener returns true");
     });
@@ -116,7 +116,7 @@ describe("EventBus", () => {
 
       controller.abort();
 
-      await assert.rejects(pending, (error: unknown) => (error as Error).name === "AbortError");
+      await assert.rejects(pending, { name: "AbortError" });
     });
   });
 

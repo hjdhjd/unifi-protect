@@ -29,13 +29,12 @@
  */
 import { Agent, WebSocket } from "undici";
 import { PROTECT_LIVESTREAM_CHUNK_SIZE, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_SEGMENT_LENGTH } from "../settings.ts";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectStallError, assertNever } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectStallError, assertNever, isExpectedWsDisconnect } from "../errors.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWebSocket } from "./ws.ts";
 import type { StreamOptions } from "../event-bus.ts";
-import { isExpectedWsDisconnect } from "../errors.ts";
 import { noopLog } from "../logging.ts";
 import { toBuffer } from "./ws.ts";
 import { wallClock } from "../clock.ts";

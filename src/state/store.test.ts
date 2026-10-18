@@ -249,7 +249,7 @@ describe("StateStore", () => {
       await delay(5);
       assert.equal(refreshes, 0);
 
-      void store;
+      await store[Symbol.asyncDispose]();
     });
   });
 

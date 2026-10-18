@@ -3,7 +3,7 @@
  * commands.test.ts: Per-command unit tests driving each CLI command through the injected openClient hook - parse, render, dispatch, and error paths.
  */
 import type { LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment, TypedEvent } from "../../../index.ts";
-import { ProtectAbortedError, ProtectAuthError, ProtectProtocolError, ProtectUnsupportedError } from "../../../index.ts";
+import { ProtectAbortedError, ProtectAuthError, ProtectProtocolError, ProtectUnsupportedError, channels } from "../../../index.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../../protocol/packet.helpers.ts";
 import { describe, test } from "node:test";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
@@ -18,7 +18,6 @@ import { cameraSnapshot } from "./camera-snapshot.ts";
 import { cameraTalkback } from "./camera-talkback.ts";
 import { cameraUnlock } from "./camera-unlock.ts";
 import { capture } from "./capture.ts";
-import { channels } from "../../../index.ts";
 import { chime } from "./chime.ts";
 import { chimePlayBuzzer } from "./chime-play-buzzer.ts";
 import { chimePlaySpeaker } from "./chime-play-speaker.ts";
@@ -167,7 +166,7 @@ describe("info", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: ["widgets"], client });
 
-    await assert.rejects(info.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(info.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("--bootstrap --scrub emits a dump with no real identifiers, coordinates included", async () => {
@@ -244,7 +243,7 @@ describe("info", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: ["--scrub"], client });
 
-    await assert.rejects(info.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(info.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("--scrub --help prints usage rather than rejecting", async () => {
@@ -420,7 +419,7 @@ describe("decode", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(decode.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(decode.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("decodes a frame from stdin when the source is -", async () => {
@@ -456,7 +455,7 @@ describe("decode", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: ["/no/such/file.bin"], client });
 
-    await assert.rejects(decode.run(ctx), (error: unknown) => (error instanceof CliError) && error.message.includes("Unable to read packet bytes"));
+    await assert.rejects(decode.run(ctx), { constructor: CliError, message: /Unable to read packet bytes/ });
   });
 });
 
@@ -643,7 +642,7 @@ describe("camera snapshot", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(cameraSnapshot.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(cameraSnapshot.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("refuses to write image bytes to an interactive terminal", async () => {
@@ -658,8 +657,7 @@ describe("camera snapshot", () => {
 
       process.stdout.isTTY = true;
 
-      await assert.rejects(cameraSnapshot.run(ctx),
-        (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("Refusing to write image bytes to a terminal"));
+      await assert.rejects(cameraSnapshot.run(ctx), { constructor: CliError, exitCode: 2, message: /Refusing to write image bytes to a terminal/ });
     } finally {
 
       process.stdout.isTTY = savedTTY;
@@ -756,7 +754,7 @@ describe("camera talkback", () => {
     // Un-aborted signal: a genuine send failure is not a stop, so it propagates to the entry point.
     const failing = makeCommandContext({ args: ["c1"], client: makeClient(new Error("boom")) });
 
-    await assert.rejects(cameraTalkback.run(failing.ctx), (error: unknown) => (error instanceof Error) && (error.message === "boom"));
+    await assert.rejects(cameraTalkback.run(failing.ctx), { constructor: Error, message: "boom" });
 
     // Already-aborted signal: the same send failure is treated as a clean Ctrl-C stop, so the command swallows it and reports the interrupted tally instead.
     const aborted = makeCommandContext({ args: ["c1"], client: makeClient(new Error("late")), signal: AbortSignal.abort() });
@@ -778,8 +776,7 @@ describe("camera talkback", () => {
 
       process.stdin.isTTY = true;
 
-      await assert.rejects(cameraTalkback.run(ctx),
-        (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("No audio on stdin"));
+      await assert.rejects(cameraTalkback.run(ctx), { constructor: CliError, exitCode: 2, message: /No audio on stdin/ });
     } finally {
 
       process.stdin.isTTY = savedTTY;
@@ -922,7 +919,7 @@ describe("watch livestream", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(watchLivestream.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(watchLivestream.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("--channel and --lens are mutually exclusive", async () => {
@@ -931,7 +928,7 @@ describe("watch livestream", () => {
     const { ctx } = makeCommandContext({ args: [ "c1", "--channel", "0", "--lens", "1" ], client });
 
     // The guard runs before the client is opened, so no camera fixture is needed to exercise it.
-    await assert.rejects(watchLivestream.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(watchLivestream.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("pipes the concatenated segment bytes to stdout, keeping the summary off it", async () => {
@@ -1052,7 +1049,7 @@ describe("update", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [ "--patch", "{}" ], client });
 
-    await assert.rejects(update.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(update.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("a missing --patch is a usage error", async () => {
@@ -1060,7 +1057,7 @@ describe("update", () => {
     const { client } = makeFakeClient({ lights: [{ id: "l1", name: "Porch" }] });
     const { ctx } = makeCommandContext({ args: ["Porch"], client });
 
-    await assert.rejects(update.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("via --patch"));
+    await assert.rejects(update.run(ctx), { constructor: CliError, exitCode: 2, message: /via --patch/ });
   });
 });
 
@@ -1124,7 +1121,7 @@ describe("reboot", () => {
     const { ctx } = makeCommandContext({ args: ["cameras"], client });
 
     // The whole run still throws (non-zero exit), but the healthy devices were rebooted - the failure did not abort the loop.
-    await assert.rejects(reboot.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 1));
+    await assert.rejects(reboot.run(ctx), { constructor: CliError, exitCode: 1 });
 
     assert.deepEqual(calls.reboots, [ "c1", "c3" ], "the failing camera is absent; the other two rebooted despite it");
   });
@@ -1134,7 +1131,7 @@ describe("reboot", () => {
     const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
     const { ctx } = makeCommandContext({ args: ["bogus"], client });
 
-    await assert.rejects(reboot.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(reboot.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("an empty device class reports there is nothing to reboot", async () => {
@@ -1153,7 +1150,7 @@ describe("reboot", () => {
     const { client } = makeFakeClient({ cameras: [ { id: "c1", name: "Dup" }, { id: "c2", name: "Dup" } ] });
     const { ctx } = makeCommandContext({ args: ["Dup"], client });
 
-    await assert.rejects(reboot.run(ctx), (error: unknown) => (error instanceof CliError) && error.message.includes("matches 2 devices by name"));
+    await assert.rejects(reboot.run(ctx), { constructor: CliError, message: /matches 2 devices by name/ });
   });
 
   test("a ProtectAbortedError from a device halts the bulk run rather than being counted as a failure", async () => {
@@ -1247,7 +1244,7 @@ describe("watch group", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: ["bogus"], client });
 
-    await assert.rejects(watch.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(watch.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("dispatches a known subcommand, forwarding the remaining args to it", async () => {
@@ -1283,8 +1280,15 @@ describe("camera group", () => {
     const { ctx } = makeCommandContext({ args: ["bogus"], client });
 
     // The valid list is derived from the dispatch table, so the diagnostic names the real subcommands rather than a hand-maintained copy that could drift.
-    await assert.rejects(camera.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("snapshot") && error.message.includes("unlock"));
+    await assert.rejects(camera.run(ctx), (error: unknown): boolean => {
+
+      assert.ok(error instanceof CliError, "the failure is a CLI error");
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /snapshot/);
+      assert.match(error.message, /unlock/);
+
+      return true;
+    });
   });
 
   test("dispatches a known subcommand, forwarding the remaining args to it", async () => {
@@ -1315,8 +1319,7 @@ describe("relay group", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: ["bogus"], client });
 
-    await assert.rejects(relay.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("toggle"));
+    await assert.rejects(relay.run(ctx), { constructor: CliError, exitCode: 2, message: /toggle/ });
   });
 
   test("dispatches a known subcommand, forwarding the remaining args to it", async () => {
@@ -1347,8 +1350,15 @@ describe("chime group", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: ["bogus"], client });
 
-    await assert.rejects(chime.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("play-buzzer") && error.message.includes("play-speaker"));
+    await assert.rejects(chime.run(ctx), (error: unknown): boolean => {
+
+      assert.ok(error instanceof CliError, "the failure is a CLI error");
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /play-buzzer/);
+      assert.match(error.message, /play-speaker/);
+
+      return true;
+    });
   });
 
   test("dispatches a known subcommand, forwarding the remaining args to it", async () => {
@@ -1385,7 +1395,7 @@ describe("camera unlock", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(cameraUnlock.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(cameraUnlock.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("a library capability error propagates unwrapped rather than being swallowed", async () => {
@@ -1427,7 +1437,7 @@ describe("camera flashlight", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(cameraFlashlight.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(cameraFlashlight.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 });
 
@@ -1462,8 +1472,15 @@ describe("relay toggle", () => {
     const { calls, client } = makeFakeClient({ relays: [{ id: "r1", name: "Garage", outputs: [ { id: 1, state: "off" }, { id: 2, state: "on" } ] }] });
     const { ctx } = makeCommandContext({ args: ["Garage"], client });
 
-    await assert.rejects(relayToggle.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("1 (off)") && error.message.includes("2 (on)"));
+    await assert.rejects(relayToggle.run(ctx), (error: unknown): boolean => {
+
+      assert.ok(error instanceof CliError, "the failure is a CLI error");
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /1 \(off\)/);
+      assert.match(error.message, /2 \(on\)/);
+
+      return true;
+    });
     assert.deepEqual(calls.toggles, [], "no output was toggled when the target was ambiguous");
   });
 
@@ -1472,8 +1489,7 @@ describe("relay toggle", () => {
     const { calls, client } = makeFakeClient({ relays: [{ id: "r1", name: "Garage", outputs: [] }] });
     const { ctx } = makeCommandContext({ args: ["Garage"], client });
 
-    await assert.rejects(relayToggle.run(ctx),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("no outputs"));
+    await assert.rejects(relayToggle.run(ctx), { constructor: CliError, exitCode: 2, message: /no outputs/ });
     assert.deepEqual(calls.toggles, [], "no toggle was attempted against a relay with no outputs");
   });
 
@@ -1482,7 +1498,7 @@ describe("relay toggle", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(relayToggle.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(relayToggle.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 });
 
@@ -1522,7 +1538,7 @@ describe("chime play-speaker", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(chimePlaySpeaker.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(chimePlaySpeaker.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 });
 
@@ -1546,7 +1562,7 @@ describe("chime play-buzzer", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(chimePlayBuzzer.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(chimePlayBuzzer.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 });
 
@@ -1683,7 +1699,7 @@ describe("diagnostics", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [ "--channel", "zzznope" ], client });
 
-    await assert.rejects(diagnostics.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(diagnostics.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("--count resolves once the message budget is met, having rendered the diagnostic", async () => {
@@ -1726,7 +1742,7 @@ describe("watch state", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(watchState.run(ctx), (error: unknown) => (error instanceof CliError) && (error.exitCode === 2));
+    await assert.rejects(watchState.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("a device category renders a count header and each device's connectivity", async () => {

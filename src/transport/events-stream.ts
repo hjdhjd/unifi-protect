@@ -27,7 +27,7 @@
  */
 import { Agent, WebSocket } from "undici";
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, isExpectedWsDisconnect } from "../errors.ts";
 import type { ProtectWebSocket, ProtectWebSocketErrorEvent } from "./ws.ts";
 import { classifyPacket, isKnownModelKey } from "../protocol/events.ts";
 import type { Clock } from "../clock.ts";
@@ -39,7 +39,6 @@ import type { StreamOptions } from "../event-bus.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import { channels } from "../diagnostics.ts";
 import { decodePacket } from "../protocol/packet.ts";
-import { isExpectedWsDisconnect } from "../errors.ts";
 import { noopLog } from "../logging.ts";
 import { toBuffer } from "./ws.ts";
 import { wallClock } from "../clock.ts";

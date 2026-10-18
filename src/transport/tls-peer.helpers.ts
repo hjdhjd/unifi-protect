@@ -50,7 +50,7 @@ export interface LoopbackTlsPeer extends AsyncDisposable {
  */
 export async function createLoopbackHttpsPeer(): Promise<LoopbackTlsPeer> {
 
-  const server = createHttpsServer({ cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture }, (request, response) => {
+  const server = createHttpsServer({ cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture }, (_request, response) => {
 
     response.writeHead(200, { "content-type": "application/json" });
     response.end("{\"ok\":true}");

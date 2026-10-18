@@ -159,7 +159,7 @@ const watchLivestreamHandler: CommandHandler = async (ctx) => {
 
   // Subscribe before `camera.livestream()` below (so the session:opened published during subscribe is captured), and declared here so disposal order is subscription
   // first, then this feed, then the client - the feed stays attached through the subscription's teardown to capture the closing session:closed / subscription:disposed.
-  using _diagFeed = (diagOutput === null) ? null : subscribeDiagnostics(
+  using diagnosticsFeed = (diagOutput === null) ? null : subscribeDiagnostics(
     Object.values(channels).filter((channel) => String(channel.name).startsWith(LIVESTREAM_DIAGNOSTIC_PREFIX)),
     (name, message) => renderDiagnostic(diagOutput, name, message, { json: values.json === true }));
 

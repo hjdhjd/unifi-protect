@@ -34,7 +34,7 @@ describe("wallClock", () => {
 
     controller.abort();
 
-    await assert.rejects(pending, (error: unknown) => (error as Error).name === "AbortError", "aborting the signal rejects the wait with an AbortError");
+    await assert.rejects(pending, { name: "AbortError" });
   });
 
   test("setInterval yields repeatedly and terminates when its signal aborts", async () => {

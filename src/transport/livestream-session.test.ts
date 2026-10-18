@@ -5,19 +5,18 @@
  */
 import { FRAME_END_SEGMENT, FRAME_MOOF, buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
+import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
 import { ProtectAbortedError, ProtectNetworkError, ProtectStallError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { fakeClock, silentLog } from "../testing.helpers.ts";
 import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
-import type { LivestreamSpec } from "./livestream-session.ts";
-import type { LivestreamState } from "./livestream-session.ts";
 import { PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT } from "../settings.ts";
 import type { ProtectError } from "../errors.ts";
-import type { Segment } from "./livestream-session.ts";
 import assert from "node:assert/strict";
 import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
+import { settle } from "homebridge-plugin-utils/testing";
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
@@ -557,7 +556,7 @@ describe("LivestreamSession", () => {
       });
 
       // Let the async connect run; it must observe the abort and bail before building a socket.
-      await new Promise((resolve) => setImmediate(resolve));
+      await settle();
 
       assert.equal(built, false);
       assert.equal(session.state, "closed");

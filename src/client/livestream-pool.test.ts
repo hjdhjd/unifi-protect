@@ -6,6 +6,7 @@
  * whenEstablished.
  */
 import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-pool.ts";
+import type { LivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_STALL_DEFAULT_MS,
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
 import { ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "../errors.ts";
@@ -17,19 +18,12 @@ import { Camera } from "../devices/camera.ts";
 import type { DeviceContext } from "../devices/context.ts";
 import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
-import type { LivestreamSpec } from "../transport/livestream-session.ts";
-import type { Segment } from "../transport/livestream-session.ts";
 import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
+import { settle } from "homebridge-plugin-utils/testing";
 
 const SPEC: LivestreamSpec = { cameraId: "cam1", source: { channel: 0, type: "channel" } };
-
-// Yield the event loop so the pool's async session connect (negotiate then build the socket) reaches the point where the fake socket exists and its listeners attached.
-function flush(): Promise<void> {
-
-  return new Promise((resolve) => setImmediate(resolve));
-}
 
 // Total index access under noUncheckedIndexedAccess, read as an assertion.
 function at<T>(items: T[], index: number): T {
@@ -87,7 +81,7 @@ async function establishInit(ws: FakeWebSocket, opts: { codec: string; data?: Bu
   ws.emitOpen();
   ws.emitMessage(buildInitSegment({ codec: opts.codec, data: opts.data ?? Buffer.from("INIT") }));
 
-  await flush();
+  await settle();
 }
 
 // Fully establish (or recover) a stream: drive the open + init handshake AND the first media segment, then yield the event loop so both reach the subscribers. Liveness
@@ -99,7 +93,7 @@ async function establish(ws: FakeWebSocket, opts: { codec: string; data?: Buffer
   await establishInit(ws, opts);
   pushMedia(ws);
 
-  await flush();
+  await settle();
 }
 
 // Push one media segment over a socket.
@@ -130,10 +124,10 @@ describe("LivestreamPool", () => {
 
       const { pool, sockets } = makePool();
 
-      await using _sub1 = pool.subscribe(SPEC);
-      await using _sub2 = pool.subscribe(SPEC);
+      await using firstSubscription = pool.subscribe(SPEC);
+      await using secondSubscription = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 1);
     });
@@ -144,7 +138,7 @@ describe("LivestreamPool", () => {
       const sub1 = pool.subscribe(SPEC);
       const sub2 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       const ws = at(sockets, 0);
 
@@ -169,10 +163,10 @@ describe("LivestreamPool", () => {
 
       const { pool, sockets } = makePool();
 
-      await using _sub1 = pool.subscribe({ cameraId: "cam1", source: { channel: 0, type: "channel" } });
-      await using _sub2 = pool.subscribe({ cameraId: "cam1", source: { channel: 1, type: "channel" } });
+      await using firstSubscription = pool.subscribe({ cameraId: "cam1", source: { channel: 0, type: "channel" } });
+      await using secondSubscription = pool.subscribe({ cameraId: "cam1", source: { channel: 1, type: "channel" } });
 
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
     });
@@ -185,7 +179,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub1 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Drive the init only (no media yet): the joiner attaches in the init->media gap, exactly the case where the cached init must be replayed before any media flows.
       await establishInit(at(sockets, 0), { codec: "avc1.640028", data: Buffer.from("INIT") });
@@ -212,7 +206,7 @@ describe("LivestreamPool", () => {
       const fast = pool.subscribe(SPEC);
       const slow = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       const ws = at(sockets, 0);
 
@@ -257,7 +251,7 @@ describe("LivestreamPool", () => {
       // The pool retains this subscription internally, so we discard the handle; its abort signal is what disposes it.
       pool.subscribe(SPEC, { signal: controller.signal });
 
-      await flush();
+      await settle();
 
       const ws = at(sockets, 0);
 
@@ -265,7 +259,7 @@ describe("LivestreamPool", () => {
 
       // Aborting sub2's signal disposes it; the shared session lives on for sub1.
       controller.abort();
-      await flush();
+      await settle();
 
       assert.equal(ws.closeRequested, false);
 
@@ -284,7 +278,7 @@ describe("LivestreamPool", () => {
 
       const sub = pool.subscribe(SPEC, { signal: controller.signal });
 
-      await flush();
+      await settle();
 
       const result = await sub[Symbol.asyncIterator]().next();
 
@@ -299,7 +293,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       const ws = at(sockets, 0);
 
@@ -327,13 +321,13 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub1 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await sub1[Symbol.asyncDispose]();
 
       // The key was removed at refcount 0, so a new subscription negotiates a fresh session rather than attaching to the closed one.
-      await using _sub2 = pool.subscribe(SPEC);
+      await using newSubscription = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
     });
@@ -346,13 +340,13 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC, { discardOnDispose: true });
 
-      await flush();
+      await settle();
 
       // Queue an init and two media without pulling, so three undelivered segments sit in this subscriber's queue.
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
       pushMedia(at(sockets, 0));
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
 
       assert.equal(sub.stats.queueDepth, 3);
 
@@ -370,7 +364,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC, { discardOnDispose: true });
 
-      await flush();
+      await settle();
 
       // Walk the default establishing curve to the deadline, as the init-then-no-media give-up test does, emitting an init on each fresh socket. The first attempt's
       // init is queued; later same-codec re-inits are suppressed.
@@ -382,7 +376,7 @@ describe("LivestreamPool", () => {
         await establishInit(at(sockets, sockets.length - 1), { codec: "avc1.640028" });
         clock.advance(window);
         // eslint-disable-next-line no-await-in-loop
-        await flush();
+        await settle();
       }
 
       // discardOnDispose is scoped to the consumer's own disposal, NOT the pool-forced fail() teardown: the queued init still drains to the consumer before the give-up
@@ -398,10 +392,10 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
 
       assert.equal(sub.stats.queueDepth, 2);
 
@@ -423,10 +417,10 @@ describe("LivestreamPool", () => {
 
       const { pool, sockets } = makePool();
 
-      await using _subA = pool.subscribe({ cameraId: "cam1", source: { channel: 0, type: "channel" } });
-      await using _subB = pool.subscribe({ cameraId: "cam2", source: { channel: 0, type: "channel" } });
+      await using firstSubscription = pool.subscribe({ cameraId: "cam1", source: { channel: 0, type: "channel" } });
+      await using secondSubscription = pool.subscribe({ cameraId: "cam2", source: { channel: 0, type: "channel" } });
 
-      await flush();
+      await settle();
       at(sockets, 0).emitOpen();
       at(sockets, 1).emitOpen();
 
@@ -454,7 +448,7 @@ describe("LivestreamPool", () => {
       await using pool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
         verifyTls: true });
 
-      await using _sub = pool.subscribe(SPEC);
+      await using subscription = pool.subscribe(SPEC);
 
       const connection = await peer.connection(0);
 
@@ -471,7 +465,7 @@ describe("LivestreamPool", () => {
       await using peer = await createLoopbackWebSocketPeer();
       await using pool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live" });
 
-      await using _sub = pool.subscribe(SPEC);
+      await using subscription = pool.subscribe(SPEC);
 
       await peer.whenHandshakes(1);
 
@@ -486,7 +480,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Establish keys on media: the init and the first media flow on the original socket, and it is the media that settles the stream `live`.
       await establish(at(sockets, 0), { codec: "avc1.640028" });
@@ -499,7 +493,7 @@ describe("LivestreamPool", () => {
 
       // The controller closes the stream. The pool recovers rather than failing the subscriber: a fresh session is created synchronously.
       at(sockets, 0).emitClose(1000, "the controller closed the stream");
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
 
@@ -520,7 +514,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -536,7 +530,7 @@ describe("LivestreamPool", () => {
 
       // The controller closes the stream; the pool reconnects on a fresh same-codec socket (its redundant init is suppressed and media resumes uninterrupted).
       at(sockets, 0).emitClose(1000, "the controller closed the stream");
-      await flush();
+      await settle();
 
       // The first media segment from the reconnected session is marked: its timeline restarted near zero, a backward jump the consumer must resynchronize on. The marker
       // now lands on the very segment that settles `recovered` (establish drives that first media), so recovered and the discontinuity coincide on one segment.
@@ -555,7 +549,7 @@ describe("LivestreamPool", () => {
 
       // A second reconnect re-arms the marker, again on its first (recovered-settling) media.
       at(sockets, 1).emitClose(1000, "the controller closed the stream again");
-      await flush();
+      await settle();
       await establish(at(sockets, 2), { codec: "avc1.640028" });
 
       const resumedAgain = await nextSegment(iterator);
@@ -573,12 +567,12 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Attempt 0's window elapses without a segment. No media has ever flowed, so the episode is still ESTABLISHING (a cold start), not recovering, and the pool retries
       // on a fresh socket. This is exactly the case that arming on a non-null prior session object would have misread as a reconnect.
       clock.advance(1000);
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
 
@@ -604,7 +598,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Fully establish on media (init + first media), so the stream is genuinely `live` before we stall it - liveness is media-keyed.
       await establish(at(sockets, 0), { codec: "avc1.640028" });
@@ -619,7 +613,7 @@ describe("LivestreamPool", () => {
       // PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, the silence threshold the watchdog fires at.
       clock.advance(10000);
       await clock.tick();
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
       assert.equal(sub.state, "recovering");
@@ -638,7 +632,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Fully establish on media so the close that follows begins a recovering episode (a close while live is a fault; a close while still establishing is absorbed).
       await establish(at(sockets, 0), { codec: "avc1.640028" });
@@ -650,7 +644,7 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "media");
 
       at(sockets, 0).emitClose(1000, "the controller closed the stream");
-      await flush();
+      await settle();
 
       // The reconnected session negotiates a different codec; the codec gate fires on the reconnect's INIT (before any media), so no fixed-codec consumer can adapt
       // mid-stream and the iterator throws the terminal. Init-only: the change is terminal before media would ever flow.
@@ -673,7 +667,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ recoveryPolicy: () => ({ kind: "giveUp" }) });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // A giveUp-first policy never even opens a socket: establishment is abandoned immediately.
       assert.equal(sockets.length, 0);
@@ -698,7 +692,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ recoveryPolicy: () => { throw new Error("the recovery policy threw"); } });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 0, "a policy that throws at the first consultation abandons establishment before opening a socket");
 
@@ -721,13 +715,13 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Attempt 0 opened a socket and is waiting its window; elapse it twice to exhaust the budget. No socket ever delivers a segment.
       clock.advance(1000);
-      await flush();
+      await settle();
       clock.advance(1000);
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
 
@@ -749,7 +743,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Each attempt: the controller acks with an init but then produces NO media, then we elapse the attempt's window. Because liveness is media-keyed, an init alone
       // never settles the episode, so each such session is a failed media-establishment attempt - exactly the init-then-hang the establishment deadline bounds. We
@@ -764,7 +758,7 @@ describe("LivestreamPool", () => {
         await establishInit(socket, { codec: "avc1.640028" });
         clock.advance(window);
         // eslint-disable-next-line no-await-in-loop
-        await flush();
+        await settle();
       }
 
       // The deadline (30s) is crossed, so the next consult gives up. Four patient attempts opened four sockets; the stream never established despite every init.
@@ -795,7 +789,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Open each fresh socket but emit nothing, then elapse its window. The deadline is time-based from the episode start, so a perennially-silent connection gives up.
       const windows = [ 5000, 8000, 10000, 10000 ];
@@ -805,7 +799,7 @@ describe("LivestreamPool", () => {
         at(sockets, sockets.length - 1).emitOpen();
         clock.advance(window);
         // eslint-disable-next-line no-await-in-loop
-        await flush();
+        await settle();
       }
 
       assert.equal(sockets.length, 4);
@@ -831,7 +825,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -841,12 +835,12 @@ describe("LivestreamPool", () => {
 
       // The controller drops the stream, starting a recovering episode.
       at(sockets, 0).emitClose(1000, "dropped");
-      await flush();
+      await settle();
 
       // The first recovery attempt acks with an init but produces no media; its window elapses, so it is a failed attempt and the pool reconnects again.
       await establishInit(at(sockets, 1), { codec: "avc1.640028" });
       clock.advance(1000);
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 3);
       assert.equal(sub.state, "recovering");
@@ -867,7 +861,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -877,7 +871,7 @@ describe("LivestreamPool", () => {
 
       // First reconnect: settles recovered on its first media.
       at(sockets, 0).emitClose(1000, "dropped");
-      await flush();
+      await settle();
       await establish(at(sockets, 1), { codec: "avc1.640028" });
 
       assert.equal((await nextSegment(iterator)).type, "media");
@@ -886,7 +880,7 @@ describe("LivestreamPool", () => {
       // Second consecutive reconnect: it too must settle recovered on its own first media - the media latch re-arms per install, so the second recovery does not wedge in
       // "recovering" waiting on a settle that the init alone would never deliver.
       at(sockets, 1).emitClose(1000, "dropped again");
-      await flush();
+      await settle();
 
       assert.equal(sub.state, "recovering");
 
@@ -915,7 +909,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub = pool.subscribe(SPEC, { signal: controller.signal });
 
-      await flush();
+      await settle();
 
       // The stream inits but has NOT yet produced media: the episode is in flight in the init->media gap, exactly the new window cancellation must survive.
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
@@ -925,7 +919,7 @@ describe("LivestreamPool", () => {
       // Cancel mid-gap. The subscription disposes, the last subscriber leaves, and teardown aborts the controller, which settles the in-flight window `aborted` - no
       // elapse, no failed attempt booked.
       controller.abort();
-      await flush();
+      await settle();
 
       assert.equal(sub.state, "closed");
       assert.equal(at(sockets, 0).closeRequested, true);
@@ -952,7 +946,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // The stream inits but has not produced media: the establishing episode is in flight in the init->media gap.
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
@@ -963,7 +957,7 @@ describe("LivestreamPool", () => {
       // A reassess in the gap must be inert: establishment is urgency-independent, so re-asking cannot change the window, and reinstalling would tear down a healthy
       // connecting session about to produce media. No new socket, no second consult.
       sub.reassess();
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 1);
       assert.equal(consults, 1);
@@ -971,7 +965,7 @@ describe("LivestreamPool", () => {
 
       // The in-flight session's first media still settles establishment normally - the reassess left it untouched.
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
 
       assert.equal(sub.state, "live");
       assert.equal(await sub.whenEstablished(), true);
@@ -994,7 +988,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub1 = pool.subscribe(SPEC, { urgency: () => 5000 });
 
-      await flush();
+      await settle();
 
       // Fully establish on media so the stream is live (liveness is media-keyed) before the drop begins a recovering episode the policy then gives up on.
       await establish(at(sockets, 0), { codec: "avc1.640028" });
@@ -1003,7 +997,7 @@ describe("LivestreamPool", () => {
       const sub2 = pool.subscribe(SPEC, { urgency: () => 200 });
 
       at(sockets, 0).emitClose(1000, "dropped");
-      await flush();
+      await settle();
 
       const recovering = contexts.find((context) => context.phase === "recovering");
 
@@ -1023,7 +1017,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -1034,7 +1028,7 @@ describe("LivestreamPool", () => {
 
       // The stream is live: no recovery episode is in flight, so reassess must not reconnect a working stream.
       sub.reassess();
-      await flush();
+      await settle();
 
       pushMedia(at(sockets, 0));
 
@@ -1064,17 +1058,17 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       at(sockets, 0).emitClose(1000, "dropped");
-      await flush();
+      await settle();
 
       // The recovery episode is parked on a `wait` - no new socket yet.
       assert.equal(sockets.length, 1);
 
       sub.reassess();
-      await flush();
+      await settle();
 
       // The reassess re-consulted the policy, which now reconnected.
       assert.equal(sockets.length, 2);
@@ -1105,25 +1099,25 @@ describe("LivestreamPool", () => {
       // Both subscribers attach while the stream is live, before the drop, so neither attach trips the joiner re-decision that only fires during a recovering episode.
       const sub1 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const sub2 = pool.subscribe(SPEC);
 
       // The controller drops the live stream, beginning a recovering episode the policy parks on a wait - no new socket yet.
       at(sockets, 0).emitClose(1000, "dropped");
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 1);
 
       // Dispose one subscriber; the sibling still owns the in-flight episode, and detach does not re-decide while a subscriber remains.
       await sub1[Symbol.asyncDispose]();
-      await flush();
+      await settle();
 
       // The disposed subscriber's reassess must leave the parked episode untouched. Without the guard this call settles the episode early, reconnecting and incrementing
       // recoveringCalls - so the assertions below (socket count and recoveringCalls) fail against the unguarded implementation.
       sub1.reassess();
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 1);
       assert.equal(recoveringCalls, 1);
@@ -1131,7 +1125,7 @@ describe("LivestreamPool", () => {
       // Positive control: the still-live sibling's reassess DOES settle the episode, proving the guard is scoped to the disposed subscription rather than disabling
       // reassessment outright.
       sub2.reassess();
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
       assert.equal(recoveringCalls, 2);
@@ -1157,11 +1151,11 @@ describe("LivestreamPool", () => {
         const { pool, sockets } = makePool();
         const sub = pool.subscribe(SPEC);
 
-        await flush();
+        await settle();
         await establish(at(sockets, 0), { codec: "avc1.640028" });
 
         at(sockets, 0).emitClose(1000, "dropped");
-        await flush();
+        await settle();
         await establish(at(sockets, 1), { codec: "avc1.640028" });
 
         assert.equal(started.length, 1);
@@ -1191,7 +1185,7 @@ describe("LivestreamPool", () => {
         const { pool } = makePool({ recoveryPolicy: () => ({ kind: "giveUp" }) });
         const sub = pool.subscribe(SPEC);
 
-        await flush();
+        await settle();
 
         await assert.rejects(sub[Symbol.asyncIterator]().next(), ProtectLivestreamUnavailableError);
 
@@ -1216,7 +1210,7 @@ describe("LivestreamPool", () => {
         const { pool, sockets } = makePool();
         const sub = pool.subscribe(SPEC);
 
-        await flush();
+        await settle();
 
         // Fully establish on media so the close begins a recovering episode the codec change then terminates.
         await establish(at(sockets, 0), { codec: "avc1.640028" });
@@ -1228,7 +1222,7 @@ describe("LivestreamPool", () => {
         assert.equal((await nextSegment(iterator)).type, "media");
 
         at(sockets, 0).emitClose(1000, "dropped");
-        await flush();
+        await settle();
 
         // The codec gate fires on the reconnect's init, before any media - init-only.
         await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90" });
@@ -1264,7 +1258,7 @@ describe("LivestreamPool", () => {
         const sub1 = pool.subscribe(SPEC);
         const sub2 = pool.subscribe(SPEC);
 
-        await flush();
+        await settle();
         await sub1[Symbol.asyncDispose]();
         await sub2[Symbol.asyncDispose]();
 
@@ -1290,7 +1284,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool();
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // Drive the init ONLY. Liveness is media-keyed, so the init alone does not establish: whenEstablished() stays pending and the stream is still "connecting".
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
@@ -1298,13 +1292,13 @@ describe("LivestreamPool", () => {
       assert.equal(sub.state, "connecting");
 
       // Race whenEstablished() against a short settle: it must NOT have resolved on the init alone.
-      const pendingProbe = await Promise.race([ sub.whenEstablished().then(() => "resolved"), flush().then(() => "pending") ]);
+      const pendingProbe = await Promise.race([ sub.whenEstablished().then(() => "resolved"), settle().then(() => "pending") ]);
 
       assert.equal(pendingProbe, "pending", "whenEstablished() must not resolve on the init alone");
 
       // The first media settles establishment: the stream goes live and whenEstablished() resolves true.
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
 
       assert.equal(sub.state, "live");
       assert.equal(await sub.whenEstablished(), true);
@@ -1317,7 +1311,7 @@ describe("LivestreamPool", () => {
       const { pool } = makePool({ recoveryPolicy: () => ({ kind: "giveUp" }) });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       assert.equal(await sub.whenEstablished(), false);
     });
@@ -1329,7 +1323,7 @@ describe("LivestreamPool", () => {
       const sub1 = pool.subscribe(SPEC);
       const sub2 = pool.subscribe(SPEC, { signal: controller.signal });
 
-      await flush();
+      await settle();
 
       // Drive the shared session to the init-only point: both subscribers are mid-establishment (whenEstablished() pending, no media yet).
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
@@ -1339,17 +1333,17 @@ describe("LivestreamPool", () => {
       const sub2Wait = sub2.whenEstablished();
 
       controller.abort();
-      await flush();
+      await settle();
 
       assert.equal(await sub2Wait, false);
 
-      const siblingProbe = await Promise.race([ sub1.whenEstablished().then(() => "resolved"), flush().then(() => "pending") ]);
+      const siblingProbe = await Promise.race([ sub1.whenEstablished().then(() => "resolved"), settle().then(() => "pending") ]);
 
       assert.equal(siblingProbe, "pending", "the sibling's wait must stay pending while its own session is still establishing");
 
       // The first media settles the sibling's wait true, exactly as it would have without the disposal.
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
 
       assert.equal(await sub1.whenEstablished(), true);
 
@@ -1362,7 +1356,7 @@ describe("LivestreamPool", () => {
       const sub1 = pool.subscribe(SPEC);
       const sub2 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
 
       // No signal here: start sub2's wait, then dispose it explicitly. The disposal deferred - not an abort listener - settles the wait false, and the shared session
@@ -1374,7 +1368,7 @@ describe("LivestreamPool", () => {
       assert.equal(await sub2Wait, false);
 
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
 
       assert.equal(await sub1.whenEstablished(), true);
 
@@ -1387,7 +1381,7 @@ describe("LivestreamPool", () => {
       const sub1 = pool.subscribe(SPEC);
       const sub2 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
 
       // Dispose sub2 first (sub1 keeps the shared session and its latch alive), THEN call whenEstablished(): the #disposed guard answers false directly. This proves the
@@ -1397,7 +1391,7 @@ describe("LivestreamPool", () => {
       assert.equal(await sub2.whenEstablished(), false);
 
       // The shared latch is still pending (sub1 remains, no media yet); a forward would hang here rather than resolve false, which is what "did not forward" means.
-      const hostStillPending = await Promise.race([ sub1.whenEstablished().then(() => "resolved"), flush().then(() => "pending") ]);
+      const hostStillPending = await Promise.race([ sub1.whenEstablished().then(() => "resolved"), settle().then(() => "pending") ]);
 
       assert.equal(hostStillPending, "pending");
 
@@ -1410,7 +1404,7 @@ describe("LivestreamPool", () => {
       const sub1 = pool.subscribe(SPEC);
       const sub2 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
 
       // Two overlapping waits on the same subscription, both racing the one shared disposal deferred rather than per-call listeners. Disposing once must settle BOTH
@@ -1438,7 +1432,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // No urgency declared: the media-stall watchdog runs at the 10s default, the fail-safe analog of the byte heartbeat.
       await establish(at(sockets, 0), { codec: "avc1.640028" });
@@ -1452,7 +1446,7 @@ describe("LivestreamPool", () => {
       // Steady media keeps refreshing `#lastMediaAt`, so the watchdog never trips: advance a little under the threshold, push media to refresh, pulse, and stay live.
       clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS - PROTECT_LIVESTREAM_STALL_POLL_MS);
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
       await pulse(clock);
 
       assert.equal(sub.state, "live");
@@ -1463,7 +1457,7 @@ describe("LivestreamPool", () => {
       // default here, and recovers into a fresh session.
       clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
       at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
-      await flush();
+      await settle();
       await pulse(clock);
 
       assert.equal(sub.state, "recovering");
@@ -1480,7 +1474,7 @@ describe("LivestreamPool", () => {
       // A 2s urgency is the consumer-declared detection deadline; it is below the 10s session heartbeat, so the media watchdog must catch the stall first.
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -1507,7 +1501,7 @@ describe("LivestreamPool", () => {
       // A near-zero urgency would, unclamped, trip on ordinary inter-segment jitter. The floor clamp keeps the effective threshold at PROTECT_LIVESTREAM_STALL_FLOOR_MS.
       const sub = pool.subscribe(SPEC, { urgency: () => 1 });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -1540,7 +1534,7 @@ describe("LivestreamPool", () => {
       // Every subscriber opts out of media-stall detection: the MIN is Infinity, so the per-tick `>= Infinity` comparison never fires and only the byte backstop watches.
       const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -1557,7 +1551,7 @@ describe("LivestreamPool", () => {
         clock.advance(1000);
         at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
         // eslint-disable-next-line no-await-in-loop
-        await flush();
+        await settle();
         // eslint-disable-next-line no-await-in-loop
         await pulse(clock);
       }
@@ -1577,7 +1571,7 @@ describe("LivestreamPool", () => {
       const optOut = pool.subscribe(SPEC, { urgency: () => Infinity });
       const hksv = pool.subscribe(SPEC, { urgency: () => 2000 });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       assert.equal(optOut.state, "live");
@@ -1604,7 +1598,7 @@ describe("LivestreamPool", () => {
       // The urgency closure is pulled fresh each tick, so mutating it mid-live re-tightens detection with no explicit re-arm.
       const sub = pool.subscribe(SPEC, { urgency: () => toleranceMs });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -1615,7 +1609,7 @@ describe("LivestreamPool", () => {
       // Under the original 10s, a 3s silence does not trip. Refresh media (so the clock is fresh) then tighten the policy to 2s.
       clock.advance(3000);
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
       await pulse(clock);
 
       assert.equal(sub.state, "live");
@@ -1639,7 +1633,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC, { urgency: () => toleranceMs });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -1671,7 +1665,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -1683,7 +1677,7 @@ describe("LivestreamPool", () => {
       // fanned as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the last picture.
       clock.advance(1500);
       at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
-      await flush();
+      await settle();
 
       // Cross the 2s media threshold relative to the LAST MEDIA (not the re-init). The watchdog fires because the non-media frame did not reset its media clock.
       clock.advance(500);
@@ -1705,7 +1699,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
 
-      await flush();
+      await settle();
 
       // Drive the init ONLY (no media). The episode is still establishing, no media has flowed, so the watchdog is NOT armed. Advancing well past the 2s media threshold
       // (but under the 100000 establishing window) and pulsing must not fire a media watchdog - there is none to arm during establishing.
@@ -1722,7 +1716,7 @@ describe("LivestreamPool", () => {
 
       // The first media now arms the watchdog and goes live.
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
 
       assert.equal(sub.state, "live");
 
@@ -1741,7 +1735,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       const iterator = sub[Symbol.asyncIterator]();
@@ -1751,7 +1745,7 @@ describe("LivestreamPool", () => {
 
       // The controller drops the stream: `#installSession` disarms the watchdog before the recovering episode's fresh session. While recovering the watchdog is unarmed.
       at(sockets, 0).emitClose(1000, "dropped");
-      await flush();
+      await settle();
 
       assert.equal(sub.state, "recovering");
 
@@ -1777,11 +1771,11 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
 
-      await flush();
+      await settle();
 
       // Attempt 0's window elapses with no segment; the still-establishing episode reinstalls. The disarm in that reinstall is a safe no-op (no watchdog was ever armed).
       clock.advance(1000);
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
 
@@ -1804,7 +1798,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       assert.equal(sub.state, "live");
@@ -1839,11 +1833,11 @@ describe("LivestreamPool", () => {
       // default are separate and must not leak into one another.
       const sub = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       at(sockets, 0).emitClose(1000, "dropped");
-      await flush();
+      await settle();
 
       const recovering = contexts.find((context) => context.phase === "recovering");
 
@@ -1873,11 +1867,11 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub1 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
 
       at(sockets, 0).emitClose(1000, "dropped");
-      await flush();
+      await settle();
 
       // The recovery episode is parked on a long `wait` - no new socket yet.
       assert.equal(sockets.length, 1);
@@ -1885,7 +1879,7 @@ describe("LivestreamPool", () => {
       // A second, more-urgent subscriber joins the parked (recovering) window: the recovering-gated attach hook re-decides it, which now reconnects.
       const sub2 = pool.subscribe(SPEC, { urgency: () => 200 });
 
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 2);
       assert.equal(recoveringCalls, 2);
@@ -1908,7 +1902,7 @@ describe("LivestreamPool", () => {
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub1 = pool.subscribe(SPEC);
 
-      await flush();
+      await settle();
 
       // The stream inits but has not produced media: the establishing episode is in flight in the init->media gap.
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
@@ -1920,7 +1914,7 @@ describe("LivestreamPool", () => {
       const sub2 = pool.subscribe(SPEC, { urgency: () => 200 });
 
       sub2.reassess();
-      await flush();
+      await settle();
 
       assert.equal(sockets.length, 1);
       assert.equal(consults, 1);
@@ -1928,7 +1922,7 @@ describe("LivestreamPool", () => {
 
       // The in-flight session's first media still settles establishment normally - the join and reassess left it untouched.
       pushMedia(at(sockets, 0));
-      await flush();
+      await settle();
 
       assert.equal(sub1.state, "live");
 

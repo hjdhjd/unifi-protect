@@ -95,7 +95,7 @@ describe("Transport", () => {
 
       const response = await transport.send(url(host, "/a"));
 
-      assert.throws(() => response.ensureOk(), (error: unknown) => (error instanceof ProtectAuthError) && (error.statusCode === 401));
+      assert.throws(() => response.ensureOk(), { constructor: ProtectAuthError, statusCode: 401 });
     });
 
     test("403 classifies as ProtectAuthorizationError", async () => {
@@ -266,7 +266,7 @@ describe("Transport", () => {
 
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
 
-      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => (error instanceof ProtectNetworkError) && (error.code === "ECONNREFUSED"));
+      await assert.rejects(transport.send(url(host, "/x")), { code: "ECONNREFUSED", constructor: ProtectNetworkError });
     });
   });
 
@@ -277,7 +277,7 @@ describe("Transport", () => {
       let entered = 0;
       const { host, pool, transport } = makeMockTransport();
 
-      using _enteredSub = transport.on("throttleEntered", () => entered++);
+      using enteredSubscription = transport.on("throttleEntered", () => entered++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
 
@@ -299,7 +299,7 @@ describe("Transport", () => {
       await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT);
       clock.advance(1000);
 
-      await assert.rejects(transport.send(url(host, "/f")), (error: unknown) => (error instanceof ProtectThrottledError) && (error.cooldownMs === COOLDOWN_MS - 1000));
+      await assert.rejects(transport.send(url(host, "/f")), { constructor: ProtectThrottledError, cooldownMs: COOLDOWN_MS - 1000 });
     });
 
     test("a successful half-open probe after cooldown closes the breaker and emits throttleExited", async () => {
@@ -307,7 +307,7 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using exitedSubscription = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
       pool.intercept({ method: "GET", path: "/f" }).reply(200, { recovered: true });
@@ -328,8 +328,8 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _enteredSub = transport.on("throttleEntered", () => entered++);
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using enteredSubscription = transport.on("throttleEntered", () => entered++);
+      using exitedSubscription = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT + 1);
 
@@ -353,7 +353,7 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using exitedSubscription = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
       pool.intercept({ method: "GET", path: "/f" }).reply(200, { recovered: true });
@@ -381,8 +381,8 @@ describe("Transport", () => {
       let exited = 0;
       const { clock, host, pool, transport } = makeMockTransport();
 
-      using _enteredSub = transport.on("throttleEntered", () => entered++);
-      using _exitedSub = transport.on("throttleExited", () => exited++);
+      using enteredSubscription = transport.on("throttleEntered", () => entered++);
+      using exitedSubscription = transport.on("throttleExited", () => exited++);
 
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT + 1);
 
@@ -489,7 +489,10 @@ describe("Transport", () => {
       const entered: { consecutiveFailures: number; cooldownMs: number }[] = [];
       let exitedCount = 0;
       const onEntered = (message: unknown): void => void entered.push(message as { consecutiveFailures: number; cooldownMs: number });
-      const onExited = (): void => void exitedCount++;
+      const onExited = (): void => {
+
+        exitedCount++;
+      };
 
       diagnosticsChannel.subscribe("unifi-protect:http:throttle:entered", onEntered);
       diagnosticsChannel.subscribe("unifi-protect:http:throttle:exited", onExited);

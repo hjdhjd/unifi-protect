@@ -2,19 +2,16 @@
  *
  * capture.ts: `ufp capture` - observe a controller against the known schema and emit one scrubbed bundle carrying whatever it says that this library does not model.
  */
+import type { AnyProtectDiagnosticsChannel, RawPacket, TypedEvent } from "../../../index.ts";
 import { COMMON_OPTIONS, axisMatches, boundedSignal, compileAxis, parseDuration, readVersion } from "../shared.ts";
 import type { CommandHandler, CommandSpec, CompiledAxis } from "../shared.ts";
 import type { NoveltyFinding, SchemaManifest, UndeclaredSnapshot, UnmodeledSnapshot } from "../manifest.ts";
 import { PROTECT_CAPTURE_DEFAULT_DURATION, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } from "../../../settings.ts";
-import { channels, subscribeToChannel } from "../../../index.ts";
+import { ProtectClient, channels, subscribeToChannel } from "../../../index.ts";
 import { createScrubContext, scrub } from "../scrub.ts";
 import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, snapshotUndeclared, snapshotUnmodeled } from "../manifest.ts";
 import { fileStamp, formatDuration, serializeJson } from "../output/format.ts";
-import type { AnyProtectDiagnosticsChannel } from "../../../index.ts";
 import { DEVICE_CATEGORIES } from "../lookup.ts";
-import { ProtectClient } from "../../../index.ts";
-import type { RawPacket } from "../../../index.ts";
-import type { TypedEvent } from "../../../index.ts";
 import { parseArgs } from "node:util";
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
@@ -418,8 +415,8 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
 
     // Subscribe before connecting, so the connect handshake's own signals are part of the record. The drift channels say the library met something it does not model;
     // the health channels say why the traffic stopped for a while, which is the difference between an unexplained gap and a reconnect.
-    using _unknownModelKeyDrift = observe(window.drift)(channels.schemaUnknownModelKey);
-    using _unmodeledCollectionDrift = observe(window.drift)(channels.schemaUnmodeledCollection);
+    using unknownModelKeyDrift = observe(window.drift)(channels.schemaUnknownModelKey);
+    using unmodeledCollectionDrift = observe(window.drift)(channels.schemaUnmodeledCollection);
     using healthObservations = new DisposableStack();
 
     for(const channel of HEALTH_CHANNELS) {

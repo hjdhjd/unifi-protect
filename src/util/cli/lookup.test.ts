@@ -99,8 +99,7 @@ describe("findDeviceOfType", () => {
     // This is the resolver's one distinguishing behavior; without it, an implementation whose narrowing never rejects would still pass every other case.
     const client = fakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
 
-    assert.throws(() => findDeviceOfType(client, "c1", "relay"),
-      (error: unknown) => (error instanceof CliError) && (error.exitCode === 2) && error.message.includes("is a camera, not a relay"));
+    assert.throws(() => findDeviceOfType(client, "c1", "relay"), { constructor: CliError, exitCode: 2, message: /is a camera, not a relay/ });
   });
 
   test("resolves within the requested class when a name collides across classes", () => {
