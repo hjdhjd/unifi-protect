@@ -4,9 +4,11 @@
  * the three-rail fan-out, schema-drift surfacing, decode-failure resilience, the silence watchdog, and teardown. Driven through an injected fake WebSocket and a
  * fake Clock, so the realtime stream is exercised deterministically without a live controller.
  */
+import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
 import { ProtectAbortedError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { capturingLog, expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
+import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { EventStream } from "./events-stream.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
@@ -14,10 +16,8 @@ import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
 import { PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
-import type { SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
-import { channels } from "../diagnostics.ts";
 import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 
 const HOST = "10.0.0.1";
@@ -285,22 +285,15 @@ describe("EventStream", () => {
     test("the events:packet diagnostic carries id and modelKey for device transitions, kind only for activity signals", async () => {
 
       const { stream, ws } = await openStream();
-      const payloads: { id?: string; kind: string; modelKey?: string }[] = [];
-      const onMessage = (message: unknown): void => void payloads.push(message as { kind: string });
+      const payloads: EventsPacketPayload[] = [];
 
-      channels.eventsPacket.subscribe(onMessage);
+      using packetSubscription = subscribeToChannel(channels.eventsPacket, (payload) => void payloads.push(payload));
 
-      try {
+      ws.emitMessage(encode({ action: "update", id: "c1", modelKey: "camera" }, { name: "Renamed" }));
+      ws.emitMessage(encode({ action: "add", id: "evt1", modelKey: "event" }, { camera: "c1", start: 1, type: "ring" }));
 
-        ws.emitMessage(encode({ action: "update", id: "c1", modelKey: "camera" }, { name: "Renamed" }));
-        ws.emitMessage(encode({ action: "add", id: "evt1", modelKey: "event" }, { camera: "c1", start: 1, type: "ring" }));
-
-        assert.deepEqual(payloads[0], { id: "c1", kind: "devicePatched", modelKey: "camera" });
-        assert.deepEqual(payloads[1], { kind: "doorbellRing" });
-      } finally {
-
-        channels.eventsPacket.unsubscribe(onMessage);
-      }
+      assert.deepEqual(payloads[0], { id: "c1", kind: "devicePatched", modelKey: "camera" });
+      assert.deepEqual(payloads[1], { kind: "doorbellRing" });
 
       await stream.close();
     });
@@ -312,24 +305,17 @@ describe("EventStream", () => {
 
       const { stream, ws } = await openStream();
       const drift: SchemaUnknownModelKeyPayload[] = [];
-      const onDrift = (message: unknown): void => void drift.push(message as SchemaUnknownModelKeyPayload);
 
-      channels.schemaUnknownModelKey.subscribe(onDrift);
+      using driftSubscription = subscribeToChannel(channels.schemaUnknownModelKey, (payload) => void drift.push(payload));
 
-      try {
+      // Two frames with the same unmodeled (modelKey, action) publish the drift signal once; a different action publishes again.
+      ws.emitMessage(encode({ action: "add", id: "g1", modelKey: "garage" }, { id: "g1" }));
+      ws.emitMessage(encode({ action: "add", id: "g2", modelKey: "garage" }, { id: "g2" }));
+      ws.emitMessage(encode({ action: "update", id: "g1", modelKey: "garage" }, { id: "g1" }));
 
-        // Two frames with the same unmodeled (modelKey, action) publish the drift signal once; a different action publishes again.
-        ws.emitMessage(encode({ action: "add", id: "g1", modelKey: "garage" }, { id: "g1" }));
-        ws.emitMessage(encode({ action: "add", id: "g2", modelKey: "garage" }, { id: "g2" }));
-        ws.emitMessage(encode({ action: "update", id: "g1", modelKey: "garage" }, { id: "g1" }));
-
-        assert.equal(drift.length, 2);
-        assert.deepEqual(drift[0], { action: "add", exampleId: "g1", modelKey: "garage" });
-        assert.deepEqual(drift[1], { action: "update", exampleId: "g1", modelKey: "garage" });
-      } finally {
-
-        channels.schemaUnknownModelKey.unsubscribe(onDrift);
-      }
+      assert.equal(drift.length, 2);
+      assert.deepEqual(drift[0], { action: "add", exampleId: "g1", modelKey: "garage" });
+      assert.deepEqual(drift[1], { action: "update", exampleId: "g1", modelKey: "garage" });
 
       await stream.close();
     });
@@ -338,22 +324,15 @@ describe("EventStream", () => {
 
       const { stream, ws } = await openStream();
       const packets = collect(stream, "packet");
-      const drift: unknown[] = [];
-      const onDrift = (message: unknown): void => void drift.push(message);
+      const drift: SchemaUnknownModelKeyPayload[] = [];
 
-      channels.schemaUnknownModelKey.subscribe(onDrift);
+      using driftSubscription = subscribeToChannel(channels.schemaUnknownModelKey, (payload) => void drift.push(payload));
 
-      try {
+      // An `event` frame that does not self-describe (no recognized type, no camera) classifies to null - but `event` is recognized, so it is not schema drift.
+      ws.emitMessage(encode({ action: "update", id: "evt1", modelKey: "event" }, { score: 50 }));
 
-        // An `event` frame that does not self-describe (no recognized type, no camera) classifies to null - but `event` is recognized, so it is not schema drift.
-        ws.emitMessage(encode({ action: "update", id: "evt1", modelKey: "event" }, { score: 50 }));
-
-        assert.equal(packets.length, 0);
-        assert.equal(drift.length, 0);
-      } finally {
-
-        channels.schemaUnknownModelKey.unsubscribe(onDrift);
-      }
+      assert.equal(packets.length, 0);
+      assert.equal(drift.length, 0);
 
       await stream.close();
     });
@@ -362,26 +341,19 @@ describe("EventStream", () => {
 
       const { stream, ws } = await openStream();
       const packets = collect(stream, "packet");
-      const drift: unknown[] = [];
-      const onDrift = (message: unknown): void => void drift.push(message);
+      const drift: SchemaUnknownModelKeyPayload[] = [];
 
-      channels.schemaUnknownModelKey.subscribe(onDrift);
+      using driftSubscription = subscribeToChannel(channels.schemaUnknownModelKey, (payload) => void drift.push(payload));
 
-      try {
+      // `group`, `bridge`, and `siren` are known wire model keys the library recognizes but deliberately does not reduce into state - they classify to null but are not
+      // drift, so they must stay silent on the diagnostic. This is the honest-diagnostic guarantee: schema:unknownModelKey fires only for genuinely novel keys.
+      // (`liveview` is itself a reduced StateModelKey, so it produces a packet and is exercised in the reducer/classifier tests rather than here.)
+      ws.emitMessage(encode({ action: "update", id: "br1", modelKey: "bridge" }, { name: "Front" }));
+      ws.emitMessage(encode({ action: "add", id: "g1", modelKey: "group" }, { id: "g1" }));
+      ws.emitMessage(encode({ action: "update", id: "sr1", modelKey: "siren" }, { volume: 100 }));
 
-        // `group`, `bridge`, and `siren` are known wire model keys the library recognizes but deliberately does not reduce into state - they classify to null but are not
-        // drift, so they must stay silent on the diagnostic. This is the honest-diagnostic guarantee: schema:unknownModelKey fires only for genuinely novel keys.
-        // (`liveview` is itself a reduced StateModelKey, so it produces a packet and is exercised in the reducer/classifier tests rather than here.)
-        ws.emitMessage(encode({ action: "update", id: "br1", modelKey: "bridge" }, { name: "Front" }));
-        ws.emitMessage(encode({ action: "add", id: "g1", modelKey: "group" }, { id: "g1" }));
-        ws.emitMessage(encode({ action: "update", id: "sr1", modelKey: "siren" }, { volume: 100 }));
-
-        assert.equal(packets.length, 0);
-        assert.equal(drift.length, 0, "a recognized-but-unmodeled key must not fire the schema-drift diagnostic");
-      } finally {
-
-        channels.schemaUnknownModelKey.unsubscribe(onDrift);
-      }
+      assert.equal(packets.length, 0);
+      assert.equal(drift.length, 0, "a recognized-but-unmodeled key must not fire the schema-drift diagnostic");
 
       await stream.close();
     });
@@ -528,21 +500,14 @@ describe("EventStream", () => {
 
       const { stream, ws } = await openStream();
       const closed = collect(stream, "closed");
-      const diagnostics: { code: number; reason: string }[] = [];
-      const onClosed = (message: unknown): void => void diagnostics.push(message as { code: number; reason: string });
+      const diagnostics: EventsClosedPayload[] = [];
 
-      channels.eventsClosed.subscribe(onClosed);
+      using closedSubscription = subscribeToChannel(channels.eventsClosed, (payload) => void diagnostics.push(payload));
 
-      try {
+      ws.emitClose(1000, "going away");
 
-        ws.emitClose(1000, "going away");
-
-        assert.deepEqual(closed[0]?.[0], { code: 1000, reason: "going away" });
-        assert.deepEqual(diagnostics[0], { code: 1000, reason: "going away" });
-      } finally {
-
-        channels.eventsClosed.unsubscribe(onClosed);
-      }
+      assert.deepEqual(closed[0]?.[0], { code: 1000, reason: "going away" });
+      assert.deepEqual(diagnostics[0], { code: 1000, reason: "going away" });
 
       // Disposal after a natural close is a no-op and does not throw.
       await stream[Symbol.asyncDispose]();

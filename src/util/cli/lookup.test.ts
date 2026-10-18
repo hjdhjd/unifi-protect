@@ -24,7 +24,6 @@ function fakeClient(opts: FakeOpts): ProtectClient {
 
   return {
 
-    camera: (id: string): Camera | undefined => cameras.find((camera) => camera.id === id),
     cameras,
     chimes: [],
     fobs: [],

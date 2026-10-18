@@ -5,14 +5,15 @@
  * through an injected fake WebSocket and a fake resolver, so the write-only channel is exercised deterministically without a live controller.
  */
 import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectRequestError } from "../errors.ts";
+import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
 import { assertNoUnhandledRejections, silentLog } from "../testing.helpers.ts";
+import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { FakeWritableWebSocket } from "./talkback-session.helpers.ts";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
 import { Readable } from "node:stream";
 import { TalkbackSession } from "./talkback-session.ts";
 import assert from "node:assert/strict";
-import { channels } from "../diagnostics.ts";
 import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -498,44 +499,30 @@ describe("TalkbackSession", () => {
 
     test("session:opened fires with the cameraId on connect", async () => {
 
-      const payloads: { cameraId: string }[] = [];
-      const onMessage = (message: unknown): void => void payloads.push(message as { cameraId: string });
+      const payloads: TalkbackSessionOpenedPayload[] = [];
 
-      channels.talkbackSessionOpened.subscribe(onMessage);
+      using openedSubscription = subscribeToChannel(channels.talkbackSessionOpened, (payload) => void payloads.push(payload));
 
-      try {
+      const { session } = await openSession({ cameraId: "cam-9" });
 
-        const { session } = await openSession({ cameraId: "cam-9" });
+      await session.close();
 
-        await session.close();
-
-        assert.deepEqual(payloads, [{ cameraId: "cam-9" }]);
-      } finally {
-
-        channels.talkbackSessionOpened.unsubscribe(onMessage);
-      }
+      assert.deepEqual(payloads, [{ cameraId: "cam-9" }]);
     });
 
     test("session:closed fires with the cameraId and a reason on close", async () => {
 
-      const payloads: { cameraId: string; reason: string }[] = [];
-      const onMessage = (message: unknown): void => void payloads.push(message as { cameraId: string; reason: string });
+      const payloads: TalkbackSessionClosedPayload[] = [];
 
-      channels.talkbackSessionClosed.subscribe(onMessage);
+      using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed, (payload) => void payloads.push(payload));
 
-      try {
+      const { session } = await openSession({ cameraId: "cam-9" });
 
-        const { session } = await openSession({ cameraId: "cam-9" });
+      await session.close();
 
-        await session.close();
-
-        assert.equal(payloads.length, 1);
-        assert.equal(payloads[0]?.cameraId, "cam-9");
-        assert.equal(typeof payloads[0]?.reason, "string");
-      } finally {
-
-        channels.talkbackSessionClosed.unsubscribe(onMessage);
-      }
+      assert.equal(payloads.length, 1);
+      assert.equal(payloads[0]?.cameraId, "cam-9");
+      assert.equal(typeof payloads[0]?.reason, "string");
     });
   });
 });

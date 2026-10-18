@@ -5,6 +5,8 @@
  * (same-codec init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the establishing and recovering regimes, reassess, and
  * whenEstablished.
  */
+import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
+  LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload } from "../diagnostics.ts";
 import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-pool.ts";
 import type { LivestreamPoolOptions, RecoveryContext, RecoveryPolicy } from "./livestream-pool.ts";
 import type { LivestreamSpec, Segment } from "../transport/livestream-session.ts";
@@ -12,6 +14,7 @@ import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTE
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "../errors.ts";
 import { buildInitSegment, buildMediaSegment } from "../transport/livestream-session.helpers.ts";
+import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { fakeClock, silentLog } from "../testing.helpers.ts";
 import { Camera } from "../devices/camera.ts";
@@ -19,7 +22,6 @@ import type { DeviceContext } from "../devices/context.ts";
 import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
-import { channels } from "../diagnostics.ts";
 import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -291,8 +293,7 @@ describe("LivestreamPool", () => {
 
     test("an already-aborted signal returns a subscription that is already closed and joins no stream", async () => {
 
-      const opened: unknown[] = [];
-      const onOpened = (message: unknown): void => void opened.push(message);
+      const opened: LivestreamSessionOpenedPayload[] = [];
       let urgencyCalls = 0;
       const urgency = (): number => {
 
@@ -301,29 +302,23 @@ describe("LivestreamPool", () => {
         return 0;
       };
 
-      channels.livestreamSessionOpened.subscribe(onOpened);
+      using openedSubscription = subscribeToChannel(channels.livestreamSessionOpened, (payload) => void opened.push(payload));
 
-      try {
+      const { pool } = makePool();
+      const controller = new AbortController();
 
-        const { pool } = makePool();
-        const controller = new AbortController();
+      controller.abort();
 
-        controller.abort();
+      const sub = pool.subscribe(SPEC, { signal: controller.signal, urgency });
 
-        const sub = pool.subscribe(SPEC, { signal: controller.signal, urgency });
-
-        // Every read here is synchronous with the subscribe: the handle is over the moment the caller holds it, so no session was opened and no urgency consulted.
-        assert.equal(sub.state, "closed");
-        assert.equal(sub.initSegment, null);
-        assert.equal(sub.codec, "");
-        assert.equal(urgencyCalls, 0);
-        assert.equal(opened.length, 0);
-        assert.equal(await sub.whenEstablished(), false);
-        assert.equal((await sub[Symbol.asyncIterator]().next()).done, true);
-      } finally {
-
-        channels.livestreamSessionOpened.unsubscribe(onOpened);
-      }
+      // Every read here is synchronous with the subscribe: the handle is over the moment the caller holds it, so no session was opened and no urgency consulted.
+      assert.equal(sub.state, "closed");
+      assert.equal(sub.initSegment, null);
+      assert.equal(sub.codec, "");
+      assert.equal(urgencyCalls, 0);
+      assert.equal(opened.length, 0);
+      assert.equal(await sub.whenEstablished(), false);
+      assert.equal((await sub[Symbol.asyncIterator]().next()).done, true);
     });
 
     test("a late joiner under an already-aborted signal is closed and receives no replayed init", async () => {
@@ -1300,196 +1295,153 @@ describe("LivestreamPool", () => {
 
     test("recovery:started and recovery:recovered fire across an invisible reconnect", async () => {
 
-      const started: unknown[] = [];
-      const recovered: unknown[] = [];
-      const onStarted = (message: unknown): void => void started.push(message);
-      const onRecovered = (message: unknown): void => void recovered.push(message);
+      const started: LivestreamRecoveryStartedPayload[] = [];
+      const recovered: LivestreamRecoveryRecoveredPayload[] = [];
 
-      channels.livestreamRecoveryStarted.subscribe(onStarted);
-      channels.livestreamRecoveryRecovered.subscribe(onRecovered);
+      using startedSubscription = subscribeToChannel(channels.livestreamRecoveryStarted, (payload) => void started.push(payload));
+      using recoveredSubscription = subscribeToChannel(channels.livestreamRecoveryRecovered, (payload) => void recovered.push(payload));
 
-      try {
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
 
-        const { pool, sockets } = makePool();
-        const sub = pool.subscribe(SPEC);
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
 
-        await settle();
-        await establish(at(sockets, 0), { codec: "avc1.640028" });
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
 
-        at(sockets, 0).emitClose(1000, "dropped");
-        await settle();
-        await establish(at(sockets, 1), { codec: "avc1.640028" });
+      assert.equal(started.length, 1);
+      assert.equal(recovered.length, 1);
+      assert.equal(at(started, 0).key.startsWith("cam1:0:"), true);
+      assert.equal(at(started, 0).cameraId, "cam1");
+      assert.ok(typeof at(recovered, 0).downtimeMs === "number");
+      assert.equal(at(recovered, 0).cameraId, "cam1");
 
-        assert.equal(started.length, 1);
-        assert.equal(recovered.length, 1);
-        assert.equal((started[0] as { key: string }).key.startsWith("cam1:0:"), true);
-        assert.equal((started[0] as { cameraId: string }).cameraId, "cam1");
-        assert.ok(typeof (recovered[0] as { downtimeMs: number }).downtimeMs === "number");
-        assert.equal((recovered[0] as { cameraId: string }).cameraId, "cam1");
-
-        await sub[Symbol.asyncDispose]();
-      } finally {
-
-        channels.livestreamRecoveryStarted.unsubscribe(onStarted);
-        channels.livestreamRecoveryRecovered.unsubscribe(onRecovered);
-      }
+      await sub[Symbol.asyncDispose]();
     });
 
     test("recovery:exhausted fires and carries the attempt count when the policy gives up", async () => {
 
-      const exhausted: unknown[] = [];
-      const onExhausted = (message: unknown): void => void exhausted.push(message);
+      const exhausted: LivestreamRecoveryExhaustedPayload[] = [];
 
-      channels.livestreamRecoveryExhausted.subscribe(onExhausted);
+      using exhaustedSubscription = subscribeToChannel(channels.livestreamRecoveryExhausted, (payload) => void exhausted.push(payload));
 
-      try {
+      const { pool } = makePool({ recoveryPolicy: () => ({ kind: "giveUp" }) });
+      const sub = pool.subscribe(SPEC);
 
-        const { pool } = makePool({ recoveryPolicy: () => ({ kind: "giveUp" }) });
-        const sub = pool.subscribe(SPEC);
+      await settle();
 
-        await settle();
+      await assert.rejects(sub[Symbol.asyncIterator]().next(), ProtectLivestreamUnavailableError);
 
-        await assert.rejects(sub[Symbol.asyncIterator]().next(), ProtectLivestreamUnavailableError);
-
-        assert.equal(exhausted.length, 1);
-        assert.equal((exhausted[0] as { attempts: number }).attempts, 0);
-        assert.equal((exhausted[0] as { cameraId: string }).cameraId, "cam1");
-      } finally {
-
-        channels.livestreamRecoveryExhausted.unsubscribe(onExhausted);
-      }
+      assert.equal(exhausted.length, 1);
+      assert.equal(at(exhausted, 0).attempts, 0);
+      assert.equal(at(exhausted, 0).cameraId, "cam1");
     });
 
     test("codec:changed fires with the from/to descriptors on a codec change", async () => {
 
-      const changed: unknown[] = [];
-      const onChanged = (message: unknown): void => void changed.push(message);
+      const changed: LivestreamCodecChangedPayload[] = [];
 
-      channels.livestreamCodecChanged.subscribe(onChanged);
+      using changedSubscription = subscribeToChannel(channels.livestreamCodecChanged, (payload) => void changed.push(payload));
 
-      try {
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
 
-        const { pool, sockets } = makePool();
-        const sub = pool.subscribe(SPEC);
+      await settle();
 
-        await settle();
+      // Fully establish on media so the close begins a recovering episode the codec change then terminates.
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
 
-        // Fully establish on media so the close begins a recovering episode the codec change then terminates.
-        await establish(at(sockets, 0), { codec: "avc1.640028" });
+      // Drain the established init and media so the next pull surfaces the terminal rather than a queued segment.
+      const iterator = sub[Symbol.asyncIterator]();
 
-        // Drain the established init and media so the next pull surfaces the terminal rather than a queued segment.
-        const iterator = sub[Symbol.asyncIterator]();
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
 
-        assert.equal((await nextSegment(iterator)).type, "init");
-        assert.equal((await nextSegment(iterator)).type, "media");
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
 
-        at(sockets, 0).emitClose(1000, "dropped");
-        await settle();
+      // The codec gate fires on the reconnect's init, before any media - init-only.
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90" });
 
-        // The codec gate fires on the reconnect's init, before any media - init-only.
-        await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90" });
+      assert.equal(changed.length, 1);
+      assert.equal(at(changed, 0).from, "avc1.640028");
+      assert.equal(at(changed, 0).to, "hev1.1.6.L150.90");
+      assert.equal(at(changed, 0).cameraId, "cam1");
 
-        assert.equal(changed.length, 1);
-        assert.equal((changed[0] as { from: string }).from, "avc1.640028");
-        assert.equal((changed[0] as { to: string }).to, "hev1.1.6.L150.90");
-        assert.equal((changed[0] as { cameraId: string }).cameraId, "cam1");
-
-        await assert.rejects(iterator.next(), ProtectCodecChangeError);
-      } finally {
-
-        channels.livestreamCodecChanged.unsubscribe(onChanged);
-      }
+      await assert.rejects(iterator.next(), ProtectCodecChangeError);
     });
 
     test("session and subscription lifecycle channels fire with the expected payloads", async () => {
 
-      const opened: unknown[] = [];
-      const created: unknown[] = [];
-      const disposed: unknown[] = [];
-      const onOpened = (message: unknown): void => void opened.push(message);
-      const onCreated = (message: unknown): void => void created.push(message);
-      const onDisposed = (message: unknown): void => void disposed.push(message);
+      const opened: LivestreamSessionOpenedPayload[] = [];
+      const created: LivestreamSubscriptionCreatedPayload[] = [];
+      const disposed: LivestreamSubscriptionDisposedPayload[] = [];
 
-      channels.livestreamSessionOpened.subscribe(onOpened);
-      channels.livestreamSubscriptionCreated.subscribe(onCreated);
-      channels.livestreamSubscriptionDisposed.subscribe(onDisposed);
+      using openedSubscription = subscribeToChannel(channels.livestreamSessionOpened, (payload) => void opened.push(payload));
+      using createdSubscription = subscribeToChannel(channels.livestreamSubscriptionCreated, (payload) => void created.push(payload));
+      using disposedSubscription = subscribeToChannel(channels.livestreamSubscriptionDisposed, (payload) => void disposed.push(payload));
 
-      try {
+      const { pool } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC);
 
-        const { pool } = makePool();
-        const sub1 = pool.subscribe(SPEC);
-        const sub2 = pool.subscribe(SPEC);
+      await settle();
+      await sub1[Symbol.asyncDispose]();
+      await sub2[Symbol.asyncDispose]();
 
-        await settle();
-        await sub1[Symbol.asyncDispose]();
-        await sub2[Symbol.asyncDispose]();
-
-        // One session opened for the shared stream, one created event per subscriber, one disposed event per subscriber.
-        assert.equal(opened.length, 1);
-        assert.equal(created.length, 2);
-        assert.equal(disposed.length, 2);
-        assert.equal((opened[0] as { cameraId: string }).cameraId, "cam1");
-        assert.ok(typeof (created[0] as { subscriptionId: string }).subscriptionId === "string");
-      } finally {
-
-        channels.livestreamSessionOpened.unsubscribe(onOpened);
-        channels.livestreamSubscriptionCreated.unsubscribe(onCreated);
-        channels.livestreamSubscriptionDisposed.unsubscribe(onDisposed);
-      }
+      // One session opened for the shared stream, one created event per subscriber, one disposed event per subscriber.
+      assert.equal(opened.length, 1);
+      assert.equal(created.length, 2);
+      assert.equal(disposed.length, 2);
+      assert.equal(at(opened, 0).cameraId, "cam1");
+      assert.ok(typeof at(created, 0).subscriptionId === "string");
     });
 
     test("an already-aborted subscribe publishes created then disposed and no session event", async () => {
 
-      const events: { payload: unknown; tag: string }[] = [];
-      const record = (tag: string): ((payload: unknown) => void) => (payload: unknown): void => void events.push({ payload, tag });
-      const onOpened = record("opened");
-      const onClosed = record("closed");
-      const onCreated = record("created");
-      const onDisposed = record("disposed");
+      // One ordered record across the session and subscription channels, each entry tagged by the channel that published it, so a read narrows its payload by the tag.
+      type LifecycleEvent = { payload: LivestreamSessionClosedPayload; tag: "closed" } | { payload: LivestreamSubscriptionCreatedPayload; tag: "created" } |
+        { payload: LivestreamSubscriptionDisposedPayload; tag: "disposed" } | { payload: LivestreamSessionOpenedPayload; tag: "opened" };
+      const events: LifecycleEvent[] = [];
       const tags = (): string[] => events.map((event) => event.tag);
 
-      channels.livestreamSessionOpened.subscribe(onOpened);
-      channels.livestreamSessionClosed.subscribe(onClosed);
-      channels.livestreamSubscriptionCreated.subscribe(onCreated);
-      channels.livestreamSubscriptionDisposed.subscribe(onDisposed);
+      using openedSubscription = subscribeToChannel(channels.livestreamSessionOpened, (payload) => void events.push({ payload, tag: "opened" }));
+      using closedSubscription = subscribeToChannel(channels.livestreamSessionClosed, (payload) => void events.push({ payload, tag: "closed" }));
+      using createdSubscription = subscribeToChannel(channels.livestreamSubscriptionCreated, (payload) => void events.push({ payload, tag: "created" }));
+      using disposedSubscription = subscribeToChannel(channels.livestreamSubscriptionDisposed, (payload) => void events.push({ payload, tag: "disposed" }));
 
-      try {
+      const { pool, sockets } = makePool();
+      const controller = new AbortController();
 
-        const { pool, sockets } = makePool();
-        const controller = new AbortController();
+      controller.abort();
 
-        controller.abort();
+      // With no prior subscriber, the closed handle opens no session; its own pair publishes inside the subscribe call, in order.
+      pool.subscribe(SPEC, { signal: controller.signal });
 
-        // With no prior subscriber, the closed handle opens no session; its own pair publishes inside the subscribe call, in order.
-        pool.subscribe(SPEC, { signal: controller.signal });
+      assert.deepEqual(tags(), [ "created", "disposed" ]);
 
-        assert.deepEqual(tags(), [ "created", "disposed" ]);
+      events.length = 0;
 
-        events.length = 0;
+      const first = pool.subscribe(SPEC);
 
-        const first = pool.subscribe(SPEC);
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
 
-        await settle();
-        await establish(at(sockets, 0), { codec: "avc1.640028" });
+      events.length = 0;
 
-        events.length = 0;
+      // Beside a live stream with an init cached, the closed handle's pair is the same, and nothing was replayed into it.
+      const late = pool.subscribe(SPEC, { signal: controller.signal });
+      const [ created, disposed ] = events;
 
-        // Beside a live stream with an init cached, the closed handle's pair is the same, and nothing was replayed into it.
-        const late = pool.subscribe(SPEC, { signal: controller.signal });
+      assert.deepEqual(tags(), [ "created", "disposed" ]);
+      assert.ok((created?.tag === "created") && (disposed?.tag === "disposed"));
+      assert.equal(created.payload.subscriptionId, late.id);
+      assert.equal(disposed.payload.subscriptionId, late.id);
+      assert.deepEqual(disposed.payload.stats, { delivered: 0, discarded: 0, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 });
 
-        assert.deepEqual(tags(), [ "created", "disposed" ]);
-        assert.equal((at(events, 0).payload as { subscriptionId: string }).subscriptionId, late.id);
-        assert.equal((at(events, 1).payload as { subscriptionId: string }).subscriptionId, late.id);
-        assert.deepEqual((at(events, 1).payload as { stats: unknown }).stats, { delivered: 0, discarded: 0, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 });
-
-        await first[Symbol.asyncDispose]();
-      } finally {
-
-        channels.livestreamSessionOpened.unsubscribe(onOpened);
-        channels.livestreamSessionClosed.unsubscribe(onClosed);
-        channels.livestreamSubscriptionCreated.unsubscribe(onCreated);
-        channels.livestreamSubscriptionDisposed.unsubscribe(onDisposed);
-      }
+      await first[Symbol.asyncDispose]();
     });
   });
 

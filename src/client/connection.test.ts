@@ -10,6 +10,7 @@ import { PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
 import { ProtectError, ProtectNetworkError } from "../errors.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { capturingLog, expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
+import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeNvr } from "../fixtures.helpers.ts";
 import { ConnectionMonitor } from "./connection.ts";
@@ -21,7 +22,6 @@ import type { RawPacket } from "../protocol/packet.ts";
 import { StateStore } from "../state/store.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
-import { channels } from "../diagnostics.ts";
 import { setTimeout as delay } from "node:timers/promises";
 
 const HOST = "10.0.0.1";
@@ -1002,38 +1002,26 @@ describe("ConnectionMonitor", () => {
       const reboots: { newUpSince: number; previousUpSince: number }[] = [];
       const reconnecting: { reason: string }[] = [];
 
-      const onTransition = (message: unknown): void => void transitions.push(message as { from: string; to: string });
-      const onReboot = (message: unknown): void => void reboots.push(message as { newUpSince: number; previousUpSince: number });
-      const onReconnecting = (message: unknown): void => void reconnecting.push(message as { reason: string });
+      using transitionSubscription = subscribeToChannel(channels.connectionTransition, (payload) => void transitions.push(payload));
+      using rebootSubscription = subscribeToChannel(channels.connectionRebootDetected, (payload) => void reboots.push(payload));
+      using reconnectingSubscription = subscribeToChannel(channels.eventsReconnecting, (payload) => void reconnecting.push(payload));
 
-      channels.connectionTransition.subscribe(onTransition);
-      channels.connectionRebootDetected.subscribe(onReboot);
-      channels.eventsReconnecting.subscribe(onReconnecting);
+      await monitor.opened;
+      await settle();
 
-      try {
+      // A reboot bootstrap (a boot-time jump beyond the noise floor) fires the reboot channel.
+      store.dispatch({ data: makeBootstrap({ nvr: makeNvr({ upSince: 100000 }) }), kind: "bootstrapLoaded" });
+      await expectAt(() => reboots.length === 1, { message: "expected a reboot diagnostic" });
 
-        await monitor.opened;
-        await settle();
+      // A stall and recovery fire the transition and reconnecting channels.
+      clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
+      await clock.tick();
+      await pump(clock);
+      await expectAt(() => monitor.state === "healthy", { message: "expected recovery" });
 
-        // A reboot bootstrap (a boot-time jump beyond the noise floor) fires the reboot channel.
-        store.dispatch({ data: makeBootstrap({ nvr: makeNvr({ upSince: 100000 }) }), kind: "bootstrapLoaded" });
-        await expectAt(() => reboots.length === 1, { message: "expected a reboot diagnostic" });
-
-        // A stall and recovery fire the transition and reconnecting channels.
-        clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
-        await clock.tick();
-        await pump(clock);
-        await expectAt(() => monitor.state === "healthy", { message: "expected recovery" });
-
-        assert.ok(transitions.length > 0, "transition diagnostics were published");
-        assert.equal(reconnecting.length, 1, "the reconnecting diagnostic was published once");
-        assert.ok(events.transitions.length > 0);
-      } finally {
-
-        channels.connectionTransition.unsubscribe(onTransition);
-        channels.connectionRebootDetected.unsubscribe(onReboot);
-        channels.eventsReconnecting.unsubscribe(onReconnecting);
-      }
+      assert.ok(transitions.length > 0, "transition diagnostics were published");
+      assert.equal(reconnecting.length, 1, "the reconnecting diagnostic was published once");
+      assert.ok(events.transitions.length > 0);
 
       await monitor[Symbol.asyncDispose]();
     });

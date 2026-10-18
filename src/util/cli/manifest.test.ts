@@ -393,9 +393,9 @@ describe("noveltyKey", () => {
   test("identity fields carrying delimiter-like text do not collide", () => {
 
     // The key is a JSON tuple rather than a joined string precisely because record ids and field paths are the values most likely to contain whatever delimiter a
-    // join would have picked.
+    // join would have picked. The findings below are different, yet their record ids and paths, joined with a colon in the key's order, spell the same "a::b".
     const first: NoveltyFinding = { collection: "sensors", kind: "unknownField", observedType: "number", open: true, path: "b", recordId: "a:" };
-    const second: NoveltyFinding = { ...first, path: "b", recordId: "a" };
+    const second: NoveltyFinding = { ...first, path: ":b", recordId: "a" };
 
     assert.notEqual(noveltyKey(first), noveltyKey(second));
   });
@@ -451,13 +451,13 @@ describe("parseSchemaManifest", () => {
 
     [ "text that is not JSON", "{", "not valid JSON" ],
     [ "a JSON value that is not an object", "[]", "not a JSON object" ],
-    [ "a missing top-level member", JSON.stringify({ ...FIXTURE, version: undefined }), "\"version\" member is not a string" ],
+    [ "a missing top-level member", fixtureWith({ version: undefined }), "\"version\" member is not a string" ],
     [ "a wrong-typed top-level member", fixtureWith({ eventTypes: "motion" }), "\"eventTypes\" member is not an array of strings" ],
     [ "a wrong-typed vocabulary tier", fixtureWith({ modelKeys: { collection: [], device: [], known: [], state: 7 } }), "\"state\" member is not an array of strings" ],
     [ "a vocabulary that is not an object", fixtureWith({ modelKeys: "camera" }), "\"modelKeys\" member is not an object" ],
     [ "a records member that is not an object", fixtureWith({ records: [] }), "\"records\" member is not an object" ],
     [ "a recordKeys member that is not an object", fixtureWith({ recordKeys: 7 }), "\"recordKeys\" member is not an object" ],
-    [ "a recordKeys entry that is not a string", fixtureWith({ recordKeys: { camera: 7 } }), "entry for \"camera\" is not a string" ],
+    [ "a recordKeys entry that is not a string", fixtureWith({ recordKeys: { ...FIXTURE.recordKeys, camera: 7 } }), "entry for \"camera\" is not a string" ],
     [ "a record tree that is not a node", fixtureWith({ records: { ...FIXTURE.records, cameras: "an object shape" } }),
       "the node at \"cameras\" is not an object" ],
     [ "a recordKeys entry naming an absent record", fixtureWith({ recordKeys: { ...FIXTURE.recordKeys, doorlock: "doorlocks" } }),

@@ -301,8 +301,9 @@ describe("expectAt", () => {
     let count = 0;
     const start = Date.now();
 
-    // With intervalMs: 20 and timeoutMs: 100, expectAt keeps polling a never-true predicate until the deadline; we check that it waits the full timeout and polls at
-    // least once.
+    // With intervalMs: 20 and timeoutMs: 100, expectAt keeps polling a never-true predicate until the deadline; we check that it waits the full timeout, polls at
+    // least once, and polls no more often than the interval allows. That bound is the window over the interval plus one poll of margin: a timer that never fires
+    // early cannot break it however loaded the machine, while a loop that ignored the interval would poll far past it.
     await assert.rejects(
 
       async () => expectAt(() => {
@@ -318,6 +319,7 @@ describe("expectAt", () => {
 
     assert.ok(elapsed >= 100, "expectAt must wait the full timeout before rejecting (got " + elapsed.toString() + "ms)");
     assert.ok(count >= 1, "predicate must be polled at least once");
+    assert.ok(count <= 6, "predicate must be polled at the interval's cadence (got " + count.toString() + " polls)");
   });
 });
 
@@ -603,7 +605,7 @@ describe("fakeClock", () => {
     assert.deepEqual(clock.pendingWaits(), [300000], "a fired wait is removed from the pending list, the not-yet-due one remains");
   });
 
-  test("wait rejects with an AbortError when its signal aborts, and a later advance does not fire it", async () => {
+  test("wait rejects with an AbortError when its signal aborts, and leaves the pending list", async () => {
 
     const controller = new AbortController();
     const clock = fakeClock();
@@ -614,10 +616,6 @@ describe("fakeClock", () => {
     await assert.rejects(pending, { name: "AbortError" });
 
     assert.deepEqual(clock.pendingWaits(), [], "the aborted wait is removed from the pending list");
-
-    // Advance past the original deadline. This step asserts nothing of its own - the empty pending list above is what shows no waiter remains for an advance to fire.
-    clock.advance(1000);
-    await settle();
   });
 
   test("wait with an already-aborted signal rejects immediately without registering", async () => {

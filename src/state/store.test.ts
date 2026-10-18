@@ -8,11 +8,11 @@
 import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
 import { StateStore, createStateStore } from "./store.ts";
 import { capturingLog, expectAt, fakeClock } from "../testing.helpers.ts";
+import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeNvr, makeSensor } from "../fixtures.helpers.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import assert from "node:assert/strict";
-import { channels } from "../diagnostics.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { deviceSelectors } from "./selectors.ts";
 
@@ -315,42 +315,35 @@ describe("StateStore", () => {
       const log = capturingLog();
       const store = new StateStore({ clock: fakeClock(), log, refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
       const drift: SchemaUnmodeledCollectionPayload[] = [];
-      const onDrift = (message: unknown): void => void drift.push(message as SchemaUnmodeledCollectionPayload);
 
-      channels.schemaUnmodeledCollection.subscribe(onDrift);
+      using driftSubscription = subscribeToChannel(channels.schemaUnmodeledCollection, (payload) => void drift.push(payload));
 
-      try {
+      // First bootstrap: the unmodeled aiports collection publishes once and debug-logs.
+      store.dispatch({ data: unmodeledBootstrap(), kind: "bootstrapLoaded" });
 
-        // First bootstrap: the unmodeled aiports collection publishes once and debug-logs.
-        store.dispatch({ data: unmodeledBootstrap(), kind: "bootstrapLoaded" });
+      assert.equal(drift.length, 1);
+      assert.deepEqual(drift[0], { collection: "aiports", count: 1, exampleId: "ap1", known: true, modelKey: "aiport" });
+      assert.ok(log.entries.some((entry) => (entry.level === "debug") && entry.message.includes("device collection the library does not model")));
 
-        assert.equal(drift.length, 1);
-        assert.deepEqual(drift[0], { collection: "aiports", count: 1, exampleId: "ap1", known: true, modelKey: "aiport" });
-        assert.ok(log.entries.some((entry) => (entry.level === "debug") && entry.message.includes("device collection the library does not model")));
+      // A second identical bootstrap re-mints a fresh state (applyBootstrap always bumps bootstrapId, so the dispatch Object.is gate never fires for a bootstrap); the
+      // per-session #seenUnmodeled dedup set, not the gate, is what suppresses the re-publish.
+      store.dispatch({ data: unmodeledBootstrap(), kind: "bootstrapLoaded" });
 
-        // A second identical bootstrap re-mints a fresh state (applyBootstrap always bumps bootstrapId, so the dispatch Object.is gate never fires for a bootstrap); the
-        // per-session #seenUnmodeled dedup set, not the gate, is what suppresses the re-publish.
-        store.dispatch({ data: unmodeledBootstrap(), kind: "bootstrapLoaded" });
+      assert.equal(drift.length, 1, "a recurring unmodeled class re-publishes nothing within a session (the dedup set is the sole suppressor)");
 
-        assert.equal(drift.length, 1, "a recurring unmodeled class re-publishes nothing within a session (the dedup set is the sole suppressor)");
+      // A DISTINCT unmodeled device class publishes independently - #seenUnmodeled is keyed per modelKey, not once per session. A `garages` collection (modelKey
+      // "garage" + a mac) is genuine drift, so it adds a second publish. `garages` is not a declared bootstrap field, so we spread makeBootstrap()'s result (its
+      // overrides parameter is closed to the modeled collections) and add `garages` as an out-of-schema key, which the bootstrap's index signature accepts.
+      const withGarages: ProtectNvrBootstrap = {
 
-        // A DISTINCT unmodeled device class publishes independently - #seenUnmodeled is keyed per modelKey, not once per session. A `garages` collection (modelKey
-        // "garage" + a mac) is genuine drift, so it adds a second publish. `garages` is not a declared bootstrap field, so we spread makeBootstrap()'s result (its
-        // overrides parameter is closed to the modeled collections) and add `garages` as an out-of-schema key, which the bootstrap's index signature accepts.
-        const withGarages: ProtectNvrBootstrap = {
+        ...makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }),
+        garages: [makeCamera({ id: "g1", mac: "AA:BB:CC:00:00:20", modelKey: "garage" })]
+      };
 
-          ...makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }),
-          garages: [makeCamera({ id: "g1", mac: "AA:BB:CC:00:00:20", modelKey: "garage" })]
-        };
+      store.dispatch({ data: withGarages, kind: "bootstrapLoaded" });
 
-        store.dispatch({ data: withGarages, kind: "bootstrapLoaded" });
-
-        assert.equal(drift.length, 2, "a distinct unmodeled modelKey publishes independently (per-modelKey dedup granularity)");
-        assert.deepEqual(drift[1], { collection: "garages", count: 1, exampleId: "g1", known: false, modelKey: "garage" });
-      } finally {
-
-        channels.schemaUnmodeledCollection.unsubscribe(onDrift);
-      }
+      assert.equal(drift.length, 2, "a distinct unmodeled modelKey publishes independently (per-modelKey dedup granularity)");
+      assert.deepEqual(drift[1], { collection: "garages", count: 1, exampleId: "g1", known: false, modelKey: "garage" });
     });
   });
 
@@ -368,17 +361,10 @@ describe("StateStore", () => {
 
       const store = plainStore();
       const published: AdoptionContradictionPayload[] = [];
-      const onPublish = (message: unknown): void => void published.push(message as AdoptionContradictionPayload);
 
-      channels.adoptionContradiction.subscribe(onPublish);
+      using subscription = subscribeToChannel(channels.adoptionContradiction, (payload) => void published.push(payload));
 
-      try {
-
-        run(store, published);
-      } finally {
-
-        channels.adoptionContradiction.unsubscribe(onPublish);
-      }
+      run(store, published);
     }
 
     test("publishes once on the ENTER edge with the device payload and warns, and a second flagged bootstrap re-publishes nothing", () => {
@@ -386,25 +372,18 @@ describe("StateStore", () => {
       const log = capturingLog();
       const store = new StateStore({ clock: fakeClock(), log, refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
       const published: AdoptionContradictionPayload[] = [];
-      const onPublish = (message: unknown): void => void published.push(message as AdoptionContradictionPayload);
 
-      channels.adoptionContradiction.subscribe(onPublish);
+      using subscription = subscribeToChannel(channels.adoptionContradiction, (payload) => void published.push(payload));
 
-      try {
+      store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
 
-        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
+      assert.equal(published.length, 1);
+      assert.deepEqual(published[0], { id: "s1", mac: "AABBCC000001", modelKey: "sensor", nvrMac: ownMac });
+      assert.ok(log.entries.some((entry) => (entry.level === "warn") && entry.message.includes("adopted by another controller")), "a warn narrates the episode");
 
-        assert.equal(published.length, 1);
-        assert.deepEqual(published[0], { id: "s1", mac: "AABBCC000001", modelKey: "sensor", nvrMac: ownMac });
-        assert.ok(log.entries.some((entry) => (entry.level === "warn") && entry.message.includes("adopted by another controller")), "a warn narrates the episode");
+      store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
 
-        store.dispatch({ data: flaggedBootstrap(), kind: "bootstrapLoaded" });
-
-        assert.equal(published.length, 1, "the same engaged device re-asserting on the next bootstrap publishes nothing");
-      } finally {
-
-        channels.adoptionContradiction.unsubscribe(onPublish);
-      }
+      assert.equal(published.length, 1, "the same engaged device re-asserting on the next bootstrap publishes nothing");
     });
 
     test("a repeat flagged patch and a flagged deviceAdded re-send publish nothing once the device is engaged", () => {

@@ -8,6 +8,7 @@ import { ProtectAuthError, ProtectRequestError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
 import { AuthSession } from "./auth.ts";
+import type { ChannelListener } from "node:diagnostics_channel";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
@@ -93,9 +94,9 @@ describe("AuthSession", () => {
       assert.equal(auth.isAuthenticated, false);
     });
 
-    // A status that is no verdict on the credentials - a readiness answer from the transport's retried set, or a 5xx outside it - surfaces as the classified request
-    // error rather than as a rejected sign-in, and the handshake leaves no session behind.
-    for(const status of [ 503, 404, 400, 501 ]) {
+    // A status that is no verdict on the credentials - a readiness answer from the transport's retried set, a 3xx, or a 5xx outside the set - surfaces as the
+    // classified request error rather than as a rejected sign-in, and the handshake leaves no session behind.
+    for(const status of [ 503, 404, 400, 501, 302 ]) {
 
       test("a login answered " + String(status) + " throws ProtectRequestError and stays unauthenticated", async () => {
 
@@ -136,6 +137,32 @@ describe("AuthSession", () => {
       pool.intercept({ method: "GET", path: ROOT_PATH }).reply(503, "rebooting");
 
       await assert.rejects(auth.login({ host, password: "p", username: "u" }), { constructor: ProtectRequestError, statusCode: 503 });
+      assert.equal(auth.isAuthenticated, false);
+    });
+
+    test("a login answered 401 whose controller root answers 404 throws ProtectRequestError rather than a rejected sign-in", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const auth = new AuthSession({ transport });
+
+      // A 404 is in the retried set, the answer a controller mid-reboot gives, so the root's 404 is a readiness answer like the 503 above and its error surfaces.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
+      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(404, "rebooting");
+
+      await assert.rejects(auth.login({ host, password: "p", username: "u" }), { constructor: ProtectRequestError, statusCode: 404 });
+      assert.equal(auth.isAuthenticated, false);
+    });
+
+    test("a login answered 401 whose controller root answers 501 throws ProtectAuthError as a rejected sign-in", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const auth = new AuthSession({ transport });
+
+      // A root answer outside the retried set yields no token and leaves the login's own answer standing, so the 401 is read as the rejected sign-in it is.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
+      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(501, "not implemented");
+
+      await assert.rejects(auth.login({ host, password: "p", username: "u" }), ProtectAuthError);
       assert.equal(auth.isAuthenticated, false);
     });
 
@@ -193,12 +220,15 @@ describe("AuthSession", () => {
 
       const { host, pool, transport } = makeMockTransport();
       const auth = new AuthSession({ transport });
-      const outcomes: boolean[] = [];
-      const onRelogin = (message: unknown): void => void outcomes.push((message as { success: boolean }).success);
+      const outcomes: unknown[] = [];
+      const onRelogin: ChannelListener = (message) => void outcomes.push(message);
 
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=old", "x-csrf-token": "csrf1" } });
 
       await auth.login({ host, password: "p", username: "u" });
+
+      // The row subscribes by the channel's published name rather than through the typed channel, because the name is public contract a consumer subscribes by, and
+      // this row is what holds it; the payloads are compared whole, so nothing is read through a cast.
       diagnosticsChannel.subscribe("unifi-protect:auth:relogin", onRelogin);
 
       try {
@@ -215,7 +245,7 @@ describe("AuthSession", () => {
         diagnosticsChannel.unsubscribe("unifi-protect:auth:relogin", onRelogin);
       }
 
-      assert.deepEqual(outcomes, [ true, false ], "the channel must report each relogin outcome in order");
+      assert.deepEqual(outcomes, [ { success: true }, { success: false } ], "the channel must report each relogin outcome in order");
     });
 
     test("concurrent reauthenticate calls coalesce into a single handshake", async () => {

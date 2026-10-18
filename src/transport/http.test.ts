@@ -10,13 +10,16 @@
  * assert the transport's throttle breaker and its 401-relogin retry exactly and without flakiness. The injected rows bypass the status-code retry interceptor,
  * which is composed only onto a pool the transport builds itself; the owned-pool describe covers it against a loopback peer.
  */
+import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../diagnostics.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../settings.ts";
 import { Pool, errors } from "undici";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectThrottledError,
   ProtectTimeoutError } from "../errors.ts";
+import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
 import type { AddressInfo } from "node:net";
+import type { ChannelListener } from "node:diagnostics_channel";
 import type { MockTransport } from "./mock-controller.helpers.ts";
 import type { SendOptions } from "./http.ts";
 import { Transport } from "./http.ts";
@@ -161,6 +164,7 @@ describe("Transport", () => {
 
       assert.ok(thrown instanceof ProtectRequestError);
       assert.equal(thrown.statusCode, 500);
+      assert.equal(thrown.message, "The UniFi Protect controller answered the request with HTTP status 500.");
       assert.equal(thrown.body, "boom");
       assert.equal(thrown.headers?.["x-trace"], "abc");
     });
@@ -301,6 +305,25 @@ describe("Transport", () => {
       await assert.rejects(transport.send(url(host, "/x")), { code: "ECONNREFUSED", constructor: ProtectNetworkError });
     });
 
+    test("a response that does not match the range or length the request expected surfaces as ProtectNetworkError", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const retryError = new errors.RequestRetryError("range mismatch", 416, {});
+
+      // The injected dispatcher carries no retry interceptor, so the row hands the transport the error that interceptor raises for a response whose bytes it cannot
+      // reconcile with the request.
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(retryError);
+
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.equal(error.message, "The response from the UniFi Protect controller did not match the range or length the request expected.");
+        assert.ok(Object.is(error.cause, retryError));
+
+        return true;
+      });
+    });
+
     test("a caller abort that carries a reason surfaces as ProtectAbortedError", async () => {
 
       const reason = new Error("The talkback session was stopped.");
@@ -373,10 +396,9 @@ describe("Transport", () => {
       const origin = "http://127.0.0.1:" + String((server.address() as AddressInfo).port);
       const dispatcher = new Pool(origin);
       const transport = new Transport({ dispatcher, host: new URL(origin).host });
-      const ends: { cancelled?: true }[] = [];
-      const onEnd = (message: unknown): void => void ends.push(message as { cancelled?: true });
+      const ends: HttpRequestEndPayload[] = [];
 
-      diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+      using endSubscription = subscribeToChannel(channels.httpRequestEnd, (payload) => void ends.push(payload));
 
       try {
 
@@ -398,7 +420,6 @@ describe("Transport", () => {
         assert.equal(ends.at(-1)?.cancelled, true);
       } finally {
 
-        diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
         await dispatcher.close();
         server.closeAllConnections();
         await new Promise<undefined>((resolve) => server.close(() => resolve(undefined)));
@@ -674,10 +695,8 @@ describe("Transport", () => {
 
     test("a request whose caller had already aborted is never issued and books nothing", async () => {
 
-      const starts: unknown[] = [];
-      const ends: unknown[] = [];
-      const onStart = (message: unknown): void => void starts.push(message);
-      const onEnd = (message: unknown): void => void ends.push(message);
+      const starts: HttpRequestStartPayload[] = [];
+      const ends: HttpRequestEndPayload[] = [];
       const causedBy = (reason: unknown): ((error: unknown) => boolean) => (error: unknown): boolean => (error instanceof ProtectAbortedError) &&
         Object.is(error.cause, reason);
       const { host, pool, transport } = makeMockTransport();
@@ -686,22 +705,15 @@ describe("Transport", () => {
 
       await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT - 1);
 
-      diagnosticsChannel.subscribe("unifi-protect:http:request:start", onStart);
-      diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+      using startSubscription = subscribeToChannel(channels.httpRequestStart, (payload) => void starts.push(payload));
+      using endSubscription = subscribeToChannel(channels.httpRequestEnd, (payload) => void ends.push(payload));
 
-      try {
+      // No reply is intercepted for this path, so a request that reached the dispatcher would fail there, publish its start and end diagnostics, and book.
+      const aborted = AbortSignal.abort();
+      const lapsed = AbortSignal.abort(new DOMException("The deadline lapsed.", "TimeoutError"));
 
-        // No reply is intercepted for this path, so a request that reached the dispatcher would fail there, publish its start and end diagnostics, and book.
-        const aborted = AbortSignal.abort();
-        const lapsed = AbortSignal.abort(new DOMException("The deadline lapsed.", "TimeoutError"));
-
-        await assert.rejects(transport.send(url(host, "/never"), { signal: aborted }), causedBy(aborted.reason));
-        await assert.rejects(transport.send(url(host, "/never"), { signal: lapsed }), causedBy(lapsed.reason));
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-protect:http:request:start", onStart);
-        diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
-      }
+      await assert.rejects(transport.send(url(host, "/never"), { signal: aborted }), causedBy(aborted.reason));
+      await assert.rejects(transport.send(url(host, "/never"), { signal: lapsed }), causedBy(lapsed.reason));
 
       assert.equal(starts.length, 0);
       assert.equal(ends.length, 0);
@@ -717,11 +729,13 @@ describe("Transport", () => {
 
     test("publishes request start and end with a correlating requestId", async () => {
 
-      const starts: { host: string; method: string; requestId: string; url: string }[] = [];
-      const ends: { host: string; requestId: string; statusCode?: number }[] = [];
-      const onStart = (message: unknown): void => void starts.push(message as { host: string; method: string; requestId: string; url: string });
-      const onEnd = (message: unknown): void => void ends.push(message as { host: string; requestId: string; statusCode?: number });
+      const starts: unknown[] = [];
+      const ends: unknown[] = [];
+      const onStart: ChannelListener = (message) => void starts.push(message);
+      const onEnd: ChannelListener = (message) => void ends.push(message);
 
+      // The row subscribes by the channels' published names rather than through the typed channels, because the names are public contract a consumer subscribes by,
+      // and this row is what holds them.
       diagnosticsChannel.subscribe("unifi-protect:http:request:start", onStart);
       diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
 
@@ -741,76 +755,65 @@ describe("Transport", () => {
         diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
       }
 
+      const [start] = starts;
+      const [end] = ends;
+
+      // Each payload is narrowed by the fields the row reads before it reads them, so a payload missing one fails here rather than comparing undefined.
       assert.equal(starts.length, 1);
-      assert.equal(starts[0]?.method, "GET");
-      assert.equal(starts[0]?.host, configuredHost, "the start payload carries the configured controller host verbatim");
+      assert.ok((typeof start === "object") && (start !== null) && ("host" in start) && ("method" in start) && ("requestId" in start));
+      assert.equal(start.method, "GET");
+      assert.equal(start.host, configuredHost, "the start payload carries the configured controller host verbatim");
       assert.equal(ends.length, 1);
-      assert.equal(ends[0]?.statusCode, 200);
-      assert.equal(ends[0]?.host, configuredHost, "the end payload carries the configured controller host verbatim");
-      assert.equal(starts[0]?.requestId, ends[0]?.requestId, "start and end must share the requestId");
+      assert.ok((typeof end === "object") && (end !== null) && ("host" in end) && ("requestId" in end) && ("statusCode" in end));
+      assert.equal(end.statusCode, 200);
+      assert.equal(end.host, configuredHost, "the end payload carries the configured controller host verbatim");
+      assert.equal(start.requestId, end.requestId, "start and end must share the requestId");
     });
 
     test("stamps the controller host on the end payload even when the request fails at the transport level", async () => {
 
-      const ends: { error?: string; host: string; statusCode?: number }[] = [];
-      const onEnd = (message: unknown): void => void ends.push(message as { error?: string; host: string; statusCode?: number });
+      const ends: HttpRequestEndPayload[] = [];
 
-      diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+      using endSubscription = subscribeToChannel(channels.httpRequestEnd, (payload) => void ends.push(payload));
 
-      let configuredHost = "";
+      const { host, pool, transport } = makeMockTransport();
+      const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
 
-      try {
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
 
-        const { host, pool, transport } = makeMockTransport();
-        const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
-
-        configuredHost = host;
-        pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
-
-        await assert.rejects(transport.send(url(host, "/x")), ProtectNetworkError);
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
-      }
+      await assert.rejects(transport.send(url(host, "/x")), ProtectNetworkError);
 
       assert.equal(ends.length, 1);
-      assert.equal(ends[0]?.host, configuredHost, "the failure-path end payload still carries the configured controller host");
+      assert.equal(ends[0]?.host, host, "the failure-path end payload still carries the configured controller host");
       assert.equal(ends[0]?.statusCode, undefined, "a transport-level failure carries no status code");
       assert.ok((ends[0]?.error ?? "").length > 0, "a transport-level failure carries an error message");
     });
 
     test("marks a cancelled request on the end payload and no other", async () => {
 
-      const ends: { cancelled?: true; error?: string }[] = [];
-      const onEnd = (message: unknown): void => void ends.push(message as { cancelled?: true; error?: string });
+      const ends: HttpRequestEndPayload[] = [];
 
-      diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+      using endSubscription = subscribeToChannel(channels.httpRequestEnd, (payload) => void ends.push(payload));
 
-      try {
+      const mock = makeMockTransport();
+      const { host, pool, transport } = mock;
+      const controller = new AbortController();
 
-        const mock = makeMockTransport();
-        const { host, pool, transport } = mock;
-        const controller = new AbortController();
+      await sendCancelled(mock);
 
-        await sendCancelled(mock);
+      // A deadline of ours that fired before the caller aborted is our timeout, not the caller's cancel.
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(new DOMException("The deadline lapsed.", "TimeoutError"));
 
-        // A deadline of ours that fired before the caller aborted is our timeout, not the caller's cancel.
-        pool.intercept({ method: "GET", path: "/x" }).replyWithError(new DOMException("The deadline lapsed.", "TimeoutError"));
+      const pending = transport.send(url(host, "/x"), { signal: controller.signal });
 
-        const pending = transport.send(url(host, "/x"), { signal: controller.signal });
+      controller.abort();
 
-        controller.abort();
+      await assert.rejects(pending, ProtectTimeoutError);
 
-        await assert.rejects(pending, ProtectTimeoutError);
+      // A deadline the caller supplied that lapses in flight is a controller that did not answer in time, not a cancel.
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
 
-        // A deadline the caller supplied that lapses in flight is a controller that did not answer in time, not a cancel.
-        pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
-
-        await assert.rejects(transport.send(url(host, "/slow"), { signal: AbortSignal.timeout(20) }), ProtectAbortedError);
-      } finally {
-
-        diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
-      }
+      await assert.rejects(transport.send(url(host, "/slow"), { signal: AbortSignal.timeout(20) }), ProtectAbortedError);
 
       const [ cancelled, ours, lapsed ] = ends;
 
@@ -822,14 +825,16 @@ describe("Transport", () => {
 
     test("publishes throttle entered and exited around the breaker lifecycle", async () => {
 
-      const entered: { consecutiveFailures: number; cooldownMs: number }[] = [];
+      const entered: unknown[] = [];
       let exitedCount = 0;
-      const onEntered = (message: unknown): void => void entered.push(message as { consecutiveFailures: number; cooldownMs: number });
+      const onEntered: ChannelListener = (message) => void entered.push(message);
       const onExited = (): void => {
 
         exitedCount++;
       };
 
+      // The row subscribes by the channels' published names rather than through the typed channels, because the names are public contract a consumer subscribes by,
+      // and this row is what holds them; the entered payload is compared whole, so nothing is read through a cast.
       diagnosticsChannel.subscribe("unifi-protect:http:throttle:entered", onEntered);
       diagnosticsChannel.subscribe("unifi-protect:http:throttle:exited", onExited);
 

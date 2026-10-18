@@ -90,8 +90,9 @@ export class ProtectTimeoutError extends RecoverableError {
 }
 
 /**
- * A connect, DNS, TLS, or socket-level failure reaching the controller. The originating Node `ErrnoException` is preserved on the `cause` chain (the shape undici
- * raises as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching.
+ * A connect, DNS, TLS, or socket-level failure reaching the controller, or a response whose bytes did not match the range or length the request expected, which the
+ * transport classifies here because the controller was reached but no whole response arrived. The originating Node `ErrnoException` is preserved on the `cause`
+ * chain (the shape undici raises as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching.
  *
  * @category Errors
  */
@@ -183,8 +184,8 @@ export class ProtectAuthorizationError extends FatalError {
 }
 
 /**
- * The controller returned an error status the library does not classify more specifically (a 4xx other than 401/403, or any 5xx). The status, body, and headers are
- * preserved so the caller can inspect the controller's own explanation.
+ * The controller returned a non-2xx status the library does not classify more specifically (a 3xx, a 4xx other than 401/403, or any 5xx). The status, body, and
+ * headers are preserved so the caller can inspect the controller's own explanation.
  *
  * @category Errors
  */
@@ -257,7 +258,9 @@ export function assertNever(value: never): never {
  * The bootstrap sequence failed while fetching or parsing the controller bootstrap document. `stage` marks which - `"fetch"` when the bootstrap endpoint returns
  * a non-2xx status, `"parse"` when the body cannot be decoded - so the caller and the diagnostics surface can report the precise point of failure rather than a
  * generic "connect failed." A login or reachability failure is not wrapped here: a transport-level failure reaching the endpoint propagates as its own typed error
- * (`ProtectNetworkError`, `ProtectTimeoutError`, `ProtectThrottledError`, `ProtectAbortedError`), and a login failure as `ProtectAuthError`.
+ * (`ProtectNetworkError`, `ProtectTimeoutError`, `ProtectThrottledError`, `ProtectAbortedError`), and a login failure as `ProtectAuthError` when the controller
+ * rejected the sign-in or as `ProtectRequestError` when it answered with a status that is no verdict on the credentials (a readiness answer the transport already
+ * retried, a 3xx, or a 5xx outside the retried set).
  *
  * @category Errors
  */
@@ -276,8 +279,9 @@ export class ProtectBootstrapError extends FatalError {
 
 /**
  * The stages of the `connect()` sequence, used to tag a {@link ProtectBootstrapError}. The sequence authenticates, fetches the bootstrap document, parses it, then
- * subscribes to the realtime stream; only the fetch and parse stages are wrapped as a bootstrap error. A login failure already propagates as `ProtectAuthError`
- * (fatal) and a reachability failure as `ProtectNetworkError` (recoverable), and a failure to open the realtime subscription propagates unwrapped rather than tagged
+ * subscribes to the realtime stream; only the fetch and parse stages are wrapped as a bootstrap error. A login failure already propagates as its own typed error -
+ * `ProtectAuthError` (fatal) when the controller rejected the sign-in, `ProtectRequestError` (fatal) when it answered with a status that is no verdict on the
+ * credentials - and a reachability failure as `ProtectNetworkError` (recoverable). A failure to open the realtime subscription propagates unwrapped rather than tagged
  * with any stage, so `"login"` and `"subscribe"` name stages of the sequence without either one being a tag a caller will observe on a thrown `ProtectBootstrapError`.
  *
  * @category Errors
