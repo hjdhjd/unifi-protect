@@ -2,7 +2,7 @@
  *
  * commands.test.ts: Per-command unit tests driving each CLI command through the injected openClient hook - parse, render, dispatch, and error paths.
  */
-import type { LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment, TypedEvent } from "../../../index.ts";
+import type { LivestreamDescription, LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment, TypedEvent } from "../../../index.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectProtocolError, ProtectUnsupportedError, channels } from "../../../index.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../../protocol/packet.helpers.ts";
 import { describe, test } from "node:test";
@@ -784,6 +784,16 @@ describe("camera talkback", () => {
   });
 });
 
+// A description an init built for the CLI rows carries, so a row can read the track summary a command prints from it.
+const STREAM_DESCRIPTION: LivestreamDescription = {
+
+  tracks: [
+
+    { codec: "h264", height: 1080, id: 1, kind: "video", level: 40, profile: 100, width: 1920 },
+    { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
+  ]
+};
+
 describe("watch livestream", () => {
 
   test("writes the concatenated segments to a file and reports the total", async () => {
@@ -795,7 +805,7 @@ describe("watch livestream", () => {
       const out = path.join(dir, "stream.mp4");
       const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door", segments: [
 
-        { codec: "avc1", data: Buffer.from([ 1, 2, 3 ]), type: "init" },
+        { codec: "avc1", data: Buffer.from([ 1, 2, 3 ]), description: { tracks: [] }, type: "init" },
         { data: Buffer.from([ 4, 5, 6 ]), mdat: Buffer.alloc(0), moof: Buffer.alloc(0), type: "media" }
       ] }] });
       const { ctx, stdout } = makeCommandContext({ args: [ "Front Door", "--out", out ], client });
@@ -826,9 +836,10 @@ describe("watch livestream", () => {
 
           async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
 
-            channels.livestreamCodecChanged.publish({ cameraId: "c1", from: "avc1.640028", key: "c1:0:0:100:4096:false", to: "hev1.1.6.L150.90" });
+            channels.livestreamCodecChanged.publish({ cameraId: "c1", from: { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION },
+              key: "c1:0:0:100:4096:false", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
 
-            yield { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), type: "init" };
+            yield { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION, type: "init" };
           },
           [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve(),
           stats: { delivered: 1, discarded: 0, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 }
@@ -865,12 +876,16 @@ describe("watch livestream", () => {
       }
     };
 
-    // With --diagnostics, the published codec-change event is rendered to stderr (JSON, honoring --json) and never pollutes the stdout NDJSON metadata stream.
+    // With --diagnostics, the published codec-change event is rendered to stderr (JSON, honoring --json) and never pollutes the stdout NDJSON metadata stream. The
+    // event's inits render their bytes as a length, while the init record on stdout carries the stream's description and no bytes at all.
     const withDiag = await run([ "c1", "--diagnostics", "--json", "--count", "1" ]);
 
     assert.match(withDiag.stderr, /unifi-protect:livestream:codec:changed/);
     assert.match(withDiag.stderr, /hev1\.1\.6\.L150\.90/);
+    assert.match(withDiag.stderr, /"data":"<3 bytes>"/);
+    assert.match(withDiag.stderr, /"data":"<2 bytes>"/);
     assert.doesNotMatch(withDiag.stdout, /unifi-protect:livestream/);
+    assert.deepEqual((JSON.parse(withDiag.stdout) as { description: unknown }).description, STREAM_DESCRIPTION);
 
     // Without the flag, no feed is subscribed, so the same published event reaches neither stream.
     const withoutDiag = await run([ "c1", "--json", "--count", "1" ]);
@@ -935,7 +950,7 @@ describe("watch livestream", () => {
 
     const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Cam", segments: [
 
-      { codec: "avc1", data: Buffer.from([ 1, 2, 3 ]), type: "init" },
+      { codec: "avc1", data: Buffer.from([ 1, 2, 3 ]), description: { tracks: [] }, type: "init" },
       { data: Buffer.from([ 4, 5, 6 ]), mdat: Buffer.alloc(0), moof: Buffer.alloc(0), type: "media" }
     ] }] });
     const { ctx, stdout } = makeCommandContext({ args: ["c1"], client });
@@ -972,7 +987,7 @@ describe("watch livestream", () => {
 
         async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
 
-          yield { codec: "avc1", data: Buffer.from([ 1, 2, 3 ]), type: "init" };
+          yield { codec: "avc1", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION, type: "init" };
           yield { data: Buffer.from([ 4, 5, 6 ]), mdat: Buffer.alloc(0), moof: Buffer.alloc(0), type: "media" };
         },
         [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve(),
@@ -1004,7 +1019,7 @@ describe("watch livestream", () => {
     const out = stdout();
 
     assert.match(out, /init/);
-    assert.match(out, /avc1/);
+    assert.match(out, /avc1 {2}h264 1920x1080 L40, aac 16000 Hz mono/);
     assert.match(out, /media/);
     assert.match(out, /q=0 peak=0/);
     assert.match(out, /Received 2 segment\(s\)/);
@@ -1574,7 +1589,7 @@ describe("doctor", () => {
 
     const { client } = makeFakeClient({ authUser: { id: "u1", name: "admin" }, cameras: [{ id: "c1", name: "Cam", segments: [
 
-      { codec: "avc1", data: Buffer.from([1]), type: "init" },
+      { codec: "avc1", data: Buffer.from([1]), description: STREAM_DESCRIPTION, type: "init" },
       { data: Buffer.from([2]), mdat: Buffer.alloc(0), moof: Buffer.alloc(0), type: "media" }
     ] }], events: [{ at: 0, cameraId: "c1", eventId: "e1", kind: "motionDetected" }] });
 
@@ -1592,8 +1607,10 @@ describe("doctor", () => {
 
       const out = stdout();
 
-      // Every subsystem is exercised against the fake; the diagnostics-channels check warns (nothing publishes), which is not a failure, so the run exits zero.
+      // Every subsystem is exercised against the fake; the diagnostics-channels check warns (nothing publishes), which is not a failure, so the run exits zero. The
+      // livestream check prints what the stream is beside its codec label.
       assert.match(out, /PASS/);
+      assert.match(out, /codec avc1 \(h264 1920x1080 L40, aac 16000 Hz mono\)/);
       assert.match(out, /\d+ passed, \d+ warnings, 0 failed\./);
       assert.equal(process.exitCode, 0);
     } finally {
@@ -1723,6 +1740,32 @@ describe("diagnostics", () => {
 
     assert.match(out, /unifi-protect:http:request:start/, "the published diagnostic was rendered");
     assert.match(out, /Subscribed to \d+ diagnostics channel\(s\)/);
+  });
+
+  test("renders a codec change on the plain-text line with each init's bytes summarized as its length", async () => {
+
+    const { client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: [ "--channel", "codec:changed", "--count", "1" ], client });
+    const realOpen = ctx.openClient;
+
+    // The plain-text line serializes its payload the way the JSON form does, so a codec change's inits print as their labels and descriptions, each init's bytes as
+    // its own length rather than as a byte array.
+    ctx.openClient = (opts?: { debug?: boolean; refreshIntervalMs?: number | false; signal?: AbortSignal }): Promise<ProtectClient> => {
+
+      channels.livestreamCodecChanged.publish({ cameraId: "c1", from: { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION },
+        key: "c1:0:0:100:4096:false", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
+
+      return realOpen(opts);
+    };
+
+    await diagnostics.run(ctx);
+
+    const out = stdout();
+
+    assert.match(out, /unifi-protect:livestream:codec:changed/);
+    assert.match(out, /"data":"<3 bytes>"/);
+    assert.match(out, /"data":"<2 bytes>"/);
+    assert.doesNotMatch(out, /"type":"Buffer"/);
   });
 
   test("an already-aborted signal resolves the wait immediately", async () => {

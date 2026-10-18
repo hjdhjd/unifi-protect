@@ -5,7 +5,7 @@
 import { COMMON_OPTIONS, CliError, boundedSignal, parseDuration, parseNonNegativeInt, parsePositiveInt, take } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import type { LivestreamSource, LivestreamSubscription, Segment } from "../../../index.ts";
-import { Output, formatBytes, nowStamp } from "../output/format.ts";
+import { Output, formatBytes, formatTracks, nowStamp } from "../output/format.ts";
 import { renderDiagnostic, subscribeDiagnostics } from "../diagnostics-feed.ts";
 import { channels } from "../../../index.ts";
 import { createWriteStream } from "node:fs";
@@ -68,22 +68,24 @@ const OPTIONS = {
 // means a channel added to the subsystem later is picked up automatically, the same single-source discipline the `channels` registry exists to enforce.
 const LIVESTREAM_DIAGNOSTIC_PREFIX = "unifi-protect:livestream:";
 
-// The structured per-segment record for --json. A curated subset (byte size, the delivered and queue-depth counters, and the codec or media timestamps) rather than the
-// raw bytes, so the metadata stream is analyzable with jq while the byte stream stays on its own sink.
+// The structured per-segment record for --json. A curated subset (byte size, the delivered and queue-depth counters, and the init's codec label and description or
+// the media's timestamps) rather than the raw bytes, so the metadata stream is analyzable with jq while the byte stream stays on its own sink.
 function segmentMeta(segment: Segment, sub: LivestreamSubscription): unknown {
 
   const stats = sub.stats;
 
   if(segment.type === "init") {
 
-    return { bytes: segment.data.length, codec: segment.codec, delivered: stats.delivered, queueDepth: stats.queueDepth, type: "init" };
+    return { bytes: segment.data.length, codec: segment.codec, delivered: stats.delivered, description: segment.description, queueDepth: stats.queueDepth,
+      type: "init" };
   }
 
   return { bytes: segment.data.length, delivered: stats.delivered, queueDepth: stats.queueDepth, timestamps: segment.timestamps ?? null, type: "media" };
 }
 
-// One pretty summary line for a segment: time, type, size, and either the codec (init) or the frame-timestamp count and the subscriber's queue depth (media). The queue
-// depth is the operator's own backpressure signal - a steadily growing value means this consumer is falling behind the stream.
+// One pretty summary line for a segment: time, type, size, and either the codec label and the tracks the init describes (init) or the frame-timestamp count and the
+// subscriber's queue depth (media). The queue depth is the operator's own backpressure signal - a steadily growing value means this consumer is falling behind the
+// stream.
 function summaryLine(output: Output, segment: Segment, sub: LivestreamSubscription): string {
 
   const colors = output.colors;
@@ -91,7 +93,9 @@ function summaryLine(output: Output, segment: Segment, sub: LivestreamSubscripti
 
   if(segment.type === "init") {
 
-    return stamp + "  " + colors.green("init") + "   " + formatBytes(segment.data.length) + "  " + colors.cyan(segment.codec);
+    const tracks = formatTracks(segment.description);
+
+    return stamp + "  " + colors.green("init") + "   " + formatBytes(segment.data.length) + "  " + colors.cyan(segment.codec) + ((tracks !== "") ? ("  " + tracks) : "");
   }
 
   const timestamps = (segment.timestamps !== undefined) ? "  ts=" + segment.timestamps.length.toString() : "";

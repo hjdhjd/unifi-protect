@@ -2,9 +2,10 @@
  *
  * livestream-pool.test.ts: Tests for the resilient-by-default LivestreamPool - multi-subscriber session sharing, late-joiner init replay, exact ref-counted teardown,
  * slow-vs-fast subscriber isolation, the stream-affecting pool key, diagnostics, Camera.livestream delegation, and the recovery layer: invisible reconnect
- * (same-codec init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the establishing and recovering regimes, reassess, and
+ * (same-stream init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the establishing and recovering regimes, reassess, and
  * whenEstablished.
  */
+import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AUDIO_RATE_CHANGED_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload } from "../diagnostics.ts";
 import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-pool.ts";
@@ -26,6 +27,16 @@ import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
 const SPEC: LivestreamSpec = { cameraId: "cam1", source: { channel: 0, type: "channel" } };
+
+// The description of `AI_PRO_INIT`, the init bytes every helper-driven init carries unless a test passes its own.
+const AI_PRO_DESCRIPTION = {
+
+  tracks: [
+
+    { codec: "h265", height: 2160, id: 1, kind: "video", level: 150, profile: 1, width: 3840 },
+    { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
+  ]
+};
 
 // Total index access under noUncheckedIndexedAccess, read as an assertion.
 function at<T>(items: T[], index: number): T {
@@ -97,19 +108,20 @@ async function nextSegment(iterator: AsyncIterator<Segment>): Promise<Segment> {
 // Drive a fresh socket through the open + init-segment handshake ONLY (no media), then yield the event loop. Liveness is media-keyed, so this drives a stream to the
 // codec-gate / init point but NOT to "established" / "recovered" - the codec gate fires on the init, the cached init is delivered or suppressed, but `whenEstablished()`
 // stays pending and the recovery episode stays in flight until media flows. Used by tests that legitimately need init-without-media: the codec-gate terminal (a codec
-// change is detected on the init, before any media) and the late-joiner replay (a joiner attaching in the init->media gap gets the cached init).
+// change is detected on the init, before any media) and the late-joiner replay (a joiner attaching in the init->media gap gets the cached init). The init bytes default
+// to a captured Protect init, so every init the pool caches carries a real description; a caller driving a changed description passes another capture.
 async function establishInit(ws: FakeWebSocket, opts: { codec: string; data?: Buffer } = { codec: "avc1.640028" }): Promise<void> {
 
   ws.emitOpen();
-  ws.emitMessage(buildInitSegment({ codec: opts.codec, data: opts.data ?? Buffer.from("INIT") }));
+  ws.emitMessage(buildInitSegment({ codec: opts.codec, data: opts.data ?? AI_PRO_INIT }));
 
   await settle();
 }
 
 // Fully establish (or recover) a stream: drive the open + init handshake AND the first media segment, then yield the event loop so both reach the subscribers. Liveness
 // is media-keyed, so it is this first media - not the init - that settles the episode `recovered`, resolves `whenEstablished()` true, and returns the stream to `live`.
-// The codec lets a caller drive a same-codec (recoverable) or codec-changed (terminal) reconnect; a codec change is detected on the init and tears the stream down before
-// the media, so callers driving a codec change use `establishInit` instead.
+// The codec label and the init bytes let a caller drive a same-stream (recoverable) or a changed (terminal) reconnect; a changed stream is detected on the init and
+// tears the stream down before the media, so callers driving one use `establishInit` instead.
 async function establish(ws: FakeWebSocket, opts: { codec: string; data?: Buffer } = { codec: "avc1.640028" }): Promise<void> {
 
   await establishInit(ws, opts);
@@ -210,13 +222,50 @@ describe("LivestreamPool", () => {
       const sub2 = pool.subscribe(SPEC);
       const segment = await nextSegment(sub2[Symbol.asyncIterator]());
 
-      assert.equal(segment.type, "init");
-      assert.deepEqual((segment as { data: Buffer }).data, Buffer.from("INIT"));
+      // The replay is a fresh segment over the cached init's fields - the label, the bytes, and the description, the same object the cache holds. Bytes too short
+      // to hold a box describe as no tracks.
+      assert.ok(segment.type === "init");
+      assert.deepEqual(segment, { codec: "avc1.640028", data: Buffer.from("INIT"), description: { tracks: [] }, type: "init" });
       assert.equal(sub2.codec, "avc1.640028");
-      assert.deepEqual(sub2.initSegment, { codec: "avc1.640028", data: Buffer.from("INIT") });
+      assert.deepEqual(sub2.initSegment, { codec: "avc1.640028", data: Buffer.from("INIT"), description: { tracks: [] } });
+      assert.notEqual(segment, sub2.initSegment);
+      assert.equal(segment.description, sub2.initSegment?.description);
 
       await sub1[Symbol.asyncDispose]();
       await sub2[Symbol.asyncDispose]();
+    });
+
+    test("a mid-session re-init on the steady path caches a fresh init carrying the new label, bytes and description", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The live session sends a further init past its first media: the steady path rather than the codec gate, so the cache takes the new init whatever it
+      // carries. The cache holds the init's fields projected onto a fresh object, never the segment it arrived in, so it carries no `type`.
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "hvc1.1.6.L180.90", data: DOORBELL_INIT }));
+      await settle();
+
+      const segment = await nextSegment(iterator);
+
+      assert.ok(segment.type === "init");
+      assert.deepEqual(sub.initSegment, { codec: "hvc1.1.6.L180.90", data: DOORBELL_INIT, description: { tracks: [
+
+        { codec: "h265", height: 4096, id: 1, kind: "video", level: 180, profile: 1, width: 3024 },
+        { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
+      ] } });
+      assert.notEqual(sub.initSegment, segment);
+      assert.equal(sub.initSegment?.description, segment.description);
+      assert.equal(Object.hasOwn(sub.initSegment ?? {}, "type"), false);
+
+      await sub[Symbol.asyncDispose]();
     });
   });
 
@@ -477,7 +526,7 @@ describe("LivestreamPool", () => {
       await settle();
 
       // Walk the default establishing curve to the deadline, as the init-then-no-media give-up test does, emitting an init on each fresh socket. The first attempt's
-      // init is queued; later same-codec re-inits are suppressed.
+      // init is queued; later same-stream re-inits are suppressed.
       const windows = [ 5000, 8000, 10000, 10000 ];
 
       for(const window of windows) {
@@ -653,7 +702,7 @@ describe("LivestreamPool", () => {
 
       assert.equal(sockets.length, 2);
 
-      // The reconnected socket negotiates the same codec, so its redundant init is suppressed and media resumes uninterrupted - no second init reaches the iterator. The
+      // The reconnected socket delivers the same stream, so its redundant init is suppressed and media resumes uninterrupted - no second init reaches the iterator. The
       // reconnect settles `recovered` only when its first media flows, not on the suppressed init.
       await establish(at(sockets, 1), { codec: "avc1.640028" });
 
@@ -684,7 +733,7 @@ describe("LivestreamPool", () => {
 
       assert.ok((established.type === "media") && (established.discontinuity === undefined), "establishment media must not be marked");
 
-      // The controller closes the stream; the pool reconnects on a fresh same-codec socket (its redundant init is suppressed and media resumes uninterrupted).
+      // The controller closes the stream; the pool reconnects on a fresh same-stream socket (its redundant init is suppressed and media resumes uninterrupted).
       at(sockets, 0).emitClose(1000, "the controller closed the stream");
       await settle();
 
@@ -806,16 +855,116 @@ describe("LivestreamPool", () => {
       // mid-stream and the iterator throws the terminal. Init-only: the change is terminal before media would ever flow.
       await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90" });
 
+      // The terminal carries the inits themselves, each the one init shape: its label, its bytes and its description, and nothing of the segment it came from.
       await assert.rejects(iterator.next(), (error: unknown) => {
 
         assert.ok(error instanceof ProtectCodecChangeError);
-        assert.equal(error.from, "avc1.640028");
-        assert.equal(error.to, "hev1.1.6.L150.90");
+        assert.deepEqual(error.from, { codec: "avc1.640028", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
+        assert.deepEqual(error.to, { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
 
         return true;
       });
 
       assert.equal(sub.state, "closed");
+    });
+
+    test("a reconnect under the same codec label whose description changed terminates the iterator with ProtectCodecChangeError", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      // The reconnected session carries the same label over a different stream - 3024 by 4096 at level 180 where 3840 by 2160 at level 150 was in flight - so the
+      // label alone would let it through. Media follows the init, so a gate that let the stream through would hand the iterator that media rather than leave it parked.
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: DOORBELL_INIT });
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.equal(error.from.codec, error.to.codec);
+        assert.deepEqual(error.from.data, AI_PRO_INIT);
+        assert.deepEqual(error.to.data, DOORBELL_INIT);
+        assert.notDeepEqual(error.from.description, error.to.description);
+
+        return true;
+      });
+
+      assert.equal(sub.state, "closed");
+    });
+
+    test("a reconnect under the same codec label whose audio rate alone moved terminates the iterator with ProtectCodecChangeError", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      // The reconnected session carries the same label and the same video track, and its audio runs at 48000 Hz where 16000 Hz was in flight - a move no codec
+      // label carries, since a label names an audio track's object type and never its rate. Media follows the init, so a gate that let the stream through would hand
+      // the iterator that media rather than leave it parked.
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: AUDIO_RATE_CHANGED_INIT });
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.equal(error.from.codec, error.to.codec);
+        assert.deepEqual(error.from.description, AI_PRO_DESCRIPTION);
+        assert.deepEqual(error.to.description, { tracks: [ AI_PRO_DESCRIPTION.tracks[0], { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 48000 } ] });
+
+        return true;
+      });
+
+      assert.equal(sub.state, "closed");
+    });
+
+    test("a reconnect whose init differs only in its timestamps is the same stream, so its init is suppressed and media resumes", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      // The captures share a label and a description and differ only in their creation and modification times, the difference every reconnect of one stream
+      // carries, so the reconnect's init is suppressed and the cache keeps the first init's bytes.
+      await establish(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: AI_PRO_RECONNECT_INIT });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+      assert.deepEqual(sub.initSegment?.data, AI_PRO_INIT);
+
+      await sub[Symbol.asyncDispose]();
     });
 
     test("the recovery policy giving up terminates the iterator with ProtectLivestreamUnavailableError", async () => {
@@ -920,7 +1069,7 @@ describe("LivestreamPool", () => {
       // The deadline (30s) is crossed, so the next consult gives up. Four patient attempts opened four sockets; the stream never established despite every init.
       assert.equal(sockets.length, 4);
 
-      // The very first attempt's init was delivered (no prior cache) and is queued; subsequent same-codec re-inits were suppressed. Drain that one init so the next pull
+      // The very first attempt's init was delivered (no prior cache) and is queued; subsequent same-stream re-inits were suppressed. Drain that one init so the next pull
       // surfaces the establishing terminal rather than the queued init - proving the init was delivered yet the stream still never established (no media ever flowed).
       const iterator = sub[Symbol.asyncIterator]();
 
@@ -1339,7 +1488,7 @@ describe("LivestreamPool", () => {
       assert.equal(at(exhausted, 0).cameraId, "cam1");
     });
 
-    test("codec:changed fires with the from/to descriptors on a codec change", async () => {
+    test("codec:changed fires with the prior and the reconnected init on a codec change", async () => {
 
       const changed: LivestreamCodecChangedPayload[] = [];
 
@@ -1366,8 +1515,8 @@ describe("LivestreamPool", () => {
       await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90" });
 
       assert.equal(changed.length, 1);
-      assert.equal(at(changed, 0).from, "avc1.640028");
-      assert.equal(at(changed, 0).to, "hev1.1.6.L150.90");
+      assert.deepEqual(at(changed, 0).from, { codec: "avc1.640028", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
+      assert.deepEqual(at(changed, 0).to, { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
       assert.equal(at(changed, 0).cameraId, "cam1");
 
       await assert.rejects(iterator.next(), ProtectCodecChangeError);
@@ -1711,7 +1860,7 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "media");
       assert.equal(sub.state, "live");
 
-      // Go media-silent FAR past the 10s default (12s) while keeping the byte heartbeat alive with non-media frames (a same-codec re-init is fanned out as an init and
+      // Go media-silent FAR past the 10s default (12s) while keeping the byte heartbeat alive with non-media frames (a mid-session re-init is fanned out as an init and
       // refreshes `#lastSegmentAt` but not `#lastMediaAt`). If the opt-out aggregated to the 10s default instead of Infinity, the media watchdog would fire here; an
       // opted-out stream must stay live, proving the threshold is genuinely Infinity, not capped at the default.
       for(let step = 0; step < 12; step++) {
@@ -1841,7 +1990,7 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "init");
       assert.equal((await nextSegment(iterator)).type, "media");
 
-      // Drive a non-media frame mid-silence. A same-codec re-init reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock), and it is fanned out as an
+      // Drive a non-media frame mid-silence. A mid-session re-init reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock), and it is fanned out as an
       // init rather than as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the last picture.
       clock.advance(1500);
       at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));

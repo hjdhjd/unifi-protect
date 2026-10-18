@@ -3,6 +3,7 @@
  * format.ts: The Output value object - the single home for the CLI's stdout/stderr discipline, colorization, NDJSON, and table rendering.
  */
 import { colorsEnabled, createPalette } from "./colors.ts";
+import type { LivestreamDescription } from "../../../index.ts";
 import type { Palette } from "./colors.ts";
 
 /**
@@ -215,6 +216,60 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
+ * Format a livestream's description as one line, its tracks joined by `, `: a video track as its codec, coded dimensions and level (`h265 3840x2160 L150`), an audio
+ * track as its codec, sample rate and channel layout (`aac 16000 Hz mono`, `opus 48000 Hz stereo`, `aac 48000 Hz 6 ch`), and a track the library does not describe
+ * as `unknown` with its sample entry type (`unknown (xyz1)`). The single source for how the CLI prints what a stream is.
+ *
+ * @param description - The description an init segment carries.
+ *
+ * @returns The one-line summary, empty for a description with no tracks.
+ *
+ * @category CLI
+ */
+export function formatTracks(description: LivestreamDescription): string {
+
+  return description.tracks.map((track) => {
+
+    switch(track.codec) {
+
+      case "aac":
+      case "opus":
+
+        return track.codec + " " + track.sampleRate.toString() + " Hz " + formatChannels(track.channels);
+
+      case "av1":
+      case "h264":
+      case "h265":
+
+        return track.codec + " " + track.width.toString() + "x" + track.height.toString() + " L" + track.level.toString();
+
+      case "unknown":
+
+        return "unknown (" + track.sampleEntry + ")";
+    }
+  }).join(", ");
+}
+
+// A channel count as a layout name where one is conventional, and as a count otherwise.
+function formatChannels(channels: number): string {
+
+  switch(channels) {
+
+    case 1:
+
+      return "mono";
+
+    case 2:
+
+      return "stereo";
+
+    default:
+
+      return channels.toString() + " ch";
+  }
+}
+
+/**
  * Format a duration in milliseconds as a compact, human-readable string - the two most significant non-zero units, e.g. "3d 4h" or "12m 8s". Used for controller uptime
  * and inter-segment gaps, where a precise millisecond count is noise but the order of magnitude is the point.
  *
@@ -274,14 +329,15 @@ export function compareCodeUnit(a: string, b: string): number {
 
 /* The `JSON.stringify` replacer that gives the CLI's machine output a stable shape: every plain object's keys are emitted in deterministic order via the shared
  * `compareCodeUnit` (locale-independent, so the ordering is identical on every machine and a captured stream diffs cleanly - the same cross-machine determinism
- * `formatTimestamp` targets for instants). Any value that is not a plain record - null, a primitive, an array, or a typed array/`Buffer` - is returned untouched rather
- * than reordered, each exempt for its own reason. An array is exempt for correctness: folding it through the entries/sort path would turn `[1, 2, 3]` into the object
- * `{ "0": 1, ... }`, losing both its element order and its array-ness. A
- * typed array or `Buffer` is exempt as a deliberate choice: a raw byte payload (a `watch raw` / `decode` frame whose payload is binary) is data, not a record to
- * alphabetize, so we neither pay to sort its thousands of numeric index keys nor let any future change to the object-sort path disturb them - today their index order
- * survives the sort anyway because `Object.fromEntries` re-canonicalizes integer keys, but exempting them makes that independence explicit rather than incidental. The
- * returned object holds the original values; `JSON.stringify` re-applies this replacer as it descends, so the whole tree sorts from this one rule - the single source of
- * the CLI's JSON key order, behind both `Output.json` and `Output.jsonPretty`. Note this normalizes a JSON-object payload's keys too, so the output is canonical, not a
+ * `formatTimestamp` targets for instants). Any value that is not a plain record - null, a primitive, an array, or a typed array - passes through as it is rather than
+ * reordered, each exempt for its own reason. An array is exempt for correctness: folding it through the entries/sort path would turn `[1, 2, 3]` into the object
+ * `{ "0": 1, ... }`, losing both its element order and its array-ness. A typed array is exempt as a deliberate choice: raw bytes are data, not a record to
+ * alphabetize, so we neither pay to sort their thousands of numeric index keys nor let any future change to the object-sort path disturb them - today their index
+ * order survives the sort anyway because `Object.fromEntries` re-canonicalizes integer keys, but exempting them makes that independence explicit rather than
+ * incidental. A `Buffer`, the form a `watch raw` / `decode` frame's binary payload takes, never reaches this replacer as a typed array: `JSON.stringify` serializes
+ * it through its own `toJSON` before any replacer sees it, so what arrives is its `{ type, data }` record, whose keys sort like any other record's. The returned
+ * object holds the original values; `JSON.stringify` re-applies this replacer as it descends, so the whole tree sorts from this one rule - the single source of the
+ * CLI's JSON key order, behind both `Output.json` and `Output.jsonPretty`. Note this normalizes a JSON-object payload's keys too, so the output is canonical, not a
  * byte-for-byte reproduction of the controller's field order.
  */
 function sortKeysReplacer(_key: string, value: unknown): unknown {
@@ -294,23 +350,36 @@ function sortKeysReplacer(_key: string, value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).sort(([a], [b]) => compareCodeUnit(a, b)));
 }
 
+/* The replacer for a view that summarizes byte payloads: each `Buffer` renders as `<n bytes>`, and every other value takes the key order `sortKeysReplacer` gives it.
+ * `JSON.stringify` calls a value's own `toJSON` before any replacer sees it, and a `Buffer`'s turns it into a `{ type, data }` record, so this reads the original
+ * value from its holder, which `JSON.stringify` passes as `this`.
+ */
+function summarizeBuffersReplacer(this: Record<string, unknown>, key: string, value: unknown): unknown {
+
+  const original = this[key];
+
+  return Buffer.isBuffer(original) ? ("<" + original.length.toString() + " bytes>") : sortKeysReplacer(key, value);
+}
+
 /**
  * Serialize a value to JSON with the CLI's key order.
  *
  * Every JSON view the CLI produces goes through here - a streaming NDJSON line, a single-shot pretty dump, a capture bundle written to a file - so all of them sort
  * object keys the same way and a captured document diffs and replays identically regardless of the order the wire delivered its fields in. `Output.json` and
- * `Output.jsonPretty` are thin wrappers over this, which is what keeps a file write and a stream write from ever drifting apart.
+ * `Output.jsonPretty` are thin wrappers over this, which is what keeps a file write and a stream write from ever drifting apart. A `Buffer` serializes in full by
+ * default, so a capture keeps every byte; a view where the bytes are noise rather than data, such as the diagnostics feed's rendering of a livestream init, asks
+ * for `summarizeBuffers` instead.
  *
  * @param value - The value to serialize.
- * @param opts  - `pretty` selects the indented, human-readable form over the compact single-line one.
+ * @param opts  - `pretty` selects the indented, human-readable form over the compact single-line one, and `summarizeBuffers` renders each `Buffer` as `<n bytes>`.
  *
  * @returns The serialized JSON, with no trailing newline.
  *
  * @category CLI
  */
-export function serializeJson(value: unknown, opts: { pretty?: boolean } = {}): string {
+export function serializeJson(value: unknown, opts: { pretty?: boolean; summarizeBuffers?: boolean } = {}): string {
 
-  return JSON.stringify(value, sortKeysReplacer, (opts.pretty === true) ? 2 : undefined);
+  return JSON.stringify(value, (opts.summarizeBuffers === true) ? summarizeBuffersReplacer : sortKeysReplacer, (opts.pretty === true) ? 2 : undefined);
 }
 
 // The control-sequence-introducer pattern for an SGR escape, used to measure and pad colored text by its visible length rather than its byte length.

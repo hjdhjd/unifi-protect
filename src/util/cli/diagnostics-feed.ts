@@ -4,9 +4,9 @@
  * and `ufp watch livestream --diagnostics` (the livestream channels, to stderr). One definition of how a diagnostics event is colored, formatted, and subscribed, so the
  * two commands never drift.
  */
+import { nowStamp, serializeJson } from "./output/format.ts";
 import type { AnyProtectDiagnosticsChannel } from "../../index.ts";
 import type { Output } from "./output/format.ts";
-import { nowStamp } from "./output/format.ts";
 import { subscribeToChannel } from "../../index.ts";
 
 // Color a channel name by its subsystem (the second colon-delimited segment of "unifi-protect:<subsystem>:..."), so a glance separates http from events from a schema
@@ -28,7 +28,8 @@ export function colorChannel(output: Output, name: string): string {
 
 /**
  * Render one diagnostics event to the given {@link Output}. The single source for how a diagnostics message looks across `ufp diagnostics` and `ufp watch livestream
- * --diagnostics`: a JSON object per event when `json` is set (so the line is analyzable with `jq`), otherwise a color-coded, timestamped human line.
+ * --diagnostics`: a JSON object per event when `json` is set (so the line is analyzable with `jq`), otherwise a color-coded, timestamped human line. Each form
+ * summarizes a byte payload as its length, so a codec change's inits print as their labels and descriptions rather than as kilobytes of byte values.
  *
  * @param output  - The sink to write the rendered line to (the caller chooses stdout or stderr by how it constructed the `Output`).
  * @param name    - The channel name.
@@ -41,12 +42,13 @@ export function renderDiagnostic(output: Output, name: string, message: unknown,
 
   if(opts.json === true) {
 
-    output.json({ channel: name, payload: message ?? null });
+    output.line(serializeJson({ channel: name, payload: message ?? null }, { summarizeBuffers: true }));
 
     return;
   }
 
-  output.line(output.colors.dim(nowStamp()) + "  " + colorChannel(output, name) + "  " + output.colors.dim((message === undefined) ? "" : JSON.stringify(message)));
+  output.line(output.colors.dim(nowStamp()) + "  " + colorChannel(output, name) + "  " +
+    output.colors.dim((message === undefined) ? "" : serializeJson(message, { summarizeBuffers: true })));
 }
 
 /**

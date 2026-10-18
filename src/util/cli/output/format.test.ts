@@ -2,7 +2,7 @@
  *
  * format.test.ts: Unit tests for the Output value object and the presentation helpers (byte/duration/timestamp formatting).
  */
-import { Output, alignedList, compareCodeUnit, formatBytes, formatDuration, nowStamp } from "./format.ts";
+import { Output, alignedList, compareCodeUnit, formatBytes, formatDuration, formatTracks, nowStamp, serializeJson } from "./format.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -77,13 +77,14 @@ describe("Output", () => {
     assert.equal(written(), "{\"list\":[{\"x\":1,\"y\":2},{\"a\":1,\"b\":2}]}\n");
   });
 
-  test("json serializes a typed-array byte payload as an index-keyed object in byte order", () => {
+  test("json serializes a typed-array byte payload as an object keyed by index in byte order", () => {
 
     const { output, written } = capture();
 
-    // A binary frame payload (a `watch raw` / `decode` Uint8Array or Buffer) serializes to an index-keyed object whose values stay in byte order, even where lexical and
-    // numeric index order diverge ("10" stays after "9") - the observable contract those consumers rely on. The typed-array guard exempts byte payloads from the sort
-    // machinery; integer keys canonicalize to this order anyway, so the guard says "bytes are data, not a record" - it is not the sole thing keeping them ordered.
+    // A typed-array payload serializes to an object keyed by index whose values stay in byte order, even where lexical and numeric index order diverge ("10" stays
+    // after "9"). A `Buffer`, the form a `watch raw` / `decode` frame's binary payload takes, serializes as its `{ type, data }` record instead, because
+    // `JSON.stringify` calls its `toJSON` before the replacer sees it. The typed-array guard exempts byte payloads from the sort machinery; integer keys canonicalize
+    // to this order anyway, so the guard says "bytes are data, not a record" - it is not the sole thing keeping them ordered.
     output.json({ payload: new Uint8Array([ 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ]) });
 
     assert.equal(written(), "{\"payload\":{\"0\":5,\"1\":6,\"2\":7,\"3\":8,\"4\":9,\"5\":10,\"6\":11,\"7\":12,\"8\":13,\"9\":14,\"10\":15}}\n");
@@ -150,6 +151,51 @@ describe("formatBytes", () => {
     assert.equal(formatBytes(1024), "1.0 KiB");
     assert.equal(formatBytes(1536), "1.5 KiB");
     assert.equal(formatBytes(1048576), "1.0 MiB");
+  });
+});
+
+describe("formatTracks", () => {
+
+  test("formats a video track as its codec, coded dimensions and level", () => {
+
+    assert.equal(formatTracks({ tracks: [{ codec: "h265", height: 2160, id: 1, kind: "video", level: 150, profile: 1, width: 3840 }] }), "h265 3840x2160 L150");
+  });
+
+  test("formats a mono audio track by its sample rate and as mono", () => {
+
+    assert.equal(formatTracks({ tracks: [{ channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }] }), "aac 16000 Hz mono");
+  });
+
+  test("formats a two-channel audio track as stereo", () => {
+
+    assert.equal(formatTracks({ tracks: [{ channels: 2, codec: "aac", id: 2, kind: "audio", sampleRate: 48000 }] }), "aac 48000 Hz stereo");
+  });
+
+  test("formats any other channel count as a count", () => {
+
+    assert.equal(formatTracks({ tracks: [{ channels: 6, codec: "aac", id: 2, kind: "audio", sampleRate: 48000 }] }), "aac 48000 Hz 6 ch");
+  });
+
+  test("formats an Opus track as Opus at its sample rate", () => {
+
+    assert.equal(formatTracks({ tracks: [{ channels: 2, codec: "opus", id: 2, kind: "audio", sampleRate: 48000 }] }), "opus 48000 Hz stereo");
+  });
+
+  test("formats an unknown track by its sample entry type, and joins every track with a comma", () => {
+
+    assert.equal(formatTracks({ tracks: [ { codec: "h264", height: 1944, id: 1, kind: "video", level: 51, profile: 77, width: 2592 },
+      { codec: "unknown", id: 2, kind: "audio", sampleEntry: "xyz1" } ] }), "h264 2592x1944 L51, unknown (xyz1)");
+  });
+});
+
+describe("serializeJson", () => {
+
+  test("serializes a Buffer in full by default, and as its byte count when asked to summarize buffers", () => {
+
+    const value = { payload: Buffer.from([ 1, 2, 3 ]) };
+
+    assert.equal(serializeJson(value), "{\"payload\":{\"data\":[1,2,3],\"type\":\"Buffer\"}}");
+    assert.equal(serializeJson(value, { summarizeBuffers: true }), "{\"payload\":\"<3 bytes>\"}");
   });
 });
 

@@ -37,6 +37,7 @@ import { EventBus } from "../event-bus.ts";
 import { EventStream } from "../transport/events-stream.ts";
 import type { Fob } from "../devices/fob.ts";
 import type { Light } from "../devices/light.ts";
+import type { LivestreamDescription } from "../protocol/init-segment.ts";
 import { LivestreamPool } from "./livestream-pool.ts";
 import type { Nvr } from "../devices/nvr.ts";
 import { ProtectBootstrapError } from "../errors.ts";
@@ -53,6 +54,7 @@ import { Transport } from "../transport/http.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import type { Viewer } from "../devices/viewer.ts";
 import { decodePacket } from "../protocol/packet.ts";
+import { describeInitSegment } from "../protocol/init-segment.ts";
 import { noopLog } from "../logging.ts";
 import { wallClock } from "../clock.ts";
 
@@ -412,6 +414,22 @@ export class ProtectClient implements AsyncDisposable {
   static decodePacket(buf: Uint8Array): RawPacket {
 
     return decodePacket(buf);
+  }
+
+  /**
+   * Describe a livestream's fMP4 init segment: every track it carries, each with the format a decoder is configured from - the coded dimensions, profile and level
+   * of a video track, the sample rate and channel count of an audio track. A static, pure, connection-independent operation, and the one reader of init bytes the
+   * library has: every init a livestream subscription yields already carries this description, so a consumer calls it only for init bytes of its own, such as an
+   * init its own muxer produced, which then describe exactly as the controller's do. It never throws: a malformed init describes as the tracks that were readable,
+   * and a truncated one as the tracks it holds whole.
+   *
+   * @param data - The init segment bytes (a `Buffer` included; read without copying).
+   *
+   * @returns The stream's description.
+   */
+  static describeInitSegment(data: Uint8Array): LivestreamDescription {
+
+    return describeInitSegment(data);
   }
 
   /**

@@ -9,6 +9,7 @@ import { describe, test } from "node:test";
 import { expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
 import { makeBootstrap, makeCamera, makeChime, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
+import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
@@ -18,6 +19,7 @@ import type { RawPacket } from "../protocol/packet.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
+import { describeInitSegment } from "../protocol/init-segment.ts";
 
 const HOST = "10.0.0.1";
 const LOGIN_PATH = "/api/auth/login";
@@ -400,6 +402,12 @@ describe("ProtectClient.connect", () => {
       assert.equal(ProtectClient.classifyPacket(unmodeled), null);
 
       assert.throws(() => ProtectClient.decodePacket(Buffer.from([ 1, 2, 3 ])), ProtectProtocolError);
+    });
+
+    test("the static init reader describes init bytes exactly as the free reader does, without a connection", () => {
+
+      // The static is the one public door to the init reader, for init bytes a consumer holds of its own, so it must answer what the livestream session reads.
+      assert.deepEqual(ProtectClient.describeInitSegment(DOORBELL_INIT), describeInitSegment(DOORBELL_INIT));
     });
 
     test("connect rejects with no client left behind when the events WebSocket fails to open", async () => {

@@ -8,6 +8,7 @@ import { DEVICE_CATEGORIES, devicesInCategory } from "../lookup.ts";
 import { channels, subscribeToChannel } from "../../../index.ts";
 import { COMMON_OPTIONS } from "../shared.ts";
 import type { Output } from "../output/format.ts";
+import { formatTracks } from "../output/format.ts";
 import { parseArgs } from "node:util";
 import { subscribeDiagnostics } from "../diagnostics-feed.ts";
 
@@ -80,9 +81,9 @@ async function firstEvent(client: ProtectClient, signal: AbortSignal): Promise<s
   return null;
 }
 
-// Subscribe to a camera's livestream just long enough to confirm an init segment (with a codec) and at least one media segment arrive, then leave. Proves the livestream
-// pool, session negotiation, and frame decode all work against real hardware.
-async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ codec: string; init: boolean; media: boolean }> {
+// Subscribe to a camera's livestream just long enough to confirm an init segment (with a codec and the tracks it describes) and at least one media segment arrive, then
+// leave. Proves the livestream pool, session negotiation, init description, and frame decode all work against real hardware.
+async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ codec: string; init: boolean; media: boolean; tracks: string }> {
 
   const deadline = AbortSignal.any([ signal, AbortSignal.timeout(LIVESTREAM_WAIT_MS) ]);
 
@@ -91,6 +92,7 @@ async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ c
   let codec = "";
   let init = false;
   let media = false;
+  let tracks = "";
 
   for await (const segment of sub) {
 
@@ -98,6 +100,7 @@ async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ c
 
       init = true;
       codec = segment.codec;
+      tracks = formatTracks(segment.description);
     } else {
 
       media = true;
@@ -109,7 +112,7 @@ async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ c
     }
   }
 
-  return { codec, init, media };
+  return { codec, init, media, tracks };
 }
 
 // Render the report as an aligned list of checks plus a summary, returning whether no check failed (for the exit code; warn and skip results do not fail it).
@@ -279,11 +282,12 @@ const doctorHandler: CommandHandler = async (ctx) => {
         return { detail: "no online camera to stream", status: "skip" };
       }
 
-      const { codec, init, media } = await probeLivestream(onlineCamera, ctx.signal);
+      const { codec, init, media, tracks } = await probeLivestream(onlineCamera, ctx.signal);
 
       return {
 
-        detail: onlineCamera.name + ": init=" + init.toString() + ", media=" + media.toString() + (codec !== "" ? (", codec " + codec) : ""),
+        detail: onlineCamera.name + ": init=" + init.toString() + ", media=" + media.toString() + (codec !== "" ? (", codec " + codec) : "") +
+          (tracks !== "" ? (" (" + tracks + ")") : ""),
         status: (init && media) ? "pass" : "fail"
       };
     });

@@ -2,6 +2,7 @@
  *
  * diagnostics.ts: Named node:diagnostics_channel publishers for the UniFi Protect library.
  */
+import type { LivestreamInit } from "./protocol/init-segment.ts";
 import type { LivestreamSubscriptionStats } from "./client/livestream-pool.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 
@@ -109,8 +110,8 @@ export const channels = {
    */
   httpThrottleExited: payloadless("unifi-protect:http:throttle:exited"),
 
-  /** A pooled livestream reconnected and the controller negotiated a different codec than the one in flight - one of the terminal errors a recovering stream
-   * can raise.
+  /** A pooled livestream reconnected and the controller delivered a different stream than the one in flight, its codec label or its description changed - one of
+   * the terminal errors a recovering stream can raise.
    */
   livestreamCodecChanged: typed<LivestreamCodecChangedPayload>("unifi-protect:livestream:codec:changed"),
 
@@ -337,17 +338,17 @@ export interface HttpThrottleEnteredPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamCodecChanged}. `from` / `to` are the RFC 6381 codec descriptors of the prior and reconnected init segments. The
- * consumer's iterator also receives a {@link ProtectCodecChangeError}; this is its observable companion.
+ * Payload published on {@link channels.livestreamCodecChanged}. `from` / `to` are the prior and the reconnected inits themselves, each with its codec label, its bytes
+ * and its description, the same pair the {@link ProtectCodecChangeError} the consumer's iterator receives carries; this is its observable companion.
  *
  * @category Diagnostics
  */
 export interface LivestreamCodecChangedPayload {
 
   cameraId: string;
-  from: string;
+  from: LivestreamInit;
   key: string;
-  to: string;
+  to: LivestreamInit;
 }
 
 /**

@@ -36,10 +36,12 @@ import { PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_AWAIT_MAX_MS, PR
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
 import { ProtectCodecChangeError, ProtectLivestreamUnavailableError, ProtectStallError } from "../errors.ts";
 import type { Clock } from "../clock.ts";
+import type { LivestreamInit } from "../protocol/init-segment.ts";
 import type { ProtectError } from "../errors.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWebSocket } from "../transport/ws.ts";
 import { channels } from "../diagnostics.ts";
+import { isDeepStrictEqual } from "node:util";
 import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
 import { wallClock } from "../clock.ts";
@@ -232,7 +234,7 @@ export interface LivestreamPoolOptions {
 // it exposes - state, the cached init, the establishment latch, and the in-flight re-decision - and nothing more.
 interface SubscriptionHost {
 
-  get initSegment(): { codec: string; data: Buffer } | null;
+  get initSegment(): LivestreamInit | null;
   get state(): LivestreamSubscriptionState;
   reassess(): void;
   whenEstablished(): Promise<boolean>;
@@ -257,9 +259,9 @@ const detachedHost: SubscriptionHost = {
  * subscription has its **own unbounded queue**: the pool pushes every segment to every subscriber, so one slow consumer cannot stall a fast one, and nothing is dropped.
  *
  * The stream is **resilient by default**: a recoverable stall or reconnect is invisible to the iterator - it pauses while the underlying session is re-established and
- * resumes uninterrupted when segments flow again (a same-codec reconnect suppresses the redundant init). The iterator terminates only on these conditions: disposal (a
- * clean `done`), a codec change across a reconnect (it throws {@link ProtectCodecChangeError}), and the recovery policy giving up (it throws {@link
- * ProtectLivestreamUnavailableError}). A recoverable stall is *not* one of them.
+ * resumes uninterrupted when segments flow again (a reconnect to the same stream, whose init carries the same codec label and description, suppresses the redundant
+ * init). The iterator terminates only on these conditions: disposal (a clean `done`), a reconnect whose init differs in its codec label or its description (it throws
+ * {@link ProtectCodecChangeError}), and the recovery policy giving up (it throws {@link ProtectLivestreamUnavailableError}). A recoverable stall is *not* one of them.
  *
  * @category Client
  */
@@ -322,11 +324,11 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   }
 
   /**
-   * The cached initialization segment of the shared stream once it has arrived, otherwise `null`. The first init sets it; a same-codec reconnect keeps it (the redundant
-   * re-init is suppressed and the cache is retained); any later init within the same session refreshes it. A codec change across a reconnect is terminal and never
-   * replaces it.
+   * The cached initialization segment of the shared stream once it has arrived, otherwise `null`: its codec label, its bytes and its description. The first init sets
+   * it; a reconnect to the same stream, one whose init carries the same label and description, keeps it (the redundant re-init is suppressed and the cache is
+   * retained); any later init within the same session refreshes it. A reconnect whose label or description differs is terminal and never replaces it.
    */
-  get initSegment(): { codec: string; data: Buffer } | null {
+  get initSegment(): LivestreamInit | null {
 
     return this.#host.initSegment;
   }
@@ -565,6 +567,22 @@ interface SessionInstallState {
   pendingDiscontinuity: boolean;
 }
 
+// Whether a reconnect's init carries the same stream as the cached one. The codec label and the description come from different sources, and a move in the label or
+// in the description makes the stream one a fixed-format consumer cannot follow: the label names the codec family, profile, level and audio object type, and the
+// description the sample rate, channels and dimensions the label says nothing about. The description compares by value, because each reconnect reads its own; the
+// bytes never compare, because every init carries creation timestamps that differ on each reconnect.
+function isSameStream(prior: LivestreamInit, next: LivestreamInit): boolean {
+
+  return (prior.codec === next.codec) && isDeepStrictEqual(prior.description, next.description);
+}
+
+// Project an init segment onto the one init type: the cache, the late-joiner replay and the prior and reconnected inits of a codec change hold its fields and never the
+// segment itself.
+function initOf(segment: Extract<Segment, { type: "init" }>): LivestreamInit {
+
+  return { codec: segment.codec, data: segment.data, description: segment.description };
+}
+
 // The pool's per-stream record: the (replaceable) underlying session, the subscribers fanned out from it, the cached init segment for late-joiner replay, and - the heart
 // of the resilient pool - the recovery loop. It is the one object holding both the session and the subscriber set, which is why recovery (a per-shared-stream decision)
 // lives here. It implements SubscriptionHost so each subscription that joined the stream reads its lifecycle state, cached init, establishment latch, and in-flight
@@ -597,7 +615,7 @@ class ManagedSession implements SubscriptionHost {
   // measuring two different liveness notions - any byte vs. a picture. `#watchdogController` is the media watchdog's lifecycle handle: non-null only while the watchdog
   // is armed (between the first media of an install and the next reconnect / teardown), aborting it ends the interval loop.
   #establishedSettled = false;
-  #initSegmentCache: { codec: string; data: Buffer } | null = null;
+  #initSegmentCache: LivestreamInit | null = null;
   #lastError: ProtectError | null = null;
   #lastMediaAt = 0;
   #lastSegmentAt = 0;
@@ -635,7 +653,7 @@ class ManagedSession implements SubscriptionHost {
   }
 
   /** The cached init segment of the shared stream, for the subscription's read-through getter and late-joiner replay. */
-  get initSegment(): { codec: string; data: Buffer } | null {
+  get initSegment(): LivestreamInit | null {
 
     return this.#initSegmentCache;
   }
@@ -656,7 +674,7 @@ class ManagedSession implements SubscriptionHost {
 
     if(this.#initSegmentCache !== null) {
 
-      subscription.push({ codec: this.#initSegmentCache.codec, data: this.#initSegmentCache.data, type: "init" });
+      subscription.push({ ...this.#initSegmentCache, type: "init" });
     }
 
     if(first) {
@@ -972,7 +990,7 @@ class ManagedSession implements SubscriptionHost {
 
     if(segment.type === "init") {
 
-      this.#initSegmentCache = { codec: segment.codec, data: segment.data };
+      this.#initSegmentCache = initOf(segment);
     }
 
     this.#fanOut(segment);
@@ -980,29 +998,30 @@ class ManagedSession implements SubscriptionHost {
 
   // The first segment of a freshly-installed session - normally the init - is the codec-gate point, NOT the recovery point. It is settle-free: the episode stays in
   // flight (its recovery window still bounds time-to-first-MEDIA) so that a controller that inits then never produces media elapses the window and reconnects rather than
-  // being presumed live. It applies the codec gate - the very first establishment caches and delivers the init; a same-codec reconnect suppresses the byte-equivalent
-  // re-emit (HKSV tolerates no second init; an FFmpeg pipe cannot re-init) and resumes uninterrupted; a changed codec is the one terminal a recovery raises, torn down
-  // here via the controller's abort (which settles the window `aborted`, booking no spurious attempt). It does NOT need the settle-race guard the recovery-media path
-  // keeps: the init can only reach us on the current session's still-attached rail, and an elapsed window would already have disposed that rail before the init could
-  // arrive.
+  // being presumed live. It applies the codec gate, which compares the codec label and the description - the very first establishment caches and delivers the init; a
+  // same-stream reconnect, whose label and description match the cached init's, suppresses the redundant re-emit (HKSV tolerates no second init; an FFmpeg pipe cannot
+  // re-init) and resumes uninterrupted; a changed label or description is the one terminal a recovery raises, torn down here via the controller's abort (which settles
+  // the window `aborted`, booking no spurious attempt). It does NOT need the settle-race guard the recovery-media path keeps: the init can only reach us on the current
+  // session's still-attached rail, and an elapsed window would already have disposed that rail before the init could arrive.
   #handleFirstSegment(segment: Segment): void {
 
     if(segment.type === "init") {
 
       const prior = this.#initSegmentCache;
+      const next = initOf(segment);
 
-      if((prior !== null) && (prior.codec !== segment.codec)) {
+      if((prior !== null) && !isSameStream(prior, next)) {
 
-        this.#failCodecChange(prior.codec, segment.codec);
+        this.#failCodecChange(prior, next);
 
         return;
       }
 
-      // The very first init (no prior cache) is delivered; a same-codec reconnect keeps the cached init and is suppressed (not re-emitted). Either way
+      // The very first init (no prior cache) is delivered; a same-stream reconnect keeps the cached init and is suppressed (not re-emitted). Either way
       // `awaitingFirstMedia` stays armed, so the following media is what settles the episode.
       if(prior === null) {
 
-        this.#initSegmentCache = { codec: segment.codec, data: segment.data };
+        this.#initSegmentCache = next;
         this.#fanOut(segment);
       }
 
@@ -1125,9 +1144,10 @@ class ManagedSession implements SubscriptionHost {
     }
   }
 
-  // A reconnect negotiated a different codec than the one in flight. No fixed-codec consumer can adapt mid-stream, so this is terminal: publish the codec diagnostic and
-  // tear the stream down with a ProtectCodecChangeError every subscriber throws.
-  #failCodecChange(from: string, to: string): void {
+  // A reconnect delivered a different stream than the one in flight: its codec label or its description (a sample rate, channel count or dimensions that moved under
+  // the same label) differs. No fixed-format consumer can adapt mid-stream, so this is terminal: publish the codec diagnostic and tear the stream down with a
+  // ProtectCodecChangeError every subscriber throws, the diagnostic and the error each carrying the prior and the reconnected init.
+  #failCodecChange(from: LivestreamInit, to: LivestreamInit): void {
 
     if(channels.livestreamCodecChanged.hasSubscribers) {
 
@@ -1205,7 +1225,7 @@ class ManagedSession implements SubscriptionHost {
 
     // The first media segment after a reconnect carries the discontinuity marker, exactly once. The post-reconnect session restarted its timeline, so a consumer that
     // maintains a decode timeline must resynchronize at this splice point. We stamp a copy (never mutating the emitted segment) and clear the latch so only this segment
-    // is marked. An init is never marked (a same-codec reconnect suppresses the re-init; a codec change is terminal), so gating on the media arm is correct by shape.
+    // is marked. An init is never marked (a same-stream reconnect suppresses the re-init; a changed stream is terminal), so gating on the media arm is correct by shape.
     let outgoing = segment;
 
     if(this.#install.pendingDiscontinuity && (segment.type === "media")) {

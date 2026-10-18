@@ -3,6 +3,7 @@
  * errors.ts: The typed error hierarchy for the UniFi Protect library.
  */
 import type { InspectOptions } from "node:util";
+import type { LivestreamInit } from "./protocol/init-segment.ts";
 
 /**
  * The error model in one sentence: every failure the library raises is a subclass of {@link ProtectError}, and the *first* level of the hierarchy answers the only
@@ -289,23 +290,23 @@ export class ProtectBootstrapError extends FatalError {
 export type ProtectBootstrapStage = "fetch" | "login" | "parse" | "subscribe";
 
 /**
- * A pooled livestream reconnected and the controller negotiated a different codec than the one in flight (H.264 to HEVC, or a channel reconfigured mid-stream). Fatal
- * because no fixed-codec consumer can adapt in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as a
- * terminal a recovering stream can raise - alongside {@link ProtectLivestreamUnavailableError} when the recovery policy gives up instead - after which the consumer
- * re-subscribes for a fresh stream against the new codec. The `from` / `to` descriptors are the RFC 6381 codec strings the two init segments carried, so a consumer
- * can log precisely what changed.
+ * A pooled livestream reconnected and the controller delivered a different stream than the one in flight: its codec label or its description differs (H.264 to HEVC,
+ * a channel reconfigured mid-stream, or a sample rate, channel count or dimensions that moved under the same label). Fatal because no fixed-format consumer can adapt
+ * in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as a terminal a recovering stream can raise -
+ * alongside {@link ProtectLivestreamUnavailableError} when the recovery policy gives up instead - after which the consumer re-subscribes for a fresh stream against
+ * the new format. `from` and `to` are the inits themselves, each with its codec label, its bytes and its description, so a consumer can log precisely what changed.
  *
  * @category Errors
  */
 export class ProtectCodecChangeError extends FatalError {
 
-  /** The RFC 6381 codec descriptor the stream began with, before the reconnect. */
-  readonly from: string;
+  /** The init the stream began with, before the reconnect: its codec label, bytes and description. */
+  readonly from: LivestreamInit;
 
-  /** The RFC 6381 codec descriptor the reconnected stream negotiated. */
-  readonly to: string;
+  /** The init the reconnected stream delivered: its codec label, bytes and description. */
+  readonly to: LivestreamInit;
 
-  constructor(message: string, options: { cause?: unknown; from: string; to: string }) {
+  constructor(message: string, options: { cause?: unknown; from: LivestreamInit; to: LivestreamInit }) {
 
     super(message, { cause: options.cause });
 

@@ -3,6 +3,7 @@
  * livestream-session.test.ts: Tests for LivestreamSession - URL negotiation, the fMP4 frame decode (init/media/reassembly/timestamps), the FSM, the silence watchdog,
  * and teardown. Driven through an injected fake WebSocket, a fake resolver, and a fake Clock, so the session is exercised deterministically without a live controller.
  */
+import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import { FRAME_END_SEGMENT, FRAME_MOOF, buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
 import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
@@ -156,22 +157,53 @@ describe("LivestreamSession", () => {
       assert.equal(session.state, "handshaking");
     });
 
-    test("the first init segment advances to live, caches the init segment, and emits it with its codec", async () => {
+    test("the first init segment advances to live, caches the init segment, and emits it with its codec and description", async () => {
 
       const { session, ws } = await openSession();
       const segments = collectSegments(session);
 
-      ws.emitMessage(buildInitSegment({ codec: "hev1.1.6.L150,mp4a.40.2", data: Buffer.from("INITDATA") }));
+      ws.emitMessage(buildInitSegment({ codec: "hev1.1.6.L180.90,mp4a.40.2", data: DOORBELL_INIT }));
 
       assert.equal(session.state, "live");
       assert.equal(segments.length, 1);
 
       const [segment] = segments;
+      const description = {
+
+        tracks: [
+
+          { codec: "h265", height: 4096, id: 1, kind: "video", level: 180, profile: 1, width: 3024 },
+          { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
+        ]
+      };
 
       assert.ok(segment?.type === "init");
-      assert.equal(segment.codec, "hev1.1.6.L150,mp4a.40.2");
-      assert.deepEqual(segment.data, Buffer.from("INITDATA"));
-      assert.deepEqual(session.initSegment, { codec: "hev1.1.6.L150,mp4a.40.2", data: Buffer.from("INITDATA") });
+      assert.equal(segment.codec, "hev1.1.6.L180.90,mp4a.40.2");
+      assert.deepEqual(segment.data, DOORBELL_INIT);
+      assert.deepEqual(segment.description, description);
+      assert.deepEqual(session.initSegment, { codec: "hev1.1.6.L180.90,mp4a.40.2", data: DOORBELL_INIT, description });
+
+      // The description is read once per init frame: the emitted segment and the cache carry the same object.
+      assert.equal(segment.description, session.initSegment?.description);
+    });
+
+    test("an init with no codec-information frame before it carries an empty codec label and its description", async () => {
+
+      const { session, ws } = await openSession();
+      const segments = collectSegments(session);
+
+      ws.emitMessage(buildInitSegment({ data: AMCREST_INIT }));
+
+      const [segment] = segments;
+
+      assert.ok(segment?.type === "init");
+      assert.equal(segment.codec, "");
+      assert.deepEqual(segment.description.tracks, [
+
+        { codec: "h264", height: 1944, id: 1, kind: "video", level: 51, profile: 77, width: 2592 },
+        { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 8000 }
+      ]);
+      assert.equal(session.initSegment?.codec, "");
     });
 
     test("a media segment is assembled from moof+mdat, with moof/mdat as zero-copy views and no timestamps when not opted in", async () => {

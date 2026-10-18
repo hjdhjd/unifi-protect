@@ -32,9 +32,11 @@ import { PROTECT_LIVESTREAM_CHUNK_SIZE, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PR
 import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectStallError, assertNever, isExpectedWsDisconnect } from "../errors.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
+import type { LivestreamInit } from "../protocol/init-segment.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWebSocket } from "./ws.ts";
 import type { StreamOptions } from "../event-bus.ts";
+import { describeInitSegment } from "../protocol/init-segment.ts";
 import { noopLog } from "../logging.ts";
 import { toBuffer } from "./ws.ts";
 import { wallClock } from "../clock.ts";
@@ -139,7 +141,8 @@ export interface ResolvedLivestreamSpec {
 /**
  * One segment of a livestream, in CMAF/DASH vocabulary: either the stream's initialization segment or a media segment. Each arm is a complete, decodable unit.
  *
- * - `init` carries the FTYP+MOOV initialization segment and its RFC 6381 codec descriptor - everything a decoder needs before the media flows.
+ * - `init` carries the FTYP+MOOV initialization segment as one {@link LivestreamInit}: the controller's RFC 6381 codec label, the init bytes, and the stream's
+ *   description read from them - everything a decoder needs before the media flows.
  * - `media` carries one complete fMP4 fragment. `moof` and `mdat` are **zero-copy `subarray` views** into `data` (no byte copy), for a consumer that wants the boxes
  *   at the lowest usable level; carrying a one-buffer-many-views model onto the single yielded item rather than re-emitting the same bytes on separate items.
  *   `timestamps` is present only when the consumer opted in via `LivestreamSpec`'s `timestamps` field; it is one decode timestamp per frame (faithful to the wire's
@@ -154,7 +157,7 @@ export interface ResolvedLivestreamSpec {
  * @category Transport
  */
 export type Segment =
-  | { type: "init"; data: Buffer; codec: string } |
+  | ({ type: "init" } & LivestreamInit) |
   { type: "media"; data: Buffer; moof: Buffer; mdat: Buffer; timestamps?: number[]; discontinuity?: true };
 
 /**
@@ -322,7 +325,7 @@ export class LivestreamSession implements AsyncDisposable {
 
   // The cached init segment (a detached copy, since it is held for the session lifetime and replayed to late joiners) and the codec string captured from the controller.
   #codec = "";
-  #initSegment: { codec: string; data: Buffer } | null = null;
+  #initSegment: LivestreamInit | null = null;
 
   // The segment under construction, the partial-frame tail carried between WebSocket messages, and the decode timestamps awaiting the next media segment.
   #current: SegmentAccumulator = { audio: [], mdat: [], moof: [], video: [] };
@@ -359,7 +362,7 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   /** The init segment cached once the session reaches `live`, used by the pool to replay to late joiners. Null before the first init segment arrives. */
-  get initSegment(): { codec: string; data: Buffer } | null {
+  get initSegment(): LivestreamInit | null {
 
     return this.#initSegment;
   }
@@ -680,19 +683,22 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   // Cache and emit the initialization segment. We take a detached copy because the cache is held for the session's lifetime and replayed to late joiners; holding the
-  // zero-copy view would keep the whole originating message buffer alive. The first init segment is what advances the session to `live`.
+  // zero-copy view would keep the whole originating message buffer alive. The description is read here, once per init frame, so the cache and every segment built
+  // from it share one description and nothing on the media path ever parses. The first init segment is what advances the session to `live`.
   #emitInitSegment(raw: Buffer): void {
 
     const data = Buffer.from(raw);
+    const description = describeInitSegment(data);
+    const init: LivestreamInit = { codec: this.#codec, data, description };
 
-    this.#initSegment = { codec: this.#codec, data };
+    this.#initSegment = init;
 
     if(this.#state === "handshaking") {
 
       this.#state = "live";
     }
 
-    this.#emitSegment({ codec: this.#codec, data, type: "init" });
+    this.#emitSegment({ ...init, type: "init" });
   }
 
   // Assemble the accumulated boxes into one media segment and emit it. We sum the box lengths, allocate once, and copy each chunk into place; `moof` and `mdat` are then
