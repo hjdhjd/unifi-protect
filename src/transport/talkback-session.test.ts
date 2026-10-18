@@ -1,10 +1,11 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * talkback-session.test.ts: Tests for TalkbackSession - atomic connect, the AsyncIterable send drain (in-order, exhaustion, mid-drain socket failure, backpressure
- * ceiling, ffmpeg-style Readable), the FSM, teardown, and the diagnostics channels. Driven through an injected fake WebSocket and a fake resolver, so the write-only
- * channel is exercised deterministically without a live controller.
+ * talkback-session.test.ts: Tests for TalkbackSession - atomic connect, the AsyncIterable send drain (in-order, exhaustion, mid-drain socket failure, a source's own
+ * failure, backpressure ceiling, ffmpeg-style Readable, and which exits wait on the source's cleanup), the FSM, teardown, and the diagnostics channels. Driven
+ * through an injected fake WebSocket and a fake resolver, so the write-only channel is exercised deterministically without a live controller.
  */
 import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectRequestError } from "../errors.ts";
+import { assertNoUnhandledRejections, silentLog } from "../testing.helpers.ts";
 import { describe, test } from "node:test";
 import { FakeWritableWebSocket } from "./talkback-session.helpers.ts";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
@@ -14,7 +15,6 @@ import assert from "node:assert/strict";
 import { channels } from "../diagnostics.ts";
 import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
-import { silentLog } from "../testing.helpers.ts";
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
@@ -37,36 +37,46 @@ async function openSession(options: { cameraId?: string; resolveUrl?: (params: U
   return { session, ws };
 }
 
-// An async iterable that yields `first`, then parks forever on its second pull - so a drain in progress is left waiting on the source while a test fires a socket fault
-// or abort. Its `return()` resolves immediately, so the drain's cleanup does not hang once the fault/abort race ends it.
-function parkingSource(first: Uint8Array): AsyncIterable<Uint8Array> {
+// An async generator that yields `first`, then parks forever on its second pull - so a drain in progress is left waiting on the source while a test fires a socket
+// fault or abort. Its `return()` queues behind the parked pull exactly as a Readable's does and so never settles, which is the behavior the drain must tolerate: a
+// drain that waited on it would never reject.
+async function *parkedGenerator(first: Uint8Array): AsyncGenerator<Uint8Array> {
 
-  return {
+  yield first;
 
-    [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+  await new Promise<never>(() => undefined);
+}
 
-      let delivered = false;
+/* A hand-written source that yields `chunks` and then answers done, and whose `return()` finishes its cleanup one turn of the event loop after it is called, which
+ * `cleaned()` reports. A generator cannot show whether a drain waited on its cleanup, because its `finally` runs before its final `next()` resolves, so the cleanup a
+ * drain must await has to be one that settles after the call that requested it.
+ */
+function lateCleanupSource(chunks: readonly Uint8Array[]): { cleaned: () => boolean; source: AsyncIterable<Uint8Array> } {
 
-      return {
+  let cleaned = false;
+  let index = 0;
 
-        next(): Promise<IteratorResult<Uint8Array>> {
+  const iterator: AsyncIterator<Uint8Array> = {
 
-          if(!delivered) {
+    next: async (): Promise<IteratorResult<Uint8Array>> => {
 
-            delivered = true;
+      const value = chunks[index];
 
-            return Promise.resolve({ done: false, value: first });
-          }
+      index++;
 
-          return new Promise<IteratorResult<Uint8Array>>(() => undefined);
-        },
-        return(): Promise<IteratorResult<Uint8Array>> {
+      return (value === undefined) ? { done: true, value: undefined } : { done: false, value };
+    },
+    return: async (): Promise<IteratorResult<Uint8Array>> => {
 
-          return Promise.resolve({ done: true, value: undefined });
-        }
-      };
+      await settle();
+
+      cleaned = true;
+
+      return { done: true, value: undefined };
     }
   };
+
+  return { cleaned: (): boolean => cleaned, source: { [Symbol.asyncIterator]: (): AsyncIterator<Uint8Array> => iterator } };
 }
 
 // Render the bytes a fake socket received as strings, for order-preserving assertions.
@@ -207,10 +217,35 @@ describe("TalkbackSession", () => {
       assert.deepEqual(sentText(ws), [ "x", "y" ]);
     });
 
-    test("rejects with a typed ProtectError when the socket errors mid-drain", async () => {
+    test("a drain that ends cleanly has finished the source's cleanup by the time it resolves", async () => {
+
+      const { session } = await openSession();
+      const { cleaned, source } = lateCleanupSource([]);
+
+      await session.send(source);
+
+      assert.equal(cleaned(), true, "the clean end waits on the source's return()");
+    });
+
+    test("a source that rejects mid-drain rejects the send with its own error, unwrapped", async () => {
 
       const { session, ws } = await openSession();
-      const sending = session.send(parkingSource(Buffer.from("a")));
+      const failure = new Error("the audio source failed");
+      const source = async function *(): AsyncGenerator<Uint8Array> {
+
+        yield Buffer.from("a");
+
+        throw failure;
+      };
+
+      await assert.rejects(session.send(source()), (error: unknown) => error === failure);
+      assert.deepEqual(sentText(ws), ["a"]);
+    });
+
+    test("rejects with a typed ProtectError when the socket errors mid-drain", { timeout: 2000 }, async () => {
+
+      const { session, ws } = await openSession();
+      const sending = session.send(parkedGenerator(Buffer.from("a")));
 
       // Let the drain send the first chunk and park on the source's second pull, then fault the socket: the send must unpark and reject.
       await settle();
@@ -222,10 +257,10 @@ describe("TalkbackSession", () => {
       assert.equal(session.state, "closed");
     });
 
-    test("rejects when the socket closes unexpectedly mid-drain", async () => {
+    test("rejects when the socket closes unexpectedly mid-drain", { timeout: 2000 }, async () => {
 
       const { session, ws } = await openSession();
-      const sending = session.send(parkingSource(Buffer.from("a")));
+      const sending = session.send(parkedGenerator(Buffer.from("a")));
 
       await settle();
       ws.emitClose(1006, "dropped");
@@ -234,26 +269,48 @@ describe("TalkbackSession", () => {
       assert.equal(session.state, "closed");
     });
 
-    test("rejects when the socket's send buffer exceeds the safety ceiling", async () => {
+    test("a source whose return() rejects never replaces the typed fault", { timeout: 2000 }, async () => {
 
       const { session, ws } = await openSession();
+      const source: AsyncIterable<Uint8Array> = { [Symbol.asyncIterator]: (): AsyncIterator<Uint8Array> => ({
+
+        next: async (): Promise<IteratorResult<Uint8Array>> => new Promise<never>(() => undefined),
+        return: async (): Promise<IteratorResult<Uint8Array>> => {
+
+          throw new Error("the audio source's cleanup failed");
+        }
+      }) };
+      const sending = session.send(source);
+
+      // The drain parks on the first pull, the socket faults, and the cleanup the drain then requests rejects: the typed fault is still what the send rejects with,
+      // and the cleanup's own rejection is handled rather than left to surface as an unhandled one.
+      await settle();
+
+      await assertNoUnhandledRejections(async () => {
+
+        ws.emitError(new Error("socket boom"));
+
+        await assert.rejects(sending, ProtectNetworkError);
+      });
+    });
+
+    test("rejects when the socket's send buffer exceeds the safety ceiling, with the source's cleanup finished", async () => {
+
+      const { session, ws } = await openSession();
+      const { cleaned, source } = lateCleanupSource([Buffer.from("a")]);
 
       // A socket that cannot drain reports a buffered amount past the ceiling; the very next send must refuse rather than buffer unboundedly.
       ws.bufferedAmount = PROTECT_TALKBACK_MAX_BUFFERED_BYTES + 1;
 
-      const source = async function *(): AsyncGenerator<Uint8Array> {
-
-        yield Buffer.from("a");
-      };
-
-      await assert.rejects(session.send(source()), ProtectNetworkError);
+      await assert.rejects(session.send(source), ProtectNetworkError);
+      assert.equal(cleaned(), true, "the ceiling's rejection waits on the source's return()");
     });
 
-    test("rejects when the caller's signal aborts the drain", async () => {
+    test("rejects when the caller's signal aborts the drain", { timeout: 2000 }, async () => {
 
       const { session } = await openSession();
       const controller = new AbortController();
-      const sending = session.send(parkingSource(Buffer.from("a")), { signal: controller.signal });
+      const sending = session.send(parkedGenerator(Buffer.from("a")), { signal: controller.signal });
 
       await settle();
       controller.abort();
@@ -397,7 +454,7 @@ describe("TalkbackSession", () => {
       await assert.rejects(connecting, ProtectAbortedError);
     });
 
-    test("aborting the session signal after it is live tears the session down and rejects an in-flight send", async () => {
+    test("aborting the session signal after it is live tears the session down and rejects an in-flight send", { timeout: 2000 }, async () => {
 
       const controller = new AbortController();
       const { session, ws } = await openSession({ signal: controller.signal });
@@ -408,7 +465,7 @@ describe("TalkbackSession", () => {
       // abort listener records the typed caller abort and runs #shutdown, which closes the socket and rejects the in-flight send with ProtectAbortedError - the
       // documented "once live, if it aborts, the session tears down and an in-flight send rejects" contract, the live-session counterpart to the
       // already-aborted-before-connect teardown above.
-      const sending = session.send(parkingSource(Buffer.from("a")));
+      const sending = session.send(parkedGenerator(Buffer.from("a")));
 
       await settle();
       controller.abort();

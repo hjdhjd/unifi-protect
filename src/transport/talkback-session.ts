@@ -208,8 +208,9 @@ export class TalkbackSession implements AsyncDisposable {
    * Drain a consumer-supplied audio source to the camera speaker. The single write entry: it sends each `Uint8Array` and pulls the next as fast as the source yields it,
    * so a real-time, producer-paced source streams at its own rate with no buffer growth. Resolves when the source is exhausted; rejects with a typed
    * {@link ProtectError} if the socket errors or closes mid-drain, if the caller's `signal` aborts, or if the socket's send buffer crosses the
-   * `PROTECT_TALKBACK_MAX_BUFFERED_BYTES` safety ceiling (a non-real-time source the wire cannot keep up with). The bytes are opaque - whatever audio format the camera
-   * expects (read `camera.config.talkbackSettings`); the library neither inspects nor transcodes them.
+   * `PROTECT_TALKBACK_MAX_BUFFERED_BYTES` safety ceiling (a non-real-time source the wire cannot keep up with). On a socket fault, an abort, or the source's own error,
+   * the source's cleanup (its `return()`) is requested and not awaited, so the rejection arrives at once and a generator's `finally` runs once its parked pull settles.
+   * The bytes are opaque - whatever audio format the camera expects (read `camera.config.talkbackSettings`); the library neither inspects nor transcodes them.
    *
    * Await one drain before starting the next. Nothing serializes concurrent calls, so overlapping drains interleave their audio on the shared socket.
    *
@@ -254,6 +255,9 @@ export class TalkbackSession implements AsyncDisposable {
 
     opts.signal?.addEventListener("abort", onAbort, { once: true });
 
+    // Whether the cleanup below waits on the source. Only the catch around the race clears it, the exit a socket fault, an abort and the source's own rejection share.
+    let awaitReturn = true;
+
     try {
 
       for(;;) {
@@ -271,6 +275,7 @@ export class TalkbackSession implements AsyncDisposable {
           result = await Promise.race([ next, this.#fault.promise, abort.promise ]);
         } catch(error) {
 
+          awaitReturn = false;
           void next.catch(() => undefined);
 
           throw error;
@@ -294,9 +299,24 @@ export class TalkbackSession implements AsyncDisposable {
 
       opts.signal?.removeEventListener("abort", onAbort);
 
-      // Signal the source we are done pulling, so a generator or pipe behind it can clean up. A source without a `return` (a plain async iterator) simply has none to
-      // call.
-      await iterator.return?.();
+      /* Signal the source we are done pulling, so a generator or pipe behind it can clean up; a source without a `return` (a plain async iterator) has none to call.
+       * A drain that ended cleanly or at the buffer ceiling waits for that cleanup. A drain that ended in the catch above only requests it: after a socket fault or an
+       * abort the pull is still parked, and a generator's or a Readable's `return()` queues behind a parked pull, so waiting would hold the typed rejection until the
+       * source next moves, while a source that rejected has already finished and leaves nothing to wait for. The request's own rejection is swallowed, so a cleanup
+       * that fails can never replace the error the drain throws.
+       */
+      const cleanup = iterator.return?.();
+
+      // TypeScript's flow analysis does not carry an assignment made inside the catch above into this finally, so the compiler reads the flag as always true where the
+      // catch clears it, and the lint rule follows the compiler.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if(awaitReturn) {
+
+        await cleanup;
+      } else {
+
+        void cleanup?.catch(() => undefined);
+      }
     }
   }
 
