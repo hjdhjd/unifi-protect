@@ -290,6 +290,19 @@ describe("loadCredentials interactive prompt", () => {
     });
   });
 
+  test("a typed password keeps its surrounding spaces while the fields typed in the open are trimmed", async () => {
+
+    await withDirs(async (cwd, home) => {
+
+      const { interactive } = scriptedPrompt([ "  10.0.0.5  ", "  admin  ", "  hunter2  ", "y" ]);
+      const prompted = await loadCredentials({ cwd, home, interactive });
+
+      // The password is saved as typed, the same value the file path reads back unchanged, while the address and the username lose the spaces around them.
+      assert.deepEqual(prompted, { host: "10.0.0.5", password: "  hunter2  ", username: "admin" });
+      assert.deepEqual(await loadCredentials({ cwd, home }), prompted);
+    });
+  });
+
   test("an empty answer is asked for again", async () => {
 
     await withDirs(async (cwd, home) => {

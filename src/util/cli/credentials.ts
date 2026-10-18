@@ -162,15 +162,21 @@ interface FieldPrompt {
 }
 
 // Ask one field until the answer is usable, recovering in place rather than failing the run. Recovery is prompt behavior, not a second validation pipeline: a field
-// with a normalizer (the controller address) goes through the very same function the file path uses. The prompt adds only what typing needs - every answer is trimmed,
-// an empty one is asked again, and a retry is worded for someone typing rather than editing a file.
+// with a normalizer (the controller address) goes through the very same function the file path uses, and a password takes the file path's rule as well - kept exactly
+// as written and rejected only when empty. The prompt adds only what typing needs - the fields a person types in the open are trimmed, an empty answer is asked again,
+// and a retry is worded for someone typing rather than editing a file.
 async function askField(ask: AskQuestion, write: WriteLine, field: FieldPrompt): Promise<string> {
+
+  const masked = field.masked ?? false;
 
   for(;;) {
 
     // Sequential by nature - the next question is only worth asking once this one has been answered, so there is nothing here to run concurrently.
     // eslint-disable-next-line no-await-in-loop
-    const answer = (await ask(field.prompt, field.masked ?? false)).trim();
+    const typed = await ask(field.prompt, masked);
+
+    // A password may begin or end with a space, so trimming a masked answer would keep a different password from the one typed.
+    const answer = masked ? typed : typed.trim();
 
     if(answer.length === 0) {
 
@@ -335,8 +341,9 @@ async function promptForCredentials(interactive: InteractivePrompt, home: string
  * present-but-broken file is a mistake the operator wants told about, not masked).
  *
  * When no file is found and the caller supplied `interactive`, the details are asked for instead: the controller address goes through the same normalization the file
- * path uses, every answer is trimmed and must be non-empty, and the answers are offered a home in `~/.ufp.json` so the next run finds a file. A broken file is never a
- * prompt - only an absent one is, because a present file that is wrong is something to fix rather than to type around.
+ * path uses, the password is kept exactly as typed and rejected only when empty, as the file path keeps it, the fields typed in the open are trimmed and must be
+ * non-empty, and the answers are offered a home in `~/.ufp.json` so the next run finds a file. A broken file is never a prompt - only an absent one is, because a
+ * present file that is wrong is something to fix rather than to type around.
  *
  * @param opts - Optional working-directory and home-directory overrides (defaults to the real ones), and the interactive prompt to fall back on.
  *
