@@ -18,14 +18,18 @@
  * Numbers are otherwise left alone, with one exception. A latitude or a longitude carries a site's or a person's position, identity the string rules can never reach, so
  * a number arriving under a coordinate key becomes zero - the field stays numeric, and it points nowhere a real installation could be.
  *
- * Replacements are chosen to stay in their original shape: MACs stay MAC-shaped and locally administered, addresses land in the range reserved for documentation, UUIDs
- * stay UUID-shaped, and cleared secrets keep their original length. A consumer reading the bundle sees data that still parses and still lines up.
+ * Replacements are chosen to stay in their original shape: MACs stay MAC-shaped and locally administered, addresses land in the ranges reserved for documentation
+ * and, past those, in a range that never routes, UUIDs stay UUID-shaped, and cleared secrets keep their original length. A consumer reading the bundle sees data
+ * that still parses and still lines up.
  *
  * @module ProtectCliScrub
  */
+import { isIPv4, isIPv6 } from "node:net";
+import { isMacAddress, normalizeMacAddress } from "../../protocol/address.ts";
 
-// The replacement categories. Each keeps its own memory, so a hostname and a device name that happen to share text never collapse onto one pseudonym.
-type ScrubCategory = "email" | "hash" | "host" | "ip" | "mac" | "name" | "token" | "uuid";
+// The replacement categories. Each keeps its own memory, so a hostname and a device name that happen to share text never collapse onto one pseudonym. The two
+// internet-address families keep separate memories so each family's sequence of stand-ins stays dense and readable.
+type ScrubCategory = "email" | "hash" | "host" | "ip" | "ipv6" | "mac" | "name" | "token" | "uuid";
 
 /**
  * The replacement memory for one scrub run.
@@ -99,11 +103,64 @@ const LOCALE_KEYS: ReadonlyMap<string, string> = new Map([ [ "countryCode", "ZZ"
 // replacement is a fixed zero rather than a pseudonym, for the same reason the locale keys take one - a position has no cross-reference worth preserving.
 const COORDINATE_KEYS: ReadonlySet<string> = new Set([ "latitude", "longitude" ]);
 
-// Shape guards, each anchored so it recognizes a value that is entirely of that shape rather than one that merely contains it.
-const MAC_PATTERN = /^[0-9a-fA-F]{12}$|^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
-const IP_PATTERN = /^(\d{1,3}\.){3}\d{1,3}$/;
+// Keys carrying a version, which is evidence about what a system is running and never identity of who or where it is. These answer ahead of the shape rules,
+// because the four-part spelling a controller sometimes sends is exactly what an address looks like to a guard that reads shape and nothing else, so a version
+// would otherwise land in the ranges reserved for documentation and take the evidence a bundle was collected for with it. The catalog is the version members this
+// library's own wire types declare, including the bare `version` a record spells it as. A version under a key no catalog names is still read by its shape, which
+// is the accepted limit of a rule that decides by key: the shape rules exist to reach fields this library has never modeled, and that reach is worth more than a
+// guarantee that every version everywhere survives.
+const VERSION_KEYS: ReadonlySet<string> = new Set([
+
+  "accessVersion", "actualVersion", "firmwareVersion", "latestFirmwareVersion", "mediaVersion", "minFirmwareVersion", "previousFirmwareVersion",
+  "softwareVersion", "swaiVersion", "ucoreVersion", "uiVersion", "ulpVersion", "updateVersion", "version"
+]);
+
+// One catalog's member names as a frozen list. A set's keys are its own values and a map's keys are its member names, so the same reader serves both kinds of
+// catalog and the export below needs no per-catalog spelling.
+function members(catalog: ReadonlyMap<string, string> | ReadonlySet<string>): readonly string[] {
+
+  return Object.freeze([...catalog.keys()]);
+}
+
+/**
+ * The key catalogs, each under its own name, as frozen lists of the member names it holds.
+ *
+ * These are what the scrub decides by key rather than by shape. Anything that needs to know which members this engine treats as identity asks the engine here,
+ * rather than reading the catalogs out of its source and going stale the first time one of them grows a member.
+ *
+ * Each list is a copy taken and frozen when this module loads, so nothing reachable through this export can reach the catalogs the engine itself reads, and no
+ * consumer can widen or narrow what the scrub protects. The catalogs are the whole of what a key decides; the shape guards decide everything else.
+ *
+ * @category CLI
+ */
+export const SCRUB_CATALOGS = Object.freeze({
+
+  COORDINATE_KEYS: members(COORDINATE_KEYS),
+  DEVICE_NAME_KEYS: members(DEVICE_NAME_KEYS),
+  HASH_KEYS: members(HASH_KEYS),
+  HOST_KEYS: members(HOST_KEYS),
+  LOCALE_KEYS: members(LOCALE_KEYS),
+  MAC_KEYS: members(MAC_KEYS),
+  NAME_KEYS: members(NAME_KEYS),
+  SECRET_KEYS: members(SECRET_KEYS),
+  USERNAME_KEYS: members(USERNAME_KEYS),
+  VERSION_KEYS: members(VERSION_KEYS)
+});
+
+// Shape guards, each anchored so it recognizes a value that is entirely of that shape rather than one that merely contains it. Neither a hardware address nor an
+// internet address has a guard here: the library's own vocabulary answers the first, and the platform's own parser answers the second in both families, because a
+// parser is the one place that already knows what an address is, and one idiom for one concept is what keeps the scrub from drifting away from either.
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// The dotted spelling of an IPv4-mapped address, the conventional text form for naming an IPv4 host inside an IPv6 literal. This reads a form rather than deciding
+// a shape: what makes the value an address at all is the parser, and this only says which family's memory the host belongs in. The hex-group spelling of the same
+// host is a plain IPv6 literal here, because nothing in it says its low groups stand for a dotted quad.
+const IPV4_MAPPED = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
+
+// The lowercase and uppercase halves of the hexadecimal alphabet, which together say what letter case one occurrence of a hardware address was spelled in.
+const LOWER_HEX_PATTERN = /[a-f]/;
+const UPPER_HEX_PATTERN = /[A-F]/;
 
 // The fixed width of a cleared secret's prefix: "REDACTED-" plus eight hex digits plus the separator. Subtracted from the original length so the replacement is the
 // same length as what it replaced.
@@ -147,21 +204,109 @@ function remember(context: ScrubContext, category: ScrubCategory, value: string,
   return minted;
 }
 
-// A synthetic MAC in the locally-administered range, matching the separator style of the value it replaces (the wire uses both forms).
+/* A synthetic MAC in the locally-administered range. This is the only place a hardware address is minted, so the key catalog and the shape rule cannot answer two
+ * spellings of one address differently.
+ *
+ * The memory is keyed by the library's own folded spelling and holds the canonical stand-in, because the controller spells one device's address in either case
+ * and with or without separators, from one record to the next. The answer is then styled to the occurrence in hand rather than to the first occurrence seen,
+ * which a memory keyed by the text as it arrived could not do: it would cache whichever spelling came first and answer it everywhere, so one device seen two ways
+ * in one bundle would read as two devices and the cross-reference between the two records would be gone.
+ */
 function scrubMac(context: ScrubContext, value: string): string {
 
-  return remember(context, "mac", value, (index) => {
+  const canonical = remember(context, "mac", normalizeMacAddress(value), (index) => "AABBCC" + index.toString(16).padStart(6, "0").toUpperCase());
 
-    const hex = "AABBCC" + index.toString(16).padStart(6, "0").toUpperCase();
+  // An occurrence spelled with lowercase letters and no uppercase ones is a lowercase occurrence; anything else, an all-digit occurrence included, takes the
+  // library's own uppercase spelling.
+  const styled = (LOWER_HEX_PATTERN.test(value) && !UPPER_HEX_PATTERN.test(value)) ? canonical.toLowerCase() : canonical;
 
-    return value.includes(":") ? (hex.match(/.{2}/g) ?? [hex]).join(":") : hex;
-  });
+  // A colon-spelled occurrence answers colon-joined, which is the separator style the wire itself uses. Every other spelling answers contiguous: the hyphen and
+  // dot forms are what an operator's own material carries rather than what a controller sends, so they collapse onto the spelling this library carries.
+  return value.includes(":") ? (styled.match(/.{2}/g) ?? [styled]).join(":") : styled;
 }
 
-// A synthetic address in TEST-NET-1, the range RFC 5737 reserves for documentation, so nothing in a bundle can ever be mistaken for a routable host.
+// The address stand-ins, in two tiers. The three blocks RFC 5737 reserves for documentation are the readable ones a bundle is expected to show, 254 hosts each.
+// Past them the sequence continues in 0.0.0.0/8, the range RFC 1122 forbids as a destination, so a stand-in is never repeated however large a capture grows and
+// none of them can ever route. The counter into that range starts at one, so the all-zeros address, which reads as no address at all, is never emitted and the
+// last stand-in in range is 0.255.255.255.
+const DOCUMENTATION_BLOCKS: readonly string[] = [ "192.0.2.", "198.51.100.", "203.0.113." ];
+const HOSTS_PER_BLOCK = 254;
+const DOCUMENTATION_HOSTS = DOCUMENTATION_BLOCKS.length * HOSTS_PER_BLOCK;
+const UNROUTABLE_HOSTS = 16777215;
+
+// One stand-in by its position in the sequence. Whether a position has a documentation block is itself the test for which tier it falls in, so both tiers are
+// read off one lookup rather than off a count written twice. Past both the mint refuses rather than reuse a stand-in, because a silent repeat is the defect these
+// tiers remove and no controller produces a capture carrying that many distinct addresses.
+function documentationAddress(index: number): string {
+
+  const block = DOCUMENTATION_BLOCKS[Math.floor(index / HOSTS_PER_BLOCK)];
+
+  if(block !== undefined) {
+
+    return block + ((index % HOSTS_PER_BLOCK) + 1).toString();
+  }
+
+  if(index >= (DOCUMENTATION_HOSTS + UNROUTABLE_HOSTS)) {
+
+    throw new Error("The scrub has no unrepeated address stand-in left; the capture carries more distinct addresses than the documentation ranges and the " +
+      "unroutable range together hold.");
+  }
+
+  const host = index - DOCUMENTATION_HOSTS + 1;
+
+  return "0." + Math.floor(host / 65536).toString() + "." + (Math.floor(host / 256) % 256).toString() + "." + (host % 256).toString();
+}
+
+// A synthetic address, drawn from the documentation blocks first and the range that never routes after them, so nothing in a bundle can ever be mistaken for a
+// routable host.
 function scrubIp(context: ScrubContext, value: string): string {
 
-  return remember(context, "ip", value, (index) => "192.0.2." + ((index % 254) + 1).toString());
+  return remember(context, "ip", value, documentationAddress);
+}
+
+// The canonical spelling of an IPv6 literal, which is what its memory is keyed by. One address has several valid spellings - the case of its digits, where the
+// run of zero groups is compressed, whether a group carries leading zeros - so a memory keyed by the text as it arrived would mint a second stand-in for the
+// second spelling of one host. The platform's URL parser is the one canonicalizer already shipped with the runtime, and it serializes the form RFC 5952 asks for:
+// lowercase, compressed, no leading zeros. A spelling the parser refuses is a zone-scoped literal, a form no capture carries; keying that by its lowercase text
+// folds the one difference that does vary and keeps two distinct addresses distinct, which is the honest answer where there is no canonical form to ask for.
+function canonicalIpv6(value: string): string {
+
+  try {
+
+    return new URL("http://[" + value + "]/").hostname.slice(1, -1);
+  } catch {
+
+    return value.toLowerCase();
+  }
+}
+
+// A count written as colon-joined sixteen-bit groups, so a stand-in stays IPv6-shaped however many addresses a bundle carries: 1 reads as "1", 65535 as "ffff",
+// 65536 as "1:0". Written straight into one group instead, a large enough count runs past that group's width and spells something that is not an address.
+function hextets(n: number): string {
+
+  const groups = [(n % 65536).toString(16)];
+
+  for(let remaining = Math.floor(n / 65536); remaining > 0; remaining = Math.floor(remaining / 65536)) {
+
+    groups.unshift((remaining % 65536).toString(16));
+  }
+
+  return groups.join(":");
+}
+
+// A synthetic address in the prefix RFC 3849 reserves for documentation. A dotted IPv4-mapped literal names an IPv4 host, so it is answered from the IPv4 memory
+// and handed back in the mapped shape it arrived in: the two spellings of one host stay one host, and the cross-reference between the record that spells it one
+// way and the record that spells it the other survives. Every other literal is remembered under its canonical spelling in this family's own memory.
+function scrubIpv6(context: ScrubContext, value: string): string {
+
+  const [ , quad ] = IPV4_MAPPED.exec(value) ?? [];
+
+  if(quad !== undefined) {
+
+    return "::ffff:" + scrubIp(context, quad);
+  }
+
+  return remember(context, "ipv6", canonicalIpv6(value), (index) => "2001:db8::" + hextets(index + 1));
 }
 
 // A synthetic UUID that keeps the dash layout, so length and format checks downstream still pass.
@@ -287,7 +432,7 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
 
     if(HOST_KEYS.has(key)) {
 
-      return IP_PATTERN.test(stripped) ? scrubIp(context, stripped) : scrubHostname(context, stripped);
+      return isIPv4(stripped) ? scrubIp(context, stripped) : (isIPv6(stripped) ? scrubIpv6(context, stripped) : scrubHostname(context, stripped));
     }
 
     if(HASH_KEYS.has(key)) {
@@ -302,18 +447,33 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
 
       return locale;
     }
+
+    if(VERSION_KEYS.has(key)) {
+
+      return stripped;
+    }
   }
 
   // Shape decides for everything the catalogs above do not name. This is what covers fields on device classes the library has never seen, which is the whole reason a
   // capture is worth collecting and the reason novelty evidence is safe to include.
-  if(MAC_PATTERN.test(stripped)) {
+  //
+  // Two of the catalogs have no shape rule beneath them, and that is a decision rather than a gap. A hostname is a word, and a checksum is a run of hexadecimal
+  // digits: a guard for either would also match ordinary text and the public digests a bundle is full of. So the key catalogs are the whole boundary for both, and
+  // a hostname or a checksum under a member no catalog names is left exactly as it stands. Guessing in either direction costs something a reader cannot get back -
+  // guess too widely and evidence is destroyed, guess too narrowly and identity survives - and the person reading a bundle is the one who can tell which it was.
+  if(isMacAddress(stripped)) {
 
     return scrubMac(context, stripped);
   }
 
-  if(IP_PATTERN.test(stripped)) {
+  if(isIPv4(stripped)) {
 
     return scrubIp(context, stripped);
+  }
+
+  if(isIPv6(stripped)) {
+
+    return scrubIpv6(context, stripped);
   }
 
   if(UUID_PATTERN.test(stripped)) {
@@ -333,7 +493,7 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
 // sitting in the key positions.
 function scrubKey(context: ScrubContext, key: string): string {
 
-  if(MAC_PATTERN.test(key)) {
+  if(isMacAddress(key)) {
 
     return scrubMac(context, key);
   }
@@ -343,9 +503,14 @@ function scrubKey(context: ScrubContext, key: string): string {
     return scrubUuid(context, key);
   }
 
-  if(IP_PATTERN.test(key)) {
+  if(isIPv4(key)) {
 
     return scrubIp(context, key);
+  }
+
+  if(isIPv6(key)) {
+
+    return scrubIpv6(context, key);
   }
 
   return key;
@@ -370,6 +535,45 @@ export function scrub(value: unknown, context: ScrubContext): unknown {
   return scrubValue(value, context, undefined);
 }
 
+/* Clear every string beneath a secret container, keeping the structure and the key names. A member named for a secret may hold a structure rather than a bare
+ * value - a credentials object, a list of tokens - whose inner keys no catalog can anticipate and whose strings are the secret itself.
+ *
+ * Text is what carries a credential, so text is all this clears: a number, a boolean, a null, and a binary payload beneath the same member stay as they are,
+ * because they are evidence of when and how the secret is used and destroying them protects nothing. Keys still pass the key replacement, so an identifier used
+ * as a key is pseudonymized here as it is anywhere else.
+ */
+function clearSecrets(context: ScrubContext, value: unknown): unknown {
+
+  if(typeof value === "string") {
+
+    return (value.length === 0) ? value : scrubToken(context, value);
+  }
+
+  if((value === null) || (value === undefined) || ArrayBuffer.isView(value)) {
+
+    return value;
+  }
+
+  if(Array.isArray(value)) {
+
+    return value.map((element) => clearSecrets(context, element));
+  }
+
+  if(isPlainObject(value)) {
+
+    const cleared: Record<string, unknown> = {};
+
+    for(const [ name, inner ] of Object.entries(value)) {
+
+      cleared[scrubKey(context, name)] = clearSecrets(context, inner);
+    }
+
+    return cleared;
+  }
+
+  return value;
+}
+
 // The recursive walk. `key` is the name the value arrived under, which is what lets the key catalogs decide ahead of the shape rules.
 function scrubValue(value: unknown, context: ScrubContext, key: string | undefined): unknown {
 
@@ -388,6 +592,13 @@ function scrubValue(value: unknown, context: ScrubContext, key: string | undefin
   if((value === null) || (value === undefined) || ArrayBuffer.isView(value)) {
 
     return value;
+  }
+
+  // A secret key holding a structure clears everything beneath it. A single string under the same key was already cleared by the string arm above, so this is the
+  // container arm of one rule rather than a second rule.
+  if((key !== undefined) && SECRET_KEYS.has(key)) {
+
+    return clearSecrets(context, value);
   }
 
   if(Array.isArray(value)) {

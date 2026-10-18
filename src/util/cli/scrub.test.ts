@@ -3,7 +3,7 @@
  * scrub.test.ts: Unit tests for the capture scrub - referential consistency in both directions, key-over-shape precedence, the text-envelope key inheritance,
  * coordinate and locale replacement, key redaction, URL credential stripping, the base64 wrapper exemption, and the promise that the input is never modified.
  */
-import { createScrubContext, scrub } from "./scrub.ts";
+import { SCRUB_CATALOGS, createScrubContext, scrub } from "./scrub.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -11,6 +11,27 @@ import assert from "node:assert/strict";
 function scrubbed(value: unknown): unknown {
 
   return scrub(value, createScrubContext());
+}
+
+/* A replacement memory that reports a count without holding one. Every mint reads its next index from the size of the memory it is minting into, so seeding that
+ * size is what lets a test stand at the far end of a sequence without first minting the sixteen million stand-ins in front of it. Nothing else about the memory
+ * changes: a lookup still misses, so the mint still runs and answers for the index it is handed.
+ */
+class SeededMemory extends Map<string, string> {
+
+  readonly #seeded: number;
+
+  constructor(seeded: number) {
+
+    super();
+
+    this.#seeded = seeded;
+  }
+
+  override get size(): number {
+
+    return this.#seeded;
+  }
 }
 
 describe("scrub", () => {
@@ -46,6 +67,64 @@ describe("scrub", () => {
 
     assert.equal(result.mac, result.vocSensorPeerAddress);
     assert.notEqual(result.mac, "AABBCCDDEEFF");
+  });
+
+  test("a hardware address keeps one stand-in and takes the styling of each occurrence", () => {
+
+    /* The controller spells one device's address in either case and with or without separators, from one record to the next. A memory keyed by the text as it
+     * arrived would mint a second stand-in for the second spelling and split one device in two; keying it by the library's own folded spelling and styling the
+     * answer to the occurrence in hand is what keeps the device whole while each occurrence still reads in the form it arrived in. The hyphen and dot spellings
+     * are what an operator's own material carries rather than what a controller sends, and they reach the same stand-in through the same fold.
+     */
+    const context = createScrubContext();
+    const result = scrub({ bare: { mac: "02ffee000002" }, colons: { mac: "02:FF:EE:00:00:02" }, dots: { mac: "02ff.ee00.0002" },
+      hyphens: { mac: "02-FF-EE-00-00-02" }, upper: { mac: "02FFEE000002" } }, context) as {
+
+      bare: { mac: string };
+      colons: { mac: string };
+      dots: { mac: string };
+      hyphens: { mac: string };
+      upper: { mac: string };
+    };
+
+    assert.match(result.upper.mac, /^[0-9A-F]{12}$/);
+    assert.equal(result.bare.mac, result.upper.mac.toLowerCase(), "a lowercase occurrence answers in lowercase");
+    assert.equal(result.colons.mac, (result.upper.mac.match(/.{2}/g) ?? []).join(":"), "a colon-spelled occurrence answers with its colons");
+    assert.equal(result.colons.mac.replaceAll(":", ""), result.upper.mac, "every spelling is one address underneath");
+    assert.equal(result.hyphens.mac, result.upper.mac, "a hyphen-spelled address collapses onto the carried spelling and the same stand-in");
+    assert.equal(result.dots.mac, result.upper.mac.toLowerCase(), "a dot-spelled address collapses onto the carried spelling and the same stand-in");
+  });
+
+  test("the shape arm and the key arm share one address memory and one styling", () => {
+
+    /* One address can arrive under a cataloged key, under a key no catalog names, and as a map's key in the same bundle. All three reach the one mint, so what
+     * decided that a value is an address changes nothing about which stand-in it gets or how that stand-in is spelled.
+     */
+    const context = createScrubContext();
+    const spellings = [ "02ffee000002", "02:FF:EE:00:00:02", "02ff.ee00.0002", "02-FF-EE-00-00-02", "02FFEE000002" ];
+    const result = scrub({ keyed: spellings.map((mac) => ({ mac })), novel: { vocSensorPeerAddress: spellings },
+      peers: { "02-FF-EE-00-00-02": true } }, context) as {
+
+      keyed: { mac: string }[];
+      novel: { vocSensorPeerAddress: string[] };
+      peers: Record<string, unknown>;
+    };
+
+    const keyed = result.keyed.map((entry) => entry.mac);
+    const upper = keyed[4] ?? "";
+
+    assert.match(upper, /^[0-9A-F]{12}$/);
+    assert.deepEqual(result.novel.vocSensorPeerAddress, keyed, "a spelling answers the same way whether its key named it an address or its shape did");
+    assert.equal(Object.keys(result.peers)[0], upper, "an address in a key position answers with the same stand-in, spelled the way the key spelled it");
+    assert.equal(keyed[0], upper.toLowerCase(), "the bare lowercase spelling reads lowercase and contiguous");
+    assert.equal(keyed[1], (upper.match(/.{2}/g) ?? []).join(":"), "the colon spelling keeps its colons");
+    assert.equal(keyed[2], upper.toLowerCase(), "the dot spelling reads lowercase and contiguous");
+    assert.equal(keyed[3], upper, "the hyphen spelling reads uppercase and contiguous");
+
+    for(const [ index, answer ] of keyed.entries()) {
+
+      assert.notEqual(answer, spellings[index], "no occurrence survives as itself");
+    }
   });
 
   test("a secret is cleared and keeps its length", () => {
@@ -86,6 +165,53 @@ describe("scrub", () => {
     assert.ok(result.shareLink.startsWith("REDACTED-"));
     assert.ok(!result.shareLink.includes("9fT2xKqL8mNbVc4z"), "the capability in the path does not survive");
     assert.ok(!result.shareLink.includes("https://"), "the whole value is cleared, so nothing is left that still reads as a link");
+  });
+
+  test("a secret container clears every string beneath it and keeps its structure", () => {
+
+    // A camera's stream credentials arrive as a structure whose member names are the controller's own and whose values are what opens the stream. No catalog can
+    // anticipate those member names, so it is the container they sit in that says the values beneath them are secrets.
+    const result = scrubbed({ credentials: { rtspPassword: "Tr0ub4dor-Horse-9x", streamUser: "protect-viewer" }, name: "Front Door" }) as {
+
+      credentials: Record<string, string>;
+      name: string;
+    };
+
+    assert.deepEqual(Object.keys(result.credentials), [ "rtspPassword", "streamUser" ], "the member names survive so the shape of the record is still readable");
+    assert.match(result.credentials["rtspPassword"] ?? "", /^REDACTED-/);
+    assert.match(result.credentials["streamUser"] ?? "", /^REDACTED-/);
+    assert.ok(!JSON.stringify(result.credentials).includes("Tr0ub4dor"));
+    assert.ok(!JSON.stringify(result.credentials).includes("protect-viewer"));
+    assert.ok(result.name.startsWith("Test Device "), "a sibling outside the container is still judged by its own key");
+  });
+
+  test("a secret container reaches through an array as well as an object", () => {
+
+    // The object element's member name is one no catalog carries, which is the case the container exists for: what says the value is a secret is the container
+    // it sits in, not its own name.
+    const result = scrubbed({ credentials: [ { rtspPassword: "9fT2xKqL8mNbVc4z" }, "kL9mQwErTyUiOp3a" ] }) as { credentials: [{ rtspPassword: string }, string] };
+
+    assert.match(result.credentials[0].rtspPassword, /^REDACTED-/, "an object element is walked and its strings cleared");
+    assert.match(result.credentials[1], /^REDACTED-/, "a bare string element is cleared where it stands");
+  });
+
+  test("a secret container clears the strings beneath it and leaves everything else as it found it", () => {
+
+    // The container rule is about text, because text is what carries a credential. A timestamp, a flag, a member that was never set, and a binary payload are
+    // evidence about when and how the secret is used, and destroying them would protect nothing.
+    const bytes = Buffer.from([0x01]);
+    const result = scrubbed({ credentials: { certificate: bytes, expiresAt: 1755300000, isActive: true, revokedAt: null,
+      rtspPassword: "Tr0ub4dor-Horse-9x" } }) as {
+
+      credentials: { certificate: Buffer; expiresAt: number; isActive: boolean; revokedAt: null; rtspPassword: string };
+    };
+
+    assert.match(result.credentials.rtspPassword, /^REDACTED-/);
+    assert.equal(result.credentials.expiresAt, 1755300000);
+    assert.equal(result.credentials.isActive, true);
+    assert.equal(result.credentials.revokedAt, null);
+    assert.equal(result.credentials.certificate, bytes);
+    assert.deepEqual(scrubbed({ secret: "" }), { secret: "" }, "an empty secret has nothing to clear");
   });
 
   test("the key decides ahead of the value's shape", () => {
@@ -356,6 +482,142 @@ describe("scrub", () => {
     assert.match(result.vocSensorGateway, /^192\.0\.2\.\d+$/);
   });
 
+  test("an IPv6 address is replaced under a host key, by its shape, and as an object key", () => {
+
+    // The same three placements an IPv4 address is caught in, and the one memory behind all of them.
+    const result = scrubbed({ host: "2001:db8:1234::5", peers: { "2001:db8:1234::5": true }, vocSensorPeer: "2001:db8:1234::5" }) as {
+
+      host: string;
+      peers: Record<string, unknown>;
+      vocSensorPeer: string;
+    };
+
+    assert.match(result.host, /^2001:db8::[0-9a-f:]+$/, "stand-ins land in the prefix reserved for documentation");
+    assert.match(result.vocSensorPeer, /^2001:db8::[0-9a-f:]+$/);
+    assert.match(Object.keys(result.peers)[0] ?? "", /^2001:db8::[0-9a-f:]+$/);
+    assert.equal(result.vocSensorPeer, result.host, "one address is one stand-in wherever it appears");
+    assert.equal(Object.keys(result.peers)[0], result.host);
+  });
+
+  test("every spelling of one IPv6 address shares a stand-in through its canonical form", () => {
+
+    /* One address has several valid spellings: the case of its digits, where the run of zero groups is compressed, whether a group carries leading zeros. A
+     * memory keyed by the text as it arrived would mint a second stand-in for the second spelling and split one host in two.
+     */
+    const result = scrubbed({ compressed: "2001:db8::1", expanded: "2001:DB8:0:0:0:0:0:1", other: "2001:db8::2", padded: "2001:0db8::0001" }) as {
+
+      compressed: string;
+      expanded: string;
+      other: string;
+      padded: string;
+    };
+
+    assert.match(result.expanded, /^2001:db8::[0-9a-f:]+$/);
+    assert.equal(result.compressed, result.expanded, "the compressed spelling names the same host");
+    assert.equal(result.padded, result.expanded, "leading zeros do not make a second host");
+    assert.notEqual(result.other, result.expanded, "and an address that really is different still gets its own stand-in");
+  });
+
+  test("the 65536th IPv6 stand-in is written as groups rather than as one long number", () => {
+
+    // A counter written straight into the last group stops spelling an address the moment it runs past sixteen bits, so the index is written as colon-joined
+    // groups and the stand-in stays IPv6-shaped at any count a bundle can reach.
+    const context = createScrubContext();
+    const addresses: string[] = [];
+
+    for(let index = 0; index < 65536; index++) {
+
+      addresses.push("fd00:" + index.toString(16) + "::1");
+    }
+
+    const result = scrub({ peers: addresses }, context) as { peers: string[] };
+
+    assert.equal(result.peers[0], "2001:db8::1", "the first stand-in is the first host in the documentation prefix");
+    assert.equal(result.peers[65535], "2001:db8::1:0", "the 65536th carries into a second group rather than overflowing the first");
+    assert.equal(new Set(result.peers).size, 65536, "and none of them repeats");
+  });
+
+  test("a dotted IPv4-mapped literal shares the IPv4 memory and answers in the mapped shape", () => {
+
+    /* A mapped literal names an IPv4 host, so it is answered out of that family's memory and handed back in the shape it arrived in. Keyed by its canonical IPv6
+     * form instead, it would mint a "2001:db8::" stand-in and the record spelling the host one way would stop pointing at the record spelling it the other.
+     */
+    const context = createScrubContext();
+    const result = scrub({ host: "::ffff:10.0.0.1", ip: "10.0.0.1", peer: "::FFFF:10.0.0.1" }, context) as { host: string; ip: string; peer: string };
+
+    assert.match(result.host, /^::ffff:192\.0\.2\.\d+$/);
+    assert.equal(result.host, "::ffff:" + result.ip, "the mapped answer carries the very stand-in the plain address received");
+    assert.equal(result.peer, result.host, "an uppercase mapped prefix is the same literal, which is what keeps it out of the IPv6 memory");
+  });
+
+  test("a zone-scoped literal is replaced, and two of them stay two", () => {
+
+    // A zone-scoped literal is the one spelling the URL parser refuses, so its memory is keyed by its lowercase text instead. That folds the difference that does
+    // vary, while two literals naming different hosts still take different stand-ins.
+    const result = scrubbed({ first: "fe80::1%eth0", second: "fe80::2%eth0", third: "FE80::1%eth0" }) as { first: string; second: string; third: string };
+
+    assert.match(result.first, /^2001:db8::/);
+    assert.match(result.second, /^2001:db8::/);
+    assert.notEqual(result.first, result.second, "two addresses that differ stay two");
+    assert.equal(result.third, result.first, "and the same address in the other case is still one");
+  });
+
+  test("a malformed dotted quad is not an address on either path", () => {
+
+    // The parser is narrower than a four-number pattern, and rightly so: 300 is not an octet, so this is not an address and the scrub does not pretend it is.
+    // Under a host key it is still a host and takes the hostname mint; under a key no catalog names there is nothing left to judge it by.
+    const result = scrubbed({ host: "300.1.2.3", vocSensorGateway: "300.1.2.3" }) as { host: string; vocSensorGateway: string };
+
+    assert.match(result.host, /^host-\d+\.test\.local$/, "a host key whose value is not an address falls to the hostname mint");
+    assert.equal(result.vocSensorGateway, "300.1.2.3", "and under an uncataloged key it is left exactly as it stands");
+  });
+
+  test("address stand-ins walk the documentation blocks in order and continue past them", () => {
+
+    /* Referential consistency means a stand-in can never repeat, so the sequence cannot cycle inside one block. It walks the three blocks RFC 5737 reserves for
+     * documentation and then continues in a range that never routes, which is what keeps the promise at any size a capture can reach.
+     */
+    const context = createScrubContext();
+    const addresses: string[] = [];
+
+    for(let index = 0; index < 763; index++) {
+
+      addresses.push("10." + Math.floor(index / 65536).toString() + "." + (Math.floor(index / 256) % 256).toString() + "." + (index % 256).toString());
+    }
+
+    const result = scrub({ peers: addresses }, context) as { peers: string[] };
+
+    assert.equal(new Set(result.peers).size, 763, "no stand-in repeats");
+    assert.equal(result.peers[0], "192.0.2.1");
+    assert.equal(result.peers[253], "192.0.2.254", "the first block runs to its 254th host");
+    assert.equal(result.peers[254], "198.51.100.1", "and the second one starts");
+    assert.equal(result.peers[507], "198.51.100.254");
+    assert.equal(result.peers[508], "203.0.113.1");
+    assert.equal(result.peers[761], "203.0.113.254", "the third block ends the documentation ranges");
+    assert.equal(result.peers[762], "0.0.0.1", "past them the sequence continues in the range that never routes");
+  });
+
+  test("the address mint refuses at its ceiling, and answers the last stand-in below it", () => {
+
+    /* Three documentation blocks of 254 hosts each is 762 stand-ins, and the range that never routes adds 16777215 more, so the sequence holds 16777977 in all
+     * and its indices run from 0 through 16777976. A silent repeat is the defect the second tier exists to remove, so the mint refuses rather than reuse once
+     * the sequence is spent. No capture comes anywhere near that far, which is why the memory is seeded here rather than filled.
+     */
+    const spent = createScrubContext();
+
+    spent.replacements.set("ip", new SeededMemory(16777977));
+
+    assert.throws(() => scrub({ ip: "10.0.0.1" }, spent), { message: /no unrepeated address stand-in left/ },
+      "the mint refuses once every stand-in has been issued");
+
+    const last = createScrubContext();
+
+    last.replacements.set("ip", new SeededMemory(16777976));
+
+    assert.deepEqual(scrub({ ip: "10.0.0.1" }, last), { ip: "0.255.255.255" },
+      "and the index just below the ceiling answers with the last address the range that never routes holds");
+  });
+
   test("a URL carrying no credentials survives intact", () => {
 
     // Only the credentials are stripped. A firmware or documentation URL is evidence worth keeping, so it has to come through unchanged.
@@ -422,6 +684,34 @@ describe("scrub", () => {
     // An IANA timezone names a city and a country code names a country, so both are location under another name. There is one of each per site and nothing points at
     // them, so a conventional value says as much as a minted pseudonym would.
     assert.deepEqual(scrubbed({ countryCode: "US", timezone: "America/New_York" }), { countryCode: "ZZ", timezone: "Etc/UTC" });
+  });
+
+  test("a version survives every member the wire spells it under, while an address under an address key still does not", () => {
+
+    /* The version keys answer ahead of the shape rules, because the four-part spelling a controller sometimes sends is what an address looks like to a guard that
+     * reads shape alone. Every member is planted here rather than a sample, each with its own address-shaped value, so a key dropped from the catalog fails in
+     * this test rather than by quietly destroying the evidence a bundle is collected for.
+     */
+    const versions = { accessVersion: "9.8.7.1", actualVersion: "9.8.7.2", firmwareVersion: "9.8.7.3", latestFirmwareVersion: "9.8.7.4",
+      mediaVersion: "9.8.7.5", minFirmwareVersion: "9.8.7.6", previousFirmwareVersion: "9.8.7.7", softwareVersion: "9.8.7.8", swaiVersion: "9.8.7.9",
+      ucoreVersion: "9.8.7.10", uiVersion: "9.8.7.11", ulpVersion: "9.8.7.12", updateVersion: "9.8.7.13", version: "9.8.7.14" };
+
+    assert.deepEqual(scrubbed(versions), versions, "every version member carries its value through untouched");
+    assert.deepEqual(scrubbed({ firmwareVersion: "v9.8.7", version: "9.8.7+1234" }), { firmwareVersion: "v9.8.7", version: "9.8.7+1234" },
+      "a prefixed or build-tagged spelling comes through the same way");
+
+    const mixed = scrubbed({ firmwareVersion: "9.8.7.6", ip: "10.13.0.42", mac: "02FFEE000002" }) as { firmwareVersion: string; ip: string; mac: string };
+
+    assert.equal(mixed.firmwareVersion, "9.8.7.6", "a version that happens to be address-shaped is still a version");
+    assert.match(mixed.ip, /^192\.0\.2\.\d+$/, "and an address beside it is still replaced, which is the polarity that makes the rule a rule");
+    assert.match(mixed.mac, /^[0-9A-F]{12}$/);
+
+    /* The accepted limit of deciding by key: the same four numbers under a key no catalog names are read as the address they look like. The shape rules exist to
+     * reach fields this library has never modeled, and that reach is worth more than a promise that every version everywhere survives.
+     */
+    const uncataloged = scrubbed({ vocSensorBuild: "9.8.7.6" }) as { vocSensorBuild: string };
+
+    assert.match(uncataloged.vocSensorBuild, /^192\.0\.2\.\d+$/, "a version under an uncataloged key is judged by its shape, which reads it as an address");
   });
 
   test("a coordinate is zeroed while the numbers beside it are untouched", () => {
@@ -523,5 +813,41 @@ describe("scrub", () => {
 
     assert.match(scrubbed("AABBCCDDEEFF") as string, /^[0-9A-F]{12}$/);
     assert.equal(scrubbed(42), 42);
+  });
+
+  test("SCRUB_CATALOGS names every key catalog as a frozen list bound to its own members", () => {
+
+    /* Anything that needs to know what this engine treats as identity reads it here rather than out of the source. The lists are frozen copies, so reaching them
+     * through the export can neither widen nor narrow what the scrub protects.
+     */
+    assert.deepEqual(Object.keys(SCRUB_CATALOGS).sort(), [ "COORDINATE_KEYS", "DEVICE_NAME_KEYS", "HASH_KEYS", "HOST_KEYS", "LOCALE_KEYS", "MAC_KEYS",
+      "NAME_KEYS", "SECRET_KEYS", "USERNAME_KEYS", "VERSION_KEYS" ]);
+    assert.equal(Object.isFrozen(SCRUB_CATALOGS), true, "the wrapper is frozen");
+
+    for(const [ name, list ] of Object.entries(SCRUB_CATALOGS)) {
+
+      assert.equal(Object.isFrozen(list), true, name + " is frozen");
+    }
+
+    assert.throws(() => (SCRUB_CATALOGS.MAC_KEYS as string[]).push("intruder"), TypeError, "a push into a frozen list throws rather than widening a catalog");
+
+    /* Each list has to be bound to its own catalog rather than merely to some catalog. A member no other catalog holds is present in its own list and absent from
+     * every other one, so binding a name to the wrong catalog reds this test.
+     */
+    const unique = { COORDINATE_KEYS: "latitude", HASH_KEYS: "sha256", HOST_KEYS: "host", LOCALE_KEYS: "timezone", MAC_KEYS: "mac", NAME_KEYS: "ssid",
+      SECRET_KEYS: "password", USERNAME_KEYS: "username", VERSION_KEYS: "firmwareVersion" };
+
+    for(const [ owner, member ] of Object.entries(unique)) {
+
+      for(const [ name, list ] of Object.entries(SCRUB_CATALOGS)) {
+
+        assert.equal(list.includes(member), name === owner, member + " belongs to " + owner + " alone, and " + name + " answers accordingly");
+      }
+    }
+
+    // Every device-name key is also a name key, so the device-name list has no member of its own to be caught by. What tells the two apart is a name key it does
+    // not hold.
+    assert.equal(SCRUB_CATALOGS.DEVICE_NAME_KEYS.includes("apName"), true);
+    assert.equal(SCRUB_CATALOGS.DEVICE_NAME_KEYS.includes("ssid"), false, "binding this list to the name catalog would show up here");
   });
 });
