@@ -562,6 +562,48 @@ describe("LivestreamSession", () => {
       assert.equal(session.state, "closed");
     });
 
+    test("a caller-signal abort during URL negotiation aborts the signal the resolver was handed and emits no error", async () => {
+
+      const controller = new AbortController();
+      const handed: (AbortSignal | undefined)[] = [];
+
+      // The resolver never settles on its own: once the signal it was handed aborts, it rejects with ProtectAbortedError, the way the transport answers a cancel.
+      const resolveUrl = async (_params: URLSearchParams, opts: { signal?: AbortSignal }): Promise<string> => {
+
+        handed.push(opts.signal);
+
+        const { promise, reject } = Promise.withResolvers<string>();
+
+        opts.signal?.addEventListener("abort", () => reject(new ProtectAbortedError("The negotiation was aborted by the caller's signal.")), { once: true });
+
+        return promise;
+      };
+
+      const session = new LivestreamSession({
+
+        log: silentLog(),
+        resolveUrl,
+        signal: controller.signal,
+        spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
+        webSocket: () => new FakeWebSocket({ autoOpen: false })
+      });
+
+      const errors = collectErrors(session);
+
+      await settle();
+      controller.abort();
+      await settle();
+
+      const [signal] = handed;
+
+      // The abort tore the session down first, so the negotiation's rejection that follows is the cancel it asked for, never a failure on the error rail.
+      assert.equal(handed.length, 1);
+      assert.ok(signal instanceof AbortSignal);
+      assert.equal(signal.aborted, true);
+      assert.equal(errors.length, 0);
+      assert.equal(session.state, "closed");
+    });
+
     test("an already-aborted caller signal records the ProtectAbortedError as the close cause", () => {
 
       const controller = new AbortController();

@@ -50,7 +50,8 @@ export type HttpMethod = "DELETE" | "GET" | "HEAD" | "PATCH" | "POST";
 
 /**
  * Per-request options accepted by {@link Transport.request} and {@link Transport.send}. The library composes the caller's `signal` with its own timeout deadline, so
- * a caller can cancel independently of the timeout. `headers` here override the auth headers the transport stamps on automatically.
+ * a caller can cancel independently of the timeout, and a `signal` that has already aborted is answered with {@link ProtectAbortedError} without a request being sent.
+ * `headers` here override the auth headers the transport stamps on automatically.
  *
  * @category Transport
  */
@@ -69,9 +70,10 @@ export interface RequestOptions {
  * - `authRetry` controls the injected 401-relogin hook: the authenticated request path leaves it at its default of `true`, while the `AuthSession` login handshake
  *   passes `false` so its own 401 cannot recurse back into relogin.
  * - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the
- *   `ConnectionMonitor`'s cadence rather than waiting out the 300-second cooldown, while still booking its outcome through the normal path - so a successful probe
- *   closes the breaker exactly as the autonomous half-open trial would. Only the monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh
- *   failsafe and device commands leave it `false` and stay gated, so the breaker still protects against operational hammering.
+ *   `ConnectionMonitor`'s cadence rather than waiting out the 300-second cooldown, while its outcome still books through the normal path - so a successful probe
+ *   closes the breaker exactly as the autonomous half-open trial would, and a probe its caller cancels books nothing, like any cancelled request. Only the monitor's
+ *   recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh failsafe and device commands leave it `false` and stay gated, so the breaker still
+ *   protects against operational hammering.
  *
  * @category Transport
  */
@@ -172,6 +174,14 @@ function classifyStatus(statusCode: number, headers: IncomingHttpHeaders, body: 
   }
 }
 
+// Whether a failed request was a cancellation its caller chose, the one failure that says nothing about the controller. The caller's own abort is the
+// ProtectAbortedError class; a deadline the caller supplied as its signal carries that class too, and is told apart by the platform's own deadline reason, the
+// TimeoutError that AbortSignal.timeout() fires with - a controller that lets a deadline lapse did not answer in time, whoever set the deadline.
+function callerCancelled(error: unknown, signal: AbortSignal | undefined): boolean {
+
+  return (error instanceof ProtectAbortedError) && !((signal?.reason instanceof Error) && (signal.reason.name === "TimeoutError"));
+}
+
 /**
  * An HTTP response from the Protect controller, returned by {@link Transport.send}. The body is eagerly buffered (so no undrained stream can hold a slot in the
  * connection pool), and decoding is synchronous and lazy on top of that buffer. `send` returns this for *any* status; call {@link ProtectResponse.ensureOk} to turn
@@ -255,10 +265,11 @@ export class ProtectResponse {
  *
  * The breaker is the canonical three-state model - `closed -> open -> half-open -> closed`:
  *
- * - **closed:** normal operation. Each completed request books an outcome; a 2xx resets the consecutive-failure count, a non-2xx or transport exception increments
- *   it. Crossing {@link PROTECT_API_ERROR_LIMIT} consecutive failures trips the breaker open.
+ * - **closed:** normal operation. Each request that reaches the controller books an outcome; a 2xx resets the consecutive-failure count, a non-2xx or transport
+ *   exception increments it. A request its caller cancels, or one never sent because its caller had already aborted, books nothing, since neither says anything about
+ *   the controller. Crossing {@link PROTECT_API_ERROR_LIMIT} consecutive failures trips the breaker open.
  * - **open:** for {@link PROTECT_API_RETRY_INTERVAL} seconds, `send` throws {@link ProtectThrottledError} before dispatching, except a `probe: true` request (the
- *   `ConnectionMonitor`'s recovery trial), which bypasses the cooldown gate and is booked exactly as a natural half-open attempt would be.
+ *   `ConnectionMonitor`'s recovery trial), which bypasses the cooldown gate and books exactly as a natural half-open attempt would, a cancelled one booking nothing.
  * - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first success closes the breaker (and emits `throttleExited`
  *   only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
@@ -311,8 +322,9 @@ export class Transport implements AsyncDisposable {
   }
 
   /**
-   * Send a request and return the {@link ProtectResponse} for any HTTP status. Throttle-gates before dispatching, composes the caller's signal with the timeout
-   * deadline, classifies transport failures into typed errors, books the breaker outcome, and runs the 401-relogin retry (once) when a hook is wired.
+   * Send a request and return the {@link ProtectResponse} for any HTTP status. Throttle-gates before dispatching, answers a caller that has already aborted without
+   * sending a request, composes the caller's signal with the timeout deadline, classifies transport failures into typed errors, books the breaker outcome unless the
+   * caller cancelled the request, and runs the 401-relogin retry (once) when a hook is wired.
    *
    * This is the transport primitive. Callers that want the ergonomic "throw on non-2xx and parse JSON" path use {@link Transport.request}; callers that need raw
    * status, headers, or bytes (the auth handshake, snapshots) use `send` directly.
@@ -328,9 +340,10 @@ export class Transport implements AsyncDisposable {
   async send(url: string, opts: SendOptions = {}): Promise<ProtectResponse> {
 
     // Gate first: if the breaker is open and still inside its cooldown window, refuse locally without touching the network. Once the cooldown has elapsed we fall
-    // through and let this request act as the half-open recovery probe; `book` will close or re-arm the breaker based on its outcome. A `probe` request - the
-    // ConnectionMonitor's recovery trial - skips this gate entirely: the monitor's backoff curve is the rate limiter while it is recovering, so its probe dispatches
-    // at the monitor's cadence and its booked outcome (success closes the breaker, failure re-arms the cooldown) is what keeps re-probe and breaker on one cadence.
+    // through and let this request act as the half-open recovery probe; `book` will close or re-arm the breaker based on its outcome, and a probe its caller cancels
+    // books nothing and leaves the breaker half-open. A `probe` request - the ConnectionMonitor's recovery trial - skips this gate entirely: the monitor's backoff
+    // curve is the rate limiter while it is recovering, so its probe dispatches at the monitor's cadence and the outcome it books (success closes the breaker, failure
+    // re-arms the cooldown, a cancel books nothing) is what keeps re-probe and breaker on one cadence.
     if((opts.probe !== true) && (this.#throttledSince !== null)) {
 
       const remaining = COOLDOWN_MS - (this.#clock.now() - this.#throttledSince);
@@ -342,10 +355,18 @@ export class Transport implements AsyncDisposable {
     }
 
     // Relogin retry loop. The body of the loop runs at most twice: the original attempt, and - if it returns 401 and a relogin hook is wired and succeeds - one
-    // retry with relogin disabled so a persistent 401 cannot spin. Booking happens exactly once, on the attempt whose outcome we return.
+    // retry with relogin disabled so a persistent 401 cannot spin. Only the attempt whose outcome we return can book, and it books nothing when its caller cancelled
+    // it or had already aborted before it was sent.
     let allowAuthRetry = opts.authRetry ?? true;
 
     for(;;) {
+
+      // A caller that has already aborted is answered before anything is dispatched. No request is issued, so none is published and none is booked: the
+      // controller was never asked, and an abort or a deadline that fired before the request began says nothing about it.
+      if(opts.signal?.aborted === true) {
+
+        throw new ProtectAbortedError("The request was aborted by the caller's signal.", { cause: opts.signal.reason });
+      }
 
       let result: { body: Buffer; headers: IncomingHttpHeaders; statusCode: number };
 
@@ -356,8 +377,13 @@ export class Transport implements AsyncDisposable {
         result = await this.#dispatch(url, opts);
       } catch(error) {
 
-        // A transport-level exception is a reachability failure - book it before propagating the already-classified error.
-        this.#book(false);
+        // A transport-level exception is evidence the controller could not be reached or did not answer in time, so it books a failure before the
+        // already-classified error propagates. A cancellation the caller chose is the exception: it says nothing about the controller, so it books no outcome
+        // and leaves the breaker exactly as it found it.
+        if(!callerCancelled(error, opts.signal)) {
+
+          this.#book(false);
+        }
 
         throw error;
       }

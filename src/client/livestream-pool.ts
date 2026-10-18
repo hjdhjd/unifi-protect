@@ -554,7 +554,7 @@ class ManagedSession implements SubscriptionHost {
 
   readonly #clock: Clock;
   readonly #controller = new AbortController();
-  readonly #createSession: () => LivestreamSession;
+  readonly #createSession: (signal: AbortSignal) => LivestreamSession;
   readonly #established = Promise.withResolvers<boolean>();
   readonly #key: string;
   readonly #log: ProtectLogging;
@@ -595,8 +595,8 @@ class ManagedSession implements SubscriptionHost {
   #phase: "establishing" | "recovering" = "establishing";
   #settleOutcome: ((outcome: RecoveryOutcome) => void) | null = null;
 
-  constructor(opts: { clock: Clock; createSession: () => LivestreamSession; key: string; log: ProtectLogging; onTeardown: (key: string) => void; policy: RecoveryPolicy;
-    resolved: ResolvedLivestreamSpec; }) {
+  constructor(opts: { clock: Clock; createSession: (signal: AbortSignal) => LivestreamSession; key: string; log: ProtectLogging; onTeardown: (key: string) => void;
+    policy: RecoveryPolicy; resolved: ResolvedLivestreamSpec; }) {
 
     this.#clock = opts.clock;
     this.#createSession = opts.createSession;
@@ -668,7 +668,8 @@ class ManagedSession implements SubscriptionHost {
     }
   }
 
-  // Close the stream from the pool's own disposal path, awaiting the underlying session's close.
+  // Close the stream from the pool's own disposal path. The teardown closes the underlying session through the lifetime signal it was handed, and awaiting that
+  // session's close here waits for the close to finish.
   async close(): Promise<void> {
 
     const session = this.#current;
@@ -855,7 +856,10 @@ class ManagedSession implements SubscriptionHost {
     // session never installs at all.
     this.#install = { awaitingFirstMedia: true, awaitingFirstSegment: true, pendingDiscontinuity: (this.#phase === "recovering") };
 
-    const session = this.#createSession();
+    // Each session is handed its managed stream's lifetime signal. When the stream is torn down, whatever the cause, that signal closes the current session and
+    // cancels any URL negotiation still in flight, a replaced session's included. A recovery retry aborts nothing: it closes the session it replaces, whose
+    // negotiation runs to its own outcome, so the request still reports what the controller did with it.
+    const session = this.#createSession(this.#controller.signal);
 
     this.#current = session;
     this.#currentRails = [
@@ -1208,10 +1212,11 @@ class ManagedSession implements SubscriptionHost {
     this.#established.resolve(value);
   }
 
-  // The single guarded teardown, whether triggered by the last subscriber leaving, the pool disposing, a codec change, or a give-up. Aborts the recovery loop, disposes
-  // the in-flight rails (so no further segment arrives), removes the key from the pool map synchronously (so a new subscriber starts fresh rather than attaching to a
-  // closing session), resolves the establishment latch (false, if it never resolved), terminates the subscribers (failing them with the terminal error if there is one,
-  // else closing them cleanly), closes the underlying session, and publishes the close diagnostic.
+  // The single guarded teardown, whether triggered by the last subscriber leaving, the pool disposing, a codec change, or a give-up. It first aborts the lifetime
+  // controller, which ends the recovery loop and closes the underlying session through the signal it was handed, cancelling any URL negotiation still in flight. It
+  // then disposes the in-flight rails (so no further segment arrives), removes the key from the pool map synchronously (so a new subscriber starts fresh rather than
+  // attaching to a closing session), resolves the establishment latch (false, if it never resolved), terminates the subscribers (failing them with the terminal error
+  // if there is one, else closing them cleanly), and publishes the close diagnostic.
   #teardown(reason: string): void {
 
     if(this.#torndown) {
@@ -1221,6 +1226,9 @@ class ManagedSession implements SubscriptionHost {
 
     this.#torndown = true;
     this.#state = "closed";
+
+    // Aborting the lifetime controller ends the recovery loop and closes the current session through the signal it was handed. The session's own close event still
+    // reaches `#onSessionClosed`, which ignores it because the teardown flag is already set.
     this.#controller.abort();
     // Disarm the media-stall watchdog so an interval tick already scheduled before teardown cannot fire on a dead session - aborting its controller ends the loop, and
     // the loop's own `#torndown` guard makes a tick that slipped through a no-op as well.
@@ -1246,7 +1254,6 @@ class ManagedSession implements SubscriptionHost {
       }
     }
 
-    void this.#current?.close();
     this.#log.debug("Livestream session torn down.", { key: this.#key, reason });
 
     if(channels.livestreamSessionClosed.hasSubscribers) {
@@ -1322,11 +1329,12 @@ export class LivestreamPool implements AsyncDisposable {
     // so any concurrent early subscriber finds it here rather than opening a second socket.
     if(managed === undefined) {
 
-      const createSession = (): LivestreamSession => new LivestreamSession({
+      const createSession = (signal: AbortSignal): LivestreamSession => new LivestreamSession({
 
         clock: this.#clock,
         log: this.#log,
         resolveUrl: this.#resolveUrl,
+        signal,
         spec,
         ...((this.#verifyTls !== undefined) && { verifyTls: this.#verifyTls }),
         ...((this.#webSocketFactory !== undefined) && { webSocket: this.#webSocketFactory })

@@ -6,11 +6,11 @@
  * whenEstablished.
  */
 import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-pool.ts";
+import type { LivestreamPoolOptions, RecoveryContext, RecoveryPolicy } from "./livestream-pool.ts";
 import type { LivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_STALL_DEFAULT_MS,
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
-import { ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "../errors.ts";
-import type { RecoveryContext, RecoveryPolicy } from "./livestream-pool.ts";
+import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "../errors.ts";
 import { buildInitSegment, buildMediaSegment } from "../transport/livestream-session.helpers.ts";
 import { describe, test } from "node:test";
 import { fakeClock, silentLog } from "../testing.helpers.ts";
@@ -36,8 +36,9 @@ function at<T>(items: T[], index: number): T {
 }
 
 // A pool over fake sockets and a fixed resolver. Every socket the pool's sessions build is captured so tests can drive `open` / `message` / `error` deterministically. A
-// recovery policy may be injected; omitting it exercises the library default.
-function makePool(options: { clock?: FakeClock; recoveryPolicy?: RecoveryPolicy } = {}):
+// recovery policy may be injected; omitting it exercises the library default. A resolver may be injected in place of the fixed one, for a test that reads the
+// negotiation itself.
+function makePool(options: { clock?: FakeClock; recoveryPolicy?: RecoveryPolicy; resolveUrl?: LivestreamPoolOptions["resolveUrl"] } = {}):
 { clock: FakeClock; pool: LivestreamPool; sockets: FakeWebSocket[] } {
 
   const sockets: FakeWebSocket[] = [];
@@ -47,7 +48,7 @@ function makePool(options: { clock?: FakeClock; recoveryPolicy?: RecoveryPolicy 
     clock,
     log: silentLog(),
     ...((options.recoveryPolicy !== undefined) && { recoveryPolicy: options.recoveryPolicy }),
-    resolveUrl: async () => "wss://controller/live",
+    resolveUrl: options.resolveUrl ?? (async () => "wss://controller/live"),
     webSocket: () => {
 
       const ws = new FakeWebSocket({ autoOpen: false });
@@ -59,6 +60,25 @@ function makePool(options: { clock?: FakeClock; recoveryPolicy?: RecoveryPolicy 
   });
 
   return { clock, pool, sockets };
+}
+
+// A resolver that records the signal each negotiation is handed and never settles on its own: once that signal aborts, the promise it returned rejects with
+// ProtectAbortedError, the way the transport answers a cancelled negotiation. A negotiation handed no signal stays pending.
+function capturingResolver(): { resolveUrl: LivestreamPoolOptions["resolveUrl"]; signals: (AbortSignal | undefined)[] } {
+
+  const signals: (AbortSignal | undefined)[] = [];
+  const resolveUrl = async (_params: URLSearchParams, opts: { signal?: AbortSignal }): Promise<string> => {
+
+    signals.push(opts.signal);
+
+    const { promise, reject } = Promise.withResolvers<string>();
+
+    opts.signal?.addEventListener("abort", () => reject(new ProtectAbortedError("The negotiation was aborted by the caller's signal.")), { once: true });
+
+    return promise;
+  };
+
+  return { resolveUrl, signals };
 }
 
 // Pull a single segment from a subscription, asserting the iterator yielded one.
@@ -524,6 +544,52 @@ describe("LivestreamPool", () => {
       assert.equal(sockets.length, 2);
       assert.equal(at(sockets, 0).closeRequested, true);
       assert.equal(at(sockets, 1).closeRequested, true);
+    });
+
+    test("a stream stopped during URL negotiation aborts the signal its resolver was handed", async () => {
+
+      const { resolveUrl, signals } = capturingResolver();
+      const { pool } = makePool({ resolveUrl });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // The last subscriber leaves while the negotiation is still pending, which stops the stream.
+      await sub[Symbol.asyncDispose]();
+
+      const [signal] = signals;
+
+      assert.equal(signals.length, 1);
+      assert.ok(signal instanceof AbortSignal);
+      assert.equal(signal.aborted, true);
+    });
+
+    test("a recovery retry leaves the replaced session's negotiation running", async () => {
+
+      const { resolveUrl, signals } = capturingResolver();
+      const { clock, pool } = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }), resolveUrl });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // The first window elapses with its negotiation still pending, so the policy reconnects: a fresh session replaces the first, whose negotiation runs on.
+      clock.advance(1000);
+      await settle();
+
+      const [ first, second ] = signals;
+
+      assert.equal(signals.length, 2);
+      assert.ok(first instanceof AbortSignal);
+      assert.ok(second instanceof AbortSignal);
+      assert.ok(Object.is(first, second));
+      assert.equal(first.aborted, false);
+      assert.equal(second.aborted, false);
+
+      // Stopping the stream ends the lifetime every negotiation was handed.
+      await sub[Symbol.asyncDispose]();
+
+      assert.equal(first.aborted, true);
+      assert.equal(second.aborted, true);
     });
   });
 

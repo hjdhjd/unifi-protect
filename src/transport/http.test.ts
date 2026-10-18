@@ -14,6 +14,8 @@ import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, Prote
   ProtectTimeoutError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
+import type { MockTransport } from "./mock-controller.helpers.ts";
+import type { SendOptions } from "./http.ts";
 import { Transport } from "./http.ts";
 import assert from "node:assert/strict";
 import { capturingLog } from "../testing.helpers.ts";
@@ -32,6 +34,32 @@ async function sendFailures(transport: Transport, target: string, count: number)
     // eslint-disable-next-line no-await-in-loop
     await transport.send(target);
   }
+}
+
+// Drive `count` sequential requests that each reject, asserting every rejection against `expected`. Each request takes its options from `sendOptions`, called once
+// per request, so a per-request signal is minted fresh: a deadline that lapsed on one request would answer the next before it was sent.
+async function sendRejections(transport: Transport, target: string, count: number, check: { expected: object; sendOptions?: () => SendOptions }): Promise<void> {
+
+  for(let index = 0; index < count; index++) {
+
+    // eslint-disable-next-line no-await-in-loop
+    await assert.rejects(transport.send(target, check.sendOptions?.() ?? {}), check.expected);
+  }
+}
+
+// Send one request its caller cancels in flight: the reply is held open, the caller's signal aborts on the next line with the given reason (the platform's own
+// when none is given), and the rejection is returned for the row to read. A probe skips the open breaker's cooldown gate, as `send` lets one.
+async function sendCancelled(mock: MockTransport, options: { probe?: boolean; reason?: unknown } = {}): Promise<unknown> {
+
+  const controller = new AbortController();
+
+  mock.pool.intercept({ method: "GET", path: "/cancel" }).reply(200, {}).delay(2000);
+
+  const pending = mock.transport.send(url(mock.host, "/cancel"), { signal: controller.signal, ...((options.probe !== undefined) && { probe: options.probe }) });
+
+  controller.abort(options.reason);
+
+  return pending.then(() => assert.fail("The cancelled request resolved."), (error: unknown) => error);
 }
 
 describe("Transport", () => {
@@ -415,6 +443,149 @@ describe("Transport", () => {
       await transport.send(url(host, "/f"));
 
       assert.ok(log.entries.some((entry) => (entry.level === "info") && entry.message.includes("Resumed")), "the recovery should log at info level");
+    });
+
+    test("a request its caller cancels neither counts toward the breaker nor resets it", async () => {
+
+      const mock = makeMockTransport();
+      const { host, pool, transport } = mock;
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT - 1);
+      await sendCancelled(mock);
+
+      // A cancel that booked a failure would have tripped the breaker here, and one that booked a success would leave the next failure short of the threshold.
+      assert.equal(transport.isThrottled, false);
+
+      await transport.send(url(host, "/f"));
+
+      assert.equal(transport.isThrottled, true);
+    });
+
+    test("a transport failure that is no cancellation books: a run of network errors trips the breaker", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+
+      pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno).times(PROTECT_API_ERROR_LIMIT);
+
+      await sendRejections(transport, url(host, "/x"), PROTECT_API_ERROR_LIMIT, { expected: { code: "ECONNREFUSED", constructor: ProtectNetworkError } });
+
+      assert.equal(transport.isThrottled, true);
+    });
+
+    test("a cancelled half-open trial leaves the breaker as it found it", async () => {
+
+      let exited = 0;
+      const mock = makeMockTransport();
+      const { clock, host, pool, transport } = mock;
+
+      using exitedSubscription = transport.on("throttleExited", () => exited++);
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
+      pool.intercept({ method: "GET", path: "/f" }).reply(200, { recovered: true });
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT);
+      clock.advance(COOLDOWN_MS);
+      await sendCancelled(mock);
+
+      assert.equal(transport.isThrottled, true);
+
+      // A cancelled trial that booked a failure would have re-armed the cooldown and refused this request. The breaker is still half-open, so this is the trial.
+      const response = await transport.send(url(host, "/f"));
+
+      assert.equal(response.statusCode, 200);
+      assert.equal(transport.isThrottled, false);
+      assert.equal(exited, 1);
+    });
+
+    test("a cancelled probe mid-cooldown does not re-arm the breaker", async () => {
+
+      const mock = makeMockTransport();
+      const { clock, host, pool, transport } = mock;
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
+      pool.intercept({ method: "GET", path: "/f" }).reply(200, { recovered: true });
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT);
+      clock.advance(COOLDOWN_MS / 2);
+      await sendCancelled(mock, { probe: true });
+
+      assert.equal(transport.isThrottled, true);
+
+      // The cooldown still runs from the trip, so it has elapsed once the other half passes. A cancelled probe that booked a failure would have re-armed it midway.
+      clock.advance(COOLDOWN_MS / 2);
+
+      const response = await transport.send(url(host, "/f"));
+
+      assert.equal(response.statusCode, 200);
+    });
+
+    test("our own deadline books though the caller's signal is live", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const controller = new AbortController();
+
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000).times(PROTECT_API_ERROR_LIMIT);
+
+      await sendRejections(transport, url(host, "/slow"), PROTECT_API_ERROR_LIMIT,
+        { expected: ProtectTimeoutError, sendOptions: () => ({ signal: controller.signal, timeout: 20 }) });
+
+      assert.equal(transport.isThrottled, true);
+    });
+
+    test("a deadline the caller supplies books when it lapses in flight", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000).times(PROTECT_API_ERROR_LIMIT);
+
+      // Each request takes a deadline of its own that lapses while the request is held open, the shape of a consumer's deadline over a slow controller.
+      await sendRejections(transport, url(host, "/slow"), PROTECT_API_ERROR_LIMIT,
+        { expected: ProtectAbortedError, sendOptions: () => ({ signal: AbortSignal.timeout(20) }) });
+
+      assert.equal(transport.isThrottled, true);
+    });
+
+    test("a request whose caller had already aborted is never issued and books nothing", async () => {
+
+      const starts: unknown[] = [];
+      const ends: unknown[] = [];
+      const onStart = (message: unknown): void => void starts.push(message);
+      const onEnd = (message: unknown): void => void ends.push(message);
+      const causedBy = (reason: unknown): ((error: unknown) => boolean) => (error: unknown): boolean => (error instanceof ProtectAbortedError) &&
+        Object.is(error.cause, reason);
+      const { host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT - 1);
+
+      diagnosticsChannel.subscribe("unifi-protect:http:request:start", onStart);
+      diagnosticsChannel.subscribe("unifi-protect:http:request:end", onEnd);
+
+      try {
+
+        // No reply is intercepted for this path, so a request that reached the dispatcher would fail there, publish its start and end diagnostics, and book.
+        const aborted = AbortSignal.abort();
+        const lapsed = AbortSignal.abort(new DOMException("The deadline lapsed.", "TimeoutError"));
+
+        await assert.rejects(transport.send(url(host, "/never"), { signal: aborted }), causedBy(aborted.reason));
+        await assert.rejects(transport.send(url(host, "/never"), { signal: lapsed }), causedBy(lapsed.reason));
+      } finally {
+
+        diagnosticsChannel.unsubscribe("unifi-protect:http:request:start", onStart);
+        diagnosticsChannel.unsubscribe("unifi-protect:http:request:end", onEnd);
+      }
+
+      assert.equal(starts.length, 0);
+      assert.equal(ends.length, 0);
+      assert.equal(transport.isThrottled, false);
+
+      await transport.send(url(host, "/f"));
+
+      assert.equal(transport.isThrottled, true);
     });
   });
 

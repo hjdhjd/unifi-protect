@@ -3,7 +3,7 @@
  * ws-endpoint.test.ts: Tests for the shared WebSocket-endpoint negotiator - the parse-{url}-and-host-rewrite core, exercised through both the livestream and talkback
  * specializations (both GET) and the shared no-URL / non-2xx failure paths, driven through an undici MockAgent so no live controller is needed.
  */
-import { ProtectError, ProtectProtocolError } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectProtocolError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { livestreamUrlResolver, talkbackUrlResolver, wsEndpointResolver } from "./ws-endpoint.ts";
 import assert from "node:assert/strict";
@@ -71,6 +71,24 @@ describe("wsEndpointResolver", () => {
       const resolve = livestreamUrlResolver(transport, host);
 
       await assert.rejects(resolve(new URLSearchParams(), {}), ProtectError);
+
+      await agent.close();
+    });
+
+    test("forwards the caller's signal to the transport", async () => {
+
+      const { agent, host, pool, transport } = makeMockTransport();
+      const controller = new AbortController();
+
+      // The reply is held open, so the request can end early only through the caller's signal, and only if the resolver handed that signal to the transport.
+      pool.intercept({ method: "GET", path: (path) => path.startsWith("/proxy/protect/api/ws/livestream") })
+        .reply(200, { url: "wss://internal-host:7443/ws/livestream?token=abc123" }).delay(2000);
+
+      const pending = livestreamUrlResolver(transport, host)(new URLSearchParams({ camera: "cam1" }), { signal: controller.signal });
+
+      controller.abort();
+
+      await assert.rejects(pending, ProtectAbortedError);
 
       await agent.close();
     });
