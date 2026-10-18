@@ -200,8 +200,9 @@ export function subscribeToChannel(channel: ProtectDiagnosticsChannel<unknown>, 
 
 /**
  * Payload published on {@link channels.adoptionContradiction}. `modelKey` and `id` identify the device whose record was self-contradictory; `mac` is the device's own
- * hardware address; `nvrMac` is the owning-controller address the record asserted, which equals this controller's own MAC (that equality is what makes the
- * adopted-by-another claim provably false). The library corrects the record and publishes this once per episode; consumers building dashboards add their own counters.
+ * hardware address; `nvrMac` is the owning-controller address the record asserted, kept as the wire spelled it, which names this controller's own MAC in some
+ * spelling (that identity is what makes the adopted-by-another claim provably false). The library corrects the record and publishes this once per episode; consumers
+ * building dashboards add their own counters.
  *
  * @category Diagnostics
  */

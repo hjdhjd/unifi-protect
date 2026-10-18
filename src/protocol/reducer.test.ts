@@ -828,7 +828,7 @@ describe("reduce - adoption self-contradiction normalization", () => {
   // The controller's own MAC and two flagged devices, a relay and a sensor that report isAdoptedByOther true while their nvrMac still names this very controller.
   // The relay/sensor ids and MACs and the controller MAC use the controller's raw format (no colons); synthetic cases below use the colon-delimited fixture MAC
   // convention, except the foreign-adoption case in (c), which reuses the flagged sensor's MAC to underline that it is the same physical device now claimed by a
-  // different controller.
+  // different controller, and the re-spelled pair in (e), which spells one controller address two ways on purpose.
   const ownMac = "AABBCC000002";
   const flaggedRelay = (): ReturnType<typeof makeRelay> => makeRelay({ id: "de6da9cf942499c89288cc27", isAdopted: true, isAdoptedByOther: true, mac: "AABBCC000000",
     nvrMac: ownMac });
@@ -950,6 +950,34 @@ describe("reduce - adoption self-contradiction normalization", () => {
       nvrMac: ownMac }), id: "r3", kind: "deviceAdded", modelKey: "relay" });
 
     assert.equal(beforeBootstrap.relays.get("r3")?.isAdoptedByOther, true, "with no NVR yet, the detector is inert");
+  });
+
+  test("(e) the detector reads two spellings of one controller address as the same controller on either side, and a foreign address in any spelling as foreign", () => {
+
+    // The device re-spells this controller's MAC colon-joined and lowercase, so a raw comparison would read the pair as two different controllers.
+    const respelled = (): ReturnType<typeof makeRelay> => ({ ...flaggedRelay(), nvrMac: "aa:bb:cc:00:00:02" });
+    const relayId = respelled().id;
+    const bootstrapped = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), relays: [respelled()] }));
+
+    assert.equal(bootstrapped.relays.get(relayId)?.isAdoptedByOther, false, "a re-spelled device MAC still names this controller on the bootstrap path");
+    assert.equal(bootstrapped.relays.get(relayId)?.nvrMac, "aa:bb:cc:00:00:02", "the stored record keeps the wire's own spelling, so only the comparison folds");
+
+    const added = reduce(seeded(), { data: respelled(), id: relayId, kind: "deviceAdded", modelKey: "relay" });
+
+    assert.equal(added.relays.get(relayId)?.isAdoptedByOther, false, "a re-spelled device MAC still names this controller on the realtime path");
+
+    // The controller re-spells its own MAC hyphen-joined and lowercase while the device keeps the raw spelling, so folding one operand only would still read foreign.
+    const ownRespelled = applyBootstrap(createInitialState(), makeBootstrap({ nvr: makeNvr({ mac: "aa-bb-cc-00-00-02" }), relays: [flaggedRelay()] }));
+
+    assert.equal(ownRespelled.relays.get(relayId)?.isAdoptedByOther, false, "a re-spelled controller MAC is still this controller, not a foreign one");
+
+    // A genuinely different MAC is a real foreign adoption in any spelling, on either path.
+    const foreign = (): ReturnType<typeof makeRelay> => ({ ...flaggedRelay(), nvrMac: "ff:ee:dd:cc:bb:aa" });
+    const foreignBootstrap = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), relays: [foreign()] }));
+    const foreignAdded = reduce(seeded(), { data: foreign(), id: relayId, kind: "deviceAdded", modelKey: "relay" });
+
+    assert.equal(foreignBootstrap.relays.get(relayId)?.isAdoptedByOther, true, "a foreign MAC in another spelling is a real foreign adoption");
+    assert.equal(foreignAdded.relays.get(relayId)?.isAdoptedByOther, true, "a foreign MAC stays foreign on the realtime path too");
   });
 
   test("(f) a flagged deviceAdded normalizes and admits membership, repeats are same-reference no-ops, and the event record keeps the raw flag", () => {

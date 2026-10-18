@@ -27,6 +27,7 @@ import type { DeepPartial, ProtectCameraConfig, ProtectChimeConfig, ProtectFobCo
 import type { StateModelKey, TypedEvent } from "./events.ts";
 import { assertNever } from "../errors.ts";
 import { isDeepStrictEqual } from "node:util";
+import { normalizeMacAddress } from "./address.ts";
 
 /**
  * The immutable snapshot of a controller's modeled state. Devices are normalized into `id -> config` maps for O(1) lookup; selectors derive arrays on demand and
@@ -573,7 +574,9 @@ export function adoptionView(stored: ProtectStateRecord | undefined, incoming: P
  * Whether an adoption view is the provably-false self-contradiction this normalization refuses: the device is adopted, claims to be adopted by another controller, and
  * names a non-empty owning-controller MAC that equals this controller's own non-empty MAC. "Another controller owns me" and "this controller owns me" cannot both hold,
  * so the record is nonsense the model declines to honor. Anything less - not adopted, not flagged, a missing or empty MAC on either side, or two different MACs (a real
- * foreign adoption) - is not the contradiction and returns false.
+ * foreign adoption) - is not the contradiction and returns false. The two MACs are compared by their normalized spelling, because a controller that spells one side
+ * colon-joined or lowercase would otherwise read as a foreign controller and the detector would go quiet on the exact record it exists to refuse...and the fold runs
+ * only after the cheaper checks have passed, so a record not flagged adopted-by-other never pays for it.
  *
  * @param view   - The merged adoption view.
  * @param ownMac - This controller's own MAC (from the incoming bootstrap during a bootstrap, else the stored NVR record), or undefined before the first bootstrap.
@@ -585,7 +588,7 @@ export function adoptionView(stored: ProtectStateRecord | undefined, incoming: P
 export function isAdoptionContradiction(view: AdoptionView, ownMac: string | undefined): boolean {
 
   return (view.isAdopted === true) && (view.isAdoptedByOther === true) && (typeof view.nvrMac === "string") && (view.nvrMac.length > 0) &&
-    (typeof ownMac === "string") && (ownMac.length > 0) && (view.nvrMac === ownMac);
+    (typeof ownMac === "string") && (ownMac.length > 0) && (normalizeMacAddress(view.nvrMac) === normalizeMacAddress(ownMac));
 }
 
 /**
