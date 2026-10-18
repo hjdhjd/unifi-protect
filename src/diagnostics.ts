@@ -122,16 +122,16 @@ export const channels = {
   /** A pooled livestream began a recovery episode after a previously-live session faulted. */
   livestreamRecoveryStarted: typed<LivestreamRecoveryStartedPayload>("unifi-protect:livestream:recovery:started"),
 
-  /** A pooled livestream session closed and released its underlying WebSocket. */
+  /** The livestream pool tore down the managed session it held for a stream. */
   livestreamSessionClosed: typed<LivestreamSessionClosedPayload>("unifi-protect:livestream:session:closed"),
 
-  /** A pooled livestream session opened a new underlying WebSocket. */
+  /** The livestream pool created a managed session for a stream, shared by every subscriber that joins it. */
   livestreamSessionOpened: typed<LivestreamSessionOpenedPayload>("unifi-protect:livestream:session:opened"),
 
   /** A livestream session went silent beyond the heartbeat watchdog window. */
   livestreamStallDetected: typed<LivestreamStallDetectedPayload>("unifi-protect:livestream:stall:detected"),
 
-  /** A consumer subscribed to a pooled livestream session. */
+  /** A consumer subscribed to a livestream through the pool. */
   livestreamSubscriptionCreated: typed<LivestreamSubscriptionCreatedPayload>("unifi-protect:livestream:subscription:created"),
 
   /** A consumer disposed its livestream subscription. */

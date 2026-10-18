@@ -18,7 +18,8 @@
  *
  * **A consumer requests a spec, never a URL.** The controller mints a fresh, one-time URL per negotiation, so the pool dedups on the *spec* (its full stream-affecting
  * identity, via {@link livestreamKey}) *before* negotiating - only the first subscriber for a key creates a managed session, which then creates and negotiates each
- * underlying session. `subscribe` registers the managed session in the map synchronously, so a concurrent early subscriber attaches to the one in-flight session.
+ * underlying session, and a subscriber whose signal had already aborted creates and joins none. `subscribe` registers the managed session in the map synchronously,
+ * so a concurrent early subscriber attaches to the one in-flight session.
  *
  * **The pool owns no transport.** It receives `resolveUrl` - the transport-backed negotiation hook (see {@link wsEndpointResolver}) - so it stays unit-testable with a
  * one-line fake resolver and a fake WebSocket, and the negotiation lives end-to-end inside each session (one connect attempt, one error path).
@@ -113,7 +114,7 @@ export type RecoveryPolicy = (context: RecoveryContext) => RecoveryDecision;
  *   follows the curve.
  *
  * These are safe **ecosystem** defaults - conservative across the diverse hardware real users run, not tuned for a fast controller. A consumer that has measured its own
- * controllers' latency (e.g. HBUP) injects a tighter policy; a consumer composing one may delegate here for the timing and override only the disposition, or replace it.
+ * controllers' latency may inject a tighter policy; a consumer composing one may delegate here for the timing and override only the disposition, or replace it.
  *
  * @param context - The library-observable recovery context.
  *
@@ -189,7 +190,10 @@ export interface LivestreamSubscribeOptions {
    */
   discardOnDispose?: boolean;
 
-  /** An abort signal that disposes this subscription (and only this one - a shared session lives as long as any subscriber remains). */
+  /**
+   * An abort signal that disposes this subscription (and only this one - a shared session lives as long as any subscriber remains), or, when it has already aborted,
+   * makes `subscribe` return one that is already disposed and joined no shared stream.
+   */
   signal?: AbortSignal;
 
   /**
@@ -221,9 +225,9 @@ export interface LivestreamPoolOptions {
   webSocket?: (url: string) => ProtectWebSocket;
 }
 
-// The recovery-relevant surface a LivestreamSubscription reads from the ManagedSession that owns its stream. Keeping it a narrow interface (rather than a back-reference
-// to the whole ManagedSession) means the subscription depends on exactly the affordances it exposes - state, the cached init, the establishment latch, and the
-// in-flight re-decision - and nothing more.
+// The recovery-relevant surface a LivestreamSubscription reads from its host: the ManagedSession that owns its stream, or the detached host below for a subscription
+// that joined none. Keeping it a narrow interface (rather than a back-reference to the whole ManagedSession) means the subscription depends on exactly the affordances
+// it exposes - state, the cached init, the establishment latch, and the in-flight re-decision - and nothing more.
 interface SubscriptionHost {
 
   get initSegment(): { codec: string; data: Buffer } | null;
@@ -231,6 +235,17 @@ interface SubscriptionHost {
   reassess(): void;
   whenEstablished(): Promise<boolean>;
 }
+
+// The host of a subscription that joined no shared stream: the handle `subscribe` returns under a signal that had already aborted. It has no init segment to read
+// through to, and it answers everything else a host is asked the way a stream that is over would. That subscription is disposed before its caller holds it, so its
+// own guards answer first; these answers keep the host total for a subscription that stands on it.
+const detachedHost: SubscriptionHost = {
+
+  initSegment: null,
+  reassess: (): void => { /* A subscription on no stream has nothing to re-decide. */ },
+  state: "closed",
+  whenEstablished: async (): Promise<boolean> => false
+};
 
 /**
  * A consumer's handle into a pooled livestream. It is an `AsyncIterable<Segment>` (the iterator *is* the surface - no callback rail) and `AsyncDisposable`. Each
@@ -263,6 +278,7 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   // the drain-before-terminal guarantee - kept deliberately separate from the generic `EventBus` rail, which rides Node's own async iterator and carries no per-consumer
   // policy.
   readonly #queue: Segment[] = [];
+  readonly #signal: AbortSignal | undefined;
 
   #abortHandler: (() => void) | null = null;
   #delivered = 0;
@@ -272,7 +288,6 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   #error: ProtectError | null = null;
   #lastSegmentAt = 0;
   #peakQueueDepth = 0;
-  #signal: AbortSignal | undefined;
   // The resolver of a pending `next()` that is waiting for the queue to fill or the stream to terminate. Cleared each time it is fired.
   #wake: (() => void) | null = null;
 
@@ -286,18 +301,12 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
     this.#onDispose = opts.onDispose;
     this.#signal = opts.signal;
 
-    // The consumer's signal disposes this subscription (and only this one - a shared session lives as long as any subscriber remains). An already-aborted signal disposes
-    // on the next microtask so the caller still receives the handle first.
+    // The consumer's signal disposes this subscription (and only this one - a shared session lives as long as any subscriber remains). The pool hands a
+    // subscription only a signal that has not aborted, so a listener is all the binding needs.
     if(opts.signal !== undefined) {
 
-      if(opts.signal.aborted) {
-
-        queueMicrotask(() => void this[Symbol.asyncDispose]());
-      } else {
-
-        this.#abortHandler = (): void => void this[Symbol.asyncDispose]();
-        opts.signal.addEventListener("abort", this.#abortHandler, { once: true });
-      }
+      this.#abortHandler = (): void => void this[Symbol.asyncDispose]();
+      opts.signal.addEventListener("abort", this.#abortHandler, { once: true });
     }
   }
 
@@ -341,8 +350,8 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   }
 
   /**
-   * Dispose the subscription: detach it from its shared session (decrementing the reference count, which tears the session down if it was the last), end any in-flight
-   * iteration, and detach the consumer's abort listener. Safe to call more than once.
+   * Dispose the subscription: detach it from its shared session when it joined one (decrementing the reference count, which tears the session down if it was the
+   * last), end any in-flight iteration, and detach the consumer's abort listener. Safe to call more than once.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
@@ -539,7 +548,8 @@ interface SessionInstallState {
 
 // The pool's per-stream record: the (replaceable) underlying session, the subscribers fanned out from it, the cached init segment for late-joiner replay, and - the heart
 // of the resilient pool - the recovery loop. It is the one object holding both the session and the subscriber set, which is why recovery (a per-shared-stream decision)
-// lives here. It implements SubscriptionHost so each subscription reads its lifecycle state, cached init, establishment latch, and in-flight re-decision through it.
+// lives here. It implements SubscriptionHost so each subscription that joined the stream reads its lifecycle state, cached init, establishment latch, and in-flight
+// re-decision through it.
 class ManagedSession implements SubscriptionHost {
 
   readonly #clock: Clock;
@@ -1283,12 +1293,28 @@ export class LivestreamPool implements AsyncDisposable {
    * @param opts - Per-subscription {@link LivestreamSubscribeOptions}: an optional abort signal that disposes this subscription (and only this one), an
    *               optional `urgency` closure feeding the resilient recovery, and `discardOnDispose` dropping the undelivered queue on this consumer's own disposal.
    *
-   * @returns A live subscription.
+   * @returns The subscription: live, or already disposed when its signal had already aborted.
    */
   subscribe(spec: LivestreamSpec, opts: LivestreamSubscribeOptions = {}): LivestreamSubscription {
 
     const resolved = resolveLivestreamSpec(spec);
     const key = livestreamKey(resolved);
+    const discardOnDispose = opts.discardOnDispose ?? false;
+
+    // A signal that has already aborted asks for a subscription that is over before it begins, so it joins no shared stream: no managed session is created,
+    // replayed from or re-decided on its behalf. The caller still receives a handle - already disposed, the answer the sibling sessions give an aborted signal at
+    // construction - and the created and disposed diagnostics publish in that order, the lifecycle an observer pairing them by id sees for every subscription.
+    if(opts.signal?.aborted === true) {
+
+      const closed = new LivestreamSubscription({ clock: this.#clock, discardOnDispose, host: detachedHost,
+        onDispose: (disposed): void => this.#publishDisposed(key, disposed) });
+
+      this.#publishCreated(key, closed);
+
+      void closed[Symbol.asyncDispose]();
+
+      return closed;
+    }
 
     let managed = this.#sessions.get(key);
 
@@ -1312,15 +1338,11 @@ export class LivestreamPool implements AsyncDisposable {
     }
 
     const session = managed;
-    const subscription = new LivestreamSubscription({ clock: this.#clock, discardOnDispose: opts.discardOnDispose ?? false, host: session,
+    const subscription = new LivestreamSubscription({ clock: this.#clock, discardOnDispose, host: session,
       onDispose: (disposed): void => this.#onSubscriptionDisposed(key, session, disposed), ...((opts.signal !== undefined) && { signal: opts.signal }) });
 
     session.attach(subscription, opts.urgency);
-
-    if(channels.livestreamSubscriptionCreated.hasSubscribers) {
-
-      channels.livestreamSubscriptionCreated.publish({ key, subscriptionId: subscription.id } satisfies LivestreamSubscriptionCreatedPayload);
-    }
+    this.#publishCreated(key, subscription);
 
     return subscription;
   }
@@ -1343,6 +1365,20 @@ export class LivestreamPool implements AsyncDisposable {
   #onSubscriptionDisposed(key: string, session: ManagedSession, subscription: LivestreamSubscription): void {
 
     session.detach(subscription);
+    this.#publishDisposed(key, subscription);
+  }
+
+  // Publish the subscription-created diagnostic, which carries the new subscription's id.
+  #publishCreated(key: string, subscription: LivestreamSubscription): void {
+
+    if(channels.livestreamSubscriptionCreated.hasSubscribers) {
+
+      channels.livestreamSubscriptionCreated.publish({ key, subscriptionId: subscription.id } satisfies LivestreamSubscriptionCreatedPayload);
+    }
+  }
+
+  // Publish the subscription-disposed diagnostic, which carries the subscription's final stats.
+  #publishDisposed(key: string, subscription: LivestreamSubscription): void {
 
     if(channels.livestreamSubscriptionDisposed.hasSubscribers) {
 

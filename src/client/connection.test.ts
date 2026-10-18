@@ -692,7 +692,6 @@ describe("ConnectionMonitor", () => {
 
         observed.push((clock.pendingWaits())[0] ?? -1);
 
-
         clock.advance(delay);
 
         // eslint-disable-next-line no-await-in-loop

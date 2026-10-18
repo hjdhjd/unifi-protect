@@ -207,7 +207,7 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
    *
    * @param opts - The stream source and tuning, plus the per-subscription options (abort signal, urgency, and discard-on-dispose).
    *
-   * @returns A live subscription.
+   * @returns The subscription: live, or already disposed when its signal had already aborted.
    */
   livestream(opts: LivestreamOptions): LivestreamSubscription {
 

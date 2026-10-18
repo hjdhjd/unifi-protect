@@ -269,20 +269,115 @@ describe("LivestreamPool", () => {
       assert.equal(ws.closeRequested, true);
     });
 
-    test("an already-aborted signal disposes the subscription so its iterator ends immediately", async () => {
+    test("an already-aborted signal returns a subscription that is already closed and joins no stream", async () => {
 
-      const { pool } = makePool();
+      const opened: unknown[] = [];
+      const onOpened = (message: unknown): void => void opened.push(message);
+      let urgencyCalls = 0;
+      const urgency = (): number => {
+
+        urgencyCalls++;
+
+        return 0;
+      };
+
+      channels.livestreamSessionOpened.subscribe(onOpened);
+
+      try {
+
+        const { pool } = makePool();
+        const controller = new AbortController();
+
+        controller.abort();
+
+        const sub = pool.subscribe(SPEC, { signal: controller.signal, urgency });
+
+        // Every read here is synchronous with the subscribe: the handle is over the moment the caller holds it, so no session was opened and no urgency consulted.
+        assert.equal(sub.state, "closed");
+        assert.equal(sub.initSegment, null);
+        assert.equal(sub.codec, "");
+        assert.equal(urgencyCalls, 0);
+        assert.equal(opened.length, 0);
+        assert.equal(await sub.whenEstablished(), false);
+        assert.equal((await sub[Symbol.asyncIterator]().next()).done, true);
+      } finally {
+
+        channels.livestreamSessionOpened.unsubscribe(onOpened);
+      }
+    });
+
+    test("a late joiner under an already-aborted signal is closed and receives no replayed init", async () => {
+
+      const { pool, sockets } = makePool();
+      const first = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
       const controller = new AbortController();
 
       controller.abort();
 
-      const sub = pool.subscribe(SPEC, { signal: controller.signal });
+      // The shared stream is live with an init cached, so a joiner that attached would read it and answer the establishment wait true. This one joins nothing.
+      const late = pool.subscribe(SPEC, { signal: controller.signal });
+      const wait = late.whenEstablished();
+
+      assert.equal(late.state, "closed");
+      assert.equal(late.initSegment, null);
+      assert.equal(late.codec, "");
+      assert.equal(await wait, false);
+      assert.equal((await late[Symbol.asyncIterator]().next()).done, true);
+      assert.equal(at(sockets, 0).closeRequested, false);
+
+      await first[Symbol.asyncDispose]();
+    });
+
+    test("a joiner under an already-aborted signal does not re-decide a parked recovery", async () => {
+
+      const clock = fakeClock();
+      let recoveringCalls = 0;
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        recoveringCalls++;
+
+        // The first recovery decision parks on a long wait; only a joiner that truly attaches should force the re-decision that reconnects.
+        return (recoveringCalls === 1) ? { forMs: 1000000000, kind: "wait" } : { awaitMs: 100000, kind: "reconnect" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      // The controller drops the live stream, beginning a recovering episode the policy parks on a wait - no new socket yet.
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      const controller = new AbortController();
+
+      controller.abort();
+      pool.subscribe(SPEC, { signal: controller.signal });
+      await settle();
+
+      assert.equal(sockets.length, 1);
+      assert.equal(recoveringCalls, 1);
+
+      // Positive control: a joiner with no signal attaches mid-recovery and re-decides the parked window, so the assertions above measure the aborted joiner alone.
+      const joiner = pool.subscribe(SPEC);
 
       await settle();
 
-      const result = await sub[Symbol.asyncIterator]().next();
+      assert.equal(sockets.length, 2);
+      assert.equal(recoveringCalls, 2);
 
-      assert.equal(result.done, true);
+      await joiner[Symbol.asyncDispose]();
+      await sub[Symbol.asyncDispose]();
     });
   });
 
@@ -1271,6 +1366,60 @@ describe("LivestreamPool", () => {
       } finally {
 
         channels.livestreamSessionOpened.unsubscribe(onOpened);
+        channels.livestreamSubscriptionCreated.unsubscribe(onCreated);
+        channels.livestreamSubscriptionDisposed.unsubscribe(onDisposed);
+      }
+    });
+
+    test("an already-aborted subscribe publishes created then disposed and no session event", async () => {
+
+      const events: { payload: unknown; tag: string }[] = [];
+      const record = (tag: string): ((payload: unknown) => void) => (payload: unknown): void => void events.push({ payload, tag });
+      const onOpened = record("opened");
+      const onClosed = record("closed");
+      const onCreated = record("created");
+      const onDisposed = record("disposed");
+      const tags = (): string[] => events.map((event) => event.tag);
+
+      channels.livestreamSessionOpened.subscribe(onOpened);
+      channels.livestreamSessionClosed.subscribe(onClosed);
+      channels.livestreamSubscriptionCreated.subscribe(onCreated);
+      channels.livestreamSubscriptionDisposed.subscribe(onDisposed);
+
+      try {
+
+        const { pool, sockets } = makePool();
+        const controller = new AbortController();
+
+        controller.abort();
+
+        // With no prior subscriber, the closed handle opens no session; its own pair publishes inside the subscribe call, in order.
+        pool.subscribe(SPEC, { signal: controller.signal });
+
+        assert.deepEqual(tags(), [ "created", "disposed" ]);
+
+        events.length = 0;
+
+        const first = pool.subscribe(SPEC);
+
+        await settle();
+        await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+        events.length = 0;
+
+        // Beside a live stream with an init cached, the closed handle's pair is the same, and nothing was replayed into it.
+        const late = pool.subscribe(SPEC, { signal: controller.signal });
+
+        assert.deepEqual(tags(), [ "created", "disposed" ]);
+        assert.equal((at(events, 0).payload as { subscriptionId: string }).subscriptionId, late.id);
+        assert.equal((at(events, 1).payload as { subscriptionId: string }).subscriptionId, late.id);
+        assert.deepEqual((at(events, 1).payload as { stats: unknown }).stats, { delivered: 0, discarded: 0, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 });
+
+        await first[Symbol.asyncDispose]();
+      } finally {
+
+        channels.livestreamSessionOpened.unsubscribe(onOpened);
+        channels.livestreamSessionClosed.unsubscribe(onClosed);
         channels.livestreamSubscriptionCreated.unsubscribe(onCreated);
         channels.livestreamSubscriptionDisposed.unsubscribe(onDisposed);
       }

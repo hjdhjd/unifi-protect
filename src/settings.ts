@@ -83,7 +83,7 @@ export const PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS = 30000;
 // only churns the negotiation. So the default policy's establishment windows are deliberately patient and urgency-INDEPENDENT (they ignore the reported tolerance), each
 // value the time it grants a fresh stream to produce its first segment before abandoning the attempt and reconnecting. Summed against the 30 s deadline this yields
 // roughly four attempts (5s + 8s + 10s + 10s) before give-up. The last value is the steady ceiling once attempts exceed the curve length. These are safe ecosystem
-// defaults sized for diverse real hardware; a consumer that has measured its own controllers (e.g. HBUP) injects a tighter policy.
+// defaults sized for diverse real hardware; a consumer that has measured its own controllers may inject a tighter policy.
 export const PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS = [ 5000, 8000, 10000 ];
 
 // Livestream live-recovery backoff curve, in milliseconds, indexed by consecutive failed attempts. Live recovery - the stream produced a segment once and then faulted -
