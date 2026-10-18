@@ -14,7 +14,7 @@
  * **The WebSocket is an injected dependency**, exactly like the {@link Transport}'s dispatcher and the {@link StateStore}'s refresh hook. `EventStream` depends on the
  * minimal {@link ProtectWebSocket} interface - only the surface it uses - never undici's full type. The default factory builds undici's `WebSocket` over an owned
  * HTTP/1.1 agent whose certificate verification follows the `verifyTls` option, permissive by default because Protect controllers ship self-signed certificates (and a
- * WebSocket upgrade cannot ride the HTTP/2 request pool). Tests inject a fake socket and drive `open` / `message` / `close` / `error` deterministically (undici's
+ * WebSocket upgrade cannot go through the HTTP/2 request pool). Tests inject a fake socket and drive `open` / `message` / `close` / `error` deterministically (undici's
  * `MockAgent` does not mock WebSockets).
  *
  * **The watchdog detects here; `ConnectionMonitor` responds.** This is the same division as the throttle breaker: the subsystem that owns a resource detects its health
@@ -50,7 +50,8 @@ import { wallClock } from "../clock.ts";
  *   and the WebSocket coming online.
  * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses).
  * - `webSocket` is the injected I/O dependency; omit it to use the default undici-backed factory, inject it in tests.
- * - `signal` cancels the connection attempt - if it aborts before the socket opens, {@link EventStream.opened} rejects and the stream tears down.
+ * - `signal` cancels the connection attempt and, once open, the stream - if it aborts before the socket opens, {@link EventStream.opened} rejects with
+ *   `ProtectAbortedError`; at any point the stream tears down.
  * - `verifyTls` opts the owned agent into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
  *   `webSocket` factory builds no agent here, so the option is inert alongside one.
  *
@@ -75,7 +76,8 @@ export interface EventStreamOptions {
  * - `rawPacket` is the raw observability firehose: the decoded {@link RawPacket} (header + payload) of *every* frame, emitted one decode step before `packet` and
  *   before classification - so it carries the valid-but-unmodeled frames the classifier drops to `null`, which `packet` never sees. Pure observability for protocol
  *   exploration and capture; never dispatched into state, no state-ordering guarantee (unlike `packet`, which is dispatched-then-emitted).
- * - `closed` fires once when the WebSocket closes (naturally, on error, or on a watchdog stall), carrying the close frame's code and reason.
+ * - `closed` fires once when the stream tears down, carrying a code and reason that classify the teardown: the peer's own close code and reason for a close it
+ *   started, otherwise 1000 for a teardown we chose (an explicit close or a caller abort) and 1006 for one forced by a failure (a socket error or a watchdog stall).
  * - `error` carries a typed {@link ProtectError} - a decode failure, a socket error, a {@link ProtectStallError} from the silence watchdog, or a {@link
  *   ProtectNetworkError} when the peer closes a live socket unsolicited (a controller reboot drops the socket this way: a `close` event with no preceding socket
  *   `error`). Every termination we did not initiate reaches this rail; a self-initiated close stays informational on `closed`, and a caller-signal abort before open
@@ -196,7 +198,8 @@ export class EventStream implements AsyncDisposable {
     this.#ws.addEventListener("close", (event) => this.#onClose(event.code, event.reason), { once: true, signal });
     this.#ws.addEventListener("error", (event) => this.#onError(event), { once: true, signal });
 
-    // The caller's signal cancels the connection attempt. Bound to our own signal too, so it detaches with everything else once we tear down.
+    // The caller's signal cancels the connection attempt and, once open, the stream itself. Bound to our own signal too, so it detaches with everything else once we
+    // tear down.
     if(options.signal !== undefined) {
 
       if(options.signal.aborted) {
@@ -289,8 +292,8 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * The realtime event firehose: every decoded {@link TypedEvent}, until the signal aborts or the stream closes. Sugar over `stream("packet")` that unwraps the
-   * single-element argument tuple to the event itself.
+   * The realtime event firehose: every decoded {@link TypedEvent}, until the caller's signal aborts. Closing the stream does not end the iteration, so a consumer ties
+   * the signal to the stream's lifetime. Sugar over `stream("packet")` that unwraps the single-element argument tuple to the event itself.
    *
    * @param opts - Optional abort signal that terminates the iteration.
    *

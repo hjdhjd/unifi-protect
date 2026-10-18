@@ -1,6 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * camera.ts: The Camera device projection - read-through config plus the camera-specific commands (snapshot, livestream).
+ * camera.ts: The Camera device projection - read-through config plus the camera-specific commands (snapshot, livestream, talkback, and the sensor and accessory
+ * operations).
  */
 import type { LivestreamSubscribeOptions, LivestreamSubscription } from "../client/livestream-pool.ts";
 import { ProtectProtocolError, ProtectUnsupportedError } from "../errors.ts";
@@ -43,8 +44,8 @@ export interface LivestreamOptions extends Omit<LivestreamSpec, "cameraId">, Liv
 
 /**
  * A camera projection. Inherits the read-through getters, live `observe`, and the write-through `update` and `reboot` commands from {@link DeviceProjection}, and adds
- * the commands specific to cameras: a JPEG snapshot and a pooled livestream subscription. Camera-specific *configuration* (RTSP enablement, recording settings, and so
- * on) is expressed through `update` payloads rather than bespoke methods.
+ * the commands specific to cameras. Camera-specific *configuration* (RTSP enablement, recording settings, and so on) is expressed through `update` payloads rather
+ * than bespoke methods.
  *
  * @category Devices
  */

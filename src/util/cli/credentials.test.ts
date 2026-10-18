@@ -1,6 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * credentials.test.ts: Unit tests for ufp.json discovery (cwd before home), controller normalization, and validation failures.
+ * credentials.test.ts: Unit tests for ufp.json discovery (cwd before home), controller normalization, validation failures, and the strict-TLS opt-in, plus the
+ * interactive credential prompt (asking, masking, the save offer, cancellation, and listener hygiene).
  */
 import { PassThrough, Writable } from "node:stream";
 import { describe, test } from "node:test";
@@ -214,6 +215,7 @@ function scriptedPrompt(answers: readonly string[], opts: { onPrompt?: () => voi
 
         if(answer !== undefined) {
 
+          // The answer is deferred to the next macrotask because the prompt is written from inside `rl.question` before the question is armed to receive a line.
           setImmediate(() => void input.write(answer + "\n"));
         }
       }
@@ -346,8 +348,8 @@ describe("loadCredentials interactive prompt", () => {
 
       await loadCredentials({ cwd, home, interactive });
 
-      // The interface is created for one run and closed on the way out. The channel registry it attaches to is the process's, so a leaked listener would outlive the
-      // command and read input meant for whatever ran next.
+      // The interface is created for one run and closed on the way out. The input stream it attaches to is, in production, the process's stdin, so a leaked listener
+      // would outlive the command and read input meant for whatever ran next.
       for(const event of [ "data", "end", "error", "keypress", "readable" ]) {
 
         assert.equal(input.listenerCount(event), 0, "no residual " + event + " listener");

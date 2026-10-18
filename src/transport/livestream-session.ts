@@ -67,9 +67,10 @@ const TIMESTAMP_BYTES = 8;
 
 /**
  * The deterministic lifecycle of a livestream session. The transitions are: `idle -> connecting` (construction begins; the URL is negotiated and the socket built),
- * `connecting -> handshaking` (WebSocket `open`), `handshaking -> live` (first init segment received and cached), `any -> closing` (a self-initiated teardown: error,
- * abort, or watchdog stall), `closing -> closed` (socket fully closed, owned agent destroyed, resources released) - a peer-initiated close reaches `closed` directly,
- * without passing through `closing`.
+ * `connecting -> handshaking` (WebSocket `open`), `handshaking -> live` (first init segment received and cached), and `any -> closed` (teardown run, listeners
+ * detached; the owned agent's destruction is what close() awaits). A teardown the session runs itself - self-initiated (an explicit close() or an aborted signal) or
+ * failure-driven (a negotiation failure, a socket error, or a watchdog stall) - passes through `closing` only momentarily inside that teardown, so `closing` is never
+ * observable from outside; a peer-initiated close reaches `closed` directly.
  *
  * @category Transport
  */
@@ -77,7 +78,7 @@ export type LivestreamState = "idle" | "connecting" | "handshaking" | "live" | "
 
 /**
  * The mutually-exclusive livestream source selector. A livestream is captured EITHER from a quality channel on the primary sensor OR from a secondary lens (which the
- * controller always addresses on channel 0); the two can never be combined. Tagged (matching {@link Segment}) so the tag is authoritative regardless
+ * controller always addresses on channel 0); no two can be combined. Tagged (matching {@link Segment}) so the tag is authoritative regardless
  * of how the value is built, and so the illegal "a non-zero channel paired with a lens" request is unrepresentable at the type level rather than silently coerced.
  *
  * @category Transport
@@ -109,7 +110,7 @@ export interface LivestreamSpec {
 
   /**
    * Which stream to capture. `{ type: "channel", channel }` selects a quality channel (0 is the highest); `{ type: "lens", lens }` selects a secondary lens on a
-   * multi-lens device (e.g., a package camera), which the controller always addresses on channel 0. The two selectors are mutually exclusive - modeling them as a
+   * multi-lens device (e.g., a package camera), which the controller always addresses on channel 0. The selectors are mutually exclusive - modeling them as a
    * discriminated union makes the illegal "channel and lens together" request unrepresentable. Omit `source` for the primary view (channel 0, lens 0).
    */
   source?: LivestreamSource;
@@ -160,9 +161,10 @@ export type Segment =
  * The events {@link LivestreamSession} publishes on its three-rail surface.
  *
  * - `segment` is the decoded stream: one init or media {@link Segment} per controller fragment. The pool bridges this rail and fans each segment to every subscriber.
- * - `closed` fires once when the WebSocket closes (naturally, on error, or on a watchdog stall), carrying the close frame's code and reason, plus the optional typed
- *   {@link ProtectError} cause an initiated teardown recorded - a caller abort, a failed negotiation, a socket error, or the watchdog stall - and omitted for a plain
- *   or spontaneous close.
+ * - `closed` fires once when the session tears down, carrying a code and reason that classify the teardown: the peer's own close code and reason for a close it
+ *   started, otherwise 1000 for a teardown we chose (an explicit close or a caller abort) and 1006 for one forced by a failure (a failed negotiation, a socket error,
+ *   or a watchdog stall). It also carries the optional typed {@link ProtectError} cause an initiated teardown recorded - a caller abort, a failed negotiation, a socket
+ *   error, or the watchdog stall - omitted for a plain or spontaneous close.
  * - `error` carries a typed {@link ProtectError}: the watchdog always emits a {@link ProtectStallError}, and a negotiation or socket failure typically wraps as a
  *   {@link ProtectNetworkError} - but when the injected `resolveUrl` hook throws an already-typed {@link ProtectError}, that instance passes through onto this rail
  *   unwrapped, so a negotiation failure can also surface a {@link ProtectStallError} or another {@link ProtectError} subtype. The error *type* is what a subscriber acts
@@ -204,7 +206,7 @@ export interface LivestreamSessionOptions {
 }
 
 // Resolve the source selector to the controller's (channel, lens) wire pair. This is the single place the protocol constraint lives: a secondary lens is always addressed
-// on channel 0, and a quality-channel selection carries no lens, so each selector pins the other coordinate to 0; an omitted source is the primary view. Because the
+// on channel 0, and a quality-channel selection carries no lens, so each selector fixes the other coordinate at 0; an omitted source is the primary view. Because the
 // input is a discriminated union, the illegal "both selected" request is unrepresentable, so this resolution never has to choose between a conflicting channel and lens.
 function resolveSource(source: LivestreamSource | undefined): { channel: number; lens: number } {
 
@@ -336,8 +338,8 @@ export class LivestreamSession implements AsyncDisposable {
     this.#verifyTls = options.verifyTls ?? false;
     this.#webSocketFactory = options.webSocket;
 
-    // The caller's signal cancels the connect attempt. Bound to our own signal too, so it detaches with everything else once we tear down. An already-aborted signal
-    // tears down immediately - the connect below sees the abort and bails before opening a socket.
+    // The caller's signal cancels the connect attempt and, once live, the session. Bound to our own signal too, so it detaches with everything else once we tear down.
+    // An already-aborted signal tears down immediately - the connect below sees the abort and bails before opening a socket.
     if(options.signal !== undefined) {
 
       if(options.signal.aborted) {
@@ -452,6 +454,8 @@ export class LivestreamSession implements AsyncDisposable {
 
     try {
 
+      // Only the caller's signal cancels the negotiation. A stop driven from inside the session (close()) lets the request finish and discards its result below; the
+      // pool cancels a negotiation by passing its stream's lifetime signal as this session's signal.
       url = await this.#resolveUrl(this.#buildParams(), (signal !== undefined) ? { signal } : {});
     } catch(error) {
 
@@ -459,7 +463,7 @@ export class LivestreamSession implements AsyncDisposable {
       // `#closed` because it is a live getter the type system cannot narrow to a constant across the await - and it is set in lockstep with `#closed` on teardown.
       if(!this.#controller.signal.aborted) {
 
-        // Construct the typed negotiation failure once: the same object rides the error rail and is carried to `#shutdown` as the closure's cause.
+        // Construct the typed negotiation failure once: the same object goes out on the error rail and is carried to `#shutdown` as the closure's cause.
         const failure = (error instanceof ProtectError) ? error :
           new ProtectNetworkError("The UniFi Protect livestream WebSocket endpoint could not be negotiated.", { cause: error });
 
@@ -676,7 +680,7 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   // Cache and emit the initialization segment. We take a detached copy because the cache is held for the session's lifetime and replayed to late joiners; holding the
-  // zero-copy view would pin the whole originating message buffer. The first init segment is what advances the session to `live`.
+  // zero-copy view would keep the whole originating message buffer alive. The first init segment is what advances the session to `live`.
   #emitInitSegment(raw: Buffer): void {
 
     const data = Buffer.from(raw);
@@ -746,7 +750,7 @@ export class LivestreamSession implements AsyncDisposable {
       this.#log.error("The UniFi Protect livestream API reported an error.", event.error ?? event.message);
     }
 
-    // Construct the socket failure once: the same object rides the error rail and is carried to `#shutdown` as the closure's cause.
+    // Construct the socket failure once: the same object goes out on the error rail and is carried to `#shutdown` as the closure's cause.
     const failure = new ProtectNetworkError("The UniFi Protect livestream API connection failed.", { cause: event.error });
 
     this.#bus.emit("error", failure);
@@ -776,6 +780,7 @@ export class LivestreamSession implements AsyncDisposable {
   // teardown that knows why it closed hands the typed cause here; it is recorded only when none is set yet, so the first cause wins and a later trigger never overwrites
   // it. `code` classifies the teardown for the `closed` event's consumers using the RFC 6455 status codes, rather than an actual close frame value: 1000 marks every
   // self-initiated teardown (an explicit close(), an aborted signal), and 1006 marks a failure-driven one (a negotiation failure, a socket error, a stalled heartbeat).
+  // Only a close the peer starts carries the real frame's code and reason, since it reaches `#onClose` directly.
   #shutdown(code: number, reason: string, cause: ProtectError | null = null): void {
 
     this.#closeCause ??= cause;
@@ -811,7 +816,7 @@ export class LivestreamSession implements AsyncDisposable {
 
           this.#log.error("The UniFi Protect livestream API went silent beyond the heartbeat window; tearing down the stalled session.", { silentForMs });
 
-          // Construct the stall once: the same object rides the error rail and is carried to `#shutdown` as the closure's cause.
+          // Construct the stall once: the same object goes out on the error rail and is carried to `#shutdown` as the closure's cause.
           const stall = new ProtectStallError("The UniFi Protect livestream API produced no data within the heartbeat window.", { silentForMs });
 
           this.#bus.emit("error", stall);

@@ -43,9 +43,9 @@ export interface InteractivePrompt {
  * Options for {@link loadCredentials}. The defaults read the real working directory and home directory; tests override them to point at a temporary fixture without
  * touching the developer's real `~/.ufp.json`.
  *
- * `interactive` is the whole mode switch: supplied, a first run with no configuration file asks for credentials instead of failing; absent, discovery behaves exactly
- * as it always does and an absent file is an error. It is one object rather than loose fields so present-or-absent is the only state there is, and the decision of
- * whether prompting is appropriate stays with the caller that knows about terminals - this loader is deterministic and never consults ambient state of its own.
+ * `interactive` is the whole mode switch: supplied, a first run with no configuration file asks for credentials instead of failing; absent, an absent file is an
+ * error. It is one object rather than loose fields so present-or-absent is the only state there is, and the decision of whether prompting is appropriate stays with
+ * the caller that knows about terminals - this loader never inspects a terminal itself; whether to prompt is decided entirely by the presence of `interactive`.
  *
  * @category CLI
  */
@@ -100,6 +100,7 @@ async function readIfPresent(file: string): Promise<string | null> {
     return await readFile(file, "utf8");
   } catch(error) {
 
+    // The fs promise API rejects with an ErrnoException, so the error carries the `code` that names the failure.
     if((error as NodeJS.ErrnoException).code === "ENOENT") {
 
       return null;
@@ -160,8 +161,9 @@ interface FieldPrompt {
   required: string;
 }
 
-// Ask one field until the answer is usable, recovering in place rather than failing the run. Recovery is prompt behavior, not a second validation pipeline: the answer
-// is normalized by the very same functions the file path uses, and only the wording of a retry belongs to the prompt.
+// Ask one field until the answer is usable, recovering in place rather than failing the run. Recovery is prompt behavior, not a second validation pipeline: a field
+// with a normalizer (the controller address) goes through the very same function the file path uses. The prompt adds only what typing needs - every answer is trimmed,
+// an empty one is asked again, and a retry is worded for someone typing rather than editing a file.
 async function askField(ask: AskQuestion, write: WriteLine, field: FieldPrompt): Promise<string> {
 
   for(;;) {
@@ -332,9 +334,9 @@ async function promptForCredentials(interactive: InteractivePrompt, home: string
  * home directory. The first file that exists wins; a malformed or incomplete file is a hard error (we do not silently fall through to the next location, because a
  * present-but-broken file is a mistake the operator wants told about, not masked).
  *
- * When no file is found and the caller supplied `interactive`, the details are asked for instead: the same normalization and validation the file path uses is applied
- * to what is typed, and the answers are offered a home in `~/.ufp.json` so the next run finds a file. A broken file is never a prompt - only an absent one is, because
- * a present file that is wrong is something to fix rather than to type around.
+ * When no file is found and the caller supplied `interactive`, the details are asked for instead: the controller address goes through the same normalization the file
+ * path uses, every answer is trimmed and must be non-empty, and the answers are offered a home in `~/.ufp.json` so the next run finds a file. A broken file is never a
+ * prompt - only an absent one is, because a present file that is wrong is something to fix rather than to type around.
  *
  * @param opts - Optional working-directory and home-directory overrides (defaults to the real ones), and the interactive prompt to fall back on.
  *
@@ -370,8 +372,8 @@ export async function loadCredentials(opts: LoadCredentialsOptions = {}): Promis
 
   if(raw === null) {
 
-    // A first run in a terminal asks rather than fails. Everywhere else - a script, a pipe, a CI job - an absent configuration stays exactly the error it has always
-    // been, because there is nobody there to answer.
+    // A first run in a terminal asks rather than fails. Everywhere else - a script, a pipe, a CI job - an absent configuration is an error, because there is nobody
+    // there to answer.
     if(opts.interactive !== undefined) {
 
       return await promptForCredentials(opts.interactive, home);
@@ -395,6 +397,7 @@ export async function loadCredentials(opts: LoadCredentialsOptions = {}): Promis
     throw new CliError("The ufp.json configuration at " + source + " must be a JSON object.");
   }
 
+  // An array also passes the object check above, but it carries none of the named fields, so `requireField` rejects it; the record view is safe either way.
   const record = parsed as Record<string, unknown>;
   const verifyTls = readVerifyTls(record, source);
 

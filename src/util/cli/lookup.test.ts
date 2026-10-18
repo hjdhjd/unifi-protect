@@ -95,8 +95,8 @@ describe("findDeviceOfType", () => {
 
   test("rejects a token that resolves to a device of a different class", () => {
 
-    // "Front Door" is a camera, so requesting it as a relay must fail with a usage error naming both classes rather than acting on the wrong device or returning nothing.
-    // This is the resolver's one distinguishing behavior; without it, an implementation whose narrowing never rejects would still pass every other case.
+    // The id "c1" is a camera, so requesting it as a relay must fail with a usage error naming both classes rather than acting on the wrong device or returning nothing.
+    // Without this case, an implementation whose narrowing never rejects would still pass every other test.
     const client = fakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
 
     assert.throws(() => findDeviceOfType(client, "c1", "relay"), { constructor: CliError, exitCode: 2, message: /is a camera, not a relay/ });

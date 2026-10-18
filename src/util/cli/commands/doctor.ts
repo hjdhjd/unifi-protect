@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * doctor.ts: `ufp doctor` - a structured, per-subsystem health check exercising every public surface of the library. The canonical "is my install healthy?" command.
+ * doctor.ts: `ufp doctor` - a structured, per-subsystem health check exercising the library's read-only subsystems. The canonical "is my install healthy?" command.
  */
 import type { Camera, ProtectClient } from "../../../index.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
@@ -112,7 +112,7 @@ async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ c
   return { codec, init, media };
 }
 
-// Render the report as an aligned list of checks plus a summary, returning whether every check passed (for the exit code).
+// Render the report as an aligned list of checks plus a summary, returning whether no check failed (for the exit code; warn and skip results do not fail it).
 function renderReport(output: Output, results: CheckResult[]): boolean {
 
   for(const result of results) {
@@ -133,9 +133,10 @@ function renderReport(output: Output, results: CheckResult[]): boolean {
 }
 
 /**
- * `ufp doctor`. Connects once and exercises every public subsystem as a discrete check: state and derived selectors, device projections, snapshot, the realtime firehose,
- * the connection monitor, the livestream pool, the diagnostics channels (asserted to fire during the run), schema drift (unknown modelKeys), and the user roster
- * (populated at connect, the precondition for `isAdmin` to derive correctly). Designed as a permanent health probe: it exits non-zero if any check fails.
+ * `ufp doctor`. Connects once and exercises the library's read-only subsystems as discrete checks: connect and authentication, state and bootstrap, derived selectors,
+ * the user roster (populated at connect, the precondition for `isAdmin` to derive correctly), snapshot, the realtime firehose, the connection monitor, the livestream
+ * pool, the diagnostics channels (a warn-level observation of which channels fired during the run), and schema drift (unknown modelKeys plus unrecognized bootstrap
+ * collections). Designed as a permanent health probe: it exits non-zero if any check fails.
  *
  * @category CLI
  */
@@ -152,8 +153,9 @@ const doctorHandler: CommandHandler = async (ctx) => {
 
   const results: CheckResult[] = [];
 
-  // Every check runs through this single chokepoint: it centralizes turning an unexpected thrown error into a `fail` result, so one probe's crash demotes to a failed
-  // check rather than aborting the whole doctor run and taking the remaining checks down with it.
+  // Every check after the connect runs through this single chokepoint: it centralizes turning an unexpected thrown error into a `fail` result, so one probe's crash
+  // demotes to a failed check rather than aborting the whole doctor run and taking the remaining checks down with it. The connect check is handled inline below, because
+  // its failure ends the run.
   const check = async (name: string, run: () => Promise<Omit<CheckResult, "name">>): Promise<void> => {
 
     try {
@@ -172,6 +174,8 @@ const doctorHandler: CommandHandler = async (ctx) => {
   const unmodeledDrift = new Set<string>();
   const unmodeledRecognized = new Set<string>();
 
+  // The client is disposed by hand in the `finally` below rather than held with `await using`, because the connect is itself a check whose failure is recorded and
+  // reported rather than thrown, which `await using` around the open would not allow.
   let client: ProtectClient | undefined;
 
   try {
@@ -214,15 +218,20 @@ const doctorHandler: CommandHandler = async (ctx) => {
 
     await check("State and bootstrap", () => Promise.resolve({
 
-      // The inventory line is built off the canonical DEVICE_CATEGORIES vocabulary rather than a hand-listed set, so a newly modeled device class (the relay) appears
+      // The inventory line is built off the canonical DEVICE_CATEGORIES vocabulary rather than a hand-listed set, so any device class added to the vocabulary appears
       // here automatically and the count can never drift from the categories `info` / `reboot` / `watch state` share.
       detail: DEVICE_CATEGORIES.map((category) => devicesInCategory(connected, category).length.toString() + " " + category).join(", "),
+
+      // The NVR record is what every bootstrap carries about the controller itself, so its presence proves the bootstrap was reduced into state.
       status: (snapshot.nvr !== null) ? "pass" : "fail"
     }));
 
     await check("Derived state (selectors)", () => Promise.resolve({
 
       detail: "isAdmin=" + connected.isAdmin.toString() + ", controllerName=" + (connected.controllerName ?? "null"),
+
+      // The controller name is selected from the bootstrapped NVR record, so a non-null value proves the selectors read the reduced state. `isAdmin` is reported but
+      // not judged, because false is a valid answer for a non-admin account.
       status: (connected.controllerName !== null) ? "pass" : "fail"
     }));
 
@@ -242,6 +251,8 @@ const doctorHandler: CommandHandler = async (ctx) => {
       }
 
       const image = await onlineCamera.snapshot({ signal: ctx.signal });
+
+      // A JPEG begins with the start-of-image marker FF D8.
       const isJpeg = (image.length >= 2) && (image[0] === 0xFF) && (image[1] === 0xD8);
 
       return { detail: onlineCamera.name + ": " + image.length.toString() + " bytes" + (isJpeg ? " (JPEG)" : ""), status: isJpeg ? "pass" : "fail" };
@@ -280,6 +291,8 @@ const doctorHandler: CommandHandler = async (ctx) => {
     await check("Diagnostics channels", () => Promise.resolve({
 
       detail: fired.size.toString() + " of " + Object.keys(channels).length.toString() + " channels fired during the run",
+
+      // A healthy run always publishes an events packet and an HTTP request start, so seeing those two proves the channel registry is live.
       status: (fired.has("unifi-protect:events:packet") && fired.has("unifi-protect:http:request:start")) ? "pass" : "warn"
     }));
 
@@ -287,7 +300,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
 
       // Genuine drift warns; recognition does not. A realtime packet carrying an unknown modelKey, or a bootstrap collection whose class the library does not recognize
       // at all (known:false), is genuine drift and warns. A recognized-but-unreduced bootstrap class (known:true, e.g. aiport) is named as an informational pass detail -
-      // the library knows it exists, it just does not project it yet - so it never warns. The detail always lists all three buckets, using a "no X observed" placeholder
+      // the library knows it exists, it just does not project it yet - so it never warns. The detail always lists every bucket, using a "no X observed" placeholder
       // when a bucket is empty, so a support log always shows the full picture at a glance.
       detail: [
         (unknownModelKeys.size === 0) ? "no unknown modelKeys observed" : ("unknown modelKeys: " + [...unknownModelKeys].join(", ")),

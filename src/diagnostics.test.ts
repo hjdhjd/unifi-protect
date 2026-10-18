@@ -13,7 +13,7 @@ import { channels, subscribeToChannel } from "./diagnostics.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-/* The authored table: every channel name beside the typed rail it is declared as. The payload-less channel binds `void`, which is what makes its `publish()` take no
+/* The authored table: every channel name beside the typed rail it is declared as. A payload-less channel binds `void`, which is what makes its `publish()` take no
  * argument and its handlers take none.
  *
  * The table is written out by hand rather than derived from the registry, because deriving it from the very thing it checks would make it agree with any binding,
@@ -48,8 +48,8 @@ interface ChannelBindings {
 }
 
 /* The shape the registry is checked against. Mapping over the registry's own keys is what makes the table total in both directions: a channel added to `channels`
- * without a row in `ChannelBindings` leaves `ChannelBindings[K]` unresolvable and fails to compile, so no channel can slip through unpinned, and the `satisfies` check
- * in the test below rejects any channel whose declared payload is not the one the table names.
+ * without a row in `ChannelBindings` leaves `ChannelBindings[K]` unresolvable and fails to compile, so no channel can slip through without a binding, and the
+ * `satisfies` check in the test below rejects any channel whose declared payload is not the one the table names.
  */
 type ChannelTypeTable = { [K in keyof typeof channels]: ChannelBindings[K] };
 

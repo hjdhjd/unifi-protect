@@ -1,7 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * clock.test.ts: Unit tests for the production wall clock. The interface itself is the contract that lets every other module take time as an injected dependency;
- * here we verify the production implementation reads real time and that its interval iterator yields and then terminates cleanly when its signal aborts.
+ * here we verify the production implementation reads real time and that its interval iterator yields and then ends by throwing an AbortError when its signal aborts
+ * (the node:timers/promises contract).
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

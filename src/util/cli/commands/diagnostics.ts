@@ -1,6 +1,6 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * diagnostics.ts: `ufp diagnostics` - subscribe to the library's named diagnostics channels and render them live. Validates the taxonomy and surfaces schema drift.
+ * diagnostics.ts: `ufp diagnostics` - subscribe to the library's named diagnostics channels and render them live. Surfaces schema drift.
  */
 import { COMMON_OPTIONS, CliError, boundedSignal, compilePattern, parseDuration, parseList, parsePositiveInt } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
@@ -33,8 +33,8 @@ const USAGE = [
 
 /**
  * `ufp diagnostics`. Subscribes to every named diagnostics channel (optionally filtered by `--channel`), connects a client to drive activity, and renders each published
- * message until Ctrl-C (or --count N messages). This is how schema drift becomes visible: `--channel schema` surfaces any unknown-modelKey the controller emits, so a
- * device class the library does not yet model is reported rather than silently dropped.
+ * message until Ctrl-C, or until --count N messages or a --duration deadline, whichever fires first. This is how schema drift becomes visible: `--channel schema`
+ * surfaces any unknown-modelKey the controller emits, so a device class the library does not yet model is reported rather than silently dropped.
  *
  * @category CLI
  */
@@ -62,7 +62,8 @@ const diagnosticsHandler: CommandHandler = async (ctx) => {
 
   const output = ctx.output;
 
-  // Resolve the wait when the operator aborts (Ctrl-C) or the message budget is reached. Each rendered message counts toward --count.
+  // Resolve the wait when the operator aborts (Ctrl-C), the --duration deadline fires, or the message budget is reached, whichever comes first. Each rendered message
+  // counts toward --count.
   const { promise, resolve } = Promise.withResolvers<undefined>();
 
   let count = 0;

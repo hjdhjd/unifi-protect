@@ -51,8 +51,8 @@ const OPTIONS = {
 const HEALTH_CHANNELS = [ channels.connectionTransition, channels.connectionRebootDetected, channels.eventsReconnecting, channels.httpThrottleEntered,
   channels.httpThrottleExited ];
 
-// Why a device is being followed. A device can be here for both reasons at once, which is worth recording: it says the operator asked for the very device that also
-// turned out to be new.
+// Why a device is being followed. A device can be here for more than one reason at once, which is worth recording: it can say the operator asked for the very device
+// that also turned out to be new.
 type SelectionReason = "deviceFlag" | "novelty";
 
 // One channel publication, stamped against the start of the window so a reader can line it up with the frames around it rather than against a wall clock.
@@ -64,7 +64,7 @@ interface Observation {
 }
 
 // A novelty finding plus how many times it was seen. The evidence is the first observation; a device that repeats itself increments the count rather than appending,
-// so a chatty new device cannot bury everything else in the bundle.
+// so a chatty new device cannot bury the other findings.
 type NoveltyEntry = NoveltyFinding & { occurrenceCount: number };
 
 // What one window accumulates. Every one of these dies with the command - nothing here is persisted, and nothing survives to need resetting.
@@ -100,7 +100,8 @@ function follow(window: Window, id: string, reason: SelectionReason): void {
 }
 
 // Merge findings into the window's accumulation, keeping the first evidence of each and counting repeats. Identity comes from the finding itself, so the same
-// undeclared field on two different records stays two findings while the same one seen twice stays one.
+// undeclared field on two different records stays two findings while the same one seen twice stays one. Returns whether the input carried any finding at all, repeats
+// included, which is what the caller keys following on.
 function accumulate(window: Window, findings: readonly NoveltyFinding[]): boolean {
 
   let novel = false;
@@ -159,7 +160,7 @@ function seedSubjects(window: Window, manifest: SchemaManifest, bootstrap: unkno
 
     if(entry.kind === "unknownField") {
 
-      // A field finding names the record it was found on, which is the device worth following.
+      // A field finding names the record it was found on, which is the record worth following.
       follow(window, entry.recordId, "novelty");
     }
 
@@ -176,7 +177,8 @@ function seedSubjects(window: Window, manifest: SchemaManifest, bootstrap: unkno
 
   for(const [ collection, value ] of Object.entries(bootstrap)) {
 
-    // Only the described collections are worth matching names against; an opaque or scalar member holds no device records to target.
+    // Only the described collections are worth matching names against; an opaque or scalar member holds no records to target. Every described collection is
+    // admitted, devices and non-device records alike, so a pattern that matches a user's or a liveview's name follows that record too.
     if(!Array.isArray(value) || !(collection in manifest.records)) {
 
       continue;
@@ -213,7 +215,7 @@ function tallyCadence(window: Window, id: string, payload: unknown): void {
   window.cadence.set(id, fields);
 }
 
-/* Consume the raw rail: the only writer of the subject map, and the rail where novelty is actually visible.
+/* Consume the raw rail: the only rail that writes the subject map once the window opens, and the rail where novelty is actually visible.
  *
  * The split between this rail and the events rail is structural rather than stylistic. An unknown model key and an unknown event type both classify to `null`, so
  * neither ever reaches the typed event firehose - checking for them there would capture nothing at all.
@@ -252,6 +254,9 @@ async function consumeRaw(source: AsyncIterable<RawPacket>, window: Window, mani
     const eventType = eventTypeOf(packet);
     const unknownEventType = (eventType !== undefined) && !manifest.eventTypes.includes(eventType);
 
+    // An unknown-model-key frame is diffed for its findings but its id is not followed. Following it would only put it in the cadence tallies and the selection
+    // to no purpose: it never reaches the typed rail, so no occurrence could ever match it, and its frames are kept on their own merits by the keep test below
+    // regardless.
     if(unknownModelKey) {
 
       accumulate(window, diffRecord(manifest, { modelKey, record: packet.payload, recordId: id }));
@@ -276,8 +281,8 @@ async function consumeRaw(source: AsyncIterable<RawPacket>, window: Window, mani
   }
 }
 
-// Consume the events rail. It only reads the subject map - an occurrence is kept when it concerns a device being followed - and never grows it, so the two rails have
-// exactly one writer between them and a frame is judged against the map as of the moment it arrived.
+// Consume the events rail. It only reads the subject map - an occurrence is kept when it concerns a device being followed - and never grows it, so the rails have exactly
+// one writer between them and a frame is judged against the map as of the moment it arrived.
 async function consumeEvents(source: AsyncIterable<TypedEvent>, window: Window): Promise<void> {
 
   for await (const event of source) {
@@ -319,8 +324,9 @@ function readControllerVersions(client: ProtectClient): { firmwareVersion: strin
   return { firmwareVersion: nvr?.firmwareVersion ?? null, version: nvr?.version ?? null };
 }
 
-// Assemble the bundle. The keys are alphabetical because the lint rule that governs every object literal in this package says so, which happens to read well too: the
-// window's own observations come before the evidence they explain.
+// Assemble the bundle. Some sections are what the window itself observed - the frames, the channel observations, the cadence tallies - and others are evidence read
+// once: the bootstrap snapshots and the end-of-run inventory and versions. The novelty list spans both, because the bootstrap diff and the arriving frames feed the same
+// accumulation.
 function assembleBundle(window: Window, client: ProtectClient, manifest: SchemaManifest, mode: string, endedAt: number): Record<string, unknown> {
 
   return {
@@ -330,7 +336,7 @@ function assembleBundle(window: Window, client: ProtectClient, manifest: SchemaM
     drift: window.drift,
     frames: {
 
-      // The two rails carry structurally different elements - a classified occurrence is not a decoded frame - so they stay separate arrays rather than being merged
+      // Each rail carries structurally different elements - a classified occurrence is not a decoded frame - so they stay separate arrays rather than being merged
       // into one. Each records how many it saw beside what it kept, which is what makes an exclusion count meaningful rather than a bare number.
       occurrences: { kept: window.occurrences, seen: window.occurrencesSeen },
       raw: { kept: encodeBinaryPayloads(window.raw), seen: window.rawSeen }
@@ -364,9 +370,9 @@ function encodeBinaryPayloads(packets: readonly RawPacket[]): RawPacket[] {
 /**
  * Build the `ufp capture` handler.
  *
- * The manifest is the command's one file-system dependency beyond the bundle it writes, so it arrives as a parameter rather than being reached for inside the flow.
- * The default is the shipped manifest, which is what the registered command uses and therefore what production runs; a test supplies a fixture loader instead, so the
- * novelty a run reports is decided by a manifest the test can read beside its assertions rather than by whatever the last build happened to emit.
+ * The manifest is the one input that decides what the run reports as novel, so it arrives as a parameter a test can substitute rather than being reached for inside
+ * the flow. The default is the shipped manifest, which is what the registered command uses and therefore what production runs; a test supplies a fixture loader
+ * instead, so the novelty a run reports is decided by a manifest the test can read beside its assertions rather than by whatever the last build happened to emit.
  *
  * @param loadManifest - How to obtain the schema manifest; defaults to the one this package ships.
  *
@@ -453,9 +459,9 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
       ctx.output.line("The controller already describes " + window.novelty.size.toString() + " thing(s) this version does not model; following them.");
     }
 
-    // Both rails run under one window. They end together on whichever comes first, the duration or Ctrl-C, and the join waits for both so nothing is assembled while a
-    // rail is still delivering. Each rail smooths the caller's own abort into a clean return, so an ordinary ending - the timer or Ctrl-C alike - settles as fulfilled
-    // and the fulfilled pair below is the normal path.
+    // Every rail runs under one window. The rails normally end together on whichever comes first, the duration or Ctrl-C, though a rail that rejects ends early while
+    // the rest run on until the window closes; the join waits for every rail so nothing is assembled while a rail is still delivering. Each rail smooths the caller's
+    // own abort into a clean return, so an ordinary ending - the timer or Ctrl-C alike - settles as fulfilled and an all-fulfilled result below is the normal path.
     const windowSignal = boundedSignal(ctx.signal, durationMs);
     const settled = await Promise.allSettled([
 
@@ -463,8 +469,8 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
       consumeEvents(client.events({ signal: windowSignal }), window)
     ]);
 
-    // Assemble in memory and write once. The write is deliberately not signal-gated: by construction this runs while the signal is already aborted, so gating it would
-    // refuse to save the very evidence the run exists to produce.
+    // Assemble in memory and write once. The write is deliberately not signal-gated, so the evidence is saved however the window ended - the deadline, Ctrl-C, or a rail
+    // that failed early. The signal has usually aborted by now, and gating on it would refuse to save the very evidence the run exists to produce.
     const bundle = assembleBundle(window, client, manifest, mode, Date.now());
     const target = path.resolve(values.out ?? ("ufp-capture-" + fileStamp() + ".json"));
 
@@ -487,7 +493,7 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
 }
 
 /**
- * `ufp capture`. Fetches a fresh bootstrap, diffs it against the schema manifest this package ships, then watches both realtime rails for the rest of the window and
+ * `ufp capture`. Fetches a fresh bootstrap, diffs it against the schema manifest this package ships, then watches the realtime rails for the rest of the window and
  * writes one scrubbed bundle describing everything the controller said that this library does not model.
  *
  * The command exists to make one ask of a field user possible: run this, send back the file. So the bundle is the product and standard output is only narration, the

@@ -9,10 +9,9 @@
  * the livestream, but its structural sibling is **{@link EventStream}, not {@link LivestreamSession}**. The distinction is deliberate - `LivestreamSession` is
  * constructed non-atomically only because its pool needs synchronous map registration so concurrent early subscribers can share one in-flight session, a constraint
  * talkback (per call, never shared) does not have. So talkback follows `EventStream`'s atomic `static connect()`: ready or throws, no half-open. It is *simpler* than
- * both siblings: no
- * frame decoder, no init-segment cache, no segment rail, and **no `EventBus`, no watchdog, no `Clock`, no recovery loop**. The channel is write-only, the bytes are
- * opaque, and there is no inbound stream to time out or reconnect mid-sentence (silently replaying stale buffered audio into a live conversation is worse than a clean
- * end).
+ * both siblings: no frame decoder, no init-segment cache, no segment rail, and **no `EventBus`, no watchdog, no `Clock`, no recovery loop**. The channel is write-only,
+ * the bytes are opaque, and there is no inbound stream to time out or reconnect mid-sentence (silently replaying stale buffered audio into a live conversation is worse
+ * than a clean end).
  *
  * **The write API is the dual of the receive channel.** The livestream's consumer surface is `AsyncIterable<Segment>` - the library is the source, the consumer pulls.
  * The honest mirror inverts that: the consumer is the source and the library pulls. So the single write entry, {@link TalkbackSession.send}, drains a consumer-supplied
@@ -44,9 +43,9 @@ import { noopLog } from "../logging.ts";
 
 /**
  * The deterministic lifecycle of a talkback session. The transitions are: construction begins connecting (`connecting`); WebSocket `open` advances to `live` (and the
- * static `connect()`'s promise resolves); an error, the caller's abort, or an explicit `close()` requests a graceful close and moves to `closing`; the socket fully
- * closing and the owned agent being destroyed is `closed`, which a peer-initiated close reaches directly without passing through `closing`. There is no `handshaking`
- * arm - talkback has no init segment.
+ * static `connect()`'s promise resolves); every teardown path - an error, the caller's abort, an explicit `close()`, or a peer-initiated close - moves to `closed`
+ * synchronously, and the owned agent is released asynchronously behind `close()`'s promise. `closing` is a momentary arm set inside the teardown call just before
+ * `closed`, so a reader of `state` never observes it. There is no `handshaking` arm - talkback has no init segment.
  *
  * @category Transport
  */
@@ -56,6 +55,7 @@ export type TalkbackState = "closed" | "closing" | "connecting" | "live";
  * Construction options for {@link TalkbackSession}.
  *
  * - `cameraId` is the camera whose speaker receives the audio - the only negotiation param.
+ * - `log` receives the session's diagnostics logging; it defaults to a no-op logger.
  * - `resolveUrl` is the negotiation hook, identical in type to {@link LivestreamSession}'s: given the request params it returns the controller-minted, host-rewritten
  *   WebSocket URL. The composition root wires it to a transport-backed GET (see `talkbackUrlResolver`); tests pass a one-line fake.
  * - `webSocket` is the injected I/O dependency - the write-direction `ProtectWritableWebSocket`, distinct from the receive-direction interface {@link EventStream} /
@@ -179,15 +179,15 @@ export class TalkbackSession implements AsyncDisposable {
 
   /**
    * Open a talkback session and wait for it to connect. Atomic: it negotiates the WebSocket URL, opens the socket, and returns a live session, or throws a typed
-   * `ProtectError` - there is no half-open session a caller must clean up.
+   * `ProtectError` - there is no half-open session a caller must clean up. The capability guard lives on `Camera.talkback`, so this method never checks whether the
+   * camera supports talkback.
    *
    * @param options - The session options.
    *
    * @returns A connected {@link TalkbackSession}.
    *
-   * @throws {@link ProtectUnsupportedError} is not thrown here (the capability guard lives on `Camera.talkback`); negotiation surfaces the classified `FatalError` on a
-   *   non-2xx (typically {@link ProtectRequestError}), a {@link ProtectNetworkError} when the socket fails to open, and {@link ProtectAbortedError} when the caller's
-   *   signal aborts the connect.
+   * @throws The classified `FatalError` negotiation surfaces on a non-2xx (typically {@link ProtectRequestError}), a {@link ProtectNetworkError} when the socket fails
+   *   to open, and {@link ProtectAbortedError} when the caller's signal aborts the connect.
    */
   static async connect(options: TalkbackSessionOptions): Promise<TalkbackSession> {
 
@@ -206,10 +206,12 @@ export class TalkbackSession implements AsyncDisposable {
 
   /**
    * Drain a consumer-supplied audio source to the camera speaker. The single write entry: it sends each `Uint8Array` and pulls the next as fast as the source yields it,
-   * so a real-time, producer-paced source streams at its own rate with no buffer growth. Resolves when the source is
-   * exhausted; rejects with a typed {@link ProtectError} if the socket errors or closes mid-drain, if the caller's `signal` aborts, or if the socket's send buffer
-   * crosses the `PROTECT_TALKBACK_MAX_BUFFERED_BYTES` safety ceiling (a non-real-time source the wire cannot keep up with). The bytes are opaque - whatever audio
-   * format the camera expects (read `camera.config.talkbackSettings`); the library neither inspects nor transcodes them.
+   * so a real-time, producer-paced source streams at its own rate with no buffer growth. Resolves when the source is exhausted; rejects with a typed
+   * {@link ProtectError} if the socket errors or closes mid-drain, if the caller's `signal` aborts, or if the socket's send buffer crosses the
+   * `PROTECT_TALKBACK_MAX_BUFFERED_BYTES` safety ceiling (a non-real-time source the wire cannot keep up with). The bytes are opaque - whatever audio format the camera
+   * expects (read `camera.config.talkbackSettings`); the library neither inspects nor transcodes them.
+   *
+   * Await one drain before starting the next. Nothing serializes concurrent calls, so overlapping drains interleave their audio on the shared socket.
    *
    * @param source - The audio source to drain. A Node `Readable` (e.g. `ffmpeg.stdout`) is an `AsyncIterable<Buffer>` and feeds in directly.
    * @param opts   - An optional abort signal that ends this drain.
@@ -264,6 +266,7 @@ export class TalkbackSession implements AsyncDisposable {
 
         try {
 
+          // The drain is sequential by nature: each chunk is pulled only after the previous one was handed to the socket, which is the backpressure contract.
           // eslint-disable-next-line no-await-in-loop
           result = await Promise.race([ next, this.#fault.promise, abort.promise ]);
         } catch(error) {
@@ -453,7 +456,10 @@ export class TalkbackSession implements AsyncDisposable {
   }
 
   // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - destroying the owned agent (in #onClose) is what guarantees the
-  // underlying connection is released even if the close frame never completes, or if we tear down before the socket was ever built (negotiation abort).
+  // underlying connection is released even if the close frame never completes. A teardown before the socket was built (a negotiation abort) has nothing to release: the
+  // owned agent is created together with the socket, so neither exists yet. `code` classifies the teardown for the debug log using the RFC 6455 status codes and is never
+  // sent as a close frame: 1000 marks a teardown this session chose (an explicit close(), an aborted signal), and 1006 marks one forced on it (a negotiation failure, a
+  // socket error).
   #shutdown(code: number, reason: string): void {
 
     // Mark this as a self-initiated teardown so #onClose does not misclassify the resulting close event as an unsolicited (failure) one.

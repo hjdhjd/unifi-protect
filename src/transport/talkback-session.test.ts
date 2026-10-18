@@ -379,9 +379,9 @@ describe("TalkbackSession", () => {
 
       const controller = new AbortController();
 
-      // A resolver that never settles, so the abort lands squarely inside the connecting phase - the negotiation await - rather than before construction. This is the
-      // distinct abort-mid-negotiation path: the session's own teardown wins the race and settles the handshake before the parked resolver could ever reject, so
-      // the typed abort, not a generic negotiation error, is what connect() throws.
+      // A resolver that never settles, so the abort lands squarely inside the connecting phase - the negotiation await - rather than before construction. The caller's
+      // abort is then the only thing that can end the connect, and this abort-mid-negotiation path must reject with the typed ProtectAbortedError rather than a
+      // generic negotiation error.
       const connecting = TalkbackSession.connect({
 
         cameraId: "cam1",

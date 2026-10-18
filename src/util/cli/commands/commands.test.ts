@@ -940,7 +940,8 @@ describe("watch livestream", () => {
     ] }] });
     const { ctx, stdout } = makeCommandContext({ args: ["c1"], client });
 
-    // With no --out/--json and a non-TTY stdout, bytes go to process.stdout and the closing summary is diverted to a stderr Output. We capture stdout and pin isTTY off.
+    // With no --out/--json and a non-TTY stdout, bytes go to process.stdout and the closing summary is diverted to a stderr Output. We capture stdout and force
+    // isTTY off.
     const outChunks: Buffer[] = [];
     const savedTTY = process.stdout.isTTY;
     const realStdout = process.stdout.write.bind(process.stdout);

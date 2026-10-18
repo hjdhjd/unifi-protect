@@ -694,7 +694,7 @@ describe("LivestreamPool", () => {
       await settle();
 
       // The first media segment from the reconnected session is marked: its timeline restarted near zero, a backward jump the consumer must resynchronize on. The marker
-      // now lands on the very segment that settles `recovered` (establish drives that first media), so recovered and the discontinuity coincide on one segment.
+      // lands on the very segment that settles `recovered` (establish drives that first media), so recovered and the discontinuity coincide on one segment.
       await establish(at(sockets, 1), { codec: "avc1.640028" });
 
       const resumed = await nextSegment(iterator);
@@ -1072,7 +1072,7 @@ describe("LivestreamPool", () => {
 
       await settle();
 
-      // The stream inits but has NOT yet produced media: the episode is in flight in the init->media gap, exactly the new window cancellation must survive.
+      // The stream inits but has NOT yet produced media: the episode is in flight in the init->media gap, the window cancellation must survive.
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
 
       assert.equal(sub.state, "connecting");
@@ -1165,7 +1165,7 @@ describe("LivestreamPool", () => {
       assert.ok(recovering !== undefined);
       assert.equal(recovering.toleranceMs, 200);
 
-      // The give-up tore the stream down; both subscribers reach the terminal once their queued init and media drain.
+      // The give-up tore the stream down; both subscribers reach the terminal once their queued segments drain.
       assert.equal(sub1.state, "closed");
       assert.equal(sub2.state, "closed");
 
@@ -1257,7 +1257,8 @@ describe("LivestreamPool", () => {
 
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
 
-      // Both subscribers attach while the stream is live, before the drop, so neither attach trips the joiner re-decision that only fires during a recovering episode.
+      // Both subscribers attach before the drop (sub1 at establishment, sub2 once live), so neither attach falls in the recovering phase where the joiner
+      // re-decision fires.
       const sub1 = pool.subscribe(SPEC);
 
       await settle();
@@ -1758,8 +1759,8 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "media");
       assert.equal(sub.state, "live");
 
-      // Go media-silent FAR past the 10s default (12s) while keeping the byte heartbeat alive with non-media frames (a suppressed same-codec re-init refreshes
-      // `#lastSegmentAt` but not `#lastMediaAt`). If the opt-out aggregated to the 10s default instead of Infinity (the seed bug), the media watchdog would fire here; an
+      // Go media-silent FAR past the 10s default (12s) while keeping the byte heartbeat alive with non-media frames (a same-codec re-init is fanned out as an init and
+      // refreshes `#lastSegmentAt` but not `#lastMediaAt`). If the opt-out aggregated to the 10s default instead of Infinity, the media watchdog would fire here; an
       // opted-out stream must stay live, proving the threshold is genuinely Infinity, not capped at the default.
       for(let step = 0; step < 12; step++) {
 
@@ -1888,8 +1889,8 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "init");
       assert.equal((await nextSegment(iterator)).type, "media");
 
-      // Drive a non-media frame mid-silence. A same-codec re-init reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock) but is suppressed and never
-      // fanned as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the last picture.
+      // Drive a non-media frame mid-silence. A same-codec re-init reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock), and it is fanned out as an
+      // init rather than as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the last picture.
       clock.advance(1500);
       at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
       await settle();

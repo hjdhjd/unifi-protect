@@ -41,7 +41,8 @@ describe("silentLog", () => {
 
     const log = silentLog();
 
-    // Exercise every level with the production-typical "message + structured context object" shape.
+    // Call each level with a different, deliberately mixed argument shape - a context object, an Error, a primitive, nullish values and an array - to prove none of
+    // them throws.
     log.debug("debug message", { id: "x" });
     log.error("error message", new Error("test error"));
     log.info("info message", 42);
@@ -192,7 +193,7 @@ describe("assertNoUnhandledRejections", () => {
 
     await assertNoUnhandledRejections(async () => {
 
-      // Awaited rejection - handled, not unhandled.
+      // A body that settles cleanly produces no unhandled rejection.
       await Promise.resolve("ok");
     });
   });
@@ -300,7 +301,8 @@ describe("expectAt", () => {
     let count = 0;
     const start = Date.now();
 
-    // With intervalMs: 20 and timeoutMs: 100, the predicate should be polled 4-6 times before the deadline (5 nominal intervals; jitter accepted).
+    // With intervalMs: 20 and timeoutMs: 100, expectAt keeps polling a never-true predicate until the deadline; we check that it waits the full timeout and polls at
+    // least once.
     await assert.rejects(
 
       async () => expectAt(() => {
@@ -613,7 +615,7 @@ describe("fakeClock", () => {
 
     assert.deepEqual(clock.pendingWaits(), [], "the aborted wait is removed from the pending list");
 
-    // A subsequent advance past the original deadline must not re-fire the already-rejected wait.
+    // Advance past the original deadline. This step asserts nothing of its own - the empty pending list above is what shows no waiter remains for an advance to fire.
     clock.advance(1000);
     await settle();
   });

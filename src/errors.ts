@@ -254,8 +254,9 @@ export function assertNever(value: never): never {
 
 /**
  * The bootstrap sequence failed while fetching or parsing the controller bootstrap document. `stage` marks which - `"fetch"` when the bootstrap endpoint returns
- * a non-2xx status or the transport fails reaching it, `"parse"` when the body cannot be decoded - so the caller and the diagnostics surface can report the precise point
- * of failure rather than a generic "connect failed." A login or reachability failure is not wrapped here; it propagates as its own typed fatal.
+ * a non-2xx status, `"parse"` when the body cannot be decoded - so the caller and the diagnostics surface can report the precise point of failure rather than a
+ * generic "connect failed." A login or reachability failure is not wrapped here: a transport-level failure reaching the endpoint propagates as its own typed error
+ * (`ProtectNetworkError`, `ProtectTimeoutError`, `ProtectThrottledError`, `ProtectAbortedError`), and a login failure as `ProtectAuthError`.
  *
  * @category Errors
  */
@@ -274,9 +275,9 @@ export class ProtectBootstrapError extends FatalError {
 
 /**
  * The stages of the `connect()` sequence, used to tag a {@link ProtectBootstrapError}. The sequence authenticates, fetches the bootstrap document, parses it, then
- * subscribes to the realtime stream; only the fetch and parse stages are wrapped as a bootstrap error. A login or reachability failure already propagates as its
- * own typed fatal (`ProtectAuthError` / `ProtectNetworkError`), and a failure to open the realtime subscription propagates unwrapped rather than tagged with any
- * stage, so `"login"` and `"subscribe"` name stages of the sequence without either one being a tag a caller will observe on a thrown `ProtectBootstrapError`.
+ * subscribes to the realtime stream; only the fetch and parse stages are wrapped as a bootstrap error. A login failure already propagates as `ProtectAuthError`
+ * (fatal) and a reachability failure as `ProtectNetworkError` (recoverable), and a failure to open the realtime subscription propagates unwrapped rather than tagged
+ * with any stage, so `"login"` and `"subscribe"` name stages of the sequence without either one being a tag a caller will observe on a thrown `ProtectBootstrapError`.
  *
  * @category Errors
  */
@@ -309,10 +310,11 @@ export class ProtectCodecChangeError extends FatalError {
 }
 
 /**
- * A pooled livestream's recovery policy gave up. The `phase` names which regime the pool gave up in: `establishing` means the first segment never arrived within
- * the bounded establishment deadline (the stream that never produced media), and `recovering` means a previously-live stream could not be re-established and the policy
- * elected to stop. Fatal because the policy - the single authority over whether to keep trying - has declared the stream unrecoverable; the consumer re-subscribes if it
- * still wants the stream. `attempts` carries how many consecutive reconnect attempts the episode made before the policy returned `giveUp`.
+ * A pooled livestream's recovery policy gave up. The `phase` names which regime the pool gave up in: `establishing` means no media segment arrived within the
+ * bounded establishment deadline (the stream may have connected and sent its init, but never produced media), and `recovering` means a previously-live stream could
+ * not be re-established and the policy elected to stop. Fatal because the policy - the single authority over whether to keep trying - has declared the stream
+ * unrecoverable; the consumer re-subscribes if it still wants the stream. `attempts` carries how many consecutive reconnect attempts the episode made before the
+ * policy returned `giveUp`.
  *
  * @category Errors
  */
@@ -397,7 +399,8 @@ export function isExpectedWsDisconnect(error: unknown): boolean {
  * 2. A bare `ErrnoException`. Filesystem reads, stream errors, and direct socket events surface this way - the error object itself carries `.code` and `.message`.
  *
  * Both shapes are validated to require `code` as a string before returning, guarding against the (rare but legal) case where an Error has a `code` property of a
- * non-string type. A non-string `code` would otherwise satisfy a downstream `code === "ECONNREFUSED"` comparison only by accident of `===` semantics.
+ * non-string type. A non-string `code` would otherwise be returned under the `ErrnoException` type, which promises a string, so a consumer reading or comparing it
+ * would be working from a false type.
  *
  * Anything outside these shapes (locally thrown TypeErrors with no cause, custom errors without `code`, non-Error throws) returns `undefined`. Internal callers
  * such as `ProtectNetworkError`'s constructor and `isExpectedWsDisconnect` treat that as no matching code and continue past it via optional chaining, rather than

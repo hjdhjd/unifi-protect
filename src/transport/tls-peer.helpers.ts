@@ -29,6 +29,7 @@ export interface LoopbackConnection {
  * `handshakes` counts the TLS handshakes that completed, which is what distinguishes a client that accepted the certificate from one that refused it: both open a TCP
  * connection, and only the accepting one gets above it. `connection(index)` resolves with the connection at that position in accept order, and `whenHandshakes(count)`
  * once that many have completed - either resolving immediately if it already happened, so a test can arm itself before the client dials or read the result after.
+ * Each index and each count supports a single outstanding waiter: a second concurrent call with the same argument replaces the first, whose promise never settles.
  */
 export interface LoopbackTlsPeer extends AsyncDisposable {
 
@@ -63,14 +64,16 @@ export async function createLoopbackHttpsPeer(): Promise<LoopbackTlsPeer> {
  * Build a loopback TLS peer that speaks just enough of the WebSocket protocol for a session to connect to it: it completes the RFC 6455 upgrade by hand and then holds
  * the connection, sending no frames of its own.
  *
- * Holding rather than conversing is the whole point. Every WebSocket URL this library builds is `wss://` by construction, so reaching a session's own socket path takes
- * a real TLS peer, and what these tests ask is whether the handshake completes at all - which the client's `open` event answers on its own. The frame protocol above
- * the socket is the injected-fake suites' subject, not this peer's.
+ * Holding rather than conversing is the whole point. Every WebSocket URL this library connects to is `wss://` - the events URL by construction, and the negotiated
+ * livestream and talkback URLs as the controller mints them - so reaching a session's own socket path takes a real TLS peer, and what these tests ask is whether the
+ * handshake completes at all - which the client's `open` event answers on its own. The frame protocol above the socket is the injected-fake suites' subject, not
+ * this peer's.
  *
  * @returns The listening peer.
  */
 export async function createLoopbackWebSocketPeer(): Promise<LoopbackTlsPeer> {
 
+  // The peer offers only http/1.1 over ALPN because the WebSocket upgrade it answers by hand is an HTTP/1.1 exchange.
   const server = createTlsServer({ ALPNProtocols: ["http/1.1"], cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture });
 
   server.on("secureConnection", (socket) => {
@@ -115,8 +118,8 @@ function acceptDigest(key: string): string {
   return createHash("sha1").update(key + WEBSOCKET_ACCEPT_GUID).digest("base64");
 }
 
-// Bind the server to an ephemeral loopback port and wrap it as a disposable peer. Shared by both peers above so the listen, address, and teardown semantics are
-// identical whichever protocol rides on top.
+// Bind the server to an ephemeral loopback port and wrap it as a disposable peer. Shared by every peer above so the listen, address, and teardown semantics are
+// identical whichever protocol runs on top.
 async function startPeer(server: Server): Promise<LoopbackTlsPeer> {
 
   const connections: LoopbackConnection[] = [];
@@ -141,7 +144,7 @@ async function startPeer(server: Server): Promise<LoopbackTlsPeer> {
     }
   });
 
-  /* Every accepted connection is recorded at the raw TCP layer, which both peers reach through the same event, which severing at teardown reaches whether or not the
+  /* Every accepted connection is recorded at the raw TCP layer, which every peer reaches through the same event, which severing at teardown reaches whether or not the
    * TLS handshake above it ever completed, and which a client that refuses the certificate still reaches on its way to hanging up.
    */
   server.on("connection", (socket: Socket) => {

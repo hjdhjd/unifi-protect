@@ -14,9 +14,9 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
-/* A miniature manifest standing in for the generated one: a couple of described collections, one opaque collection, one scalar member, and a vocabulary small enough
- * to read at a glance. The generator's own output is pinned against the real type tier in its own test; what these tests need is a fixture whose every declaration is
- * visible in the assertions beside it.
+/* A miniature manifest standing in for the generated one: described collections, the irregular nvr singleton with a keyed map, an opaque collection, a scalar member,
+ * and a vocabulary small enough to read at a glance. The generator's own output is asserted against the real type tier in its own test; what these tests need is a
+ * fixture whose every declaration is visible in the assertions beside it.
  *
  * The sensor tree is open and its air-quality block closed, so a single fixture exercises novelty on both.
  */
@@ -115,7 +115,7 @@ describe("schema manifest diff", () => {
 
   test("a declared field that is simply absent is not novelty", () => {
 
-    // Optional fields and capability nulls are ordinary traffic. A diff that reported them would bury the real signal on every run.
+    // An optional field left out of a record is ordinary traffic. A diff that reported it would bury the real signal on every run.
     assert.deepEqual(diffBootstrap(FIXTURE, { sensors: [{ id: "s2", mac: "AABBCCDDEE02" }] }), []);
   });
 
@@ -187,14 +187,15 @@ describe("schema manifest diff", () => {
 
     assert.deepEqual(diffEventType(FIXTURE, "vocThresholdCrossed"), [{ eventType: "vocThresholdCrossed", kind: "unknownEventType" }]);
 
-    // The login audit type specifically: it is the one whose omission from the vocabulary would fire on every single controller login, this library's own connect
-    // included, so it is the control worth pinning.
+    // The login audit type specifically: it is the one whose omission from the vocabulary would fire on every controller login, this library's own connect
+    // included, so it is the control worth asserting.
     assert.deepEqual(diffEventType(FIXTURE, "access"), []);
   });
 
   test("a non-object payload is walked without crashing and without inventing findings", () => {
 
-    // A raw payload is whatever the codec produced: parsed JSON, a UTF-8 string, or a buffer. Only the first has fields to be undeclared.
+    // A raw payload is whatever the codec produced: parsed JSON, a UTF-8 string, or a buffer. Only a parsed JSON object has fields to be undeclared, so every other
+    // shape walks to nothing.
     for(const record of [ "a string", Buffer.from([ 1, 2, 3 ]), [ 1, 2 ], null, 7 ]) {
 
       assert.deepEqual(diffRecord(FIXTURE, { modelKey: "sensor", record, recordId: "s1" }), []);
@@ -209,7 +210,7 @@ describe("unmodeled snapshots", () => {
   test("an unmodeled collection contributes exemplars, capped, beside the count they were drawn from", () => {
 
     // The cap is the point: a site with forty units of a class this version cannot place should teach a reader what one record looks like, not ship the roster. The
-    // count beside them is what keeps the truncation honest, so three exemplars never read as a complete collection.
+    // count beside them is what keeps the truncation honest, so a capped sample never reads as a complete collection.
     const bootstrap = { aiports: [ { id: "a1" }, { id: "a2" }, { id: "a3" }, { id: "a4" } ] };
 
     assert.deepEqual(snapshotUnmodeled(FIXTURE, bootstrap, 2), [{ collection: "aiports", kept: [ { id: "a1" }, { id: "a2" } ], seen: 4 }]);
@@ -247,7 +248,8 @@ describe("undeclared snapshots", () => {
   test("records sharing one set of undeclared members are one group, capped, beside the count that share it", () => {
 
     // The group is the shape rather than the collection: four sensors reporting the same new member are one thing to model, so the sample is capped and the count
-    // beside it says how many carried the set. A per-collection cap would fail exactly here, because the new unit need not sit among a collection's first few records.
+    // beside it says how many carried the set. A cap per collection rather than per shape would be the wrong rule, because the new unit need not sit among a
+    // collection's first few records.
     const bootstrap = { sensors: [
 
       { id: "s1", mac: "AABBCCDDEE01", smokeStatus: { ready: true } },
@@ -301,7 +303,7 @@ describe("undeclared snapshots", () => {
 
   test("a nested undeclared path groups by its full dotted path", () => {
 
-    // A new field inside a declared block is the member, named by the path that reaches it, so two records differing only in where the field sits are two shapes.
+    // A new field inside a declared block is the member, named by the full dotted path that reaches it.
     const bootstrap = { cameras: [{ channels: [{ extra: true, id: 1 }], id: "c1", mac: "AABBCCDDEE01", name: "Front Door" }] };
 
     assert.deepEqual(snapshotUndeclared(FIXTURE, bootstrap, 3), [{ collection: "cameras", kept: [
@@ -400,6 +402,8 @@ describe("noveltyKey", () => {
 
   test("each kind is identified by its own subject", () => {
 
+    // Each kind's key is its own subject alone. An observed value type, where a kind carries one, is left out as evidence rather than identity, the same rule the
+    // observed-type test above states.
     assert.notEqual(noveltyKey({ collection: "agreements", kind: "unknownCollection", valueType: "object" }),
       noveltyKey({ collection: "hubs", kind: "unknownCollection", valueType: "array" }));
     assert.equal(noveltyKey({ eventType: "voc", kind: "unknownEventType" }), noveltyKey({ eventType: "voc", kind: "unknownEventType" }));
@@ -431,7 +435,7 @@ describe("loadSchemaManifest", () => {
 
   test("a present-but-unreadable manifest is a distinct failure from a missing one", async () => {
 
-    // Pointing at a directory is the reachable stand-in for any read failure that is not absence: a permission error, a broken link. Absence means "the build has not
+    // Pointing at a directory is the reachable stand-in for any read failure that is not absence, such as a permission error. Absence means "the build has not
     // run yet" and gets that hint, while anything else is a real problem and must not be reported as a missing build artifact.
     await withDir(async (dir) => {
 

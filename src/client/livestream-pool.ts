@@ -82,7 +82,7 @@ export interface RecoveryContext {
  *
  * - `reconnect` tears down any socket and connects fresh; the attempt is treated as failed if no media segment arrives within `awaitMs`, then the policy is re-consulted.
  *   `awaitMs` doubles as the inter-attempt spacing (a fast-failing attempt still occupies its full window), so the single policy governs both disposition and timing.
- * - `wait` does nothing for `forMs`, then re-consults - unifying defer-soak (a still-connecting session's late segment cancels it early) and inter-attempt backoff.
+ * - `wait` does nothing for `forMs`, then re-consults - unifying defer-soak (a still-connecting session's late media segment cancels it early) and inter-attempt backoff.
  * - `giveUp` is terminal: the give-up error is thrown into every subscriber and the stream is torn down.
  *
  * @category Client
@@ -198,11 +198,12 @@ export interface LivestreamSubscribeOptions {
 
   /**
    * How many milliseconds this consumer can tolerate receiving no segment, pulled fresh at each decision and aggregated across a shared stream by the minimum. It serves
-   * consumer-owned policies at once. First, the resilient recovery's await budget self-tunes from the consumer's real buffer headroom: a live view reports ~0
+   * each consumer-owned policy from one closure. First, the resilient recovery's await budget self-tunes from the consumer's real buffer headroom: a live view reports ~0
    * (recover aggressively), a paced recording its cushion, a passive buffer a large value (wait patiently). Second, it is the consumer's MEDIA-stall detection deadline
-   * for the pool's always-on (while live) media watchdog: declaring nothing leaves the default 10 s window (every stream is media-watched by default), a tighter value
-   * tightens detection (clamped up to a small floor against jitter), and Infinity opts out of media-stall detection entirely (the session's any-byte heartbeat still
-   * watches the socket). Omit it to leave the stream maximally patient on recovery and media-watched at the 10 s default.
+   * for the pool's always-on (while live) media watchdog: declaring nothing leaves `PROTECT_LIVESTREAM_STALL_DEFAULT_MS` (the default media-stall window, so every
+   * stream is media-watched by default), a tighter value tightens detection (clamped up to a small floor against jitter), and Infinity opts out of media-stall detection
+   * entirely (the session's any-byte heartbeat still watches the socket). Omit it to leave the stream maximally patient on recovery and media-watched at the default
+   * media-stall window.
    */
   urgency?: () => number;
 }
@@ -211,7 +212,8 @@ export interface LivestreamSubscribeOptions {
  * Construction options for {@link LivestreamPool}. `resolveUrl` is the transport-backed negotiation hook (build it with {@link livestreamUrlResolver}, the shared {@link
  * wsEndpointResolver}'s livestream specialization); `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s and threaded down to each session;
  * `recoveryPolicy` is the per-stream recovery decision authority, defaulting to {@link defaultLivestreamRecoveryPolicy}; `verifyTls` is the strict-TLS opt-in threaded
- * down to each session's owned agent, defaulting to `false` for the controller's self-signed certificate.
+ * down to each session's owned agent, defaulting to `false` for the controller's self-signed certificate; `clock` is the time source, defaulting to the wall clock
+ * and replaceable for tests; `log` is the logger, defaulting to a no-op.
  *
  * @category Client
  */
@@ -242,7 +244,10 @@ interface SubscriptionHost {
 const detachedHost: SubscriptionHost = {
 
   initSegment: null,
-  reassess: (): void => { /* A subscription on no stream has nothing to re-decide. */ },
+  reassess: (): void => {
+
+    // A subscription on no stream has nothing to re-decide.
+  },
   state: "closed",
   whenEstablished: async (): Promise<boolean> => false
 };
@@ -275,8 +280,8 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   readonly #host: SubscriptionHost;
   readonly #onDispose: (subscription: LivestreamSubscription) => void;
   // This queue is a policy-bearing media backlog on the library's hottest path - it carries the per-subscriber delivery statistics, the consumer-disposal discard, and
-  // the drain-before-terminal guarantee - kept deliberately separate from the generic `EventBus` rail, which rides Node's own async iterator and carries no per-consumer
-  // policy.
+  // the drain-before-terminal guarantee - kept deliberately separate from the generic `EventBus` rail, which is built on Node's own async iterator and carries no
+  // per-consumer policy.
   readonly #queue: Segment[] = [];
   readonly #signal: AbortSignal | undefined;
 
@@ -317,8 +322,9 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   }
 
   /**
-   * The cached initialization segment of the shared stream once it has arrived, otherwise `null`. Stable across same-codec reconnects (it is suppressed and the cache is
-   * retained), and replaced only on a codec change - which is itself terminal, so a consumer never observes the cached init mutate beneath it mid-stream.
+   * The cached initialization segment of the shared stream once it has arrived, otherwise `null`. The first init sets it; a same-codec reconnect keeps it (the redundant
+   * re-init is suppressed and the cache is retained); any later init within the same session refreshes it. A codec change across a reconnect is terminal and never
+   * replaces it.
    */
   get initSegment(): { codec: string; data: Buffer } | null {
 
@@ -429,8 +435,12 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
     return Promise.race([ this.#host.whenEstablished(), this.#disposalDeferred.promise ]);
   }
 
-  // Push a segment to this subscriber. Records liveness, tracks the peak queue depth (the consumer's slowness signal), enqueues, and wakes a pending next(). Codec reads
-  // through to the shared session's cached init, so nothing codec-specific is tracked here. Package-internal: the ManagedSession calls this.
+  /**
+   * Push a segment to this subscriber. Records liveness, tracks the peak queue depth (the consumer's slowness signal), enqueues, and wakes a pending next(). Codec reads
+   * through to the shared session's cached init, so nothing codec-specific is tracked here. Package-internal: the ManagedSession calls this.
+   *
+   * @internal
+   */
   push(segment: Segment): void {
 
     if(this.#done) {
@@ -444,8 +454,12 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
     this.#fireWake();
   }
 
-  // Terminate this subscriber with a terminal error (codec change or give-up). Already-queued segments still drain first; the error throws only once the queue empties.
-  // Package-internal.
+  /**
+   * Terminate this subscriber with a terminal error (codec change or give-up). Already-queued segments still drain first; the error throws only once the queue
+   * empties. Package-internal.
+   *
+   * @internal
+   */
   fail(error: ProtectError): void {
 
     if(this.#done || (this.#error !== null)) {
@@ -457,7 +471,12 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
     this.#fireWake();
   }
 
-  // Terminate this subscriber cleanly (disposal, or the pool closing without a terminal error). Already-queued segments still drain first. Package-internal.
+  /**
+   * Terminate this subscriber cleanly: the managed stream's teardown without a terminal error (for example, pool disposal). Already-queued segments still drain
+   * first. Package-internal.
+   *
+   * @internal
+   */
   close(): void {
 
     if(this.#done) {
@@ -574,7 +593,7 @@ class ManagedSession implements SubscriptionHost {
   //
   // `#lastSegmentAt` is the ANY-segment liveness clock (stamped on every segment, inits included) the recovery diagnostics report. `#lastMediaAt` is the dedicated
   // MEDIA-keyed liveness clock the media-stall watchdog reads: it advances only when a decodable media segment is fanned, so a stream producing only non-media frames (a
-  // suppressed re-init, the negotiated timestamp frames) reads stalled to the watchdog even while `#lastSegmentAt` stays fresh. The two are deliberately separate clocks
+  // mid-session re-init, the negotiated timestamp frames) reads stalled to the watchdog even while `#lastSegmentAt` stays fresh. The two are deliberately separate clocks
   // measuring two different liveness notions - any byte vs. a picture. `#watchdogController` is the media watchdog's lifecycle handle: non-null only while the watchdog
   // is armed (between the first media of an install and the next reconnect / teardown), aborting it ends the interval loop.
   #establishedSettled = false;
@@ -744,7 +763,7 @@ class ManagedSession implements SubscriptionHost {
         const isReconnect = (decision.kind === "reconnect");
 
         // A reconnect tears down any in-flight socket and connects fresh; a wait leaves the socket untouched. Either way we then wait out the decision's window for a
-        // segment (which restores the stream) or the window's elapse.
+        // media segment (which restores the stream) or the window's elapse.
         if(isReconnect) {
 
           this.#installSession();
@@ -759,7 +778,7 @@ class ManagedSession implements SubscriptionHost {
         }
 
         // A reconnect whose window elapsed without a recovering MEDIA segment is a failed attempt; a wait that simply elapsed is not (it was deliberate backoff/defer). A
-        // reassess on either re-consults immediately without counting an attempt. Because the recovery point now keys on media, an init-then-no-media session - the
+        // reassess on either re-consults immediately without counting an attempt. Because the recovery point keys on media, an init-then-no-media session - the
         // controller acked with an init then went silent - elapses its window exactly like a session that never connected, and counts as a failed media-establishment
         // attempt: a fresh socket is a legitimate recovery for a per-socket controller bug, bounded by the establishment deadline (establishing) and by the injected
         // policy's giveUp -> self-heal (recovering). We deliberately do NOT keep-the-session-and-wait. The residual edge is a near-good session that inits at
@@ -788,7 +807,7 @@ class ManagedSession implements SubscriptionHost {
 
   // Aggregate delay tolerance across the stream's subscribers by the MINIMUM (the most-urgent governs). A subscriber that reported no urgency contributes nothing, so the
   // aggregate is Infinity when none reported - which the default policy reads as "patient." This feeds the recovery-await derivation (RecoveryContext.toleranceMs); it is
-  // deliberately distinct from `#detectionThresholdMs`, whose undeclared default is the 10 s media-stall window, not Infinity.
+  // deliberately distinct from `#detectionThresholdMs`, whose undeclared default is the default media-stall window, not Infinity.
   #aggregateTolerance(): number {
 
     let tolerance = Infinity;
@@ -805,18 +824,18 @@ class ManagedSession implements SubscriptionHost {
   }
 
   // The media-stall detection threshold - the consumer-declared policy the watchdog enforces, aggregated across subscribers by the MINIMUM (the most-urgent governs).
-  // This is the detection sibling of `#aggregateTolerance`, with one deliberately different default: a subscriber that declares NO urgency contributes the 10 s default
-  // (every live stream is media-watched by default - the fail-safe analog of the byte heartbeat), whereas the recovery-await aggregate reads an undeclared subscriber as
-  // Infinity (patient). A subscriber declaring a tighter value pulls the MIN down; one declaring Infinity opts itself out entirely, so a stream where every subscriber
-  // opts out yields Infinity and the watchdog's per-tick `>= Infinity` comparison never fires (the byte backstop alone watches it). A finite MIN is clamped UP to the
-  // floor so a maximally-urgent consumer cannot set a threshold so tight that ordinary inter-segment jitter trips it. We read the RAW aggregate here, never the value
-  // `defaultLivestreamRecoveryPolicy` derives from it after subtracting the await margin - detection answers "notice a stall this fast," a different question from
-  // the recovery-await's "how long to wait per attempt," so the 10 s detection default must never leak into recovery and vice versa.
+  // This is the detection sibling of `#aggregateTolerance`, with one deliberately different default: a subscriber that declares NO urgency contributes the default
+  // media-stall window (every live stream is media-watched by default - the fail-safe analog of the byte heartbeat), whereas the recovery-await aggregate reads an
+  // undeclared subscriber as Infinity (patient). A subscriber declaring a tighter value pulls the MIN down; one declaring Infinity opts itself out entirely, so a stream
+  // where every subscriber opts out yields Infinity and the watchdog's per-tick `>= Infinity` comparison never fires (the byte backstop alone watches it). A finite MIN
+  // is clamped UP to the floor so a maximally-urgent consumer cannot set a threshold so tight that ordinary inter-segment jitter trips it. We read the RAW aggregate
+  // here, never the value `defaultLivestreamRecoveryPolicy` derives from it after subtracting the await margin - detection answers "notice a stall this fast," a
+  // different question from the recovery-await's "how long to wait per attempt," so the detection default must never leak into recovery and vice versa.
   #detectionThresholdMs(): number {
 
-    // Seed the MIN at its identity (Infinity), then fold in each subscriber's contribution: the 10 s default when it declared no urgency, otherwise its declared value.
-    // Seeding at the default instead would cap every stream at 10 s and make the Infinity opt-out unreachable (a lone Infinity subscriber would MIN to the 10 s seed) -
-    // the default is a per-subscriber contribution, not the aggregate's ceiling.
+    // Seed the MIN at its identity (Infinity), then fold in each subscriber's contribution: the default media-stall window when it declared no urgency, otherwise its
+    // declared value. Seeding at the default instead would cap every stream at that window and make the Infinity opt-out unreachable (a lone Infinity subscriber would
+    // MIN to the default seed) - the default is a per-subscriber contribution, not the aggregate's ceiling.
     let threshold = Infinity;
 
     for(const urgency of this.#subscribers.values()) {
@@ -943,7 +962,7 @@ class ManagedSession implements SubscriptionHost {
     }
 
     // The recovery point: the first MEDIA segment after the init. This is the sole steady-path settle - it ends the establishing / recovering episode `recovered`. We
-    // gate on media so a post-init traffic lull (non-media frames, a suppressed re-init) never settles the episode.
+    // gate on media so a post-init traffic lull (non-media frames, a further init fanned out to subscribers) never settles the episode.
     if(this.#install.awaitingFirstMedia && (segment.type === "media")) {
 
       this.#handleRecoveryMedia(segment);
@@ -1034,13 +1053,14 @@ class ManagedSession implements SubscriptionHost {
     this.#watchdogController?.abort();
     this.#watchdogController = new AbortController();
 
-    // Swallow the abort the same way `#raceOutcome` swallows its timer's: a disarm aborts the controller, which the interval iterator reports as an AbortError the loop
-    // already catches - voiding the promise keeps it off the unhandled-rejection rail.
+    // Swallow the abort the same way `#raceOutcome` swallows its timer's: a disarm aborts the controller, the interval iterator rejects with an AbortError that
+    // propagates out of `#runWatchdog`, and the `.then` rejection handler absorbs that expected rejection so it never becomes unhandled.
     void this.#runWatchdog(this.#watchdogController.signal).then(() => undefined, () => undefined);
   }
 
-  // Disarm the media-stall watchdog. Aborts the interval loop (ending it cleanly) and clears the handle. A no-op on repeat, and when the watchdog was never armed (a
-  // stream torn down or reconnected before any media flowed), so both `#installSession` and `#teardown` can call it unconditionally.
+  // Disarm the media-stall watchdog. Aborts the interval loop (its AbortError is absorbed where `#armWatchdog` starts it) and clears the handle. A no-op on repeat,
+  // and when the watchdog was never armed (a stream torn down or reconnected before any media flowed), so both `#installSession` and `#teardown` can call it
+  // unconditionally.
   #disarmWatchdog(): void {
 
     if(this.#watchdogController !== null) {
@@ -1079,9 +1099,9 @@ class ManagedSession implements SubscriptionHost {
   }
 
   // The stream produced its first MEDIA segment of the install: the episode is over. Establishment resolves the latch true; live recovery publishes the recovered
-  // diagnostic with the downtime (now "media was absent this long", since the episode settles on media). Either way the stream returns to `live` and the attempt counter
-  // resets. `wasEstablishing` keys off `#state` (still `"connecting"` for an establishing episode, `"recovering"` otherwise) - this is reached only on media now, never
-  // on the init, but nothing between the episode start and here mutates `#state`, so the establishing-vs-recovering classification is unchanged.
+  // diagnostic with the downtime - how long media was absent, since the episode settles on media. Either way the stream returns to `live` and the attempt counter
+  // resets. `wasEstablishing` keys off `#state` (still `"connecting"` for an establishing episode, `"recovering"` otherwise) - this is reached only on media, never on
+  // the init, and nothing between the episode start and here mutates `#state`, so it still tells an establishing episode from a recovering one.
   #onRecovered(): void {
 
     const wasEstablishing = (this.#state === "connecting");
@@ -1360,7 +1380,8 @@ export class LivestreamPool implements AsyncDisposable {
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
-    // Snapshot the sessions first: each close() removes its own key from the map via teardown, so iterating the live map would mutate it mid-iteration.
+    // Snapshot the sessions first so the map can be cleared at once, making the pool look empty to any concurrent subscribe, while each captured session is still
+    // closed.
     const managed = [...this.#sessions.values()];
 
     this.#sessions.clear();

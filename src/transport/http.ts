@@ -70,10 +70,10 @@ export interface RequestOptions {
  * - `authRetry` controls the injected 401-relogin hook: the authenticated request path leaves it at its default of `true`, while the `AuthSession` login handshake
  *   passes `false` so its own 401 cannot recurse back into relogin.
  * - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the
- *   `ConnectionMonitor`'s cadence rather than waiting out the 300-second cooldown, while its outcome still books through the normal path - so a successful probe
- *   closes the breaker exactly as the autonomous half-open trial would, and a probe its caller cancels books nothing, like any cancelled request. Only the monitor's
- *   recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh failsafe and device commands leave it `false` and stay gated, so the breaker still
- *   protects against operational hammering.
+ *   `ConnectionMonitor`'s cadence rather than waiting out the breaker's cooldown ({@link PROTECT_API_RETRY_INTERVAL}), while its outcome still books through the normal
+ *   path - so a successful probe closes the breaker exactly as the autonomous half-open trial would, and a probe its caller cancels books nothing, like any cancelled
+ *   request. Only the monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh failsafe and device commands leave it `false` and stay
+ *   gated, so the breaker still protects against operational hammering.
  *
  * @category Transport
  */
@@ -265,7 +265,7 @@ export class ProtectResponse {
  *
  * The breaker is the canonical three-state model - `closed -> open -> half-open -> closed`:
  *
- * - **closed:** normal operation. Each request that reaches the controller books an outcome; a 2xx resets the consecutive-failure count, a non-2xx or transport
+ * - **closed:** normal operation. Each request that is dispatched books an outcome; a 2xx resets the consecutive-failure count, a non-2xx or transport
  *   exception increments it. A request its caller cancels, or one never sent because its caller had already aborted, books nothing, since neither says anything about
  *   the controller. Crossing {@link PROTECT_API_ERROR_LIMIT} consecutive failures trips the breaker open.
  * - **open:** for {@link PROTECT_API_RETRY_INTERVAL} seconds, `send` throws {@link ProtectThrottledError} before dispatching, except a `probe: true` request (the
@@ -379,7 +379,9 @@ export class Transport implements AsyncDisposable {
 
         // A transport-level exception is evidence the controller could not be reached or did not answer in time, so it books a failure before the
         // already-classified error propagates. A cancellation the caller chose is the exception: it says nothing about the controller, so it books no outcome
-        // and leaves the breaker exactly as it found it.
+        // and leaves the breaker exactly as it found it. A ClientDestroyedError from a pool reset books a failure too, though it says nothing new about the
+        // controller: the library resets the pool only as the breaker trips, so such a failure lands on an already-open breaker and re-arms the cooldown within
+        // moments of the trip, which moves it negligibly, and a consumer that resets through the transport chose to end the requests in flight.
         if(!callerCancelled(error, opts.signal)) {
 
           this.#book(false);
@@ -430,6 +432,9 @@ export class Transport implements AsyncDisposable {
       return;
     }
 
+    // The old pool's destroy is deliberately not awaited: the breaker calls this synchronously as it trips, and the next request needs only the rebuilt pool.
+    // Destroying the pool rejects any request still in flight on it with ClientDestroyedError, which books a failure on the breaker, already open when the
+    // breaker itself is the caller.
     void this.#dispatcher.destroy();
     this.#dispatcher = this.#buildPool();
   }
@@ -585,8 +590,9 @@ export class Transport implements AsyncDisposable {
   // alone, so a failure of any other shape stays what it is even when the caller aborts after it; an abort that is not the caller's is our own deadline.
   #classifyTransportError(error: unknown, callerSignal: AbortSignal | undefined, elapsedMs: number): ProtectAbortedError | ProtectNetworkError | ProtectTimeoutError {
 
-    // The shapes an abort of ours takes: our deadline fires through AbortSignal.timeout(), whose DOMException is named "TimeoutError" rather than "AbortError", so
-    // both names are tested, alongside undici's own RequestAbortedError, which the pool throws when it aborts an in-flight request on its own.
+    // The shapes an abort takes. Our deadline fires through AbortSignal.timeout(), whose DOMException is named "TimeoutError". An "AbortError" DOMException and
+    // undici's RequestAbortedError, which undici substitutes when the signal it was given aborts with a falsy reason, are tested as well, as a defensive fallback for
+    // an abort that is neither our TimeoutError nor the caller's own reason.
     const isAbort = ((error instanceof DOMException) && ((error.name === "AbortError") || (error.name === "TimeoutError"))) ||
       (error instanceof errors.RequestAbortedError);
 
@@ -599,19 +605,19 @@ export class Transport implements AsyncDisposable {
       return new ProtectAbortedError("The request was aborted by the caller's signal.", { cause: error });
     }
 
-    // Any other abort is our own deadline.
+    // Any other abort is reported as our own deadline: our timeout is the only abort this transport arms, so the defensive fallbacks above are classified with it.
     if(isAbort) {
 
       return new ProtectTimeoutError("The UniFi Protect controller did not respond before the request deadline elapsed.", { cause: error, elapsedMs });
     }
 
-    // Our own pool reset destroyed an in-flight connection. Recoverable: the caller may retry against the freshly rebuilt pool.
+    // Our own pool was torn down, by reset() or by disposal. Recoverable: a retry helps only after a reset, which rebuilds the pool; after disposal nothing is rebuilt.
     if(error instanceof errors.ClientDestroyedError) {
 
       return new ProtectNetworkError("The request was interrupted because the connection pool was reset.", { cause: error });
     }
 
-    // The retry interceptor exhausted its attempts without a usable response.
+    // The retry interceptor gave up on a retryable status code - after exhausting its retries, or at once for a method outside its retried set.
     if(error instanceof errors.RequestRetryError) {
 
       return new ProtectNetworkError("The UniFi Protect controller could not be reached after exhausting retries.", { cause: error });
@@ -642,12 +648,13 @@ export class Transport implements AsyncDisposable {
   // 60-second client TTL so each pooled connection is recycled roughly once a minute rather than kept alive indefinitely (bounding how long a keepalive socket to a
   // controller that has since rebooted or silently dropped the link can linger before it is retired), a fixed user-agent, and the exponential-backoff retry
   // interceptor. The retried set is the conventionally retry-safe verbs plus POST: the interceptor only fires on the transient controller-readiness codes in
-  // RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable - conditions in which the controller was not in a state to accept and act on
-  // the request - so re-sending a POST does not risk double-applying one that already took effect. PATCH is held out of the set even so, because the config writes it
+  // RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable. A refused connection, a 429, or a controller still starting up means the
+  // controller was not in a state to accept the request, so re-sending a POST there cannot double-apply it; a 500, a gateway error, or a connection reset can arrive
+  // after the controller already acted, so a POST retried on one of those may apply twice. PATCH is held out of the set for that reason, because the config writes it
   // carries are the one place a double-apply would be consequential and the undocumented API promises nothing about what a repeated write does. The backoff curve
-  // itself - five attempts, starting at a 100ms floor and doubling on each attempt up to a 1500ms cap - is sized to ride out the same transient readiness gaps
-  // RETRY_STATUS_CODES targets: a reboot or a momentary load spike on a Protect controller typically clears within a few seconds, so the curve gives it that room to
-  // recover while keeping a caller from stalling through a much longer wait.
+  // itself - up to five retries after the initial attempt, starting at a 100ms delay and doubling on each retry up to a 1500ms cap - is sized to outlast the same
+  // transient readiness gaps RETRY_STATUS_CODES targets: a reboot or a momentary load spike on a Protect controller typically clears within a few seconds, so the curve
+  // gives it that room to recover while keeping a caller from stalling through a much longer wait.
   #buildPool(): Dispatcher {
 
     const userAgent: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {

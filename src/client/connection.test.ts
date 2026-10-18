@@ -311,8 +311,8 @@ describe("ConnectionMonitor", () => {
 
       await expectAt(() => events.rebooted.length === 1, { message: "expected a reboot to be detected" });
 
-      // The user-facing restart line is a plain info statement with no "self-reported boot time" wording and no raw upSince epochs; those values ride the
-      // controllerRebooted event and the connectionRebootDetected channel for diagnostics instead.
+      // The user-facing restart line is a plain info statement with no "self-reported boot time" wording and no raw upSince epochs; those values are carried by
+      // the controllerRebooted event and the connectionRebootDetected channel for diagnostics instead.
       const restart = log.entries.find((entry) => entry.message.includes("The UniFi Protect controller restarted."));
 
       assert.ok(restart, "the restart was logged");
@@ -596,8 +596,8 @@ describe("ConnectionMonitor", () => {
       await monitor.opened;
       await settle();
 
-      // A fault kicks the guarded recovery sequence. The "beginning recovery" notice is transient - a fault that immediately recovers is not warn-worthy - so it now logs
-      // at debug; the warn is reserved for the confirmed-loss tier.
+      // A fault kicks the guarded recovery sequence. The "beginning recovery" notice is transient - a fault that immediately recovers is not warn-worthy - so it logs at
+      // debug; the warn is reserved for the confirmed-loss tier.
       streams[0]?.emitError(new Error("socket dropped"));
       await settle();
 
@@ -721,7 +721,7 @@ describe("ConnectionMonitor", () => {
       // Consumed: the first fault took the known track.
       assert.deepEqual(clock.pendingWaits(), [PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0]], "the armed fault is a known reboot");
 
-      // Recover (the controller returns), so the episode ends and the anticipation is spent.
+      // The first known-track probe fails, then the controller returns and the remaining schedule drains to healthy.
       control.setVerifyError(new ProtectNetworkError("down again"));
       clock.advance(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0] ?? 0);
       await settle();

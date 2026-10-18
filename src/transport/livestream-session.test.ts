@@ -443,7 +443,7 @@ describe("LivestreamSession", () => {
 
       assert.ok(error instanceof ProtectStallError);
 
-      // The passthrough contract end to end: the exact instance the resolver threw rides the error rail and is recorded as the closure's cause.
+      // The passthrough contract end to end: the exact instance the resolver threw goes out on the error rail and is recorded as the closure's cause.
       const info = await closed.promise;
 
       assert.ok(Object.is(error, thrown));
@@ -656,7 +656,7 @@ describe("LivestreamSession", () => {
 
       const info = await closed.promise;
 
-      // Both surfaces report the one fact: the abort's cause rides the closed payload and is the same object the getter returns.
+      // Both surfaces report the one fact: the abort's cause is carried by the closed payload and is the same object the getter returns.
       assert.ok(info.cause instanceof ProtectAbortedError);
       assert.ok(Object.is(info.cause, session.closeCause));
     });

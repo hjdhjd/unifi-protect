@@ -1,7 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * ws-endpoint.test.ts: Tests for the shared WebSocket-endpoint negotiator - the parse-{url}-and-host-rewrite core, exercised through both the livestream and talkback
- * specializations (both GET) and the shared no-URL / non-2xx failure paths, driven through an undici MockAgent so no live controller is needed.
+ * specializations (both GET), the shared no-URL / non-2xx failure paths, and forwarding the caller's abort signal to the transport, driven through an undici
+ * MockAgent so no live controller is needed.
  */
 import { ProtectAbortedError, ProtectError, ProtectProtocolError } from "../errors.ts";
 import { describe, test } from "node:test";

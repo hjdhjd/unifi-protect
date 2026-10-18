@@ -48,7 +48,7 @@ export interface Clock {
    * Yields once per `delayMs` interval until the abort signal fires. Mirrors `setInterval` from `node:timers/promises` but takes only the parameters we
    * actually use - the value parameter and the optional `ref` flag are omitted because no consumer needs them.
    *
-   * The returned async iterable terminates cleanly when the signal aborts (the iterator throws an `AbortError`, which the consumer's `for await` catches).
+   * The returned async iterable ends when the signal aborts: the iterator rejects with an `AbortError`, which each consumer absorbs as the expected rejection.
    *
    * @param delayMs - Interval between yields in milliseconds.
    * @param options - Includes the abort signal that ends the iteration.

@@ -58,8 +58,9 @@ function payloadless(name: string): ProtectDiagnosticsChannel<void> {
  * This module is the single source of truth for the channel set. Each channel is a {@link ProtectDiagnosticsChannel} bound to its payload type, so both directions of
  * the rail are typed - a publish is checked against the payload shape, and a subscriber's handler receives it already narrowed - and the generated reference
  * `docs/variables/channels.md` (via `npm run build-docs`) links each channel to its payload. {@link subscribeToChannel} is the subscription path a consumer reaches for:
- * it returns a `Disposable`, so a handler's lifetime is scoped by `using` rather than tracked by hand. Adding a channel touches both: the typed, doc-commented entry
- * here and its payload interface below.
+ * it returns a `Disposable`, so a handler's lifetime is scoped by `using` rather than tracked by hand. Adding a channel touches the typed, doc-commented entry here, its
+ * payload interface below (a payload-less channel declares none), and its row in the `ChannelBindings` table in `diagnostics.test.ts`, without which that suite fails to
+ * compile.
  *
  * @category Diagnostics
  */
@@ -103,8 +104,8 @@ export const channels = {
   /** The transport entered its throttle cooldown after crossing the consecutive-failure threshold. */
   httpThrottleEntered: typed<HttpThrottleEnteredPayload>("unifi-protect:http:throttle:entered"),
 
-  /** The transport left its throttle cooldown and resumed normal operation. The one payload-less channel: the transition itself is the whole signal, so it publishes
-   * with no argument and its handlers take none.
+  /** The transport left its throttle cooldown and resumed normal operation. A payload-less channel: the transition itself is the whole signal, so it publishes with no
+   * argument and its handlers take none.
    */
   httpThrottleExited: payloadless("unifi-protect:http:throttle:exited"),
 
@@ -247,7 +248,9 @@ export interface ConnectionTransitionPayload {
 }
 
 /**
- * Payload published on {@link channels.eventsClosed}. Mirrors the WebSocket close frame.
+ * Payload published on {@link channels.eventsClosed}. When the controller closes the stream unprompted, `code` and `reason` carry the peer's WebSocket close frame. When
+ * the stream closes itself, they carry the library's own classification instead: `1000` for a deliberate teardown (an explicit `close()` or the caller's abort) and
+ * `1006` for a failure-driven one (a socket error or a watchdog stall), with a reason describing what ended it.
  *
  * @category Diagnostics
  */
@@ -270,7 +273,8 @@ export interface EventsPacketPayload {
 }
 
 /**
- * Payload published on {@link channels.eventsReconnecting}.
+ * Payload published on {@link channels.eventsReconnecting}. `reason` is the message of the fault that dropped the events channel, or a generic description when no
+ * fault was recorded.
  *
  * @category Diagnostics
  */
@@ -321,7 +325,8 @@ export interface HttpRequestStartPayload {
 }
 
 /**
- * Payload published on {@link channels.httpThrottleEntered}.
+ * Payload published on {@link channels.httpThrottleEntered}. `consecutiveFailures` is the count of consecutive failed requests that tripped the breaker, and
+ * `cooldownMs` is how long, in milliseconds, the transport refuses requests before it lets them through again as recovery probes.
  *
  * @category Diagnostics
  */
@@ -372,8 +377,9 @@ export interface LivestreamRecoveryRecoveredPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamRecoveryStarted}. `attempts` is 0 at the start of an episode; `sinceLastSegmentMs` is how long the stream had been
- * silent when the fault was observed.
+ * Payload published on {@link channels.livestreamRecoveryStarted}. `attempts` is 0 at the start of an episode; `sinceLastSegmentMs` is the time since the last segment of
+ * any kind, init segments included, when the fault was observed. It is not a measure of media downtime: an episode started by the media-stall watchdog can report a
+ * small value while media has been absent for the whole detection threshold, because non-media frames kept arriving.
  *
  * @category Diagnostics
  */
@@ -386,7 +392,8 @@ export interface LivestreamRecoveryStartedPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamSessionClosed}.
+ * Payload published on {@link channels.livestreamSessionClosed}. `reason` is a short description of what ended the stream, such as its last subscriber leaving, a codec
+ * change, or the recovery policy giving up.
  *
  * @category Diagnostics
  */
@@ -412,7 +419,9 @@ export interface LivestreamSessionOpenedPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamStallDetected}.
+ * Payload published on {@link channels.livestreamStallDetected}. `lastSegmentAt` is when the pool last saw a segment of any kind, read from the injected `Clock`, so it
+ * is epoch milliseconds only under the production clock. `silentForMs` is how long, in milliseconds, the session's heartbeat watchdog found the channel silent when it
+ * declared the stall.
  *
  * @category Diagnostics
  */

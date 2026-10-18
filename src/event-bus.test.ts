@@ -1,13 +1,13 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * event-bus.test.ts: Unit tests for the three-rail EventBus facade - Disposable callbacks, the once promise, the stream async-iterable, signal cancellation on both,
- * and the single-emit fan-out across all three rails.
+ * and the single-emit fan-out to every active callback subscriber.
  */
 import { describe, test } from "node:test";
 import { EventBus } from "./event-bus.ts";
 import assert from "node:assert/strict";
 
-// A representative event map: one single-argument event and one multi-argument event, so the tuple typing of every rail is exercised.
+// A representative event map: a single-argument event for the rails' behavior, and a multi-argument event that covers tuple destructuring on the once rail.
 interface TestEvents {
 
   ping: [count: number];

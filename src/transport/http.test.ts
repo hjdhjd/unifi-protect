@@ -7,7 +7,8 @@
  *
  * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, a fake Clock advances breaker time
  * without real-time waits, and the rows that need a real connection open a loopback server of their own. The injected dispatcher and clock let these tests
- * assert the controller's throttle and retry behavior - the established behavioral contract - exactly and without flakiness.
+ * assert the transport's throttle breaker and its 401-relogin retry exactly and without flakiness. The injected dispatcher bypasses the status-code retry
+ * interceptor, which is composed only onto a pool the transport builds itself, so these rows do not cover it.
  */
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../settings.ts";
 import { Pool, errors } from "undici";
@@ -325,6 +326,7 @@ describe("Transport", () => {
       const controller = new AbortController();
       const errno = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
 
+      // The run of failures stops one short of the breaker's threshold, so the trip asserted at the end shows the late-aborted failure was booked as a failure.
       pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT - 1);
       pool.intercept({ method: "GET", path: "/x" }).replyWithError(errno);
 
@@ -496,8 +498,7 @@ describe("Transport", () => {
       assert.equal(transport.isThrottled, true);
 
       // Still deep inside the cooldown: a normal send is refused locally, but a probe - the ConnectionMonitor's recovery trial - dispatches anyway, so the monitor's
-      // backoff curve (not the breaker's 300s cooldown) paces re-probing. This is the unification: the same booking that the autonomous half-open trial would take,
-      // reached early by the monitor.
+      // backoff curve (not the breaker's cooldown) paces re-probing. The probe takes the same booking the autonomous half-open trial would, only earlier.
       clock.advance(1000);
 
       await assert.rejects(transport.send(url(host, "/f")), ProtectThrottledError);
@@ -524,7 +525,7 @@ describe("Transport", () => {
       clock.advance(1000);
 
       // A failed probe takes exactly the failed-half-open booking: the breaker stays open, re-armed from now, with no rail churn - so the consumer's "throttled
-      // throughout" view holds. This is why the probe needs no new rail logic.
+      // throughout" view holds, so the probe shares the breaker's existing rail logic.
       const probe = await transport.send(url(host, "/f"), { probe: true });
 
       assert.equal(probe.statusCode, 500);

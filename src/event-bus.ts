@@ -115,8 +115,8 @@ export class EventBus<EventMap extends Record<keyof EventMap, readonly unknown[]
    */
   stream<K extends keyof EventMap & string>(event: K, opts: StreamOptions = {}): AsyncIterable<EventMap[K]> {
 
-    // node:events' `on` returns an async iterator that buffers emissions and terminates cleanly when the signal aborts - precisely our stream contract. The yielded
-    // values are the argument arrays, which are our tuple type at the boundary.
+    // node:events' `on` returns an async iterator that buffers emissions and rejects with the abort reason when the signal fires - precisely our stream contract,
+    // which the firehose sugar smooths into a clean return. The yielded values are the argument arrays, which are our tuple type at the boundary.
     return subscribeIterator(this.#emitter, EVENT_NAME_PREFIX + event, opts.signal ? { signal: opts.signal } : undefined) as AsyncIterable<EventMap[K]>;
   }
 

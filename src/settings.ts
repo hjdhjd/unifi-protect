@@ -3,13 +3,18 @@
  * settings.ts: Settings and constants for UniFi Protect.
  */
 
-// Number of API errors to accept before we backoff so we don't slam a Protect controller.
+// Number of consecutive API failures to accept before we back off so we don't slam a Protect controller.
 export const PROTECT_API_ERROR_LIMIT = 10;
 
-// Interval, in seconds, to wait before trying to access the API again once we've hit the PROTECT_API_ERROR_LIMIT threshold.
+// Interval, in seconds, to wait before trying to access the API again once we've hit the PROTECT_API_ERROR_LIMIT threshold. The breaker waits out this cooldown on its
+// own only while the ConnectionMonitor is idle - HTTP failing while the realtime events channel stays alive. During a recovery episode the monitor's probe skips the
+// cooldown and paces re-probing on its own backoff curve, so this cooldown can stay long without delaying recovery from a controller outage.
 export const PROTECT_API_RETRY_INTERVAL = 300;
 
-// Protect API response timeout, in milliseconds. This should never be greater than 5000 ms.
+// Protect API response timeout, in milliseconds. This should never be greater than 5000 ms, the reasonable upper limit for a controller that is merely slow. The value
+// balances retries and responsiveness against genuinely slow networks and controllers: a consumer such as a HomeKit snapshot request runs under a hard deadline of
+// its own, so the library's timeout must leave it room to fail over, while a controller that hangs during a reboot must surface as a timeout rather than be masked by
+// a longer wait.
 export const PROTECT_API_TIMEOUT = 3500;
 
 // Bootstrap refresh failsafe interval, in milliseconds. The StateStore re-bootstraps the controller on this cadence because Protect firmware occasionally drops realtime
@@ -32,7 +37,7 @@ export const PROTECT_RECOVERY_BACKOFF_KNOWN_MS = [ 300000, 120000 ];
 // Connection-recovery backoff, in milliseconds, for the unknown-unreachable track. The ConnectionMonitor enters this track on any unsolicited fault (a stall, a socket
 // drop, a network error - including an autonomous reboot, which at t=0 is indistinguishable from a transient blip). It enters at the short end - probe at once to catch a
 // blip in seconds - then walks the delay out toward the steady floor, so an autonomous reboot still recovers within roughly a steady interval of the controller's return.
-// The leading zero reproduces "probe immediately on the fault." After these stages the monitor falls through to the shared steady floor.
+// The leading zero means the first probe fires immediately on the fault. After these stages the monitor falls through to the shared steady floor.
 export const PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS = [ 0, 5000, 15000, 30000 ];
 
 // Connection-recovery steady-state floor, in milliseconds. Both backoff tracks walk out to this interval and then probe at it indefinitely until the controller returns
@@ -47,15 +52,18 @@ export const PROTECT_RECOVERY_STEADY_INTERVAL_MS = 60000;
 export const PROTECT_REBOOT_ANTICIPATION_WINDOW_MS = 60000;
 
 // Livestream heartbeat timeout, in milliseconds. If no data is received within this interval, the livestream is considered unresponsive and the connection is closed.
+// Any byte resets it, so a silence this long means the channel is dead rather than merely quiet; this is the transport-liveness backstop beneath the pool's media
+// watchdog.
 export const PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT = 10000;
 
 // Default media-stall detection threshold, in milliseconds, for the pool's always-on media watchdog. The watchdog is the MEDIA-silence analog of the session's any-byte
 // heartbeat watchdog: the session timer proves the socket is alive (any byte, including the negotiated timestamp frames that carry no picture), while this one proves a
 // decodable picture is actually flowing. A subscriber that declares no urgency contributes this default, so every live stream is media-watched by default - the fail-safe
 // counterpart of the byte watchdog. It mirrors the heartbeat window's magnitude deliberately: a 10 s media silence is the same "this channel is dead, not merely quiet"
-// signal, one layer up. A consumer that needs a tighter deadline (HBUP, whose HKSV path tolerates only a few seconds) declares a smaller urgency; one that wants the byte
-// watchdog alone declares Infinity to opt out. This is a DETECTION default, deliberately distinct from PROTECT_LIVESTREAM_DEFAULT_TOLERANCE_MS (the recovery-await
-// patience default): detection answers "notice a stall this fast," the recovery-await answers "how long to wait per reconnect attempt," and the two must not leak.
+// signal, one layer up. A consumer that needs a tighter deadline (a HomeKit Secure Video recorder, which tolerates only a few seconds) declares a smaller urgency;
+// one that wants the byte watchdog alone declares Infinity to opt out. This is a DETECTION default, deliberately distinct from PROTECT_LIVESTREAM_DEFAULT_TOLERANCE_MS
+// (the recovery-await patience default): detection answers "notice a stall this fast," the recovery-await answers "how long to wait per reconnect attempt," and the two
+// must not leak.
 export const PROTECT_LIVESTREAM_STALL_DEFAULT_MS = 10000;
 
 // Media-stall detection floor, in milliseconds. The pool clamps the aggregated detection threshold up to this value so a maximally-urgent consumer (declaring a near-zero
@@ -72,26 +80,26 @@ export const PROTECT_LIVESTREAM_STALL_FLOOR_MS = 2000;
 // lands during an active media silence, which a per-segment-rearmed one-shot would miss because no segment arrives to rearm it.
 export const PROTECT_LIVESTREAM_STALL_POLL_MS = 1000;
 
-// Livestream establishment deadline, in milliseconds. The pool's recovery runs in two regimes: bounded establishment (the stream has never produced a segment) and
-// unbounded live recovery (it produced one once and then faulted). The default recovery policy gives up - surfacing ProtectLivestreamUnavailableError - once an
-// establishing episode has run for longer than this without a first segment - a stream that connects but never produces media. Live recovery has no such deadline: a
-// stream that proved itself once keeps being retried (throttled by the backoff curve) until it returns or every subscriber leaves.
+// Livestream establishment deadline, in milliseconds. The pool's recovery runs in two regimes: bounded establishment (the stream has never produced a media segment)
+// and unbounded live recovery (it produced one once and then faulted). The default recovery policy gives up - surfacing ProtectLivestreamUnavailableError - once an
+// establishing episode has run for longer than this without a first media segment - a stream that connects but never produces media. Live recovery has no such
+// deadline: a stream that proved itself once keeps being retried (throttled by the backoff curve) until it returns or every subscriber leaves.
 export const PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS = 30000;
 
-// Livestream establishment backoff curve, in milliseconds, indexed by consecutive failed attempts. Establishment - the stream has never produced a segment - is bound by
-// the camera's own first-segment latency, which no consumer can hurry: an impatient consumer cannot make the hardware mint faster, and tearing a fresh stream down early
-// only churns the negotiation. So the default policy's establishment windows are deliberately patient and urgency-INDEPENDENT (they ignore the reported tolerance), each
-// value the time it grants a fresh stream to produce its first segment before abandoning the attempt and reconnecting. Summed against the 30 s deadline this yields
-// roughly four attempts (5s + 8s + 10s + 10s) before give-up. The last value is the steady ceiling once attempts exceed the curve length. These are safe ecosystem
-// defaults sized for diverse real hardware; a consumer that has measured its own controllers may inject a tighter policy.
+// Livestream establishment backoff curve, in milliseconds, indexed by consecutive failed attempts. Establishment - the stream has never produced a media segment - is
+// bound by the camera's own first-segment latency, which no consumer can hurry: an impatient consumer cannot make the hardware mint faster, and tearing a fresh stream
+// down early only churns the negotiation. So the default policy's establishment windows are deliberately patient and urgency-INDEPENDENT (they ignore the reported
+// tolerance), each value the time it grants a fresh stream to produce its first media segment before abandoning the attempt and reconnecting. Summed against the 30 s
+// deadline this yields roughly four attempts (5s + 8s + 10s + 10s) before give-up. The last value is the steady ceiling once attempts exceed the curve length. These are
+// safe ecosystem defaults sized for diverse real hardware; a consumer that has measured its own controllers may inject a tighter policy.
 export const PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS = [ 5000, 8000, 10000 ];
 
-// Livestream live-recovery backoff curve, in milliseconds, indexed by consecutive failed attempts. Live recovery - the stream produced a segment once and then faulted -
-// uses this curve as the headroom-clamped per-attempt window: the default policy grants the stage this long for a segment, having torn down and negotiated a fresh URL
-// (which often clears a wedged endpoint), before abandoning the attempt and consulting the policy again. The window doubles as the inter-attempt spacing - a fast-failing
-// attempt still occupies its full window - so one curve expresses both "how long to give this attempt" and "how hard to back off," growing with each failure; the last
-// value is the steady ceiling. Unlike establishment, recovery is clamped by the consumer's reported headroom (see the await clamp below), so an urgent consumer recovers
-// faster than this curve and a patient one follows it.
+// Livestream live-recovery backoff curve, in milliseconds, indexed by consecutive failed attempts. Live recovery - the stream produced a media segment once and then
+// faulted - uses this curve as the headroom-clamped per-attempt window: the default policy grants the stage this long for a media segment, having torn down and
+// negotiated a fresh URL (which often clears a wedged endpoint), before abandoning the attempt and consulting the policy again. The window doubles as the inter-attempt
+// spacing - a fast-failing attempt still occupies its full window - so one curve expresses both "how long to give this attempt" and "how hard to back off," growing
+// with each failure; the last value is the steady ceiling. Unlike establishment, recovery is clamped by the consumer's reported headroom (see the await clamp below), so
+// an urgent consumer recovers faster than this curve and a patient one follows it.
 export const PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS = [ 3000, 5000, 10000 ];
 
 // Default livestream delay tolerance, in milliseconds, used by the default recovery policy's live-recovery branch when no subscriber reported an urgency. Urgency is each
@@ -100,15 +108,17 @@ export const PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS = [ 3000, 5000, 10000 ];
 // on a relaxed pace. (Establishment ignores this entirely - it is hardware-bound, not headroom-bound.)
 export const PROTECT_LIVESTREAM_DEFAULT_TOLERANCE_MS = 10000;
 
-// Livestream await margin, in milliseconds. The default policy's live-recovery branch derives a reconnect attempt's window from the most-urgent subscriber's reported
-// tolerance, less this margin, so it always leaves the consumer some cushion between "the library abandons this attempt" and "the consumer's own buffer runs dry."
+// Livestream await margin, in milliseconds. In the default policy's live-recovery branch, a reconnect attempt's window is the backoff-curve stage, capped by the
+// most-urgent subscriber's reported tolerance less this margin, so the cap always leaves the consumer some cushion between "the library abandons this attempt" and "the
+// consumer's own buffer runs dry."
 // Subtracting a fixed margin rather than a fraction keeps the headroom math legible and the cushion predictable regardless of the reported tolerance's magnitude.
 export const PROTECT_LIVESTREAM_AWAIT_MARGIN_MS = 1000;
 
 // Livestream await window clamp, in milliseconds, for the default policy's live-recovery branch (establishment is unclamped - it follows its own patient curve). Recovery
 // clamps every reconnect attempt's window to [min, max]: the floor keeps even a maximally-urgent consumer (reporting near-zero tolerance) from tearing down a fresh
 // stream before the controller can plausibly mint its first segment - the same first-segment latency establishment respects - and the ceiling keeps a patient consumer
-// re-probing often enough to catch the controller's return promptly. The headroom-derived window is clamped into this band, so the policy self-tunes within sane bounds.
+// re-probing often enough to catch the controller's return promptly. The backoff stage and the headroom-derived cap are both clamped into this band, so the policy
+// self-tunes within sane bounds.
 export const PROTECT_LIVESTREAM_AWAIT_MIN_MS = 3000;
 export const PROTECT_LIVESTREAM_AWAIT_MAX_MS = 10000;
 

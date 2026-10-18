@@ -103,7 +103,7 @@ function summaryLine(output: Output, segment: Segment, sub: LivestreamSubscripti
 /**
  * `ufp watch livestream`. Subscribes to the camera's stream and routes each segment to the chosen sink: a file (`--out <path>`), stdout (`--out -`, or automatically when
  * stdout is piped) for `| ffmpeg`/`| ffprobe`, NDJSON metadata (`--json`), or a TTY summary. When bytes go to stdout, every human-readable line is diverted to stderr so
- * the byte stream stays pristine. Running two invocations against the same camera proves the pool's fan-out: both receive byte-identical segment streams.
+ * the byte stream stays pristine.
  *
  * @category CLI
  */
@@ -163,7 +163,7 @@ const watchLivestreamHandler: CommandHandler = async (ctx) => {
     Object.values(channels).filter((channel) => String(channel.name).startsWith(LIVESTREAM_DIAGNOSTIC_PREFIX)),
     (name, message) => renderDiagnostic(diagOutput, name, message, { json: values.json === true }));
 
-  // The parsed flags select one of the two mutually-exclusive sources; --lens (when set) wins as a lens source, otherwise the channel (defaulting to 0) is the source.
+  // The parsed flags select one of the mutually-exclusive sources; --lens (when set) wins as a lens source, otherwise the channel (defaulting to 0) is the source.
   // The mutual-exclusion check above guarantees at most one flag is set, so this never silently discards the other.
   const source: LivestreamSource = (lens !== undefined) ? { lens: lens, type: "lens" } : { channel: channel, type: "channel" };
 
@@ -193,6 +193,8 @@ const watchLivestreamHandler: CommandHandler = async (ctx) => {
       codec = segment.codec;
     }
 
+    // The byte sinks do not wait for drain: a livestream cannot be paused upstream, so a sink slower than the stream buffers here in the process rather than stalling
+    // the subscription.
     if(fileStream !== null) {
 
       fileStream.write(segment.data);
