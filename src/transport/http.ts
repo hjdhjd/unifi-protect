@@ -19,9 +19,10 @@ import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
 import { wallClock } from "../clock.ts";
 
-// The transient-failure status codes the undici retry interceptor retries before `send` ever observes a response. These are intentional and specific to how Protect
-// controllers behave under load and during reboots - they must not be trimmed (notably 400 and 404, which a controller transiently returns mid-reboot). This is the
-// HTTP-layer retry surface and is distinct from the throttle circuit breaker below, which counts the failures that survive these retries.
+// The transient-failure status codes the undici retry interceptor retries before `send` observes the controller's last answer. These are intentional and specific to
+// how Protect controllers behave under load and during reboots - they must not be trimmed (notably 400 and 404, which a controller transiently returns mid-reboot).
+// This is the HTTP-layer retry surface and is distinct from the throttle circuit breaker below, which counts the failures that survive these retries. The login
+// handshake is the set's second reader, through isTransientStatus: a status in it is the controller's readiness answer, never a verdict on the credentials.
 const RETRY_STATUS_CODES = [ 400, 404, 429, 500, 502, 503, 504 ] as const;
 
 // The throttle cooldown in milliseconds, derived once from the seconds-valued constant so the breaker math reads in the same unit it compares against.
@@ -120,6 +121,20 @@ export function responseOk(statusCode: number | undefined): boolean {
 }
 
 /**
+ * Determine whether an HTTP status code is one the owned pool's retry interceptor retries as the controller's transient readiness answer, the status a controller
+ * that is rebooting, starting up, or shedding load answers with. The login handshake never reads such a status as a verdict on the credentials.
+ *
+ * @param statusCode - The status code to test.
+ *
+ * @returns `true` for a status in the retried set, `false` otherwise.
+ */
+export function isTransientStatus(statusCode: number): boolean {
+
+  // The set is a tuple of literals, whose `includes` accepts only those literals, so a status of any value is tested by comparison instead.
+  return RETRY_STATUS_CODES.some((code) => code === statusCode);
+}
+
+/**
  * Flatten undici's `IncomingHttpHeaders` (whose values are `string | string[] | undefined`) to a plain `Record<string, string>` for {@link ProtectRequestError}. A
  * multi-value header is joined with ", " and an absent value is dropped.
  *
@@ -169,7 +184,7 @@ function classifyStatus(statusCode: number, headers: IncomingHttpHeaders, body: 
 
     default:
 
-      return new ProtectRequestError("The UniFi Protect controller returned an error response.",
+      return new ProtectRequestError("The UniFi Protect controller answered the request with HTTP status " + String(statusCode) + ".",
         { body: body.length ? body.toString("utf8") : undefined, headers: flattenHeaders(headers), statusCode });
   }
 }
@@ -617,10 +632,12 @@ export class Transport implements AsyncDisposable {
       return new ProtectNetworkError("The request was interrupted because the connection pool was reset.", { cause: error });
     }
 
-    // The retry interceptor gave up on a retryable status code - after exhausting its retries, or at once for a method outside its retried set.
+    // The retry interceptor raises RequestRetryError for a response whose bytes it cannot reconcile with the request: a resumed retry the controller answered without
+    // the matching range, or a body whose length disagrees with the length its headers declared. The controller was reached, but what arrived is not one whole
+    // response, so it is classified with the connection faults a later attempt can clear.
     if(error instanceof errors.RequestRetryError) {
 
-      return new ProtectNetworkError("The UniFi Protect controller could not be reached after exhausting retries.", { cause: error });
+      return new ProtectNetworkError("The response from the UniFi Protect controller did not match the range or length the request expected.", { cause: error });
     }
 
     // A connect-phase timeout (distinct from our request deadline) - surface it as a timeout, carrying the elapsed time.
@@ -654,7 +671,10 @@ export class Transport implements AsyncDisposable {
   // carries are the one place a double-apply would be consequential and the undocumented API promises nothing about what a repeated write does. The backoff curve
   // itself - up to five retries after the initial attempt, starting at a 100ms delay and doubling on each retry up to a 1500ms cap - is sized to outlast the same
   // transient readiness gaps RETRY_STATUS_CODES targets: a reboot or a momentary load spike on a Protect controller typically clears within a few seconds, so the curve
-  // gives it that room to recover while keeping a caller from stalling through a much longer wait.
+  // gives it that room to recover while keeping a caller from stalling through a much longer wait. With `throwOnError` off, the interceptor never discards an answer:
+  // once the retries run out, or at once for a status outside the set or a method outside the retried verbs, the controller's last response returns to `send` with its
+  // body, and `ensureOk` is where it becomes the classified error. The six attempts and their backoff all run inside the one request deadline `#dispatch` arms, so a
+  // controller too slow to answer every attempt inside it ends the request as a timeout rather than as a response.
   #buildPool(): Dispatcher {
 
     const userAgent: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {
@@ -671,6 +691,6 @@ export class Transport implements AsyncDisposable {
 
     return new Pool("https://" + this.#host, { allowH2: true, clientTtl: 60000, connect: { preferH2: true, rejectUnauthorized: this.#verifyTls }, connections: 5 })
       .compose(userAgent, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
-        statusCodes: [...RETRY_STATUS_CODES], timeoutFactor: 2 }));
+        statusCodes: [...RETRY_STATUS_CODES], throwOnError: false, timeoutFactor: 2 }));
   }
 }

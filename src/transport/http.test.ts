@@ -2,13 +2,13 @@
  *
  * http.test.ts: Unit tests for the HTTP transport - the send/request surface, ProtectResponse decoding and ensureOk classification, transport-error classification
  * (timeout vs caller-abort vs network), the auth-header hook and 401-relogin retry, the full throttle circuit-breaker FSM (closed -> open -> half-open -> closed),
- * the diagnostics-channel publishes for request start/end and throttle entered/exited, dispatcher-ownership semantics for an injected versus an owned pool, and
- * the on/once/stream event-rail surface.
+ * the diagnostics-channel publishes for request start/end and throttle entered/exited, dispatcher-ownership semantics for an injected versus an owned pool, the
+ * owned pool's handling of the statuses it retries, and the on/once/stream event-rail surface.
  *
  * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, a fake Clock advances breaker time
  * without real-time waits, and the rows that need a real connection open a loopback server of their own. The injected dispatcher and clock let these tests
- * assert the transport's throttle breaker and its 401-relogin retry exactly and without flakiness. The injected dispatcher bypasses the status-code retry
- * interceptor, which is composed only onto a pool the transport builds itself, so these rows do not cover it.
+ * assert the transport's throttle breaker and its 401-relogin retry exactly and without flakiness. The injected rows bypass the status-code retry interceptor,
+ * which is composed only onto a pool the transport builds itself; the owned-pool describe covers it against a loopback peer.
  */
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../settings.ts";
 import { Pool, errors } from "undici";
@@ -934,6 +934,50 @@ describe("Transport", () => {
 
         return true;
       });
+    });
+  });
+
+  describe("owned pool and the retried statuses", () => {
+
+    test("a PATCH answered 404 returns the 404 response with its body after one request", async () => {
+
+      // PATCH is held out of the retried verbs, so the interceptor hands the first answer straight back and send returns it for ensureOk to classify.
+      await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{\"error\":\"missing\"}", status: 404 }) });
+      await using transport = new Transport({ host: peer.host });
+
+      const response = await transport.send(url(peer.host, "/missing"), { method: "PATCH" });
+
+      assert.equal(response.statusCode, 404);
+      assert.equal(response.text(), "{\"error\":\"missing\"}");
+      assert.equal(peer.requests, 1);
+    });
+
+    test("a GET answered 503 on every attempt returns the last 503 response with its body after six requests", async () => {
+
+      /* The interceptor retries five times after the first attempt and then hands the controller's last answer back. Its backoff waits run in real time and come to
+       * most of the default request deadline, which leaves little margin on a loaded machine, so this row gives the request a deadline of its own.
+       */
+      await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{\"error\":\"starting\"}", status: 503 }) });
+      await using transport = new Transport({ host: peer.host });
+
+      const response = await transport.send(url(peer.host, "/busy"), { timeout: 10000 });
+
+      assert.equal(response.statusCode, 503);
+      assert.equal(response.text(), "{\"error\":\"starting\"}");
+      assert.equal(peer.requests, 6);
+      assert.throws(() => response.ensureOk(), { constructor: ProtectRequestError, statusCode: 503 });
+    });
+
+    test("a GET answered 503 twice and then 200 returns the 200 after three requests", async () => {
+
+      await using peer = await createLoopbackHttpsPeer({ respond: (request) => ((request <= 2) ? { body: "{}", status: 503 } : { body: "{\"ok\":true}", status: 200 }) });
+      await using transport = new Transport({ host: peer.host });
+
+      const response = await transport.send(url(peer.host, "/recovering"));
+
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(response.json<{ ok: boolean }>(), { ok: true });
+      assert.equal(peer.requests, 3);
     });
   });
 

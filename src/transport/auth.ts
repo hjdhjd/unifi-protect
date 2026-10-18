@@ -2,6 +2,7 @@
  *
  * auth.ts: The authentication session for the UniFi Protect library - the UniFi OS credential handshake, CSRF rotation, and the 401-triggered relogin hook.
  */
+import { isTransientStatus, responseOk } from "./http.ts";
 import type { AuthReloginPayload } from "../diagnostics.ts";
 import type { IncomingHttpHeaders } from "node:http";
 import { ProtectAuthError } from "../errors.ts";
@@ -9,7 +10,6 @@ import type { ProtectLogging } from "../logging.ts";
 import type { Transport } from "./http.ts";
 import { channels } from "../diagnostics.ts";
 import { noopLog } from "../logging.ts";
-import { responseOk } from "./http.ts";
 
 /**
  * The credentials for a Protect controller. `host` is the controller address without a scheme (e.g., `"192.168.1.1"`); the session derives the UniFi OS login URL
@@ -55,6 +55,20 @@ function getHeader(name: string, headers: IncomingHttpHeaders): string | null {
   }
 
   return Array.isArray(raw) ? (raw[0] ?? null) : raw;
+}
+
+/**
+ * Read a login answer as a verdict on the credentials. A 4xx is the controller judging the request it was sent, except a status in the transport's retried set, which
+ * a controller rebooting or shedding load answers with (a 400 or a 404 mid-reboot among them) and which says nothing about the credentials. A 3xx or a 5xx says
+ * nothing about them at all.
+ *
+ * @param statusCode - The status the controller answered with.
+ *
+ * @returns `true` when the answer rejects the sign-in, `false` otherwise.
+ */
+function rejectedSignIn(statusCode: number): boolean {
+
+  return (statusCode >= 400) && (statusCode <= 499) && !isTransientStatus(statusCode);
 }
 
 /**
@@ -130,6 +144,8 @@ export class AuthSession {
    * @param opts        - Optional abort signal threaded through the handshake requests.
    *
    * @throws {@link ProtectAuthError} if the handshake does not yield a cookie and CSRF token.
+   * @throws {@link ProtectRequestError} if the controller answers with a status that is no verdict on the credentials, such as a readiness answer the transport
+   *   already retried, which a reconnecting caller retries again later.
    */
   async login(credentials: ProtectCredentials, opts: { signal?: AbortSignal } = {}): Promise<void> {
 
@@ -190,8 +206,9 @@ export class AuthSession {
 
   // One relogin run, shared by every caller that arrived while it was in flight. It resolves rather than rejects on every path: the transport's hook contract is a
   // boolean, and the request that tripped the 401 belongs to some unrelated caller which must receive its own 401-derived result rather than an error raised by a
-  // recovery it never asked for. A handshake can genuinely throw here - the transport surfaces network failure as typed errors, and a failing network is often exactly
-  // the weather that produced the 401 - so that throw settles this false and is reported on the channel like any other unsuccessful relogin.
+  // recovery it never asked for. A handshake can genuinely throw here - a network failure surfaces as the recoverable ProtectNetworkError and a readiness answer as
+  // ProtectRequestError, and a failing or rebooting controller is often exactly the weather that produced the 401 - so that throw settles this false and is reported
+  // on the channel like any other unsuccessful relogin.
   async #reauthenticateOnce(): Promise<boolean> {
 
     let success = false;
@@ -238,10 +255,17 @@ export class AuthSession {
     this.#cookie = null;
   }
 
-  // Run the UniFi OS handshake. Attempt a direct login first; if it fails and we hold no CSRF token, fetch one from the controller root and retry the login once. On
-  // success, capture the rotated CSRF token (the controller returns it as X-Updated-CSRF-Token, falling back to X-CSRF-Token) and the bare session cookie. Returns
-  // whether a complete session was established. Self-sufficient in its auth headers - it stamps the CSRF token explicitly rather than relying on the transport's
-  // getAuthHeaders hook being wired back to this same session.
+  /* Run the UniFi OS handshake. Attempt a direct login first; if the controller rejects it and we hold no CSRF token, fetch one from the controller root and retry
+   * the login once. On success, capture the rotated CSRF token (the controller returns it as X-Updated-CSRF-Token, falling back to X-CSRF-Token) and the bare session
+   * cookie. Returns whether a complete session was established. Self-sufficient in its auth headers - it stamps the CSRF token explicitly rather than relying on the
+   * transport's getAuthHeaders hook being wired back to this same session.
+   *
+   * A false return is a rejected sign-in, which login() reports as bad credentials and which a reconnecting consumer counts against its budget, so only an answer that
+   * judges the credentials earns it: a 4xx outside the transport's retried set. A readiness answer the transport already retried, a 3xx, or any other 5xx says nothing
+   * about the credentials, so each throws the error the transport classifies it as, and a controller answering mid-reboot is never reported as a wrong password. The
+   * controller root's answer is read by the same rule: a readiness answer there throws as well, because a controller not ready to serve its root was not ready to
+   * judge the login it rejected.
+   */
   async #handshake(signal?: AbortSignal): Promise<boolean> {
 
     const credentials = this.#credentials;
@@ -258,9 +282,16 @@ export class AuthSession {
 
     // The controller rejected the login and we have no CSRF token to offer. UniFi OS gates login behind CSRF protection, so fetch a token from the root document and
     // retry the login once with it in hand.
-    if(!responseOk(response.statusCode) && (this.#csrfToken === null)) {
+    if(rejectedSignIn(response.statusCode) && (this.#csrfToken === null)) {
 
       const csrfResponse = await this.#transport.send("https://" + credentials.host, { authRetry: false, method: "GET", ...((signal !== undefined) && { signal }) });
+
+      // A root answering with a readiness status means the controller is not ready to judge a sign-in, so its classified error surfaces rather than the login's
+      // rejection standing as a verdict. Any other root answer that yields no token leaves the login's own answer to the read below.
+      if(isTransientStatus(csrfResponse.statusCode)) {
+
+        csrfResponse.ensureOk();
+      }
 
       if(responseOk(csrfResponse.statusCode)) {
 
@@ -274,11 +305,18 @@ export class AuthSession {
       }
     }
 
+    // Any answer that is not a 2xx ends the handshake, so the session is cleared first and a session that held a cookie never keeps it past a handshake that did not
+    // complete. A rejected sign-in then returns false; every other answer throws its classified error from ensureOk, which throws for every non-2xx.
     if(!responseOk(response.statusCode)) {
 
       this.#clearFailedSession(credentials);
 
-      return false;
+      if(rejectedSignIn(response.statusCode)) {
+
+        return false;
+      }
+
+      response.ensureOk();
     }
 
     const csrfToken = getHeader("x-updated-csrf-token", response.headers) ?? getHeader("x-csrf-token", response.headers);

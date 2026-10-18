@@ -1,7 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * tls-peer.helpers.ts: Loopback TLS peers presenting a self-signed certificate - an HTTPS responder for the request path and a hand-rolled WebSocket upgrader for the
- * socket paths - so the certificate-verification option can be exercised at each construction site that owns a TLS connection.
+ * socket paths - so the certificate-verification option can be exercised at each construction site that owns a TLS connection, and the owned pool's retry
+ * interceptor against the statuses a test scripts.
  */
 import type { Server, Socket } from "node:net";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
@@ -41,23 +42,74 @@ export interface LoopbackTlsPeer extends AsyncDisposable {
 }
 
 /**
- * Build a loopback HTTPS peer that answers any request with a 200 and a small JSON body, presenting the throwaway self-signed identity a controller's own certificate
- * stands in for.
+ * A listening loopback HTTPS peer. Beside every {@link LoopbackTlsPeer} member, `requests` counts the HTTP requests the peer has answered, which is how a test reads
+ * the number of attempts a client's retry policy made.
+ */
+export interface LoopbackHttpsPeer extends LoopbackTlsPeer {
+
+  readonly requests: number;
+}
+
+/**
+ * Options for {@link createLoopbackHttpsPeer}.
  *
- * An `undici.MockAgent` replaces undici's dispatch wholesale, so the pool's connect options - certificate verification among them - are permanently out of its reach.
- * Establishing what the option does to a handshake therefore takes a real peer, dialed by a transport that built its own pool.
+ * - `respond` decides each answer from the 1-based index of the request being answered, so a test scripts a sequence (two 503s, then a 200) as readily as a fixed
+ *   reply. Each answer goes out under a JSON content type. It defaults to a 200 with `{"ok":true}` for every request.
+ */
+export interface LoopbackHttpsPeerOptions {
+
+  respond?: (request: number) => { body: string; status: number };
+}
+
+// The answer a peer gives when a test scripts none: a 200 and a small JSON body, all a test asking whether a request completes needs.
+const answerOk = (): { body: string; status: number } => ({ body: "{\"ok\":true}", status: 200 });
+
+/**
+ * Build a loopback HTTPS peer that answers each request as `respond` decides and counts the requests it answered, presenting the throwaway self-signed identity a
+ * controller's own certificate stands in for.
+ *
+ * An `undici.MockAgent` replaces undici's dispatch wholesale, so the pool's connect options - certificate verification among them - and the retry interceptor the
+ * pool composes are permanently out of its reach. Establishing what the option does to a handshake, or what the interceptor does with a status it retries, therefore
+ * takes a real peer, dialed by a transport that built its own pool.
+ *
+ * @param options - The peer's options; see {@link LoopbackHttpsPeerOptions}.
  *
  * @returns The listening peer.
  */
-export async function createLoopbackHttpsPeer(): Promise<LoopbackTlsPeer> {
+export async function createLoopbackHttpsPeer({ respond = answerOk }: LoopbackHttpsPeerOptions = {}): Promise<LoopbackHttpsPeer> {
+
+  let requests = 0;
 
   const server = createHttpsServer({ cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture }, (_request, response) => {
 
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end("{\"ok\":true}");
+    requests++;
+
+    const { body, status } = respond(requests);
+
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(body);
   });
 
-  return startPeer(server);
+  const peer = await startPeer(server);
+  const close = async (): Promise<void> => peer.close();
+
+  // The peer is wrapped member by member rather than spread, because a spread copies the `handshakes` getter's value once and would freeze the count at that moment.
+  return {
+
+    close,
+    connection: async (index: number): Promise<LoopbackConnection> => peer.connection(index),
+    get handshakes(): number {
+
+      return peer.handshakes;
+    },
+    host: peer.host,
+    get requests(): number {
+
+      return requests;
+    },
+    whenHandshakes: async (count: number): Promise<void> => peer.whenHandshakes(count),
+    [Symbol.asyncDispose]: close
+  };
 }
 
 /**

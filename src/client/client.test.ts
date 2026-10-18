@@ -154,9 +154,9 @@ describe("ProtectClient.connect", () => {
 
       const { agent, pool } = mockController();
 
-      // The login is rejected and the CSRF-fetch fallback also fails, so the handshake cannot complete.
+      // The login is rejected and the CSRF fetch yields no token, so the handshake cannot complete.
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad");
-      pool.intercept({ method: "GET", path: "/" }).reply(500, "unavailable");
+      pool.intercept({ method: "GET", path: "/" }).reply(200, "");
 
       await assert.rejects(connect(agent), ProtectAuthError);
     });

@@ -278,8 +278,9 @@ export class ProtectClient implements AsyncDisposable {
 
     try {
 
-      // Stage 1: authenticate. A credential failure throws `ProtectAuthError`, an unreachable controller `ProtectNetworkError` - both already typed fatals, propagated
-      // as-is rather than wrapped, so the caller sees the precise cause.
+      // Stage 1: authenticate. A credential failure throws the fatal `ProtectAuthError`, a login answered with a status that is no verdict on the credentials (a
+      // readiness answer the transport already retried among them) the fatal `ProtectRequestError`, and an unreachable controller the recoverable
+      // `ProtectNetworkError` - each already typed, propagated as-is rather than wrapped, so the caller sees the precise cause.
       await auth.login({ host: opts.host, password: opts.password, username: opts.username }, (opts.signal !== undefined) ? { signal: opts.signal } : {});
 
       // Stage 2: fetch the initial bootstrap. Not a probe - the breaker is closed at connect time, and the initial fetch should respect the gate like any normal request.

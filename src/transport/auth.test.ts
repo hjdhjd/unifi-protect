@@ -1,13 +1,13 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * auth.test.ts: Unit tests for the authentication session - the UniFi OS credential handshake, the CSRF pre-fetch retry, the cookie/CSRF capture and stripping,
- * the throw-on-failure contract, the logout / reauthenticate paths, the relogin's single-flight coalescing, and the stale-session write guards. Driven against an
- * undici MockAgent so the handshake exercises the real transport path.
+ * the throw-on-failure contract and the answers that are no verdict on the credentials, the logout / reauthenticate paths, the relogin's single-flight coalescing,
+ * and the stale-session write guards. Driven against an undici MockAgent so the handshake exercises the real transport path.
  */
+import { ProtectAuthError, ProtectRequestError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
 import { AuthSession } from "./auth.ts";
-import { ProtectAuthError } from "../errors.ts";
 import assert from "node:assert/strict";
 import diagnosticsChannel from "node:diagnostics_channel";
 
@@ -85,10 +85,57 @@ describe("AuthSession", () => {
       const { host, pool, transport } = makeMockTransport();
       const auth = new AuthSession({ transport });
 
+      // The login is rejected and the controller root answers without a CSRF token, so the retry has nothing to offer and the rejection stands.
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
-      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(500, "unavailable");
+      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(200, "");
 
       await assert.rejects(auth.login({ host, password: "p", username: "u" }), ProtectAuthError);
+      assert.equal(auth.isAuthenticated, false);
+    });
+
+    // A status that is no verdict on the credentials - a readiness answer from the transport's retried set, or a 5xx outside it - surfaces as the classified request
+    // error rather than as a rejected sign-in, and the handshake leaves no session behind.
+    for(const status of [ 503, 404, 400, 501 ]) {
+
+      test("a login answered " + String(status) + " throws ProtectRequestError and stays unauthenticated", async () => {
+
+        const { host, pool, transport } = makeMockTransport();
+        const auth = new AuthSession({ transport });
+
+        pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(status, "not ready");
+
+        await assert.rejects(auth.login({ host, password: "p", username: "u" }), { constructor: ProtectRequestError, statusCode: status });
+        assert.equal(auth.isAuthenticated, false);
+      });
+    }
+
+    test("a login answered 503 over an authenticated session throws ProtectRequestError and drops the session cookie", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const auth = new AuthSession({ transport });
+
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=abc", "x-csrf-token": "csrf1" } });
+
+      await auth.login({ host, password: "p", username: "u" });
+
+      // A handshake that ends on any non-2xx did not complete, so the cookie of the session before it is cleared although the answer throws rather than rejects.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(503, "rebooting");
+
+      await assert.rejects(auth.login({ host, password: "p", username: "u" }), { constructor: ProtectRequestError, statusCode: 503 });
+      assert.equal(auth.isAuthenticated, false);
+      assert.equal(auth.authHeaders()["cookie"], undefined);
+    });
+
+    test("a login answered 401 whose controller root answers 503 throws ProtectRequestError rather than a rejected sign-in", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const auth = new AuthSession({ transport });
+
+      // The root's readiness answer means the controller could not yet judge a sign-in, so the login's 401 is no verdict and the root's classified error surfaces.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
+      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(503, "rebooting");
+
+      await assert.rejects(auth.login({ host, password: "p", username: "u" }), { constructor: ProtectRequestError, statusCode: 503 });
       assert.equal(auth.isAuthenticated, false);
     });
 

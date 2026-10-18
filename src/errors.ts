@@ -11,7 +11,8 @@ import type { InspectOptions } from "node:util";
  * - {@link RecoverableError} means the operation could plausibly succeed if retried or deferred (a throttle window, a timeout, a transient network blip, a caller
  *   abort, a livestream stall). The caller decides the retry policy; the library does not retry user operations on the caller's behalf.
  * - {@link FatalError} means retrying the same call will fail the same way (bad credentials, insufficient privileges, a 4xx/5xx the controller will keep returning,
- *   a protocol violation, a structural bootstrap failure). The caller should surface or propagate it.
+ *   a protocol violation, a structural bootstrap failure), except that a {@link ProtectRequestError} carrying a status the transport retries is one the transport has
+ *   already retried, which a caller on a reconnect schedule retries again later. The caller should surface or propagate it.
  *
  * Consumers branch on the abstract base for policy (`if(err instanceof RecoverableError) { defer(); }`) and on the concrete class for specific handling
  * (`if(err instanceof ProtectThrottledError) { waitFor(err.cooldownMs); }`). This is the Node idiom - a class hierarchy with `instanceof` - chosen deliberately over
