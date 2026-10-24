@@ -25,10 +25,10 @@ const USAGE = [
 
 /**
  * `ufp relay toggle`. Resolves the positional to a relay and flips one of its outputs via {@link Relay.toggleOutput}. The output is chosen by its numeric `id` (the value
- * the controller reports on each `outputs[]` entry), not by array position. When an id is given it is toggled directly; the id is deliberately not pre-validated here -
- * an unknown id surfaces as the controller's classified error, consistent with the library's controller-as-authority grain. When the id is omitted, the relay's single
- * output is toggled; a relay with several outputs asks for the id (listing each output's id and state), and a relay with no outputs is a usage error rather than a call
- * with no target.
+ * the controller reports on each `outputs[]` entry), not by array position. When an id is given it is toggled directly; the id is not checked against the relay's
+ * outputs here - an unknown id surfaces as the controller's classified error, consistent with the library's controller-as-authority grain. When the id is omitted, the
+ * relay's single output is toggled; a relay with several outputs asks for the id (listing each output's id and state), and a relay with no outputs is a usage error
+ * rather than a call with no target.
  *
  * @category CLI
  */
@@ -50,21 +50,25 @@ const relayToggleHandler: CommandHandler = async (ctx) => {
     throw new CliError("Specify a relay by id or name. Run \"ufp relay toggle --help\".", { exitCode: 2 });
   }
 
+  // An explicit output id is parsed as a non-negative integer (output ids may legitimately be 0, so a positive-only parse would be wrong). It is parsed before the
+  // client opens, so a malformed id is a usage error that costs no connection.
+  const explicitId = (outputArg !== undefined) ? parseNonNegativeInt(outputArg, "output-id") : undefined;
+
   await using client = await ctx.openClient({ debug: values.debug === true, refreshIntervalMs: false, signal: ctx.signal });
 
   const relay = findDeviceOfType(client, target, "relay");
   const outputs = relay.config.outputs;
 
-  // Resolve which output id to toggle. An explicit id is parsed as a non-negative integer (output ids may legitimately be 0, so a positive-only parse would be wrong) and
-  // toggled directly. With no id, the sole output is the unambiguous target; several outputs need the id (we list each id and its current state as the resolve-to-one
-  // convenience); zero outputs is a usage error rather than a call with no target. We toggle the output's `id` field, never its array position.
+  // Resolve which output id to toggle. An explicit id is toggled directly. With no id, the sole output is the unambiguous target; several outputs need the id (we list
+  // each id and its current state as the resolve-to-one convenience); zero outputs is a usage error rather than a call with no target. We toggle the output's `id`
+  // field, never its array position.
   const [sole] = outputs;
 
   let outputId: number;
 
-  if(outputArg !== undefined) {
+  if(explicitId !== undefined) {
 
-    outputId = parseNonNegativeInt(outputArg, "output-id");
+    outputId = explicitId;
   } else if(sole === undefined) {
 
     throw new CliError("Relay " + relay.name + " exposes no outputs to toggle.", { exitCode: 2 });

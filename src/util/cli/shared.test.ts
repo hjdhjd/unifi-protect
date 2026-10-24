@@ -7,6 +7,7 @@ import { CliError, boundedSignal, buildEventFilter, buildRawFilter, commandList,
 import type { CommandHandler, CommandSpec } from "./shared.ts";
 import type { RawPacket, TypedEvent } from "../../index.ts";
 import { describe, test } from "node:test";
+import { PROTECT_CLI_DURATION_MAX_MS } from "../../settings.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -69,6 +70,22 @@ describe("parsePositiveInt", () => {
       assert.throws(() => parsePositiveInt(bad, "--count"), CliError);
     });
   }
+
+  // An empty value, a padded one and a hex spelling each convert through `Number`, so the parser refuses them by their shape, and a refusal is a usage error
+  // (exit 2) like any other malformed argument.
+  for(const bad of [ "", " 5", "0x10" ]) {
+
+    test("rejects \"" + bad + "\" as a usage error", () => {
+
+      assert.throws(() => parsePositiveInt(bad, "--count"), { constructor: CliError, exitCode: 2 });
+    });
+  }
+
+  // A long enough digit run passes the digits check yet converts to `Infinity`, so the integer check behind it is what refuses the value.
+  test("rejects a digit run that converts to Infinity as a usage error", () => {
+
+    assert.throws(() => parsePositiveInt("9".repeat(400), "--count"), { constructor: CliError, exitCode: 2 });
+  });
 });
 
 describe("parseNonNegativeInt", () => {
@@ -90,6 +107,21 @@ describe("parseNonNegativeInt", () => {
       assert.throws(() => parseNonNegativeInt(bad, "--channel"), CliError);
     });
   }
+
+  // The same shapes, refused the same way. Zero is a valid answer here, so even the empty value, which `Number` reads as zero, would otherwise pass as channel 0.
+  for(const bad of [ "", " 5", "0x10" ]) {
+
+    test("rejects \"" + bad + "\" as a usage error", () => {
+
+      assert.throws(() => parseNonNegativeInt(bad, "--channel"), { constructor: CliError, exitCode: 2 });
+    });
+  }
+
+  // The digits check admits the same run here, so the integer check behind it is what keeps `Infinity` from passing as a channel.
+  test("rejects a digit run that converts to Infinity as a usage error", () => {
+
+    assert.throws(() => parseNonNegativeInt("9".repeat(400), "--channel"), { constructor: CliError, exitCode: 2 });
+  });
 });
 
 describe("parseDuration", () => {
@@ -112,6 +144,24 @@ describe("parseDuration", () => {
       assert.throws(() => parseDuration(bad, "--duration"), CliError);
     });
   }
+
+  test("rejects a missing unit and a zero magnitude as usage errors", () => {
+
+    // Each refusal the parser makes, told apart by its message.
+    assert.throws(() => parseDuration("30", "--duration"), { constructor: CliError, exitCode: 2, message: /with a unit/ });
+    assert.throws(() => parseDuration("0s", "--duration"), { constructor: CliError, exitCode: 2, message: /greater than zero/ });
+  });
+
+  test("rejects a duration past the timer's range as a usage error", () => {
+
+    // A digit run long enough to convert to Infinity and a finite duration past the ceiling are refused alike, while the ceiling itself still parses.
+    for(const bad of [ "9".repeat(400) + "s", "2147483648ms", "50000000000ms" ]) {
+
+      assert.throws(() => parseDuration(bad, "--duration"), { constructor: CliError, exitCode: 2, message: /at most/ }, bad.slice(0, 16) + " is refused.");
+    }
+
+    assert.equal(parseDuration("2147483647ms", "--duration"), 2147483647);
+  });
 });
 
 describe("boundedSignal", () => {
@@ -143,6 +193,18 @@ describe("boundedSignal", () => {
     await delay(40);
 
     assert.equal(bounded.aborted, true, "the duration deadline aborts the bounded signal");
+  });
+
+  test("a signal bounded at the ceiling is still pending after a short wait", async () => {
+
+    // A timer asked for more than it holds fires at once, so this row goes red if the ceiling ever exceeds what the timer holds. The platform leaves the timeout
+    // unreferenced, so the pending timer does not hold the suite open.
+    const base = new AbortController().signal;
+    const bounded = boundedSignal(base, PROTECT_CLI_DURATION_MAX_MS);
+
+    await delay(30);
+
+    assert.equal(bounded.aborted, false, "a duration at the ceiling runs its length rather than firing at once");
   });
 });
 

@@ -7,8 +7,8 @@
  */
 import * as settings from "./settings.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_CAPTURE_DEFAULT_DURATION,
-  PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
-  PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
+  PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, PROTECT_CLI_DURATION_MAX_MS, PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT,
+  PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
   PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -136,5 +136,23 @@ describe("settings", () => {
   test("PROTECT_CAPTURE_DEFAULT_DURATION is 15 minutes", () => {
 
     assert.equal(PROTECT_CAPTURE_DEFAULT_DURATION, 900000, "the capture window must be 15 minutes expressed in milliseconds");
+  });
+
+  // The duration ceiling is the platform's rather than a tuning choice: it is the largest delay a Node timer holds for its full length, so a larger value would let
+  // a duration through that fires at once.
+  test("PROTECT_CLI_DURATION_MAX_MS is 2147483647 ms", () => {
+
+    assert.equal(PROTECT_CLI_DURATION_MAX_MS, 2147483647, "the duration ceiling must be the largest delay a Node timer holds for its full length");
+  });
+
+  // The capture default reaches the same timer a parsed duration does without passing through the parser, so the ceiling the parser enforces is asserted on it here.
+  test("the capture default fits the duration ceiling", () => {
+
+    // Each constant's literal type makes the linter read a direct comparison as always true, and number-typed locals change only how the linter reads it, leaving the
+    // comparison itself unchanged.
+    const captureDefault: number = PROTECT_CAPTURE_DEFAULT_DURATION;
+    const ceiling: number = PROTECT_CLI_DURATION_MAX_MS;
+
+    assert.ok(captureDefault <= ceiling, "the capture window's default must be a duration the timer holds for its full length");
   });
 });

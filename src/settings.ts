@@ -149,6 +149,11 @@ export const PROTECT_TALKBACK_MAX_BUFFERED_BYTES = 1048576;
 // a device reports more slowly, and Ctrl-C ends the window early at any point with the bundle still written.
 export const PROTECT_CAPTURE_DEFAULT_DURATION = 900000;
 
+// The longest duration, in milliseconds, the CLI accepts. It is the largest delay a Node timer holds for its full length: a longer one fires at once rather than at
+// its deadline, and one past the timer's own bound is refused outright. Every --duration is read against this ceiling, so a window the timer could not run to its
+// end is a usage error before any client opens, rather than a run that ends a moment after it connects.
+export const PROTECT_CLI_DURATION_MAX_MS = 2147483647;
+
 // How many records `ufp capture` carries as shape evidence for each group it samples - a bootstrap collection the manifest describes no shape for, or the records of a
 // described collection that share one set of members it does not declare. Modeling something this library has not seen takes a couple of examples of what one of its
 // records looks like - enough to show which fields vary between units and which are fixed - never a roster of every unit at a site, which would grow a bundle without

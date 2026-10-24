@@ -5,6 +5,7 @@
 import type { RawPacket, TypedEvent } from "../../index.ts";
 import { alignedList, compareCodeUnit } from "./output/format.ts";
 import type { Output } from "./output/format.ts";
+import { PROTECT_CLI_DURATION_MAX_MS } from "../../settings.ts";
 import type { ParseArgsOptionsConfig } from "node:util";
 import { ProtectClient } from "../../index.ts";
 import { readFileSync } from "node:fs";
@@ -126,6 +127,11 @@ export function parseList(value: string | undefined): string[] {
   return value.split(",").map((term) => term.trim()).filter((term) => term.length > 0);
 }
 
+// A flag value made of decimal digits alone. The integer parsers hold a value to it before trusting what `Number` makes of it, because `Number` reads an empty value
+// as zero and accepts surrounding whitespace, a sign, and hex and exponent spellings, so `--channel ""` would select channel 0 and `--count 0x10` would count
+// sixteen. The integer check behind it is not redundant: a long enough run of digits reads as `Infinity`.
+const DIGITS_PATTERN = /^\d+$/;
+
 /**
  * Parse a CLI option value as a positive integer (`--count`, `--width`, `--height`), failing with a precise message rather than letting a bad value silently
  * become `NaN` deep in a command. We require a whole positive number because every consumer of this - a count, a pixel dimension - is meaningless at zero or below.
@@ -143,9 +149,9 @@ export function parsePositiveInt(value: string, flag: string): number {
 
   const parsed = Number(value);
 
-  if(!Number.isInteger(parsed) || (parsed <= 0)) {
+  if(!DIGITS_PATTERN.test(value) || !Number.isInteger(parsed) || (parsed <= 0)) {
 
-    throw new CliError("The " + flag + " value must be a positive integer, but received \"" + value + "\".");
+    throw new CliError("The " + flag + " value must be a positive integer, but received \"" + value + "\".", { exitCode: 2 });
   }
 
   return parsed;
@@ -168,9 +174,9 @@ export function parseNonNegativeInt(value: string, flag: string): number {
 
   const parsed = Number(value);
 
-  if(!Number.isInteger(parsed) || (parsed < 0)) {
+  if(!DIGITS_PATTERN.test(value) || !Number.isInteger(parsed)) {
 
-    throw new CliError("The " + flag + " value must be a non-negative integer, but received \"" + value + "\".");
+    throw new CliError("The " + flag + " value must be a non-negative integer, but received \"" + value + "\".", { exitCode: 2 });
   }
 
   return parsed;
@@ -191,7 +197,8 @@ const DURATION_UNITS: Record<string, number> = { h: 3600000, m: 60000, ms: 1, s:
  *
  * @returns The duration in milliseconds.
  *
- * @throws {@link CliError} when the value is not a positive integer followed by a known unit (`ms` / `s` / `m` / `h`).
+ * @throws {@link CliError} when the value is not a positive integer followed by a known unit (`ms` / `s` / `m` / `h`), or when it is longer than the platform timer
+ * holds for its full length (`PROTECT_CLI_DURATION_MAX_MS`).
  *
  * @category CLI
  */
@@ -204,17 +211,27 @@ export function parseDuration(value: string, flag: string): number {
 
   if((match === null) || (unit === undefined)) {
 
-    throw new CliError("The " + flag + " value must be a positive integer with a unit (ms, s, m, h), e.g. 30s or 5m, but received \"" + value + "\".");
+    throw new CliError("The " + flag + " value must be a positive integer with a unit (ms, s, m, h), e.g. 30s or 5m, but received \"" + value + "\".",
+      { exitCode: 2 });
   }
 
   const magnitude = Number(match[1]);
 
   if(magnitude <= 0) {
 
-    throw new CliError("The " + flag + " value must be greater than zero, but received \"" + value + "\".");
+    throw new CliError("The " + flag + " value must be greater than zero, but received \"" + value + "\".", { exitCode: 2 });
   }
 
-  return magnitude * unit;
+  const durationMs = magnitude * unit;
+
+  // A duration past the ceiling would fire at once or be refused once the window is bound, so it is refused here at the parse, where every command reads it. A digit
+  // run long enough to convert to Infinity lands past the ceiling too, so this one bound answers both.
+  if(durationMs > PROTECT_CLI_DURATION_MAX_MS) {
+
+    throw new CliError("The " + flag + " value must be at most " + PROTECT_CLI_DURATION_MAX_MS.toString() + "ms, but received \"" + value + "\".", { exitCode: 2 });
+  }
+
+  return durationMs;
 }
 
 /**

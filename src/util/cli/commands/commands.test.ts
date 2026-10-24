@@ -517,7 +517,7 @@ describe("watch events", () => {
     ctx.openClient = (): Promise<ProtectClient> => Promise.reject(new ProtectAuthError("not authenticated", { statusCode: 401 }));
 
     // A bare number has no unit. The opener rejects, so the duration's usage error surfacing in its place shows --duration is parsed before a client is opened.
-    await assert.rejects(watchEvents.run(ctx), { constructor: CliError, message: /--duration value must be/ });
+    await assert.rejects(watchEvents.run(ctx), { constructor: CliError, exitCode: 2, message: /--duration value must be/ });
   });
 
   test("renders a tamper event with its camera name and occurrence id", async () => {
@@ -1472,6 +1472,17 @@ describe("relay toggle", () => {
     await relayToggle.run(ctx);
 
     assert.deepEqual(calls.toggles, [{ outputId: 0, relay: "r1" }]);
+  });
+
+  test("a malformed output id is a usage error, surfaced before connecting", async () => {
+
+    const { client } = makeFakeClient({ relays: [{ id: "r1", name: "Garage", outputs: [ { id: 0, state: "off" }, { id: 2, state: "on" } ] }] });
+    const { ctx } = makeCommandContext({ args: [ "Garage", "two" ], client });
+
+    ctx.openClient = (): Promise<ProtectClient> => Promise.reject(new ProtectAuthError("not authenticated", { statusCode: 401 }));
+
+    // The opener rejects, so the output id's usage error surfacing in its place shows the id is parsed before a client is opened.
+    await assert.rejects(relayToggle.run(ctx), { constructor: CliError, exitCode: 2, message: /output-id value must be/ });
   });
 
   test("with a single output and no id toggles that output's id (not its index)", async () => {
