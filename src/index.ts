@@ -70,13 +70,14 @@ export { isPlainObject } from "./protocol/plain-object.ts";
 export type { TalkbackSession, TalkbackState } from "./transport/talkback-session.ts";
 export type { ProtectState } from "./protocol/reducer.ts";
 
-// State - the observable store a consumer receives from `client.state`, and the memoized selectors a consumer passes to `observe` (or calls directly). `deviceSelectors`
-// is the category-keyed catalog: `deviceSelectors.<category>` exposes that collection's quartet (`all`, `byId`, `online`, `adoptedIds`), and `adoptedIds` is the
-// content-memoized membership set - it changes reference only when a device is adopted or removed, so a consumer can `observe` one to drive accessory add/remove without
-// waking on routine config churn. `ProtectDeviceConfigMap` and the `CollectionSelectors` / `CollectionViews` shapes type a consumer's own generic iteration over it.
-export { deviceSelectors, isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectIsAdmin, selectLiveview, selectLiveviews, selectNvr,
-  selectRingtone, selectRingtones } from "./state/selectors.ts";
-export type { CollectionSelectors, CollectionViews, ProtectDeviceConfigMap } from "./state/selectors.ts";
+// State - the observable store a consumer receives from `client.state`, and the memoized selectors a consumer passes to `observe` (or calls directly). The store owns
+// the category-keyed catalog, typed `DeviceSelectors`: `client.state.selectors.<category>` exposes that collection's quartet (`all`, `byId`, `online`, `adoptedIds`),
+// and `adoptedIds` is the content-memoized membership set - it changes reference only when a device is adopted or removed, so a consumer can `observe` one to drive
+// accessory add/remove without waking on routine config churn, and each store's catalog keeps that memo to itself. `ProtectDeviceConfigMap` and the
+// `CollectionSelectors` / `CollectionViews` shapes type a consumer's own generic iteration over it.
+export { isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectIsAdmin, selectLiveview, selectLiveviews, selectNvr, selectRingtone,
+  selectRingtones } from "./state/selectors.ts";
+export type { CollectionSelectors, CollectionViews, DeviceSelectors, ProtectDeviceConfigMap } from "./state/selectors.ts";
 export { createStateStore } from "./state/store.ts";
 export type { StateStore, StateStoreOptions } from "./state/store.ts";
 

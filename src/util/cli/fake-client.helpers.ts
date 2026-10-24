@@ -3,9 +3,9 @@
  * fake-client.helpers.ts: A minimal, configurable fake ProtectClient and command-context harness for unit-testing CLI commands through the injected openClient hook.
  */
 import type { LivestreamOptions, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment, TypedEvent } from "../../index.ts";
+import { ProtectAbortedError, createStateStore } from "../../index.ts";
 import type { CommandContext } from "./shared.ts";
 import { Output } from "./output/format.ts";
-import { ProtectAbortedError } from "../../index.ts";
 
 // One relay output as the fake surfaces it through `config.outputs`, mirroring the real record's numeric `id` and `"off" | "on"` state - the fields `relay toggle` reads
 // to resolve which output to toggle.
@@ -455,6 +455,10 @@ export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandl
         }
       },
 
+      // The library's own selector catalog, so a command observing a device collection runs the real selectors over the fake's snapshot records. It comes from a store
+      // built through the barrel's createStateStore, the construction the barrel sanctions for test harnesses, with its failsafe off so the refresh never runs.
+      selectors: createStateStore({ refresh: (): Promise<never> => Promise.reject(new Error("The fake client's selector store never refreshes.")),
+        refreshIntervalMs: false }).selectors,
       snapshot: buildSnapshot
     },
     viewer: lookup(viewers),

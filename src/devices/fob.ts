@@ -5,7 +5,6 @@
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { ProtectFobConfig } from "../types/index.ts";
-import { deviceSelectors } from "../state/selectors.ts";
 
 /**
  * A fob projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from {@link DeviceProjection}. A fob is an input device: its
@@ -20,6 +19,6 @@ export class Fob extends DeviceProjection<ProtectFobConfig> {
 
   constructor(ctx: DeviceContext, id: string) {
 
-    super(ctx, id, deviceSelectors.fob.byId);
+    super(ctx, id, ctx.store.selectors.fob.byId);
   }
 }

@@ -24,6 +24,7 @@ import type { DeviceContext } from "../devices/context.ts";
 import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
+import { createDeviceSelectors } from "../state/selectors.ts";
 import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -2395,9 +2396,10 @@ describe("LivestreamPool", () => {
       const controller = new AbortController();
       const urgency = (): number => 0;
 
-      // This fixture implements only the DeviceContext members that Camera.livestream() touches - livestreamPool.subscribe() to capture
-      // its arguments, plus stub log/store/transport fields to satisfy the shape. Neither the subscribe() return value nor the store and
-      // transport fields resemble their real interfaces, so both casts route through unknown rather than claiming a genuine match.
+      // This fixture implements only the DeviceContext members that Camera.livestream() touches - livestreamPool.subscribe() to capture its arguments, and the store's
+      // selector catalog, which the camera reads its record selector from as it is constructed - plus stub log/transport fields to satisfy the shape. Neither the
+      // subscribe() return value nor the store and transport fields resemble their real interfaces, so both casts route through unknown rather than claiming a genuine
+      // match.
       const context = {
 
         host: "10.0.0.1",
@@ -2408,7 +2410,7 @@ describe("LivestreamPool", () => {
           return {} as unknown;
         } },
         log: silentLog(),
-        store: {},
+        store: { selectors: createDeviceSelectors() },
         transport: {}
       } as unknown as DeviceContext;
 

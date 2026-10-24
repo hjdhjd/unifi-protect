@@ -15,7 +15,6 @@ import type { FakeClock } from "../testing.helpers.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { deviceSelectors } from "./selectors.ts";
 import { plainStore } from "./store.helpers.ts";
 
 // Drive an observer in the background, collecting every yielded value into an array. Returns the array plus the iteration's completion promise so a test can abort the
@@ -72,7 +71,23 @@ describe("StateStore", () => {
 
       assert.equal(store.snapshot().bootstrapId, 1);
       assert.equal(store.snapshot().cameras.size, 1);
-      assert.equal(deviceSelectors.camera.byId("c1")(store.snapshot())?.name, "Front");
+      assert.equal(store.selectors.camera.byId("c1")(store.snapshot())?.name, "Front");
+    });
+
+    test("a store's selectors are its own and stable across dispatches", () => {
+
+      // The catalog is built once, with the store, so an observer holding one of its selectors keeps a live memo for the store's lifetime; a second store builds its
+      // own, so the two never share a memo slot.
+      const store = plainStore();
+      const other = plainStore();
+      const selectors = store.selectors;
+
+      store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true })] }), kind: "bootstrapLoaded" });
+      store.dispatch({ id: "c1", kind: "devicePatched", modelKey: "camera", patch: { name: "Renamed" } });
+
+      assert.ok(Object.is(store.selectors, selectors), "the catalog survives every dispatch");
+      assert.notEqual(store.selectors, other.selectors, "two stores never share a catalog");
+      assert.notEqual(store.selectors.camera.adoptedIds, other.selectors.camera.adoptedIds, "nor any selector inside one");
     });
 
     test("a no-op event leaves the state reference unchanged", () => {
@@ -96,7 +111,7 @@ describe("StateStore", () => {
       store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1", name: "Front" })] }), kind: "bootstrapLoaded" });
 
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(deviceSelectors.camera.byId("c1"), { signal: ac.signal }));
+      const { done, values } = collect(store.observe(store.selectors.camera.byId("c1"), { signal: ac.signal }));
 
       // Let the async-generator body register the observer (it reads the baseline from the current snapshot at this point).
       await delay(0);
@@ -117,7 +132,7 @@ describe("StateStore", () => {
       store.dispatch({ data: makeBootstrap({ cameras: [ makeCamera({ id: "c1" }), makeCamera({ id: "c2" }) ] }), kind: "bootstrapLoaded" });
 
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(deviceSelectors.camera.byId("c1"), { signal: ac.signal }));
+      const { done, values } = collect(store.observe(store.selectors.camera.byId("c1"), { signal: ac.signal }));
 
       await delay(0);
 
@@ -137,7 +152,7 @@ describe("StateStore", () => {
 
       ac.abort();
 
-      const { done, values } = collect(store.observe(deviceSelectors.camera.all, { signal: ac.signal }));
+      const { done, values } = collect(store.observe(store.selectors.camera.all, { signal: ac.signal }));
 
       // A change after the aborted observe would wake a registered observer, and an abort that has already fired can never end one, so the bounded wait reads the
       // iteration completing on its own.
@@ -151,7 +166,7 @@ describe("StateStore", () => {
 
       const store = plainStore();
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(deviceSelectors.camera.all, { signal: ac.signal }));
+      const { done, values } = collect(store.observe(store.selectors.camera.all, { signal: ac.signal }));
 
       await delay(0);
       store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }), kind: "bootstrapLoaded" });
@@ -177,7 +192,7 @@ describe("StateStore", () => {
       store.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
 
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(deviceSelectors.camera.all, { signal: ac.signal }));
+      const { done, values } = collect(store.observe(store.selectors.camera.all, { signal: ac.signal }));
 
       await delay(0);
 
@@ -204,7 +219,7 @@ describe("StateStore", () => {
       store.dispatch({ data: bootstrapFor(), kind: "bootstrapLoaded" });
 
       const ac = new AbortController();
-      const { done, values } = collect(store.observe(deviceSelectors.camera.byId("c1"), { signal: ac.signal }));
+      const { done, values } = collect(store.observe(store.selectors.camera.byId("c1"), { signal: ac.signal }));
 
       await delay(0);
 
@@ -328,7 +343,7 @@ describe("StateStore", () => {
     test("stops the refresh failsafe and terminates observers", async () => {
 
       const { clock, refreshes, store } = countingStore(1000);
-      const { done, values } = collect(store.observe(deviceSelectors.camera.all));
+      const { done, values } = collect(store.observe(store.selectors.camera.all));
 
       await delay(0);
       await store[Symbol.asyncDispose]();
@@ -350,7 +365,7 @@ describe("StateStore", () => {
 
       // No dispatch, no abort, and no further disposal will ever arrive to unpark this iteration, so it must complete on its own rather than registering, which the
       // bounded wait reads.
-      const { done, values } = collect(store.observe(deviceSelectors.camera.all));
+      const { done, values } = collect(store.observe(store.selectors.camera.all));
 
       await expectAt(settlement(done), { message: "an observation begun after disposal must complete on its own" });
       await done;
@@ -608,6 +623,6 @@ describe("createStateStore", () => {
       refresh: () => Promise.reject(new Error("the refresh hook must not be called")), refreshIntervalMs: false });
 
     assert.equal(store.snapshot().cameras.size, 1, "the supplied initial state reached the new store");
-    assert.equal(deviceSelectors.camera.byId("seed")(store.snapshot())?.name, "Seeded");
+    assert.equal(store.selectors.camera.byId("seed")(store.snapshot())?.name, "Seeded");
   });
 });

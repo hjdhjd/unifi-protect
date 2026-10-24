@@ -5,7 +5,6 @@
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { ProtectSensorConfig } from "../types/index.ts";
-import { deviceSelectors } from "../state/selectors.ts";
 
 /**
  * A sensor projection. Inherits the read-through getters, live `observe`, and write-through `update` from {@link DeviceProjection}; sensor-specific behavior
@@ -19,6 +18,6 @@ export class Sensor extends DeviceProjection<ProtectSensorConfig> {
 
   constructor(ctx: DeviceContext, id: string) {
 
-    super(ctx, id, deviceSelectors.sensor.byId);
+    super(ctx, id, ctx.store.selectors.sensor.byId);
   }
 }

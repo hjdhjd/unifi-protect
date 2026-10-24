@@ -4,7 +4,7 @@
  */
 
 /**
- * Pre-built selectors over {@link ProtectState}. Every selector is a **pure function returning config records** (`ProtectCameraConfig`, ...), never a Layer-3 `Camera`
+ * The selectors over {@link ProtectState}. Every selector is a **pure function returning config records** (`ProtectCameraConfig`, ...), never a Layer-3 `Camera`
  * projection - selectors live in the data layer, and a projection needs the client (Layer 3, built by the `DeviceRegistry`).
  *
  * Returning config records is required, not stylistic. {@link StateStore.observe} detects change with `Object.is`; the reducer keeps a record's reference stable
@@ -20,6 +20,10 @@
  * referentially stable through config churn and change only when an id enters or leaves the set. That is a second, distinct regime, **content memoization** (see
  * {@link memoizeArrayByContent}): layered over the map-identity memo, it returns the previously computed array whenever the freshly derived one is element-for-element
  * equal, so a `lastSeen`/stats patch that rebuilds the backing map does not wake a membership observer - only a real add, removal, or adoption flip does.
+ *
+ * Content memoization holds a slot, so the device-collection selectors carrying it are built per catalog by {@link createDeviceSelectors}, and each `StateStore` owns
+ * one catalog. The remaining selectors hold no slot - each memoizes, where it memoizes at all, through a `WeakMap` keyed per map or record - so they are built once
+ * at module load and shared safely.
  *
  * @module StateSelectors
  */
@@ -169,11 +173,9 @@ function shallowEqualArrays<T>(a: readonly T[], b: readonly T[]): boolean {
  *
  * The single closure slot assumes calls progress with the latest state - true for `observe` (it only ever evaluates against the just-committed state) and for
  * `snapshot()`-based reads. A caller replaying an *older* snapshot would thrash the slot (and lose the reference-stability optimization), but never get a wrong answer:
- * the derived value is always correct for the state passed in; only the memo's effectiveness degrades. The same assumption extends across stores, not just across
- * calls: `cameras`, `chimes`, and the rest of this file's per-collection selectors (and the `deviceSelectors` catalog built from them) are constructed once when the
- * module loads rather than once per `StateStore`, so every store running in the same process shares one slot. Interleaved calls from two stores can overwrite `last`
- * with the other store's array - each call still returns a value that is correct for the state it was given, but the reference-stability guarantee `adoptedIds` exists
- * to provide is lost for whichever store's array got overwritten.
+ * the derived value is always correct for the state passed in; only the memo's effectiveness degrades. The slot belongs to one catalog, and {@link createDeviceSelectors}
+ * builds a catalog per `StateStore`, so the calls a slot sees come from one store's states: two stores interleaved through config churn each keep their own
+ * `adoptedIds` reference, and nothing is shared per process.
  *
  * @typeParam T - The array element type.
  *
@@ -262,15 +264,6 @@ function collectionSelectors<T extends DeviceCollectionRecord>(pick: (state: Pro
   return { adoptedIds, all, byId, online };
 }
 
-// One selector quartet per device collection, assembled into the deviceSelectors catalog exported below.
-const cameras = collectionSelectors<ProtectCameraConfig>((state) => state.cameras);
-const chimes = collectionSelectors<ProtectChimeConfig>((state) => state.chimes);
-const fobs = collectionSelectors<ProtectFobConfig>((state) => state.fobs);
-const lights = collectionSelectors<ProtectLightConfig>((state) => state.lights);
-const relays = collectionSelectors<ProtectRelayConfig>((state) => state.relays);
-const sensors = collectionSelectors<ProtectSensorConfig>((state) => state.sensors);
-const viewers = collectionSelectors<ProtectViewerConfig>((state) => state.viewers);
-
 // The read-only NVR-scoped collections. Liveviews and ringtones are config entities with no connection lifecycle, so they use the base views (no `online` subset): the
 // full array and a by-id lookup. Liveviews advance in realtime (the `liveview` StateModelKey); ringtones advance bootstrap-only - but both reconcile through the same
 // engine, so the selectors are identical in shape.
@@ -303,23 +296,36 @@ const _configMapKeysExact: ConfigMapKeysExact = true;
 
 /**
  * The category-keyed selector catalog: one {@link CollectionSelectors} quartet per {@link DeviceCollectionKey}, each exactly typed to its category's config record. The
- * single surface a consumer reaches every device collection's selectors through - `deviceSelectors.camera.all`, `deviceSelectors[key].byId(id)`, and the rest - so the
- * map-identity and content-memoization regimes this module documents reach every category through one entry rather than a
- * flat export per category. The mapped type pins each entry to its own config record, so `deviceSelectors.camera.all` returns `readonly ProtectCameraConfig[]` while
- * generic iteration over the key set stays fully typed.
+ * single surface a consumer reaches every device collection's selectors through - `client.state.selectors.camera.all`, `client.state.selectors[key].byId(id)`, and the
+ * rest - so the map-identity and content-memoization regimes this module documents reach every category through one entry rather than a flat export per category. The
+ * mapped type holds each entry to its own config record, so `selectors.camera.all` returns `readonly ProtectCameraConfig[]` while generic iteration over the key set
+ * stays fully typed.
  *
  * @category State
  */
-export const deviceSelectors: { readonly [K in DeviceCollectionKey]: CollectionSelectors<ProtectDeviceConfigMap[K]> } = {
+export type DeviceSelectors = { readonly [K in DeviceCollectionKey]: CollectionSelectors<ProtectDeviceConfigMap[K]> };
 
-  camera: cameras,
-  chime: chimes,
-  fob: fobs,
-  light: lights,
-  relay: relays,
-  sensor: sensors,
-  viewer: viewers
-};
+/**
+ * Build a device-collection selector catalog whose memo slots belong to it alone. Each `StateStore` builds one when it is constructed and exposes it as `selectors`, so
+ * the content memo behind every `adoptedIds` sees one store's states and keeps its reference stability however many stores share the process.
+ *
+ * @returns A fresh {@link DeviceSelectors} catalog.
+ *
+ * @category State
+ */
+export function createDeviceSelectors(): DeviceSelectors {
+
+  return {
+
+    camera: collectionSelectors<ProtectCameraConfig>((state) => state.cameras),
+    chime: collectionSelectors<ProtectChimeConfig>((state) => state.chimes),
+    fob: collectionSelectors<ProtectFobConfig>((state) => state.fobs),
+    light: collectionSelectors<ProtectLightConfig>((state) => state.lights),
+    relay: collectionSelectors<ProtectRelayConfig>((state) => state.relays),
+    sensor: collectionSelectors<ProtectSensorConfig>((state) => state.sensors),
+    viewer: collectionSelectors<ProtectViewerConfig>((state) => state.viewers)
+  };
+}
 
 /** All liveviews, memoized on the liveview-map identity. Each record carries its `slots[].cameras`. @category State */
 export const selectLiveviews = liveviews.all;

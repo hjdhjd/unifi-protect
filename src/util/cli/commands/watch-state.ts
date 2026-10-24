@@ -5,8 +5,8 @@
 import { COMMON_OPTIONS, CliError, boundedSignal, parseDuration, parsePositiveInt, take } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import { DEVICE_CATEGORIES, findDevice, isDeviceCategory } from "../lookup.ts";
-import type { ProtectClient, ProtectDeviceConfig, ProtectState } from "../../../index.ts";
-import { deviceSelectors, isDeviceOnline, selectControllerName, selectIsAdmin } from "../../../index.ts";
+import type { DeviceCollectionKey, ProtectClient, ProtectDeviceConfig, ProtectState } from "../../../index.ts";
+import { isDeviceOnline, selectControllerName, selectIsAdmin } from "../../../index.ts";
 import type { DeviceCategory } from "../lookup.ts";
 import type { Output } from "../output/format.ts";
 import { nowStamp } from "../output/format.ts";
@@ -39,26 +39,26 @@ const USAGE = [
   "  ufp watch state \"Front Door\" --json     # one device's changes as JSON"
 ].join("\n");
 
-// A device category's selectors - the full set and the connected-only subset - plus its display label. Typed against the config-record union so every category
-// shares one shape; each concrete selector's narrower return type is assignable here by return-type covariance.
-interface CategorySelectors {
+// The record views a device category is watched through - the full set, and the connected-only subset `--online` selects. Typed against the config-record union so
+// every category shares one shape; each collection's narrower return type is assignable here by return-type covariance.
+interface CategoryViews {
 
   all: (state: ProtectState) => readonly ProtectDeviceConfig[];
-  label: string;
   online: (state: ProtectState) => readonly ProtectDeviceConfig[];
 }
 
 // The device-category family of the registry, keyed by the canonical DeviceCategory set so it cannot drift from the vocabulary `reboot` / `info` share. Each entry
-// mirrors a library collection selector pair, so the menu never offers a slice the library cannot model.
-const CATEGORIES: Record<DeviceCategory, CategorySelectors> = {
+// names a library device collection and its display label, so the menu never offers a slice the library cannot model. The selectors themselves belong to the
+// connected client's store, so they are read from `client.state.selectors` when a watch begins rather than held here.
+const CATEGORIES: Record<DeviceCategory, { key: DeviceCollectionKey; label: string }> = {
 
-  cameras: { all: deviceSelectors.camera.all, label: "Cameras", online: deviceSelectors.camera.online },
-  chimes: { all: deviceSelectors.chime.all, label: "Chimes", online: deviceSelectors.chime.online },
-  fobs: { all: deviceSelectors.fob.all, label: "Fobs", online: deviceSelectors.fob.online },
-  lights: { all: deviceSelectors.light.all, label: "Lights", online: deviceSelectors.light.online },
-  relays: { all: deviceSelectors.relay.all, label: "Relays", online: deviceSelectors.relay.online },
-  sensors: { all: deviceSelectors.sensor.all, label: "Sensors", online: deviceSelectors.sensor.online },
-  viewers: { all: deviceSelectors.viewer.all, label: "Viewers", online: deviceSelectors.viewer.online }
+  cameras: { key: "camera", label: "Cameras" },
+  chimes: { key: "chime", label: "Chimes" },
+  fobs: { key: "fob", label: "Fobs" },
+  lights: { key: "light", label: "Lights" },
+  relays: { key: "relay", label: "Relays" },
+  sensors: { key: "sensor", label: "Sensors" },
+  viewers: { key: "viewer", label: "Viewers" }
 };
 
 // The controller-fact family: derived facts that are not device collections. These mirror the client's derived getters (isAdmin, controllerName) and update live - a
@@ -136,11 +136,12 @@ async function *watchTarget(client: ProtectClient, target: string, online: boole
 
   if(isDeviceCategory(target)) {
 
-    const category = CATEGORIES[target];
+    const { key, label } = CATEGORIES[target];
+    const views: CategoryViews = client.state.selectors[key];
 
-    for await (const records of client.state.observe(online ? category.online : category.all, { signal })) {
+    for await (const records of client.state.observe(online ? views.online : views.all, { signal })) {
 
-      yield categoryChange(target, category.label, records);
+      yield categoryChange(target, label, records);
     }
 
     return;

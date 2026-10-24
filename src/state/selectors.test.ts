@@ -4,23 +4,28 @@
  * plus the session-identity selectors (selectAuthUser, selectIsAdmin, selectNvr, selectControllerName, selectControllerUpSince).
  */
 import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.ts";
-import { describe, test } from "node:test";
-import { deviceSelectors, isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectControllerUpSince, selectIsAdmin, selectLiveview,
+import { createDeviceSelectors, isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectControllerUpSince, selectIsAdmin, selectLiveview,
   selectLiveviews, selectNvr, selectRingtone, selectRingtones } from "./selectors.ts";
+import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
 import { DEVICE_COLLECTION_KEYS } from "../protocol/events.ts";
 import assert from "node:assert/strict";
+import { plainStore } from "./store.helpers.ts";
+
+// One catalog for the rows below, as one store holds one: the reference-stability rows read against it, and the interleaving row builds two stores of its own to show
+// that two catalogs never share a memo slot.
+const catalog = createDeviceSelectors();
 
 describe("selectors", () => {
 
-  describe("deviceSelectors catalog", () => {
+  describe("the selector catalog", () => {
 
     test("exposes the full selector quartet for every device-collection key", () => {
 
       for(const key of DEVICE_COLLECTION_KEYS) {
 
-        const selectors = deviceSelectors[key];
+        const selectors = catalog[key];
 
         assert.equal(typeof selectors.all, "function", key + ".all is a selector");
         assert.equal(typeof selectors.byId, "function", key + ".byId is a selector");
@@ -31,17 +36,17 @@ describe("selectors", () => {
 
     test("carries exactly the device-collection vocabulary and no key beyond it", () => {
 
-      assert.deepEqual(Object.keys(deviceSelectors).sort(), [...DEVICE_COLLECTION_KEYS].sort());
+      assert.deepEqual(Object.keys(catalog).sort(), [...DEVICE_COLLECTION_KEYS].sort());
     });
   });
 
-  describe("deviceSelectors.camera.all", () => {
+  describe("selectors.camera.all", () => {
 
     test("returns every camera in the state", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [ makeCamera({ id: "c1" }), makeCamera({ id: "c2" }) ] }));
 
-      assert.deepEqual(deviceSelectors.camera.all(state).map((camera) => camera.id), [ "c1", "c2" ]);
+      assert.deepEqual(catalog.camera.all(state).map((camera) => camera.id), [ "c1", "c2" ]);
     });
 
     test("memoizes on map identity - the same array reference for the same state", () => {
@@ -49,7 +54,7 @@ describe("selectors", () => {
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
 
       // Two reads against the same state must return the identical array, so an observer's Object.is comparison sees no change.
-      assert.ok(Object.is(deviceSelectors.camera.all(state), deviceSelectors.camera.all(state)),
+      assert.ok(Object.is(catalog.camera.all(state), catalog.camera.all(state)),
         "repeat reads of an unchanged state must return the same array reference");
     });
 
@@ -58,40 +63,40 @@ describe("selectors", () => {
       const first = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
       const second = applyBootstrap(first, makeBootstrap({ cameras: [ makeCamera({ id: "c1" }), makeCamera({ id: "c2" }) ] }));
 
-      assert.ok(!Object.is(deviceSelectors.camera.all(first), deviceSelectors.camera.all(second)), "a changed map must yield a new array");
-      assert.equal(deviceSelectors.camera.all(second).length, 2);
+      assert.ok(!Object.is(catalog.camera.all(first), catalog.camera.all(second)), "a changed map must yield a new array");
+      assert.equal(catalog.camera.all(second).length, 2);
     });
 
     test("preserves the array reference across a dispatch that did not touch cameras", () => {
 
       const withCamera = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
-      const before = deviceSelectors.camera.all(withCamera);
+      const before = catalog.camera.all(withCamera);
       // Re-bootstrapping with the identical camera leaves the camera map reference intact (reconcileMap returns the existing map), so the memoized array survives.
       const after = applyBootstrap(withCamera, makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
 
-      assert.ok(Object.is(before, deviceSelectors.camera.all(after)), "a drift-free re-bootstrap must keep the cameras array reference stable");
+      assert.ok(Object.is(before, catalog.camera.all(after)), "a drift-free re-bootstrap must keep the cameras array reference stable");
     });
   });
 
-  describe("deviceSelectors.camera.online", () => {
+  describe("selectors.camera.online", () => {
 
     test("filters to connected cameras only", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras:
         [ makeCamera({ id: "c1", state: "CONNECTED" }), makeCamera({ id: "c2", state: "DISCONNECTED" }) ] }));
 
-      assert.deepEqual(deviceSelectors.camera.online(state).map((camera) => camera.id), ["c1"]);
+      assert.deepEqual(catalog.camera.online(state).map((camera) => camera.id), ["c1"]);
     });
 
     test("memoizes on map identity", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", state: "CONNECTED" })] }));
 
-      assert.ok(Object.is(deviceSelectors.camera.online(state), deviceSelectors.camera.online(state)));
+      assert.ok(Object.is(catalog.camera.online(state), catalog.camera.online(state)));
     });
   });
 
-  describe("deviceSelectors.camera.adoptedIds", () => {
+  describe("selectors.camera.adoptedIds", () => {
 
     test("returns only the ids of devices adopted by this controller, in canonical order", () => {
 
@@ -103,29 +108,29 @@ describe("selectors", () => {
 
       // Only the owned-and-adopted pair, sorted - the device adopted by another controller and the unadopted one are excluded, and the insertion order (c2 before c1) is
       // canonicalized so a bootstrap reorder cannot masquerade as a membership change.
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(state), [ "c1", "c2" ]);
+      assert.deepEqual(catalog.camera.adoptedIds(state), [ "c1", "c2" ]);
     });
 
     test("preserves the array reference across a config-churn dispatch (wakes only on a membership change)", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true, name: "Front" })] }));
-      const before = deviceSelectors.camera.adoptedIds(state);
+      const before = catalog.camera.adoptedIds(state);
       // A name patch rebuilds the camera map (its identity changes), but the adopted-id set is unchanged - so the membership selector must hand back the prior array.
       // This is the whole point: an identity-memoized selector would wake the observer here; the content-memoized one does not.
       const churned = reduce(state, { id: "c1", kind: "devicePatched", modelKey: "camera", patch: { name: "Renamed" } });
 
-      assert.ok(!Object.is(deviceSelectors.camera.all(state), deviceSelectors.camera.all(churned)),
+      assert.ok(!Object.is(catalog.camera.all(state), catalog.camera.all(churned)),
         "the camera map identity must change on the patch, or the test proves nothing");
-      assert.ok(Object.is(before, deviceSelectors.camera.adoptedIds(churned)),
+      assert.ok(Object.is(before, catalog.camera.adoptedIds(churned)),
         "config churn that leaves the id-set intact must keep the membership array reference stable");
     });
 
     test("changes the reference and the content when an adopted device is added", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true })] }));
-      const before = deviceSelectors.camera.adoptedIds(state);
+      const before = catalog.camera.adoptedIds(state);
       const withAdded = applyBootstrap(state, makeBootstrap({ cameras: [ makeCamera({ id: "c1", isAdopted: true }), makeCamera({ id: "c2", isAdopted: true }) ] }));
-      const after = deviceSelectors.camera.adoptedIds(withAdded);
+      const after = catalog.camera.adoptedIds(withAdded);
 
       assert.ok(!Object.is(before, after), "adding a member must yield a new array reference");
       assert.deepEqual(after, [ "c1", "c2" ]);
@@ -135,9 +140,9 @@ describe("selectors", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras:
         [ makeCamera({ id: "c1", isAdopted: true }), makeCamera({ id: "c2", isAdopted: true }) ] }));
-      const before = deviceSelectors.camera.adoptedIds(state);
+      const before = catalog.camera.adoptedIds(state);
       const withRemoved = applyBootstrap(state, makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true })] }));
-      const after = deviceSelectors.camera.adoptedIds(withRemoved);
+      const after = catalog.camera.adoptedIds(withRemoved);
 
       assert.ok(!Object.is(before, after), "removing a member must yield a new array reference");
       assert.deepEqual(after, ["c1"]);
@@ -147,10 +152,10 @@ describe("selectors", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras:
         [ makeCamera({ id: "c1", isAdopted: true }), makeCamera({ id: "c2", isAdopted: true }) ] }));
-      const before = deviceSelectors.camera.adoptedIds(state);
+      const before = catalog.camera.adoptedIds(state);
       // C2 is swapped for c3: the set count stays at two, so the equality check cannot short-circuit on length and must compare element-for-element to see the change.
       const swapped = applyBootstrap(state, makeBootstrap({ cameras: [ makeCamera({ id: "c1", isAdopted: true }), makeCamera({ id: "c3", isAdopted: true }) ] }));
-      const after = deviceSelectors.camera.adoptedIds(swapped);
+      const after = catalog.camera.adoptedIds(swapped);
 
       assert.ok(!Object.is(before, after), "a same-count membership swap must still yield a new array reference");
       assert.deepEqual(after, [ "c1", "c3" ]);
@@ -161,29 +166,29 @@ describe("selectors", () => {
       // The camera exists in state from the start but is not a member while unadopted.
       const unadopted = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: false })] }));
 
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(unadopted), []);
+      assert.deepEqual(catalog.camera.adoptedIds(unadopted), []);
 
       // The controller finishes adopting it; isAdopted flips true via a realtime patch, and the id enters the membership set.
       const adopted = reduce(unadopted, { id: "c1", kind: "devicePatched", modelKey: "camera", patch: { isAdopted: true } });
 
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(adopted), ["c1"]);
+      assert.deepEqual(catalog.camera.adoptedIds(adopted), ["c1"]);
 
       // It is later unadopted; the id leaves the set again.
       const removed = reduce(adopted, { id: "c1", kind: "devicePatched", modelKey: "camera", patch: { isAdopted: false } });
 
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(removed), []);
+      assert.deepEqual(catalog.camera.adoptedIds(removed), []);
     });
 
     test("drops a device once it is claimed by another controller, even while isAdopted stays true", () => {
 
       const adopted = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true, isAdoptedByOther: false })] }));
 
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(adopted), ["c1"]);
+      assert.deepEqual(catalog.camera.adoptedIds(adopted), ["c1"]);
 
       // IsAdoptedByOther wins: the device is owned elsewhere now, so it drops out of our membership set even though isAdopted remains true.
       const claimedByOther = reduce(adopted, { id: "c1", kind: "devicePatched", modelKey: "camera", patch: { isAdoptedByOther: true } });
 
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(claimedByOther), []);
+      assert.deepEqual(catalog.camera.adoptedIds(claimedByOther), []);
     });
 
     test("keeps a re-provisioning (isAdopting) but still-owned device in the set", () => {
@@ -191,42 +196,64 @@ describe("selectors", () => {
       // The predicate is ownership, not readiness: a device mid-(re)adoption that is still adopted by us must not churn out of the membership set.
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true, isAdopting: true })] }));
 
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(state), ["c1"]);
+      assert.deepEqual(catalog.camera.adoptedIds(state), ["c1"]);
     });
 
     test("is the empty set for an empty collection and for an all-unadopted collection", () => {
 
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(createInitialState()), []);
+      assert.deepEqual(catalog.camera.adoptedIds(createInitialState()), []);
 
       const allUnadopted = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [ makeCamera({ id: "c1", isAdopted: false }),
         makeCamera({ id: "c2", isAdopted: true, isAdoptedByOther: true }) ] }));
 
-      assert.deepEqual(deviceSelectors.camera.adoptedIds(allUnadopted), []);
+      assert.deepEqual(catalog.camera.adoptedIds(allUnadopted), []);
     });
 
     test("repeat reads of an unchanged state return the same array reference", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true })] }));
 
-      assert.ok(Object.is(deviceSelectors.camera.adoptedIds(state), deviceSelectors.camera.adoptedIds(state)),
+      assert.ok(Object.is(catalog.camera.adoptedIds(state), catalog.camera.adoptedIds(state)),
         "repeat reads of an unchanged state must return the same array reference");
+    });
+
+    test("two stores interleaved through config churn each keep their own adoptedIds reference", () => {
+
+      // Two controllers in one process. Each store owns its catalog, so each membership memo sees one store's states alone; a slot the two shared would hold store b's
+      // array by the time store a reads again, and a's churned read would come back as a fresh reference although a's membership never moved.
+      const a = plainStore();
+      const b = plainStore();
+
+      a.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "a1", isAdopted: true, name: "Front" })] }), kind: "bootstrapLoaded" });
+      b.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "b1", isAdopted: true, name: "Back" })] }), kind: "bootstrapLoaded" });
+
+      const beforeA = a.selectors.camera.adoptedIds(a.snapshot());
+      const beforeB = b.selectors.camera.adoptedIds(b.snapshot());
+      const camerasA = a.snapshot().cameras;
+
+      a.dispatch({ id: "a1", kind: "devicePatched", modelKey: "camera", patch: { name: "Renamed" } });
+      b.dispatch({ id: "b1", kind: "devicePatched", modelKey: "camera", patch: { name: "Renamed" } });
+
+      assert.ok(!Object.is(a.snapshot().cameras, camerasA), "the camera map identity must change on the patch, or the test proves nothing");
+      assert.ok(Object.is(a.selectors.camera.adoptedIds(a.snapshot()), beforeA), "store a keeps its membership array reference through b's reads");
+      assert.ok(Object.is(b.selectors.camera.adoptedIds(b.snapshot()), beforeB), "store b keeps its membership array reference through a's reads");
     });
   });
 
-  describe("deviceSelectors.camera.byId", () => {
+  describe("selectors.camera.byId", () => {
 
     test("returns the camera config for a known id", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", name: "Front" })] }));
 
-      assert.equal(deviceSelectors.camera.byId("c1")(state)?.name, "Front");
+      assert.equal(catalog.camera.byId("c1")(state)?.name, "Front");
     });
 
     test("returns undefined for an unknown id", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
 
-      assert.equal(deviceSelectors.camera.byId("missing")(state), undefined);
+      assert.equal(catalog.camera.byId("missing")(state), undefined);
     });
   });
 
@@ -249,7 +276,7 @@ describe("selectors", () => {
 
       for(const key of DEVICE_COLLECTION_KEYS) {
 
-        const selectors = deviceSelectors[key];
+        const selectors = catalog[key];
         const id = ids[key];
 
         // The fixtures default to the connected state, so each online subset matches its full collection, and each adopted-id list is the collection's one device.
@@ -271,11 +298,11 @@ describe("selectors", () => {
         makeRelay({ id: "r3", isAdopted: false, state: "CONNECTED" }) ] }));
 
       // All: every relay; byId: the one record (undefined for an unknown id); online: only the connected ones; adoptedIds: the owned-and-adopted ids, sorted.
-      assert.deepEqual(deviceSelectors.relay.all(state).map((relay) => relay.id).sort(), [ "r1", "r2", "r3" ]);
-      assert.equal(deviceSelectors.relay.byId("r1")(state)?.id, "r1");
-      assert.equal(deviceSelectors.relay.byId("missing")(state), undefined);
-      assert.deepEqual(deviceSelectors.relay.online(state).map((relay) => relay.id), [ "r1", "r3" ]);
-      assert.deepEqual(deviceSelectors.relay.adoptedIds(state), [ "r1", "r2" ]);
+      assert.deepEqual(catalog.relay.all(state).map((relay) => relay.id).sort(), [ "r1", "r2", "r3" ]);
+      assert.equal(catalog.relay.byId("r1")(state)?.id, "r1");
+      assert.equal(catalog.relay.byId("missing")(state), undefined);
+      assert.deepEqual(catalog.relay.online(state).map((relay) => relay.id), [ "r1", "r3" ]);
+      assert.deepEqual(catalog.relay.adoptedIds(state), [ "r1", "r2" ]);
     });
   });
 

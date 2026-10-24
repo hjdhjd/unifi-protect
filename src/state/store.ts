@@ -34,9 +34,11 @@ import { MAP_BACKED_STATE_MODEL_KEYS, adoptedByOtherAssertion, adoptionView, cre
 import type { MapBackedStateModelKey, ProtectState } from "../protocol/reducer.ts";
 import type { StateModelKey, TypedEvent } from "../protocol/events.ts";
 import type { Clock } from "../clock.ts";
+import type { DeviceSelectors } from "./selectors.ts";
 import { PROTECT_BOOTSTRAP_REFRESH_INTERVAL } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
 import { channels } from "../diagnostics.ts";
+import { createDeviceSelectors } from "./selectors.ts";
 import { findUnmodeledDeviceCollections } from "../protocol/events.ts";
 import { noopLog } from "../logging.ts";
 import { wallClock } from "../clock.ts";
@@ -183,6 +185,14 @@ export class StateStore implements AsyncDisposable {
   // how #seenUnmodeled dedups the schema tripwire. It starts empty each session, so a process restart mid-episode re-publishes once on its first post-restart bootstrap -
   // accepted by design, since a fresh process legitimately reports the anomaly it finds.
   readonly #engagedAdoption = new Set<string>();
+
+  /**
+   * This store's device-collection selector catalog: one quartet per collection key, `all`, `byId`, `online` and `adoptedIds`, built when the store is constructed so
+   * its memo slots see this store's states alone. Pass its selectors to {@link StateStore.observe} - `client.state.selectors.camera.adoptedIds` wakes only when a camera
+   * is adopted or removed - or call them over {@link StateStore.snapshot}.
+   */
+  readonly selectors: DeviceSelectors;
+
   #state: ProtectState;
 
   constructor(options: StateStoreOptions) {
@@ -190,6 +200,7 @@ export class StateStore implements AsyncDisposable {
     this.#clock = options.clock ?? wallClock;
     this.#log = options.log ?? noopLog;
     this.#refresh = options.refresh;
+    this.selectors = createDeviceSelectors();
     this.#state = options.initialState ?? createInitialState();
 
     // Start the failsafe unless it was explicitly disabled or given a non-positive interval. The loop runs detached for the store's lifetime; disposal aborts it.
@@ -221,7 +232,8 @@ export class StateStore implements AsyncDisposable {
    *
    * @typeParam T - The selector's output type.
    *
-   * @param selector - A pure function from state to the value of interest. Use the memoized selectors in `state/selectors.ts` so unchanged collections compare equal.
+   * @param selector - A pure function from state to the value of interest. Use this store's {@link StateStore.selectors} or the memoized selectors in
+   *                   `state/selectors.ts` so unchanged collections compare equal.
    * @param opts     - Optional abort signal that terminates the iteration.
    *
    * @returns An async iterable of the selector's value at each change.

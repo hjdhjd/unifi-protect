@@ -462,7 +462,10 @@ export class ProtectClient implements AsyncDisposable {
     return eventSubjects(event);
   }
 
-  /** The data layer: synchronous `snapshot()` and live `observe(selector)` over the reduced controller state. */
+  /**
+   * The data layer: synchronous `snapshot()` and live `observe(selector)` over the reduced controller state. Its `selectors` catalog, `client.state.selectors`, is the
+   * one reach to the device-collection selectors, built per store so each membership memo belongs to this client alone.
+   */
   get state(): StateStore {
 
     return this.#store;

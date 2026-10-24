@@ -12,10 +12,9 @@ import { Nvr } from "./nvr.ts";
 import { Relay } from "./relay.ts";
 import { Sensor } from "./sensor.ts";
 import { Viewer } from "./viewer.ts";
-import { deviceSelectors } from "../state/selectors.ts";
 
-// The concrete projection class for each device category. Correlated with deviceSelectors through the shared DeviceCollectionKey so a lookup and the class it constructs
-// cannot drift apart.
+// The concrete projection class for each device category. Correlated with the store's selector catalog through the shared DeviceCollectionKey so a lookup and the class
+// it constructs cannot drift apart.
 interface RegistryProjectionMap {
 
   camera: Camera;
@@ -156,12 +155,16 @@ export class DeviceRegistry {
   // projection share one notion of "exists"; the key correlates the selector and the constructor through PROJECTIONS, so a mismatched pair cannot compile.
   #lookup<K extends DeviceCollectionKey>(key: K, id: string): RegistryProjectionMap[K] | undefined {
 
-    return (deviceSelectors[key].byId(id)(this.#ctx.store.snapshot()) !== undefined) ? new PROJECTIONS[key](this.#ctx, id) : undefined;
+    const store = this.#ctx.store;
+
+    return (store.selectors[key].byId(id)(store.snapshot()) !== undefined) ? new PROJECTIONS[key](this.#ctx, id) : undefined;
   }
 
   // Map the memoized config array for a collection to fresh projection handles. One helper for every device collection keeps the construction logic single-source.
   #all<K extends DeviceCollectionKey>(key: K): readonly RegistryProjectionMap[K][] {
 
-    return deviceSelectors[key].all(this.#ctx.store.snapshot()).map((config) => new PROJECTIONS[key](this.#ctx, config.id));
+    const store = this.#ctx.store;
+
+    return store.selectors[key].all(store.snapshot()).map((config) => new PROJECTIONS[key](this.#ctx, config.id));
   }
 }

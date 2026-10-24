@@ -5,7 +5,6 @@
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { ProtectRelayConfig } from "../types/index.ts";
-import { deviceSelectors } from "../state/selectors.ts";
 
 /**
  * A relay projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from {@link DeviceProjection}, and adds its
@@ -19,7 +18,7 @@ export class Relay extends DeviceProjection<ProtectRelayConfig> {
 
   constructor(ctx: DeviceContext, id: string) {
 
-    super(ctx, id, deviceSelectors.relay.byId);
+    super(ctx, id, ctx.store.selectors.relay.byId);
   }
 
   /**

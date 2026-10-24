@@ -30,7 +30,7 @@ export function allDevices(client: ProtectClient): AnyDevice[] {
 /**
  * The device categories the CLI selects a *class* of devices by - the plural words shared verbatim across `watch state <category>`, `reboot <category>`, and
  * `info [category]`, so the vocabulary is learned once and means the same thing wherever a command names a class of devices. This is the single source for that name set;
- * `watch state`'s selector map is typed against {@link DeviceCategory} so it cannot drift from it.
+ * `watch state`'s category table, which names each category's device collection and display label, is keyed by {@link DeviceCategory} so it cannot drift from it.
  *
  * @category CLI
  */

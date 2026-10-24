@@ -10,7 +10,6 @@ import { DeviceProjection } from "./device.ts";
 import type { LivestreamSpec } from "../transport/livestream-session.ts";
 import type { ProtectCameraConfig } from "../types/index.ts";
 import type { TalkbackSession } from "../transport/talkback-session.ts";
-import { deviceSelectors } from "../state/selectors.ts";
 
 /**
  * Options for {@link Camera.snapshot}. Width and height request a specific output size; omit both for the controller's default. Set `packageCamera` to capture from the
@@ -55,7 +54,7 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
 
   constructor(ctx: DeviceContext, id: string) {
 
-    super(ctx, id, deviceSelectors.camera.byId);
+    super(ctx, id, ctx.store.selectors.camera.byId);
   }
 
   /**
