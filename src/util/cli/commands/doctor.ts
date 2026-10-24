@@ -297,7 +297,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
       detail: fired.size.toString() + " of " + Object.keys(channels).length.toString() + " channels fired during the run",
 
       // A healthy run always publishes an events packet and an HTTP request start, so seeing those two proves the channel registry is live.
-      status: (fired.has("unifi-protect:events:packet") && fired.has("unifi-protect:http:request:start")) ? "pass" : "warn"
+      status: (fired.has(String(channels.eventsPacket.name)) && fired.has(String(channels.httpRequestStart.name))) ? "pass" : "warn"
     }));
 
     await check("Schema drift", () => Promise.resolve({

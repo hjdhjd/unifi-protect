@@ -3,7 +3,7 @@
  * manifest.ts: The schema manifest - the known-surface vocabulary the build generates, the loader that validates it, the diff that reports wire novelty against it, and
  * the exemplar records that evidence what it does not model, whole collections and undeclared members alike.
  */
-import { CliError } from "./shared.ts";
+import { CliError, isPlainObject } from "./shared.ts";
 import type { RawPacket } from "../../index.ts";
 import { compareCodeUnit } from "./output/format.ts";
 import { readFile } from "node:fs/promises";
@@ -263,23 +263,6 @@ export function noveltyKey(finding: NoveltyFinding): string {
 
       return JSON.stringify([ finding.kind, finding.modelKey, finding.recordId ]);
   }
-}
-
-// Whether a value is a plain JSON object - the shape a record, an object node, and a dictionary all require.
-//
-// The test is the prototype rather than `typeof`, because a raw frame's payload is whatever the codec produced: parsed JSON, a UTF-8 string, or a `Buffer`. A buffer
-// answers `typeof` as an object and enumerates as numeric index keys, so a looser test would walk one and report every byte as an undeclared field. Parsed JSON always
-// carries the ordinary object prototype, so this admits exactly what a record can be and nothing else.
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-
-  if((typeof value !== "object") || (value === null)) {
-
-    return false;
-  }
-
-  const prototype: unknown = Object.getPrototypeOf(value);
-
-  return (prototype === Object.prototype) || (prototype === null);
 }
 
 // Name the JSON shape of an observed value. Total over `unknown` so a novelty finding can always say what it found; parsed JSON only ever produces the six shapes

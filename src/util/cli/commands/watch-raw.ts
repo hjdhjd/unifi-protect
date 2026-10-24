@@ -2,11 +2,12 @@
  *
  * watch-raw.ts: `ufp watch raw` - the raw decoded-frame firehose. Every frame the controller emits, unmodeled ones included; the protocol-capture surface.
  */
-import { COMMON_OPTIONS, boundedSignal, buildRawFilter, matchesRawPacket, parseDuration, parsePositiveInt, take } from "../shared.ts";
-import type { CommandHandler, CommandSpec, RawFilter } from "../shared.ts";
+import { COMMON_OPTIONS, boundedSignal, buildRawFilter, filterStream, matchesRawPacket, parseDuration, parsePositiveInt, take } from "../shared.ts";
+import type { CommandHandler, CommandSpec } from "../shared.ts";
 import type { Output } from "../output/format.ts";
 import type { RawPacket } from "../../../index.ts";
 import { buildNameResolver } from "../lookup.ts";
+import { nowStamp } from "../output/format.ts";
 import { parseArgs } from "node:util";
 
 const USAGE = [
@@ -117,23 +118,10 @@ function renderPacket(output: Output, packet: RawPacket, resolveName: (id: strin
 
   const colors = output.colors;
   const { action, id, modelKey } = packet.header;
-  const parts = [ colors.dim(new Date().toISOString().slice(11, 23)), colors.cyan(modelKey), actionColor(colors, action)(action),
+  const parts = [ colors.dim(nowStamp()), colors.cyan(modelKey), actionColor(colors, action)(action),
     colors.bold(resolveName(id) ?? id), colors.dim(payloadSummary(packet.payload)) ];
 
   output.line(parts.join("  "));
-}
-
-// Apply the compiled filter to the raw firehose. A pure pass-through generator, so it composes cleanly with `take` (the early return propagates back through here
-// and into `client.rawPackets`, unsubscribing the firehose).
-async function *filterRawPackets(source: AsyncIterable<RawPacket>, filter: RawFilter, resolveName: (id: string) => string | undefined): AsyncGenerator<RawPacket> {
-
-  for await (const packet of source) {
-
-    if(matchesRawPacket(filter, packet, resolveName)) {
-
-      yield packet;
-    }
-  }
 }
 
 /**
@@ -172,7 +160,7 @@ const watchRawHandler: CommandHandler = async (ctx) => {
   // The resolver is built once from the connect-time snapshot - device names are stable in practice, and a frame for a device added mid-watch simply renders by id.
   // --duration bounds the stream (not the connect) via boundedSignal, which folds the deadline into the Ctrl-C signal; the firehose ends on whichever fires first.
   const resolveName = buildNameResolver(client);
-  const source = filterRawPackets(client.rawPackets({ signal: boundedSignal(ctx.signal, durationMs) }), filter, resolveName);
+  const source = filterStream(client.rawPackets({ signal: boundedSignal(ctx.signal, durationMs) }), (packet) => matchesRawPacket(filter, packet, resolveName));
   const limited = (limit !== undefined) ? take(source, limit) : source;
 
   for await (const packet of limited) {

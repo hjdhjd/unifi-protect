@@ -96,6 +96,57 @@ export function commandList(table: Record<string, CommandSpec>): string[] {
 }
 
 /**
+ * Build the handler a command group runs. A group registers each subcommand once, in its table, and the handler reads both its usage and its unknown-subcommand
+ * diagnostic from that table, so the subcommands a group lists, the ones its diagnostic names and the ones it dispatches can never drift apart. A missing
+ * subcommand, or one of "help", "-h" or "--help", prints the group usage and exits zero; an unknown subcommand is a usage error (exit 2) naming every valid
+ * subcommand; and a known one runs with the arguments after its name, sharing the same context (output, signal).
+ *
+ * @param name            - The group's verb, as its usage banner and its diagnostic name it.
+ * @param subcommands     - The group's subcommand dispatch table.
+ * @param options         - The group's optional usage content.
+ * @param options.seeAlso - A cross-reference the usage prints beneath the subcommand list, after "See also: ". Defaults to none.
+ *
+ * @returns The group's command handler.
+ *
+ * @category CLI
+ */
+export function commandGroup(name: string, subcommands: Record<string, CommandSpec>, { seeAlso = "" }: { seeAlso?: string } = {}): CommandHandler {
+
+  const usage = [
+
+    "Usage: ufp " + name + " <subcommand> [options]",
+    "",
+    "Subcommands:",
+    ...commandList(subcommands),
+    ...((seeAlso.length > 0) ? [ "", "See also: " + seeAlso ] : []),
+    "",
+    "Run \"ufp " + name + " <subcommand> --help\" for subcommand options."
+  ].join("\n");
+
+  return async (ctx) => {
+
+    const [ subcommand, ...rest ] = ctx.args;
+
+    if((subcommand === undefined) || (subcommand === "help") || (subcommand === "--help") || (subcommand === "-h")) {
+
+      ctx.output.line(usage);
+
+      return;
+    }
+
+    const command = subcommands[subcommand];
+
+    if(command === undefined) {
+
+      throw new CliError("Unknown " + name + " subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(subcommands).sort(compareCodeUnit).join(", ") + ".",
+        { exitCode: 2 });
+    }
+
+    await command.run({ ...ctx, args: rest });
+  };
+}
+
+/**
  * The options every command accepts, merged into each command's own option set before parsing. `--debug` turns on the library's debug logging (to stderr); `--help`
  * prints the command's usage. Centralizing them keeps these universal flags identical across every command.
  *
@@ -125,6 +176,31 @@ export function parseList(value: string | undefined): string[] {
   }
 
   return value.split(",").map((term) => term.trim()).filter((term) => term.length > 0);
+}
+
+/**
+ * Whether a value is a plain JSON object - the shape a record, an object node, and a dictionary all require, and the one payload shape with fields to read.
+ *
+ * The test is the prototype rather than `typeof`, because a raw frame's payload is whatever the codec produced: parsed JSON, a UTF-8 string, or a `Buffer`. A buffer
+ * answers `typeof` as an object and enumerates as numeric index keys, so a looser test would walk one and read every byte as a field. Parsed JSON always carries the
+ * ordinary object prototype, so this admits exactly what a record can be and nothing else, and an array, which a walk over JSON handles on its own path, answers false.
+ *
+ * @param value - The value to test.
+ *
+ * @returns `true` when the value is an object whose prototype is the ordinary object prototype or null.
+ *
+ * @category CLI
+ */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+
+  if((typeof value !== "object") || (value === null)) {
+
+    return false;
+  }
+
+  const prototype: unknown = Object.getPrototypeOf(value);
+
+  return (prototype === Object.prototype) || (prototype === null);
 }
 
 // A flag value made of decimal digits alone. The integer parsers hold a value to it before trusting what `Number` makes of it, because `Number` reads an empty value
@@ -338,6 +414,55 @@ export function axisMatches(axis: CompiledAxis, candidates: string[]): boolean {
   return candidates.some((candidate) => axis.predicates.some((predicate) => predicate(candidate)));
 }
 
+/* Compile a filter spec's raw flag strings into the axes the operator supplied, each by the mode its table names. This is the one compiler every watch filter goes
+ * through, so an axis and its mode are declared once, in the filter's mode table, and an axis whose flag was absent or empty compiles to nothing and is never set,
+ * which keeps a matcher's `axis !== undefined` checks honest. It runs once per invocation, never per item.
+ */
+function compileFilter<K extends string>(spec: Partial<Record<K, string>>, modes: Readonly<Record<K, MatchMode>>): Partial<Record<K, CompiledAxis>> {
+
+  const filter: Partial<Record<K, CompiledAxis>> = {};
+
+  for(const [ key, mode ] of Object.entries(modes) as [K, MatchMode][]) {
+
+    const axis = compileAxis(spec[key], mode);
+
+    if(axis !== undefined) {
+
+      filter[key] = axis;
+    }
+  }
+
+  return filter;
+}
+
+// One axis of a filter as a matcher tests it: the candidate values the item offers on that axis, and the axis's positive and exclude terms where the operator gave them.
+interface AxisCheck {
+
+  candidates: string[];
+  exclude?: CompiledAxis;
+  positive?: CompiledAxis;
+}
+
+// The match loop every filter runs, AND across axes and OR within an axis: every present positive axis must be satisfied by one of its candidates, and no present exclude
+// axis may be satisfied by any of them. Each matcher derives its own candidates and hands over the checks it already built, so the loop adds no allocation per item.
+function passes(checks: readonly AxisCheck[]): boolean {
+
+  for(const check of checks) {
+
+    if((check.positive !== undefined) && !axisMatches(check.positive, check.candidates)) {
+
+      return false;
+    }
+
+    if((check.exclude !== undefined) && axisMatches(check.exclude, check.candidates)) {
+
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * The raw filter flags as parsed from the command line - one comma-separated string per axis, in both positive and exclude forms. {@link buildEventFilter} compiles this
  * into the matcher the hot path uses.
@@ -374,6 +499,20 @@ export interface EventFilter {
   object?: CompiledAxis;
 }
 
+// The match mode of each event filter axis: the token axes compare whole tokens, and the device axes search the id and the resolved name. The annotation holds the
+// table to the spec's keys, so an axis added to the spec without a mode fails to compile.
+const EVENT_AXIS_MODES: Readonly<Record<keyof EventFilterSpec, MatchMode>> = {
+
+  device: "substring",
+  excludeDevice: "substring",
+  excludeKind: "exact",
+  excludeModelKey: "exact",
+  excludeObject: "exact",
+  kind: "exact",
+  modelKey: "exact",
+  object: "exact"
+};
+
 /**
  * Compile the raw filter flags into an {@link EventFilter}. The token axes (kind, modelKey, object) match whole tokens by equality-or-glob; the device axis matches by
  * substring-or-glob against both the device id and its resolved name. The compilation is done once per `watch events` invocation, never per event.
@@ -386,59 +525,7 @@ export interface EventFilter {
  */
 export function buildEventFilter(spec: EventFilterSpec): EventFilter {
 
-  // Assemble only the axes the operator actually supplied. We build the object via assignment rather than a literal so an axis that compiles to `undefined` (an empty
-  // flag) is simply never set, keeping the matcher's `axis !== undefined` checks honest.
-  const filter: EventFilter = {};
-  const device = compileAxis(spec.device, "substring");
-  const excludeDevice = compileAxis(spec.excludeDevice, "substring");
-  const excludeKind = compileAxis(spec.excludeKind, "exact");
-  const excludeModelKey = compileAxis(spec.excludeModelKey, "exact");
-  const excludeObject = compileAxis(spec.excludeObject, "exact");
-  const kind = compileAxis(spec.kind, "exact");
-  const modelKey = compileAxis(spec.modelKey, "exact");
-  const object = compileAxis(spec.object, "exact");
-
-  if(device !== undefined) {
-
-    filter.device = device;
-  }
-
-  if(excludeDevice !== undefined) {
-
-    filter.excludeDevice = excludeDevice;
-  }
-
-  if(excludeKind !== undefined) {
-
-    filter.excludeKind = excludeKind;
-  }
-
-  if(excludeModelKey !== undefined) {
-
-    filter.excludeModelKey = excludeModelKey;
-  }
-
-  if(excludeObject !== undefined) {
-
-    filter.excludeObject = excludeObject;
-  }
-
-  if(kind !== undefined) {
-
-    filter.kind = kind;
-  }
-
-  if(modelKey !== undefined) {
-
-    filter.modelKey = modelKey;
-  }
-
-  if(object !== undefined) {
-
-    filter.object = object;
-  }
-
-  return filter;
+  return compileFilter(spec, EVENT_AXIS_MODES);
 }
 
 // The smart-detect object types an event carries, or none. Only a `smartDetect` event has an `objectTypes` array; every other kind contributes nothing here.
@@ -466,28 +553,15 @@ export function matchesEvent(filter: EventFilter, event: TypedEvent, resolveName
   const names = ids.map((id) => resolveName(id)).filter((name): name is string => name !== undefined);
 
   // The device axis tests both ids and names, and the object axis tests every smart-detect type the event carries; kind and modelKey test a single token each (the
-  // latter only when the event carries one). Driving every axis off one table keeps the AND-across/exclude logic written exactly once instead of repeated per axis.
-  const checks: { candidates: string[]; exclude?: CompiledAxis; positive?: CompiledAxis }[] = [
+  // latter only when the event carries one). Driving every axis off one table lets `passes` hold the AND-across/exclude logic the matchers share.
+  const checks: AxisCheck[] = [
     { candidates: [event.kind], exclude: filter.excludeKind, positive: filter.kind },
     { candidates: ("modelKey" in event) ? [event.modelKey] : [], exclude: filter.excludeModelKey, positive: filter.modelKey },
     { candidates: [...new Set([ ...ids, ...names ])], exclude: filter.excludeDevice, positive: filter.device },
     { candidates: objectsOf(event), exclude: filter.excludeObject, positive: filter.object }
   ];
 
-  for(const check of checks) {
-
-    if((check.positive !== undefined) && !axisMatches(check.positive, check.candidates)) {
-
-      return false;
-    }
-
-    if((check.exclude !== undefined) && axisMatches(check.exclude, check.candidates)) {
-
-      return false;
-    }
-  }
-
-  return true;
+  return passes(checks);
 }
 
 /**
@@ -523,6 +597,18 @@ export interface RawFilter {
   modelKey?: CompiledAxis;
 }
 
+// The match mode of each raw filter axis, held to the spec's keys as the event filter's table is: the header tokens compare whole, and the device axes search the
+// header id and its resolved name.
+const RAW_AXIS_MODES: Readonly<Record<keyof RawFilterSpec, MatchMode>> = {
+
+  action: "exact",
+  device: "substring",
+  excludeAction: "exact",
+  excludeDevice: "substring",
+  excludeModelKey: "exact",
+  modelKey: "exact"
+};
+
 /**
  * Compile the raw filter flags into a {@link RawFilter}. `modelKey` and `action` match whole header tokens by equality-or-glob; `device` matches by substring-or-glob
  * against the header's `id` and its resolved name. Compiled once per `watch raw` invocation, never per packet - the same engine the event filter uses.
@@ -535,47 +621,7 @@ export interface RawFilter {
  */
 export function buildRawFilter(spec: RawFilterSpec): RawFilter {
 
-  // Assemble only the axes the operator supplied, by assignment rather than a literal, so an axis that compiles to `undefined` (an empty flag) is never set and the
-  // matcher's `axis !== undefined` checks stay honest - the same discipline as buildEventFilter.
-  const filter: RawFilter = {};
-  const action = compileAxis(spec.action, "exact");
-  const device = compileAxis(spec.device, "substring");
-  const excludeAction = compileAxis(spec.excludeAction, "exact");
-  const excludeDevice = compileAxis(spec.excludeDevice, "substring");
-  const excludeModelKey = compileAxis(spec.excludeModelKey, "exact");
-  const modelKey = compileAxis(spec.modelKey, "exact");
-
-  if(action !== undefined) {
-
-    filter.action = action;
-  }
-
-  if(device !== undefined) {
-
-    filter.device = device;
-  }
-
-  if(excludeAction !== undefined) {
-
-    filter.excludeAction = excludeAction;
-  }
-
-  if(excludeDevice !== undefined) {
-
-    filter.excludeDevice = excludeDevice;
-  }
-
-  if(excludeModelKey !== undefined) {
-
-    filter.excludeModelKey = excludeModelKey;
-  }
-
-  if(modelKey !== undefined) {
-
-    filter.modelKey = modelKey;
-  }
-
-  return filter;
+  return compileFilter(spec, RAW_AXIS_MODES);
 }
 
 /**
@@ -595,26 +641,37 @@ export function matchesRawPacket(filter: RawFilter, packet: RawPacket, resolveNa
   const { action, id, modelKey } = packet.header;
   const name = resolveName(id);
   const deviceCandidates = (name !== undefined) ? [ id, name ] : [id];
-  const checks: { candidates: string[]; exclude?: CompiledAxis; positive?: CompiledAxis }[] = [
+  const checks: AxisCheck[] = [
     { candidates: [action], exclude: filter.excludeAction, positive: filter.action },
     { candidates: [modelKey], exclude: filter.excludeModelKey, positive: filter.modelKey },
     { candidates: deviceCandidates, exclude: filter.excludeDevice, positive: filter.device }
   ];
 
-  for(const check of checks) {
+  return passes(checks);
+}
 
-    if((check.positive !== undefined) && !axisMatches(check.positive, check.candidates)) {
+/**
+ * Yield the values of an async iterable that a predicate admits, in order, ending when the source ends. A pure pass-through generator, so it composes cleanly with
+ * {@link take}: an early return propagates back through here and into the source, so the firehose beneath it (`client.events`, `client.rawPackets`) is unsubscribed.
+ *
+ * @typeParam T - The element type.
+ *
+ * @param source    - The async iterable to draw from.
+ * @param predicate - Reports whether a value passes; a value it rejects is dropped.
+ *
+ * @returns An async generator of the admitted values.
+ *
+ * @category CLI
+ */
+export async function *filterStream<T>(source: AsyncIterable<T>, predicate: (item: T) => boolean): AsyncGenerator<T> {
 
-      return false;
-    }
+  for await (const item of source) {
 
-    if((check.exclude !== undefined) && axisMatches(check.exclude, check.candidates)) {
+    if(predicate(item)) {
 
-      return false;
+      yield item;
     }
   }
-
-  return true;
 }
 
 /**

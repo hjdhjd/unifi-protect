@@ -317,6 +317,20 @@ describe("watch raw", () => {
     assert.doesNotMatch(out, /Front Door/, "the camera frame is filtered out");
   });
 
+  test("--exclude-device drops the frames of a matching device and keeps the rest", async () => {
+
+    const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }], rawPackets: [ rawCamera, rawGarage ] });
+    const { ctx, stdout } = makeCommandContext({ args: [ "--exclude-device", "front" ], client });
+
+    await watchRaw.run(ctx);
+
+    const out = stdout();
+
+    // The flag reaches the device axis in its substring mode, so a lowercase fragment of the resolved name drops the camera's frame and keeps the unresolved one.
+    assert.match(out, /garage {2}add {2}g1/, "a frame from another device is kept");
+    assert.doesNotMatch(out, /Front Door/, "the matching device's frame is dropped");
+  });
+
   test("--json emits one full { header, payload } object per line", async () => {
 
     const { client } = makeFakeClient({ rawPackets: [ rawCamera, rawGarage ] });
@@ -567,6 +581,21 @@ describe("watch events", () => {
     assert.match(out, /tamperDetected {2}Front Door {2}id=e2/);
     assert.doesNotMatch(out, /Back Yard/, "the other camera's tamper event is filtered out");
     assert.doesNotMatch(out, /id=e4/);
+  });
+
+  test("--exclude-device drops the events of a matching device and keeps the rest", async () => {
+
+    const backYard: TypedEvent = { at: 0, cameraId: "c2", eventId: "e4", kind: "motionDetected" };
+    const { client } = makeFakeClient({ cameras: [ { id: "c1", name: "Front Door" }, { id: "c2", name: "Back Yard" } ], events: [ motion, backYard ] });
+    const { ctx, stdout } = makeCommandContext({ args: [ "--exclude-device", "front" ], client });
+
+    await watchEvents.run(ctx);
+
+    const out = stdout();
+
+    // The flag reaches the device axis in its substring mode, so a lowercase fragment of the resolved name drops that camera's event and keeps the other camera's.
+    assert.match(out, /motionDetected {2}Back Yard {2}id=e4/, "the other camera's event is kept");
+    assert.doesNotMatch(out, /Front Door/, "the matching camera's event is dropped");
   });
 
   test("--kind filters the stream", async () => {

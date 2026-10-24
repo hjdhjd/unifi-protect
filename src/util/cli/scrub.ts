@@ -25,7 +25,8 @@
  * @module ProtectCliScrub
  */
 import { isIPv4, isIPv6 } from "node:net";
-import { isMacAddress, normalizeMacAddress } from "../../protocol/address.ts";
+import { isMacAddress, normalizeMacAddress } from "../../index.ts";
+import { isPlainObject } from "./shared.ts";
 
 // The replacement categories. Each keeps its own memory, so a hostname and a device name that happen to share text never collapse onto one pseudonym. The two
 // internet-address families keep separate memories so each family's sequence of stand-ins stays dense and readable.
@@ -378,20 +379,6 @@ function stripUrlCredentials(value: string): string {
   url.password = "";
 
   return url.toString();
-}
-
-// Whether a value is a plain JSON object. Buffers and typed arrays answer `typeof` as objects but are binary, and arrays are handled on their own path, so the
-// prototype is what the test reads.
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-
-  if((typeof value !== "object") || (value === null)) {
-
-    return false;
-  }
-
-  const prototype: unknown = Object.getPrototypeOf(value);
-
-  return (prototype === Object.prototype) || (prototype === null);
 }
 
 // Whether an object is the base64 wrapper the bundle wraps binary payloads in. Its `bytes` member is declared opaque and unscrubbed where it is produced, and base64

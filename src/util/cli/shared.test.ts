@@ -2,8 +2,8 @@
  *
  * shared.test.ts: Unit tests for the cross-command CLI infrastructure - the realtime-event filter engine, the option parsers, the async-iterator take, and CliError.
  */
-import { CliError, boundedSignal, buildEventFilter, buildRawFilter, commandList, compilePattern, matchesEvent, matchesRawPacket, parseDuration, parseList,
-  parseNonNegativeInt, parsePositiveInt, take, wireAbortSignal } from "./shared.ts";
+import { CliError, boundedSignal, buildEventFilter, buildRawFilter, commandList, compilePattern, filterStream, matchesEvent, matchesRawPacket, parseDuration,
+  parseList, parseNonNegativeInt, parsePositiveInt, take, wireAbortSignal } from "./shared.ts";
 import type { CommandHandler, CommandSpec } from "./shared.ts";
 import type { RawPacket, TypedEvent } from "../../index.ts";
 import { describe, test } from "node:test";
@@ -403,6 +403,57 @@ describe("matchesRawPacket", () => {
   });
 });
 
+describe("filterStream", () => {
+
+  test("yields only the items the predicate admits, in order", async () => {
+
+    const collected: number[] = [];
+
+    for await (const value of filterStream(streamOf([ 5, 2, 7, 8, 4, 1 ]), (item) => (item % 2) === 0)) {
+
+      collected.push(value);
+    }
+
+    assert.deepEqual(collected, [ 2, 8, 4 ]);
+  });
+
+  test("ends when the source ends", async () => {
+
+    const filtered = filterStream(streamOf([ 1, 2 ]), () => true);
+
+    assert.deepEqual(await filtered.next(), { done: false, value: 1 });
+    assert.deepEqual(await filtered.next(), { done: false, value: 2 });
+    assert.deepEqual(await filtered.next(), { done: true, value: undefined }, "the filter is done once its source is exhausted");
+  });
+
+  test("an early return propagates to the source", async () => {
+
+    let returned = false;
+    const source = async function *(): AsyncGenerator<number> {
+
+      try {
+
+        for(let value = 0; ; value++) {
+
+          yield value;
+        }
+      } finally {
+
+        returned = true;
+      }
+    };
+
+    for await (const value of filterStream(source(), (item) => (item % 2) === 0)) {
+
+      assert.equal(value, 0);
+
+      break;
+    }
+
+    assert.equal(returned, true, "the source's finally must run when the consumer stops early");
+  });
+});
+
 describe("take", () => {
 
   test("yields at most count values", async () => {
@@ -508,6 +559,15 @@ describe("wireAbortSignal", () => {
 async function *naturals(): AsyncGenerator<number> {
 
   for(let value = 0; ; value++) {
+
+    yield value;
+  }
+}
+
+// A finite source yielding the given values in order and then ending, for exercising filterStream over a source that completes.
+async function *streamOf<T>(values: readonly T[]): AsyncGenerator<T> {
+
+  for(const value of values) {
 
     yield value;
   }

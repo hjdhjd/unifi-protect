@@ -3,7 +3,7 @@
  * capture.ts: `ufp capture` - observe a controller against the known schema and emit one scrubbed bundle carrying whatever it says that this library does not model.
  */
 import type { AnyProtectDiagnosticsChannel, RawPacket, TypedEvent } from "../../../index.ts";
-import { COMMON_OPTIONS, axisMatches, boundedSignal, compileAxis, parseDuration, readVersion } from "../shared.ts";
+import { COMMON_OPTIONS, axisMatches, boundedSignal, compileAxis, isPlainObject, parseDuration, readVersion } from "../shared.ts";
 import type { CommandHandler, CommandSpec, CompiledAxis } from "../shared.ts";
 import type { NoveltyFinding, SchemaManifest, UndeclaredSnapshot, UnmodeledSnapshot } from "../manifest.ts";
 import { PROTECT_CAPTURE_DEFAULT_DURATION, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } from "../../../settings.ts";
@@ -126,20 +126,6 @@ function accumulate(window: Window, findings: readonly NoveltyFinding[]): boolea
   return novel;
 }
 
-// Whether a value is a plain JSON object. A raw frame's payload is whatever the codec produced - parsed JSON, a UTF-8 string, or a buffer - and only the first has
-// fields to read, so everything else is left alone rather than walked as though it were a record.
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-
-  if((typeof value !== "object") || (value === null)) {
-
-    return false;
-  }
-
-  const prototype: unknown = Object.getPrototypeOf(value);
-
-  return (prototype === Object.prototype) || (prototype === null);
-}
-
 // Read a record's own id and name, structurally. It matches `--device` against the fetched bootstrap and against an arriving frame without asserting anything about the
 // shape of a record this version may never have seen.
 function identityOf(record: unknown): { id: string; name: string } {
@@ -152,19 +138,16 @@ function identityOf(record: unknown): { id: string; name: string } {
   return { id: (typeof record["id"] === "string") ? record["id"] : "", name: (typeof record["name"] === "string") ? record["name"] : "" };
 }
 
-// Seed the subjects from the fetched bootstrap: everything the diff found novelty in, plus everything `--device` names. Matching runs against this same document rather
-// than the connect-time snapshot, so one bootstrap generation feeds both the diff and the targeting and the two can never disagree.
+// Seed the subjects from the fetched bootstrap: every record the diff found novelty in, plus everything `--device` names. Seeding runs before any rail starts, so the
+// window's novelty holds the bootstrap diff and nothing else, and that diff finds collections and fields. Matching runs against this same document rather than the
+// connect-time snapshot, so one bootstrap generation feeds both the diff and the targeting and the two can never disagree.
 function seedSubjects(window: Window, manifest: SchemaManifest, bootstrap: unknown, device: CompiledAxis | undefined): void {
 
   for(const entry of window.novelty.values()) {
 
+    // Of the bootstrap diff's findings, a field finding names the record it was found on, which is the record worth following. A collection finding names no record,
+    // and the unmodeled snapshot taken beside it carries its evidence.
     if(entry.kind === "unknownField") {
-
-      // A field finding names the record it was found on, which is the record worth following.
-      follow(window, entry.recordId, "novelty");
-    }
-
-    if(entry.kind === "unknownModelKey") {
 
       follow(window, entry.recordId, "novelty");
     }

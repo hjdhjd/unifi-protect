@@ -2,12 +2,13 @@
  *
  * watch-events.ts: `ufp watch events` - the realtime event firehose with a rich filter surface. The primary tool for probing and capturing the Protect wire protocol.
  */
-import { COMMON_OPTIONS, boundedSignal, buildEventFilter, matchesEvent, parseDuration, parsePositiveInt, take } from "../shared.ts";
-import type { CommandHandler, CommandSpec, EventFilter } from "../shared.ts";
+import { COMMON_OPTIONS, boundedSignal, buildEventFilter, filterStream, matchesEvent, parseDuration, parsePositiveInt, take } from "../shared.ts";
+import type { CommandHandler, CommandSpec } from "../shared.ts";
 import type { Output } from "../output/format.ts";
 import { ProtectClient } from "../../../index.ts";
 import type { TypedEvent } from "../../../index.ts";
 import { buildNameResolver } from "../lookup.ts";
+import { nowStamp } from "../output/format.ts";
 import { parseArgs } from "node:util";
 
 const USAGE = [
@@ -171,9 +172,7 @@ function renderEvent(output: Output, event: TypedEvent, resolveName: (id: string
 
   const colors = output.colors;
   const [id] = ProtectClient.eventSubjects(event);
-
-  // `slice(11, 23)` is the "HH:MM:SS.mmm" time-of-day portion of the ISO 8601 string (the date prefix and trailing "Z" dropped).
-  const parts = [ colors.dim(new Date().toISOString().slice(11, 23)), kindColor(colors, event.kind)(event.kind) ];
+  const parts = [ colors.dim(nowStamp()), kindColor(colors, event.kind)(event.kind) ];
 
   if(id !== undefined) {
 
@@ -188,19 +187,6 @@ function renderEvent(output: Output, event: TypedEvent, resolveName: (id: string
   }
 
   output.line(parts.join("  "));
-}
-
-// Apply the compiled filter to the firehose. A pure pass-through generator, so it composes cleanly with `take` (the early return propagates back through here and into
-// `client.events`, unsubscribing the firehose).
-async function *filterEvents(source: AsyncIterable<TypedEvent>, filter: EventFilter, resolveName: (id: string) => string | undefined): AsyncGenerator<TypedEvent> {
-
-  for await (const event of source) {
-
-    if(matchesEvent(filter, event, resolveName)) {
-
-      yield event;
-    }
-  }
 }
 
 /**
@@ -240,7 +226,7 @@ const watchEventsHandler: CommandHandler = async (ctx) => {
   // The resolver is built once from the connect-time snapshot - device names are stable in practice, and an event for a device added mid-watch simply renders by id.
   // --duration bounds the stream (not the connect): boundedSignal folds the deadline into the Ctrl-C signal, so the firehose ends cleanly on whichever fires first.
   const resolveName = buildNameResolver(client);
-  const source = filterEvents(client.events({ signal: boundedSignal(ctx.signal, durationMs) }), filter, resolveName);
+  const source = filterStream(client.events({ signal: boundedSignal(ctx.signal, durationMs) }), (event) => matchesEvent(filter, event, resolveName));
   const limited = (limit !== undefined) ? take(source, limit) : source;
 
   for await (const event of limited) {

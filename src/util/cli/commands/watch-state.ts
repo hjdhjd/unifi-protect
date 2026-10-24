@@ -9,6 +9,7 @@ import type { ProtectClient, ProtectDeviceConfig, ProtectState } from "../../../
 import { deviceSelectors, isDeviceOnline, selectControllerName, selectIsAdmin } from "../../../index.ts";
 import type { DeviceCategory } from "../lookup.ts";
 import type { Output } from "../output/format.ts";
+import { nowStamp } from "../output/format.ts";
 import { parseArgs } from "node:util";
 
 const USAGE = [
@@ -75,13 +76,6 @@ interface Change {
   render: (output: Output) => void;
 }
 
-// The current wall-clock time as a compact HH:MM:SS.mmm stamp - enough to correlate changes without the date noise of a full ISO string on every line.
-// `slice(11, 23)` extracts that time-of-day portion from the ISO 8601 string, dropping the date prefix and the trailing "Z".
-function timestamp(): string {
-
-  return new Date().toISOString().slice(11, 23);
-}
-
 // Render a device's connectivity as a colored lowercase word, using the library's own "online" predicate so the CLI and the library agree on the definition.
 function stateLabel(output: Output, state: string): string {
 
@@ -97,7 +91,7 @@ function categoryChange(target: string, label: string, records: readonly Protect
       selector: target },
     render: (output: Output): void => {
 
-      output.line(output.colors.dim(timestamp()) + "  " + output.colors.bold(label) + " (" + records.length.toString() + ")");
+      output.line(output.colors.dim(nowStamp()) + "  " + output.colors.bold(label) + " (" + records.length.toString() + ")");
 
       for(const record of records) {
 
@@ -117,7 +111,7 @@ function factChange(target: string, value: boolean | string | null): Change {
 
       const rendered = (typeof value === "boolean") ? (value ? output.colors.green("yes") : output.colors.yellow("no")) : (value ?? output.colors.dim("null"));
 
-      output.line(output.colors.dim(timestamp()) + "  " + output.colors.bold(target) + ": " + rendered);
+      output.line(output.colors.dim(nowStamp()) + "  " + output.colors.bold(target) + ": " + rendered);
     }
   };
 }
@@ -130,7 +124,7 @@ function deviceChange(name: string, config: ProtectDeviceConfig): Change {
     json: config,
     render: (output: Output): void => {
 
-      output.line(output.colors.dim(timestamp()) + "  " + output.colors.bold(name) + "  " + stateLabel(output, config.state) +
+      output.line(output.colors.dim(nowStamp()) + "  " + output.colors.bold(name) + "  " + stateLabel(output, config.state) +
         "  " + output.colors.dim("fw=" + (config.firmwareVersion ?? "unknown")));
     }
   };
