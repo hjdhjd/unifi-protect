@@ -147,19 +147,31 @@ function matchByName<T extends { name: string }>(devices: readonly T[], token: s
   return devices.filter((device) => device.name.toLowerCase() === lower);
 }
 
+// The device projections a token matches - an exact id (at most one) or, failing that, every case-insensitive exact-name match: empty when nothing matches, one for an
+// id or unique name, several for an ambiguous name. It returns the raw match set rather than forcing it to one, so each resolver below decides what a zero-match means:
+// `findDevice` and `findDeviceOfType` require exactly one device, while `findDeviceIfAny` answers nothing and leaves the caller its fallback.
+function findDeviceMatches(client: ProtectClient, token: string): AnyDevice[] {
+
+  const devices = allDevices(client);
+  const byId = devices.find((device) => device.id === token);
+
+  return (byId !== undefined) ? [byId] : matchByName(devices, token);
+}
+
 // Reduce a match set to exactly one device, or fail with a precise message: nothing matched, or the name was ambiguous (in which case the id is the disambiguator).
+// Either way the operator's target is at fault, so both are usage errors at exit 2, as every other operator-input fault is.
 function requireOne<T>(matches: T[], category: string, token: string): T {
 
   const [first] = matches;
 
   if(first === undefined) {
 
-    throw new CliError("No " + category + " matches \"" + token + "\" by id or name.");
+    throw new CliError("No " + category + " matches \"" + token + "\" by id or name.", { exitCode: 2 });
   }
 
   if(matches.length > 1) {
 
-    throw new CliError("\"" + token + "\" matches " + matches.length.toString() + " " + category + "s by name; use the device id to disambiguate.");
+    throw new CliError("\"" + token + "\" matches " + matches.length.toString() + " " + category + "s by name; use the device id to disambiguate.", { exitCode: 2 });
   }
 
   return first;
@@ -179,7 +191,7 @@ function requireOne<T>(matches: T[], category: string, token: string): T {
  *
  * @returns The matching device, narrowed to the requested class.
  *
- * @throws {@link CliError} when nothing matches, when a name is ambiguous, or when the token resolves to a device of a different class.
+ * @throws {@link CliError} as a usage error when nothing matches, when a name is ambiguous, or when the token resolves to a device of a different class.
  *
  * @category CLI
  */
@@ -219,7 +231,7 @@ export function findDeviceOfType<K extends AnyDevice["modelKey"]>(client: Protec
  *
  * @returns The matching camera.
  *
- * @throws {@link CliError} when nothing matches, or when a name is ambiguous.
+ * @throws {@link CliError} as a usage error when nothing matches, when a name is ambiguous, or when the token resolves to a device of another class.
  *
  * @category CLI
  */
@@ -236,7 +248,7 @@ export function findCamera(client: ProtectClient, token: string): Camera {
  *
  * @returns The matching device projection.
  *
- * @throws {@link CliError} when nothing matches, or when a name is ambiguous.
+ * @throws {@link CliError} as a usage error when nothing matches, or when a name is ambiguous.
  *
  * @category CLI
  */
@@ -246,21 +258,22 @@ export function findDevice(client: ProtectClient, token: string): AnyDevice {
 }
 
 /**
- * The device projections a token matches - an exact id (at most one) or, failing that, every case-insensitive exact-name match. Returns the raw match set rather than
- * forcing it to one, so a caller can resolve "exactly one device" itself ({@link findDevice}) *or* decide what a zero-match means - which is what lets `reboot` try a
- * device first and fall back to a category word only when no device owns the name (the device-first resolution a destructive command wants).
+ * Resolve a token to at most one device of any category: nothing when no device matches, the device for an id or a unique name, and the same usage error
+ * {@link findDevice} raises for an ambiguous name. This is what lets `reboot` try a device first and fall back to a category word only when no device owns the name (the
+ * device-first resolution a destructive command wants), while an ambiguous name never falls through to the category.
  *
  * @param client - The connected client.
  * @param token  - The device id or name as typed.
  *
- * @returns The matching device projections: empty when nothing matches, one for an id or unique name, several for an ambiguous name.
+ * @returns The matching device projection, or `undefined` when nothing matches.
+ *
+ * @throws {@link CliError} as a usage error when a name is ambiguous.
  *
  * @category CLI
  */
-export function findDeviceMatches(client: ProtectClient, token: string): AnyDevice[] {
+export function findDeviceIfAny(client: ProtectClient, token: string): AnyDevice | undefined {
 
-  const devices = allDevices(client);
-  const byId = devices.find((device) => device.id === token);
+  const matches = findDeviceMatches(client, token);
 
-  return (byId !== undefined) ? [byId] : matchByName(devices, token);
+  return (matches.length === 0) ? undefined : requireOne(matches, "device", token);
 }

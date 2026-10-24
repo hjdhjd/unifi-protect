@@ -1142,6 +1142,15 @@ describe("update", () => {
     await assert.rejects(update.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
+  test("a target that matches no device is a usage error, and nothing is patched", async () => {
+
+    const { calls, client } = makeFakeClient({ lights: [{ id: "l1", name: "Porch" }] });
+    const { ctx } = makeCommandContext({ args: [ "Back Yard", "--patch", "{\"name\":\"Front Porch\"}" ], client });
+
+    await assert.rejects(update.run(ctx), { constructor: CliError, exitCode: 2, message: /No device matches "Back Yard" by id or name/ });
+    assert.equal(calls.updates.length, 0, "an unresolved target must not PATCH");
+  });
+
   test("a missing --patch is a usage error", async () => {
 
     const { client } = makeFakeClient({ lights: [{ id: "l1", name: "Porch" }] });
@@ -1251,7 +1260,7 @@ describe("reboot", () => {
     const { client } = makeFakeClient({ cameras: [ { id: "c1", name: "Dup" }, { id: "c2", name: "Dup" } ] });
     const { ctx } = makeCommandContext({ args: ["Dup"], client });
 
-    await assert.rejects(reboot.run(ctx), { constructor: CliError, message: /matches 2 devices by name/ });
+    await assert.rejects(reboot.run(ctx), { constructor: CliError, exitCode: 2, message: /matches 2 devices by name/ });
   });
 
   test("a ProtectAbortedError from a device halts the bulk run rather than being counted as a failure", async () => {
@@ -1325,6 +1334,31 @@ describe("command help paths", () => {
   }
 });
 
+describe("commands that take no target", () => {
+
+  // Each of these reads its flags alone, so a stray word is a usage mistake rather than input: the parser refuses it, which the entry point renders at exit 2,
+  // and the refusal comes before any client is opened. Capture, the other such command, has its row beside its own fixtures.
+  const cases: [ string, CommandSpec ][] = [
+
+    [ "diagnostics", diagnostics ],
+    [ "doctor", doctor ],
+    [ "watch events", watchEvents ],
+    [ "watch raw", watchRaw ]
+  ];
+
+  for(const [ name, command ] of cases) {
+
+    test(name + " refuses a stray positional before opening a client", async () => {
+
+      const { calls, client } = makeFakeClient();
+      const { ctx } = makeCommandContext({ args: ["stray"], client });
+
+      await assert.rejects(command.run(ctx), { code: /^ERR_PARSE_ARGS/ });
+      assert.equal(calls.disposed, 0, "no client was opened, so none was disposed");
+    });
+  }
+});
+
 describe("subcommand groups", () => {
 
   // Each group's usage and unknown-subcommand rows read from one table. The usage patterns are the group's banner and, where the group prints one, the line only it
@@ -1363,6 +1397,16 @@ describe("subcommand groups", () => {
       await assert.rejects(spec.run(ctx), { constructor: CliError, exitCode: 2, message: unknown });
     });
   }
+
+  test("a subcommand named like an inherited object property is reported as unknown", async () => {
+
+    // Every object inherits a constructor, so a group that looked its table up without asking for an own entry would take that function for a command and fail on it
+    // with a TypeError rather than a usage error.
+    const { client } = makeFakeClient();
+    const { ctx } = makeCommandContext({ args: ["constructor"], client });
+
+    await assert.rejects(camera.run(ctx), { constructor: CliError, exitCode: 2, message: /Unknown camera subcommand "constructor"/ });
+  });
 
   test("camera dispatches a known subcommand, forwarding the remaining args to it", async () => {
 
@@ -1831,6 +1875,16 @@ describe("watch state", () => {
     const { ctx } = makeCommandContext({ args: [], client });
 
     await assert.rejects(watchState.run(ctx), { constructor: CliError, exitCode: 2 });
+  });
+
+  test("a target named like an inherited object property is an unknown device", async () => {
+
+    // Every object inherits a constructor, so a fact lookup that did not ask for an own entry would observe that function as a selector and print the whole state,
+    // where an unknown target is refused by the device lookup as any other unknown name is.
+    const { client } = makeFakeClient();
+    const { ctx } = makeCommandContext({ args: ["constructor"], client });
+
+    await assert.rejects(watchState.run(ctx), { constructor: CliError, exitCode: 2, message: /No device matches "constructor" by id or name/ });
   });
 
   test("a device category renders a count header and each device's connectivity", async () => {

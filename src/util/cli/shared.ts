@@ -134,7 +134,9 @@ export function commandGroup(name: string, subcommands: Record<string, CommandSp
       return;
     }
 
-    const command = subcommands[subcommand];
+    // Only the table's own entries dispatch: a plain lookup also finds what every object inherits, so a subcommand named `constructor` or `toString` would reach a
+    // property that is no command at all.
+    const command = Object.hasOwn(subcommands, subcommand) ? subcommands[subcommand] : undefined;
 
     if(command === undefined) {
 

@@ -198,7 +198,7 @@ function renderEvent(output: Output, event: TypedEvent, resolveName: (id: string
  */
 const watchEventsHandler: CommandHandler = async (ctx) => {
 
-  const { values } = parseArgs({ allowPositionals: true, args: ctx.args, options: OPTIONS, strict: true });
+  const { values } = parseArgs({ allowPositionals: false, args: ctx.args, options: OPTIONS, strict: true });
 
   if(values.help === true) {
 

@@ -137,7 +137,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const command = COMMANDS[verb];
+  // Only the table's own entries dispatch: a plain lookup also finds what every object inherits, so a verb named `constructor` or `toString` would reach a property that
+  // is no command at all.
+  const command = Object.hasOwn(COMMANDS, verb) ? COMMANDS[verb] : undefined;
 
   if(command === undefined) {
 

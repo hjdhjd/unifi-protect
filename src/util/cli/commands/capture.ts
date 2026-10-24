@@ -367,7 +367,7 @@ export function createCaptureHandler(loadManifest: () => Promise<SchemaManifest>
 
   return async (ctx) => {
 
-    const { values } = parseArgs({ allowPositionals: true, args: ctx.args, options: OPTIONS, strict: true });
+    const { values } = parseArgs({ allowPositionals: false, args: ctx.args, options: OPTIONS, strict: true });
 
     if(values.help === true) {
 

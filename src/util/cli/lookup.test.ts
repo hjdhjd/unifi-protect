@@ -51,16 +51,18 @@ describe("findCamera", () => {
     assert.equal(findCamera(client, "front door").id, "c1");
   });
 
-  test("throws when nothing matches", () => {
+  test("a target that matches no camera is a usage error", () => {
 
-    assert.throws(() => findCamera(fakeClient({ cameras: [{ id: "c1", name: "Front Door" }] }), "Back Yard"), CliError);
+    assert.throws(() => findCamera(fakeClient({ cameras: [{ id: "c1", name: "Front Door" }] }), "Back Yard"),
+      { constructor: CliError, exitCode: 2, message: "No camera matches \"Back Yard\" by id or name." });
   });
 
-  test("throws when a name is ambiguous", () => {
+  test("a name several cameras share is a usage error naming the conflict count", () => {
 
     const client = fakeClient({ cameras: [ { id: "c1", name: "Dup" }, { id: "c2", name: "Dup" } ] });
 
-    assert.throws(() => findCamera(client, "Dup"), CliError);
+    assert.throws(() => findCamera(client, "Dup"),
+      { constructor: CliError, exitCode: 2, message: "\"Dup\" matches 2 cameras by name; use the device id to disambiguate." });
   });
 });
 
@@ -78,6 +80,21 @@ describe("findDevice", () => {
     const client = fakeClient({ lights: [{ id: "l1", name: "Floodlight" }] });
 
     assert.equal(findDevice(client, "floodlight").id, "l1");
+  });
+
+  test("a target that matches no device is a usage error", () => {
+
+    const client = fakeClient({ lights: [{ id: "l1", name: "Floodlight" }] });
+
+    assert.throws(() => findDevice(client, "Back Yard"), { constructor: CliError, exitCode: 2, message: "No device matches \"Back Yard\" by id or name." });
+  });
+
+  test("a name several devices share across classes is a usage error naming the conflict count", () => {
+
+    const client = fakeClient({ cameras: [{ id: "c1", name: "Dup" }], lights: [{ id: "l1", name: "Dup" }] });
+
+    assert.throws(() => findDevice(client, "Dup"),
+      { constructor: CliError, exitCode: 2, message: "\"Dup\" matches 2 devices by name; use the device id to disambiguate." });
   });
 });
 

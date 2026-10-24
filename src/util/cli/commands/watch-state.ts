@@ -146,7 +146,9 @@ async function *watchTarget(client: ProtectClient, target: string, online: boole
     return;
   }
 
-  const fact = FACTS[target];
+  // Only the table's own entries are facts: a plain lookup also finds what every object inherits, so a target named `constructor` or `toString` would observe a
+  // property that is no selector at all rather than reach the device lookup below.
+  const fact = Object.hasOwn(FACTS, target) ? FACTS[target] : undefined;
 
   if(fact !== undefined) {
 

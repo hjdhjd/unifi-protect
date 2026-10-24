@@ -518,6 +518,28 @@ describe("capture lifetime", () => {
     assert.match(stdout, /Wrote /);
   });
 
+  test("a stray positional is refused before the client opens, and nothing is written", async () => {
+
+    // Capture reads its flags alone, so a stray word is a usage mistake the parser refuses, which the entry point renders at exit 2, before the controller is reached.
+    const dir = await mkdtemp(path.join(tmpdir(), "ufp-capture-"));
+    let opened = false;
+
+    try {
+
+      const result = await runCaptureRaw({ args: ["stray"], publish: (): void => {
+
+        opened = true;
+      } }, dir);
+
+      assert.match(String((result.thrown as NodeJS.ErrnoException | undefined)?.code), /^ERR_PARSE_ARGS/, "the parser's own error, not a CLI error");
+      assert.equal(opened, false, "the refusal comes before the client is opened");
+      assert.deepEqual((await readdir(dir)).filter((entry) => entry !== "schema-manifest.json"), [], "nothing was written");
+    } finally {
+
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
   test("an abort before the bootstrap arrives takes the cancellation path and writes nothing", async () => {
 
     // A cancellation before the subject map exists has nothing to finalize, so the run ends as a cancellation rather than as a bundle.

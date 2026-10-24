@@ -40,7 +40,7 @@ const USAGE = [
  */
 const diagnosticsHandler: CommandHandler = async (ctx) => {
 
-  const { values } = parseArgs({ allowPositionals: true, args: ctx.args,
+  const { values } = parseArgs({ allowPositionals: false, args: ctx.args,
     options: { ...COMMON_OPTIONS, channel: { type: "string" }, count: { type: "string" }, duration: { type: "string" } }, strict: true });
 
   if(values.help === true) {

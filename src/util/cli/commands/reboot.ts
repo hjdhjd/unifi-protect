@@ -4,7 +4,7 @@
  */
 import { COMMON_OPTIONS, CliError } from "../shared.ts";
 import type { CommandContext, CommandHandler, CommandSpec } from "../shared.ts";
-import { DEVICE_CATEGORIES, devicesInCategory, findDeviceMatches, isDeviceCategory } from "../lookup.ts";
+import { DEVICE_CATEGORIES, devicesInCategory, findDeviceIfAny, isDeviceCategory } from "../lookup.ts";
 import type { DeviceCategory } from "../lookup.ts";
 import { ProtectAbortedError } from "../../../index.ts";
 import type { ProtectClient } from "../../../index.ts";
@@ -142,15 +142,8 @@ const rebootHandler: CommandHandler = async (ctx) => {
   }
 
   // Device-first resolution: an explicit id or unique name takes precedence over a category word, so a destructive bulk reboot never fires when the operator named a
-  // single device. Only a token that matches no device at all falls through to the category interpretation.
-  const matches = findDeviceMatches(client, target);
-
-  if(matches.length > 1) {
-
-    throw new CliError("\"" + target + "\" matches " + matches.length.toString() + " devices by name; use the device id to disambiguate.");
-  }
-
-  const [device] = matches;
+  // single device. Only a token that matches no device at all falls through to the category interpretation, and an ambiguous name is refused by the lookup.
+  const device = findDeviceIfAny(client, target);
 
   if(device !== undefined) {
 

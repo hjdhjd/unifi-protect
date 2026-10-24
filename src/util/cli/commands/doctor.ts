@@ -145,7 +145,7 @@ function renderReport(output: Output, results: CheckResult[]): boolean {
  */
 const doctorHandler: CommandHandler = async (ctx) => {
 
-  const { values } = parseArgs({ allowPositionals: true, args: ctx.args, options: { ...COMMON_OPTIONS, json: { type: "boolean" } }, strict: true });
+  const { values } = parseArgs({ allowPositionals: false, args: ctx.args, options: { ...COMMON_OPTIONS, json: { type: "boolean" } }, strict: true });
 
   if(values.help === true) {
 
