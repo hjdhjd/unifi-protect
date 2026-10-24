@@ -4,6 +4,7 @@
  */
 import { CliError, commandList } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
+import { compareCodeUnit } from "../output/format.ts";
 import { watchEvents } from "./watch-events.ts";
 import { watchLivestream } from "./watch-livestream.ts";
 import { watchRaw } from "./watch-raw.ts";
@@ -52,7 +53,8 @@ const watchHandler: CommandHandler = async (ctx) => {
 
   if(command === undefined) {
 
-    throw new CliError("Unknown watch subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort().join(", ") + ".", { exitCode: 2 });
+    throw new CliError("Unknown watch subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort(compareCodeUnit).join(", ") + ".",
+      { exitCode: 2 });
   }
 
   await command.run({ ...ctx, args: rest });

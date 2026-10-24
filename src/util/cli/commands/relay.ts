@@ -4,6 +4,7 @@
  */
 import { CliError, commandList } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
+import { compareCodeUnit } from "../output/format.ts";
 import { relayToggle } from "./relay-toggle.ts";
 
 // The relay subcommand table. The dispatcher, the usage text, and the unknown-subcommand diagnostic all derive from it, so a subcommand is registered in exactly one
@@ -46,7 +47,8 @@ const relayHandler: CommandHandler = async (ctx) => {
 
   if(command === undefined) {
 
-    throw new CliError("Unknown relay subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort().join(", ") + ".", { exitCode: 2 });
+    throw new CliError("Unknown relay subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort(compareCodeUnit).join(", ") + ".",
+      { exitCode: 2 });
   }
 
   await command.run({ ...ctx, args: rest });

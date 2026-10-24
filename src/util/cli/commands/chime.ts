@@ -6,6 +6,7 @@ import { CliError, commandList } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import { chimePlayBuzzer } from "./chime-play-buzzer.ts";
 import { chimePlaySpeaker } from "./chime-play-speaker.ts";
+import { compareCodeUnit } from "../output/format.ts";
 
 // The chime subcommand table. The dispatcher, the usage text, and the unknown-subcommand diagnostic all derive from it, so a subcommand is registered in exactly one
 // place and its listed summary is the one the subcommand itself declares.
@@ -48,7 +49,8 @@ const chimeHandler: CommandHandler = async (ctx) => {
 
   if(command === undefined) {
 
-    throw new CliError("Unknown chime subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort().join(", ") + ".", { exitCode: 2 });
+    throw new CliError("Unknown chime subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort(compareCodeUnit).join(", ") + ".",
+      { exitCode: 2 });
   }
 
   await command.run({ ...ctx, args: rest });

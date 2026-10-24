@@ -8,9 +8,9 @@ import type { CommandHandler, CommandSpec, CompiledAxis } from "../shared.ts";
 import type { NoveltyFinding, SchemaManifest, UndeclaredSnapshot, UnmodeledSnapshot } from "../manifest.ts";
 import { PROTECT_CAPTURE_DEFAULT_DURATION, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } from "../../../settings.ts";
 import { ProtectClient, channels, subscribeToChannel } from "../../../index.ts";
+import { compareCodeUnit, fileStamp, formatDuration, serializeJson } from "../output/format.ts";
 import { createScrubContext, scrub } from "../scrub.ts";
 import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, snapshotUndeclared, snapshotUnmodeled } from "../manifest.ts";
-import { fileStamp, formatDuration, serializeJson } from "../output/format.ts";
 import { DEVICE_CATEGORIES } from "../lookup.ts";
 import { parseArgs } from "node:util";
 import path from "node:path";
@@ -348,7 +348,7 @@ function assembleBundle(window: Window, client: ProtectClient, manifest: SchemaM
       controller: readControllerVersions(client),
       manifestVersion: manifest.version,
       mode,
-      selection: Object.fromEntries([...window.subjects].map(([ id, reasons ]) => [ id, [...reasons].sort() ])),
+      selection: Object.fromEntries([...window.subjects].map(([ id, reasons ]) => [ id, [...reasons].sort(compareCodeUnit) ])),
       tool: readVersion(),
       window: { durationMs: endedAt - window.startedAt, endedAt, startedAt: window.startedAt }
     },

@@ -1,16 +1,18 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * generate-manifest.test.ts: Unit tests for the schema-manifest generator, run against the library's real type tier so the checker-level resolutions a syntax walk
- * would get wrong are pinned on the actual declarations rather than on a synthetic stand-in.
+ * would get wrong are asserted on the actual declarations rather than on a synthetic stand-in.
  */
 import type { SchemaManifest, SchemaNode } from "../util/cli/manifest.ts";
 import { buildSchemaManifest, writeSchemaManifest } from "./generate-manifest.ts";
 import { describe, test } from "node:test";
+import fs, { readFileSync } from "node:fs";
+import { loadSchemaManifest, schemaManifestLocation } from "../util/cli/manifest.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import assert from "node:assert/strict";
-import { loadSchemaManifest } from "../util/cli/manifest.ts";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 
 // The generator builds a TypeScript program, so it is built once here and shared by every assertion below rather than per test.
@@ -33,6 +35,40 @@ function nodeAt(root: SchemaNode, path: string): SchemaNode | undefined {
   }
 
   return current;
+}
+
+// The field names of every object node and the type names of every primitive node beneath a record tree, each beside the path that reaches its node, so an ordering
+// assertion names the node it found out of order. The walk descends through an object's fields, an array's element and a dictionary's values, which are every place
+// one node holds another.
+function fieldListsOf(node: SchemaNode, path: string): [string, string[]][] {
+
+  switch(node.kind) {
+
+    case "array": {
+
+      return fieldListsOf(node.element, path + "[]");
+    }
+
+    case "dictionary": {
+
+      return fieldListsOf(node.values, path + ".*");
+    }
+
+    case "object": {
+
+      return [ [ path, Object.keys(node.fields) ], ...Object.entries(node.fields).flatMap(([ name, field ]) => fieldListsOf(field, path + "." + name)) ];
+    }
+
+    case "primitive": {
+
+      return [[ path, node.types ]];
+    }
+
+    default: {
+
+      return [];
+    }
+  }
 }
 
 describe("generate-manifest", () => {
@@ -105,8 +141,8 @@ describe("generate-manifest", () => {
 
   test("a camera tree declares the members the controller reports as null", () => {
 
-    // These pins sit at the distinct tiers a widening has to reach: the shared device base, the camera's own record, and the element shape inside its channel array.
-    // Declared as bare scalars they read as always present, and a consumer trusting that dereferences a null the controller sends routinely.
+    // These assertions sit at the distinct tiers a widening has to reach: the shared device base, the camera's own record, and the element shape inside its channel
+    // array. Declared as bare scalars they read as always present, and a consumer trusting that dereferences a null the controller sends routinely.
     const cameras = manifest.records["cameras"] ?? { kind: "opaque" };
 
     assert.deepEqual(nodeAt(cameras, "connectedSince"), { kind: "primitive", types: [ "null", "number" ] },
@@ -210,26 +246,27 @@ describe("generate-manifest", () => {
     assert.equal(JSON.stringify(buildSchemaManifest()), JSON.stringify(manifest));
   });
 
-  test("every vocabulary is sorted in locale order with no repeats", () => {
+  test("every key and vocabulary is in code-unit order with no repeats", () => {
 
-    // The generator sorts each vocabulary with localeCompare, so this reads the same comparator. Code-unit order sorts every uppercase letter before every lowercase one
-    // and localeCompare does not, so code-unit and locale order can part wherever a capital lines up against a lowercase letter. Each value comparing strictly after
-    // the one before it reads the array as sorted and free of repeats in one pass.
-    const vocabularies = { collection: manifest.modelKeys.collection, device: manifest.modelKeys.device, eventTypes: manifest.eventTypes,
-      known: manifest.modelKeys.known, state: manifest.modelKeys.state };
+    // Code-unit order reads the same on every host, where a locale order reads the host's collation, so every list the manifest carries is read in it here: each
+    // vocabulary, the keys of the record and record-key maps, and beneath the record trees the field names of every object node and the type names of every primitive
+    // one. Each value comparing strictly after the one before it reads a list as sorted and free of repeats in one pass.
+    const lists: [string, readonly string[]][] = [
+      [ "collection", manifest.modelKeys.collection ], [ "device", manifest.modelKeys.device ], [ "eventTypes", manifest.eventTypes ],
+      [ "known", manifest.modelKeys.known ], [ "state", manifest.modelKeys.state ], [ "records", Object.keys(manifest.records) ],
+      [ "recordKeys", Object.keys(manifest.recordKeys) ], ...Object.entries(manifest.records).flatMap(([ name, node ]) => fieldListsOf(node, name))
+    ];
 
-    for(const [ name, values ] of Object.entries(vocabularies)) {
+    for(const [ name, list ] of lists) {
 
-      let previous: string | null = null;
+      for(const [ index, value ] of list.entries()) {
 
-      for(const value of values) {
+        const previous = list[index - 1];
 
-        if(previous !== null) {
+        if(previous !== undefined) {
 
-          assert.ok(previous.localeCompare(value) < 0, name + " sorts " + previous + " strictly before " + value + ".");
+          assert.ok(previous < value, name + " sorts " + previous + " strictly before " + value + ".");
         }
-
-        previous = value;
       }
     }
   });
@@ -249,6 +286,31 @@ describe("generate-manifest", () => {
 
       await rm(dir, { force: true, recursive: true });
     }
+  });
+
+  test("the writer's default location and the loader's default location name one file", (t) => {
+
+    /* The build writes the manifest where the generator's default points and the CLI reads it where the loader's default points, so those defaults are one
+     * contract: a loader looking anywhere else reports a missing manifest the build has just written. The writer's default is read through the path it returns,
+     * with its filesystem writes stood in for so the run leaves nothing on disk. The generator holds the filesystem functions as named bindings rather than reading
+     * them off the module object, so those bindings are resynchronized on both sides of the stand-in.
+     */
+    t.mock.method(fs, "mkdirSync", (): undefined => undefined);
+    t.mock.method(fs, "writeFileSync", (): undefined => undefined);
+    syncBuiltinESMExports();
+
+    let written = "";
+
+    try {
+
+      written = writeSchemaManifest();
+    } finally {
+
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+
+    assert.equal(written, fileURLToPath(schemaManifestLocation()), "the build's output is the file the CLI loads by default");
   });
 
   test("every vocabulary tier nests inside the next", () => {

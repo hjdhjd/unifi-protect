@@ -6,6 +6,7 @@ import { DEVICE_COLLECTION_KEYS, DEVICE_MODEL_KEYS, KNOWN_EVENT_TYPES, KNOWN_MOD
 import type { JsonTypeName, ModelKeyVocabulary, SchemaManifest, SchemaNode } from "../util/cli/manifest.ts";
 import { MAP_BACKED_STATE_MODEL_KEYS, mapFieldFor } from "../protocol/reducer.ts";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { compareCodeUnit } from "../util/cli/output/format.ts";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -23,7 +24,7 @@ import ts from "typescript";
  * kind of duplicate that drifts silently.
  *
  * Determinism is a property of the data this builds: every key is inserted in sorted order and every array is sorted, so the emitted file is byte-identical across
- * runs and a real change to the type tier is the only thing that moves it. Nothing timestamped is written.
+ * runs and build hosts, and a real change to the type tier is the only thing that moves it. Nothing timestamped is written.
  *
  * @module ProtectBuildManifest
  */
@@ -40,12 +41,13 @@ const OPAQUE_TYPE_ALIAS = "ProtectKnownJsonValue";
 // shape terminates with a usable manifest rather than exhausting the stack.
 const MAX_DEPTH = 24;
 
-// Build an object whose keys are inserted in sorted order, which is what makes the emitted JSON byte-stable across runs.
+// Build an object whose keys are inserted in code-unit order, which is what makes the emitted JSON byte-stable across runs. The order is code-unit so the manifest
+// reads the same on every build host, where a locale sort reads the host's collation.
 function sortedRecord<T>(entries: Iterable<readonly [string, T]>): Record<string, T> {
 
   const sorted: Record<string, T> = {};
 
-  for(const [ key, value ] of [...entries].sort((left, right) => left[0].localeCompare(right[0]))) {
+  for(const [ key, value ] of [...entries].sort(([left], [right]) => compareCodeUnit(left, right))) {
 
     sorted[key] = value;
   }
@@ -53,16 +55,11 @@ function sortedRecord<T>(entries: Iterable<readonly [string, T]>): Record<string
   return sorted;
 }
 
-// Sort and de-duplicate a vocabulary array.
-function sortedUnique(values: Iterable<string>): string[] {
+// Sort and de-duplicate a vocabulary array or the JSON type names a primitive node declares. The order is code-unit for the same reason as the keys above: every
+// build host reads it the same way, where a locale sort reads the host's collation.
+function sortedUnique<T extends string>(values: Iterable<T>): T[] {
 
-  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
-}
-
-// Sort and de-duplicate the JSON type names a primitive node declares.
-function sortedTypeNames(values: Iterable<JsonTypeName>): JsonTypeName[] {
-
-  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+  return [...new Set(values)].sort(compareCodeUnit);
 }
 
 // The JSON scalar name a primitive type flag maps to, or undefined for a type that is not a JSON scalar. `undefined` and `void` deliberately map to nothing: an
@@ -155,7 +152,7 @@ function mergeNodes(nodes: readonly SchemaNode[]): SchemaNode {
 
   if(primitives.length === nodes.length) {
 
-    return { kind: "primitive", types: sortedTypeNames(primitives.flatMap((node) => node.types)) };
+    return { kind: "primitive", types: sortedUnique(primitives.flatMap((node) => node.types)) };
   }
 
   const arrays = nodes.filter((node) => node.kind === "array");
@@ -256,7 +253,7 @@ function describeType(type: ts.Type, depth: number, state: WalkState): SchemaNod
 
   if(shapes.length === 0) {
 
-    return { kind: "primitive", types: sortedTypeNames(scalars) };
+    return { kind: "primitive", types: sortedUnique(scalars) };
   }
 
   state.stack.add(type);

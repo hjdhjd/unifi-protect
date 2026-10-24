@@ -5,6 +5,7 @@
  */
 import { CliError } from "./shared.ts";
 import type { RawPacket } from "../../index.ts";
+import { compareCodeUnit } from "./output/format.ts";
 import { readFile } from "node:fs/promises";
 
 /**
@@ -17,8 +18,9 @@ import { readFile } from "node:fs/promises";
  * @module ProtectCliManifest
  */
 
-// Where the generated manifest sits relative to this module once compiled: the build emits it at the root of `dist`, and this module lands in `dist/util/cli`.
-const MANIFEST_LOCATION = "../../schema-manifest.json";
+// Where the generated manifest sits relative to this module. The path climbs from the module's directory to the package root and reads the build's output in `dist`
+// there, so the module finds the manifest whether it runs compiled from `dist/util/cli` or from its source in `src/util/cli`.
+const MANIFEST_LOCATION = "../../../dist/schema-manifest.json";
 
 /**
  * The JSON scalar type names a {@link SchemaPrimitiveNode} declares. Closed by construction, because JSON has exactly these scalar types - which is what lets an
@@ -544,15 +546,7 @@ function undeclaredMembersOf(findings: readonly UnknownFieldFinding[]): Undeclar
     members.set(JSON.stringify([ finding.path, finding.observedType ]), { observedType: finding.observedType, path: finding.path });
   }
 
-  return [...members.values()].sort((left, right) => {
-
-    if(left.path !== right.path) {
-
-      return (left.path < right.path) ? -1 : 1;
-    }
-
-    return (left.observedType < right.observedType) ? -1 : 1;
-  });
+  return [...members.values()].sort((left, right) => compareCodeUnit(left.path, right.path) || compareCodeUnit(left.observedType, right.observedType));
 }
 
 /**
@@ -935,9 +929,21 @@ export function parseSchemaManifest(text: string, source: string): SchemaManifes
 }
 
 /**
+ * Where the loader reads the schema manifest from by default: the build's output in `dist` at the package root, the file the manifest build step writes.
+ *
+ * @returns The default manifest location.
+ *
+ * @category CLI
+ */
+export function schemaManifestLocation(): URL {
+
+  return new URL(MANIFEST_LOCATION, import.meta.url);
+}
+
+/**
  * Load the generated schema manifest from disk.
  *
- * @param location - The manifest file to read; defaults to the one this package ships beside its compiled code.
+ * @param location - The manifest file to read; defaults to {@link schemaManifestLocation}, the one this package ships.
  *
  * @returns The validated manifest.
  *
@@ -945,7 +951,7 @@ export function parseSchemaManifest(text: string, source: string): SchemaManifes
  *
  * @category CLI
  */
-export async function loadSchemaManifest(location: URL | string = new URL(MANIFEST_LOCATION, import.meta.url)): Promise<SchemaManifest> {
+export async function loadSchemaManifest(location: URL | string = schemaManifestLocation()): Promise<SchemaManifest> {
 
   const source = (typeof location === "string") ? location : location.pathname;
 

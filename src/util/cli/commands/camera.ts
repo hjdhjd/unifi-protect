@@ -8,6 +8,7 @@ import { cameraFlashlight } from "./camera-flashlight.ts";
 import { cameraSnapshot } from "./camera-snapshot.ts";
 import { cameraTalkback } from "./camera-talkback.ts";
 import { cameraUnlock } from "./camera-unlock.ts";
+import { compareCodeUnit } from "../output/format.ts";
 
 // The camera subcommand table. The dispatcher, the usage text, and the unknown-subcommand diagnostic all derive from it, so a subcommand is registered in exactly one
 // place and its listed summary is the one the subcommand itself declares.
@@ -57,7 +58,8 @@ const cameraHandler: CommandHandler = async (ctx) => {
 
   if(command === undefined) {
 
-    throw new CliError("Unknown camera subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort().join(", ") + ".", { exitCode: 2 });
+    throw new CliError("Unknown camera subcommand \"" + subcommand + "\". Expected one of: " + Object.keys(SUBCOMMANDS).sort(compareCodeUnit).join(", ") + ".",
+      { exitCode: 2 });
   }
 
   await command.run({ ...ctx, args: rest });

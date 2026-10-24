@@ -312,8 +312,8 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * Compare two strings by UTF-16 code unit - the default, locale-independent string ordering. The single comparator behind every deterministic sort the CLI performs (the
- * JSON key ordering below and the usage-screen command lists), so "sorted" means one thing, identical on every machine, everywhere the CLI orders by string.
+ * Compare two strings by UTF-16 code unit - the default, locale-independent string ordering. The single comparator behind every deterministic string sort the CLI and
+ * its build step perform, so "sorted" means one thing, identical on every machine.
  *
  * @param a - The first string.
  * @param b - The second string.
