@@ -1,7 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * scrub.test.ts: Unit tests for the capture scrub - referential consistency in both directions, key-over-shape precedence, the text-envelope key inheritance,
- * coordinate and locale replacement, key redaction, URL credential stripping, the base64 wrapper exemption, and the promise that the input is never modified.
+ * coordinate and locale replacement, key redaction, URL credential stripping and host stand-ins, the base64 wrapper exemption, and the promise that the input is
+ * never modified.
  */
 import { SCRUB_CATALOGS, createScrubContext, scrub } from "./scrub.ts";
 import { describe, test } from "node:test";
@@ -135,6 +136,21 @@ describe("scrub", () => {
     assert.equal(result.token.length, secret.length, "the length survives so a bundle still shows how long the real value was");
     assert.ok(result.token.startsWith("REDACTED-"));
     assert.ok(!result.token.includes("s3cr3t"));
+  });
+
+  test("a secret shorter than the prefix keeps its length and as much of the prefix as fits", () => {
+
+    assert.deepEqual(scrubbed({ token: "s3cr3t" }), { token: "REDACT" }, "the length survives below the prefix's width");
+    assert.deepEqual(scrubbed({ token: "s3cr" }), { token: "REDA" }, "the prefix's letters lead wherever they fit");
+  });
+
+  test("a secret as long as the prefix reads the prefix alone, and one character shorter loses the separator", () => {
+
+    // The width where the padding gives way to the cut, read from each side, so an off-by-one in where it falls fails here.
+    const prefix = "REDACTED-00000000-";
+
+    assert.deepEqual(scrubbed({ token: "a".repeat(prefix.length) }), { token: prefix });
+    assert.deepEqual(scrubbed({ token: "a".repeat(prefix.length - 1) }), { token: "REDACTED-00000000" });
   });
 
   test("an empty secret stays empty", () => {
@@ -539,7 +555,7 @@ describe("scrub", () => {
 
   test("a dotted IPv4-mapped literal shares the IPv4 memory and answers in the mapped shape", () => {
 
-    /* A mapped literal names an IPv4 host, so it is answered out of that family's memory and handed back in the shape it arrived in. Keyed by its canonical IPv6
+    /* A mapped literal names an IPv4 host, so it is answered out of that family's memory and handed back in the dotted mapped shape. Keyed by its canonical IPv6
      * form instead, it would mint a "2001:db8::" stand-in and the record spelling the host one way would stop pointing at the record spelling it the other.
      */
     const context = createScrubContext();
@@ -548,6 +564,24 @@ describe("scrub", () => {
     assert.match(result.host, /^::ffff:192\.0\.2\.\d+$/);
     assert.equal(result.host, "::ffff:" + result.ip, "the mapped answer carries the very stand-in the plain address received");
     assert.equal(result.peer, result.host, "an uppercase mapped prefix is the same literal, which is what keeps it out of the IPv6 memory");
+  });
+
+  test("a mapped literal names its IPv4 host in either spelling", () => {
+
+    // The parser writes the dotted spelling as two hex groups, so a rule reading only the dotted form would answer two spellings of one host differently. Read on
+    // the canonical spelling, both take the stand-in the plain address takes, and a URL's mapped host lands in the parser's own spelling of that stand-in.
+    const result = scrubbed({ dotted: "::ffff:10.0.0.5", hex: "::ffff:a00:5", host: "10.0.0.5", streamUrl: "rtsp://[::ffff:10.0.0.5]:554/x" }) as {
+
+      dotted: string;
+      hex: string;
+      host: string;
+      streamUrl: string;
+    };
+
+    assert.equal(result.host, "192.0.2.1");
+    assert.equal(result.dotted, "::ffff:192.0.2.1");
+    assert.equal(result.hex, "::ffff:192.0.2.1", "the hex-group spelling names the same IPv4 host as the dotted one");
+    assert.equal(result.streamUrl, "rtsp://[::ffff:c000:201]:554/x");
   });
 
   test("a zone-scoped literal is replaced, and two of them stay two", () => {
@@ -620,7 +654,8 @@ describe("scrub", () => {
 
   test("a URL carrying no credentials survives intact", () => {
 
-    // Only the credentials are stripped. A firmware or documentation URL is evidence worth keeping, so it has to come through unchanged.
+    // Only the credentials and an address host are replaced. A firmware or documentation URL names its host by name and is evidence worth keeping, so it has to come
+    // through unchanged.
     const url = "https://fw.example.com/firmware/UVC-G4.bin";
 
     assert.deepEqual(scrubbed({ firmwareUrl: url }), { firmwareUrl: url });
@@ -636,12 +671,111 @@ describe("scrub", () => {
 
   test("credentials embedded in a URL are stripped", () => {
 
-    // A secret inside a value, under a key no catalog would flag. The rest of the URL survives, because it is the part that carries meaning.
+    // A secret inside a value, under a key no catalog would flag. The credentials go and the address host takes its stand-in, while the rest of the URL survives,
+    // because it is the part that carries meaning.
     const result = scrubbed({ streamUrl: "rtsp://admin:hunter2@10.0.0.5:7447/abc123" }) as { streamUrl: string };
 
-    assert.ok(!result.streamUrl.includes("hunter2"));
-    assert.ok(!result.streamUrl.includes("admin"));
-    assert.ok(result.streamUrl.startsWith("rtsp://"));
+    assert.equal(result.streamUrl, "rtsp://192.0.2.1:7447/abc123");
+  });
+
+  test("an address inside a URL takes the stand-in the bare address takes", () => {
+
+    // A URL's host is the same address a host key carries elsewhere in the document, so the record naming the address and the URL pointing at it keep one stand-in.
+    const result = scrubbed({ host: "10.0.0.5", streamUrl: "rtsp://10.0.0.5:7447/live" }) as { host: string; streamUrl: string };
+
+    assert.equal(result.host, "192.0.2.1");
+    assert.equal(result.streamUrl, "rtsp://192.0.2.1:7447/live", "the URL's host reads the stand-in the bare address received");
+  });
+
+  test("an IPv6 literal inside a URL takes its stand-in", () => {
+
+    // The parser writes an IPv6 host inside brackets, so the bare literal takes the family's stand-in and the brackets go back around it.
+    const result = scrubbed({ streamUrl: "rtsp://[2001:4860::8888]:7447/live" }) as { streamUrl: string };
+
+    assert.equal(result.streamUrl, "rtsp://[2001:db8::1]:7447/live");
+  });
+
+  test("a URL used as an object key is stripped and takes its host's stand-in", () => {
+
+    // A key is identity as much as a value is, so a URL in a key position takes the same scrub a URL value takes.
+    const result = scrubbed({ "rtsp://admin:pw@10.0.0.5/x": true }) as Record<string, unknown>;
+
+    assert.deepEqual(Object.keys(result), ["rtsp://192.0.2.1/x"]);
+  });
+
+  test("credentials in a URL the parser refuses are still stripped", () => {
+
+    // A zone-scoped host is a spelling the parser refuses, so the URL is never parsed, yet its credentials and its host are spelled out in its text all the same.
+    // The credentials are removed by that text, and the host takes the IPv6 family's stand-in, keyed by its lowercase text because the parser gives it no
+    // canonical spelling, while the rest of the value is left as it arrived.
+    const result = scrubbed({ streamUrl: "rtsp://admin:hunter2@[fe80::1%25eth0]:554/live" }) as { streamUrl: string };
+
+    assert.equal(result.streamUrl, "rtsp://[2001:db8::1]:554/live");
+  });
+
+  test("a URL the parser refuses still takes its address host's stand-in", () => {
+
+    // A port past the sixteen-bit range is refused by the parser, so the host is read by text, and the record naming the address and the URL pointing at it still
+    // keep one stand-in.
+    const result = scrubbed({ host: "10.0.0.5", streamUrl: "rtsp://admin:pw@10.0.0.5:99999/x" }) as { host: string; streamUrl: string };
+
+    assert.equal(result.host, "192.0.2.1");
+    assert.equal(result.streamUrl, "rtsp://192.0.2.1:99999/x");
+  });
+
+  test("a zone-scoped literal shares one stand-in bare and inside a URL", () => {
+
+    // Inside a URL a zone-scoped literal writes its "%" delimiter as "%25", so the text read decodes it before the host takes its stand-in, and the bare literal and
+    // the URL pointing at it keep one stand-in.
+    const result = scrubbed({ streamUrl: "rtsp://[fe80::1%25eth0]:554/live", zone: "fe80::1%eth0" }) as { streamUrl: string; zone: string };
+
+    assert.equal(result.zone, "2001:db8::1");
+    assert.equal(result.streamUrl, "rtsp://[2001:db8::1]:554/live", "the URL's host reads the stand-in the bare literal received");
+  });
+
+  test("a text-read host stops at a backslash", () => {
+
+    // A special scheme's parser reads a backslash as a path delimiter, so the host read by text ends there as the userinfo does, and the address before it takes the
+    // stand-in the bare address takes. The space keeps the value off the parser.
+    const result = scrubbed({ host: "10.0.0.5", streamUrl: "http://admin:pw@10.0.0.5\\x y" }) as { host: string; streamUrl: string };
+
+    assert.equal(result.host, "192.0.2.1");
+    assert.equal(result.streamUrl, "http://192.0.2.1\\x y");
+  });
+
+  test("whitespace ahead of a URL's scheme is admitted and kept", () => {
+
+    // The text patterns admit whitespace ahead of the scheme, so a value the parser is never asked to read still loses its credentials and takes its host's stand-in,
+    // and the leading space comes through as it arrived.
+    const result = scrubbed({ streamUrl: " rtsp://admin:pw@10.0.0.5/my stream" }) as { streamUrl: string };
+
+    assert.equal(result.streamUrl, " rtsp://192.0.2.1/my stream");
+  });
+
+  test("a URL under a secret key mints no stand-in", () => {
+
+    // A secret's whole value is cleared, so nothing of a URL inside it survives to need a stand-in, and the address it names takes no place in the sequence. The
+    // secret is walked first, so a stand-in minted from its URL would push the address after it to the second one.
+    const result = scrubbed({ password: "rtsp://admin:pw@10.0.0.5/x", publicIp: "10.0.0.6" }) as { publicIp: string };
+
+    assert.equal(result.publicIp, "192.0.2.1");
+  });
+
+  test("prose that opens with a URL is not a URL", () => {
+
+    // Read as a URL, every word before the last "@" would be a userinfo the scrub clears. A value holding whitespace is prose instead, so it comes through as it
+    // arrived, its link and its words alike.
+    const note = "https://fw.example.com for info, mail ops@corp.example";
+
+    assert.deepEqual(scrubbed({ note }), { note });
+  });
+
+  test("a URL under a version key loses its credentials and takes its host's stand-in", () => {
+
+    // A version key keeps its value as evidence, so a URL under one still has its authority scrubbed before it is kept.
+    const result = scrubbed({ firmwareVersion: "rtsp://admin:pw@10.0.0.5/x" }) as { firmwareVersion: string };
+
+    assert.equal(result.firmwareVersion, "rtsp://192.0.2.1/x");
   });
 
   test("an email is referential and distinct across different addresses", () => {
@@ -677,6 +811,16 @@ describe("scrub", () => {
     assert.notEqual(result.serial, unitSerial);
     assert.equal(result.serialNumber.length, "UBNT-9911".length);
     assert.notEqual(result.serialNumber, "UBNT-9911");
+  });
+
+  test("distinct short serials take distinct stand-ins of their own length", () => {
+
+    // A short serial still names one unit, so units that share a bundle stay distinct rather than collapsing onto one stand-in.
+    const result = scrubbed({ first: { serial: "AB12" }, second: { serial: "CD34" } }) as { first: { serial: string }; second: { serial: string } };
+
+    assert.equal(result.first.serial.length, 4);
+    assert.equal(result.second.serial.length, 4);
+    assert.notEqual(result.first.serial, result.second.serial);
   });
 
   test("the site's locale is replaced by fixed placeholders", () => {

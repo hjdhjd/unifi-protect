@@ -154,18 +154,27 @@ export const SCRUB_CATALOGS = Object.freeze({
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// The dotted spelling of an IPv4-mapped address, the conventional text form for naming an IPv4 host inside an IPv6 literal. This reads a form rather than deciding
-// a shape: what makes the value an address at all is the parser, and this only says which family's memory the host belongs in. The hex-group spelling of the same
-// host is a plain IPv6 literal here, because nothing in it says its low groups stand for a dotted quad.
-const IPV4_MAPPED = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
+// The canonical spelling of an IPv4-mapped address, which names an IPv4 host inside an IPv6 literal. The parser writes the dotted spelling as these two hex
+// groups, so both spellings of one host name the same IPv4 host here, and the groups convert back to the dotted quad that host's memory is keyed by. This reads a
+// form rather than deciding a shape: what makes the value an address at all is the parser, and this only says which family's memory the host belongs in.
+const IPV4_MAPPED = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+
+// A URL's scheme and the userinfo in its authority, read by text for a value the parser refuses or is never asked to read. The parser is the first reader of
+// every other value, and this pattern answers only what it would not. Whitespace ahead of the scheme is admitted and kept, as the parser admits it. The userinfo
+// runs to the authority's last "@", where the parser itself ends it, and stops at whitespace, "/", "?", "#" and a backslash, which a special scheme's parser reads
+// as a path delimiter, so it never reaches past the authority into the text beside it. The anchor at a scheme and "://" keeps the pattern off anything that is
+// not written as a URL.
+const URL_USERINFO_PATTERN = /^(\s*[a-z][a-z\d+.-]*:\/\/)[^\s/?#\\]*@/i;
+
+// The host in that same authority once its userinfo is gone, read by text only where the parser, the first reader, refused the value or was never asked: an IPv6
+// literal from "[" to "]", or a bare host that stops at the first ":", "/", "?", "#", backslash or whitespace, so a port, a path and any text after the host stay
+// outside it. The backslash is among the stops for the reason the userinfo's is: a special scheme's parser reads one as a path delimiter. Whitespace ahead of the
+// scheme is admitted and kept, as the userinfo pattern admits it.
+const URL_HOST_PATTERN = /^(\s*[a-z][a-z\d+.-]*:\/\/)(\[[^\]]+\]|[^\s:/?#\\]+)/i;
 
 // The lowercase and uppercase halves of the hexadecimal alphabet, which together say what letter case one occurrence of a hardware address was spelled in.
 const LOWER_HEX_PATTERN = /[a-f]/;
 const UPPER_HEX_PATTERN = /[A-F]/;
-
-// The fixed width of a cleared secret's prefix: "REDACTED-" plus eight hex digits plus the separator. Subtracted from the original length so the replacement is the
-// same length as what it replaced.
-const TOKEN_PREFIX_WIDTH = 18;
 
 /**
  * Create a replacement memory for one bundle.
@@ -265,20 +274,16 @@ function scrubIp(context: ScrubContext, value: string): string {
   return remember(context, "ip", value, documentationAddress);
 }
 
-// The canonical spelling of an IPv6 literal, which is what its memory is keyed by. One address has several valid spellings - the case of its digits, where the
-// run of zero groups is compressed, whether a group carries leading zeros - so a memory keyed by the text as it arrived would mint a second stand-in for the
-// second spelling of one host. The platform's URL parser is the one canonicalizer already shipped with the runtime, and it serializes the form RFC 5952 asks for:
-// lowercase, compressed, no leading zeros. A spelling the parser refuses is a zone-scoped literal, a form no capture carries; keying that by its lowercase text
-// folds the one difference that does vary and keeps two distinct addresses distinct, which is the honest answer where there is no canonical form to ask for.
+// The canonical spelling of an IPv6 literal, which is what its memory is keyed by and what the mapped form is read on. One address has several valid spellings -
+// the case of its digits, where the run of zero groups is compressed, whether a group carries leading zeros - so a memory keyed by the text as it arrived would
+// mint a second stand-in for the second spelling of one host. The platform's URL parser is the one canonicalizer already shipped with the runtime, and its output
+// is the form RFC 5952 sets out for a plain literal: lowercase, compressed, no leading zeros. It writes an IPv4-mapped literal's dotted quad as two hex groups, so
+// both spellings of a mapped literal name one IPv4 host by the time the mapped form is read. A spelling the parser refuses is a zone-scoped literal; keying that by
+// its lowercase text folds the one difference that does vary and keeps two distinct addresses distinct, which is the honest answer where there is no canonical
+// form to ask for.
 function canonicalIpv6(value: string): string {
 
-  try {
-
-    return new URL("http://[" + value + "]/").hostname.slice(1, -1);
-  } catch {
-
-    return value.toLowerCase();
-  }
+  return URL.parse("http://[" + value + "]/")?.hostname.slice(1, -1) ?? value.toLowerCase();
 }
 
 // A count written as colon-joined sixteen-bit groups, so a stand-in stays IPv6-shaped however many addresses a bundle carries: 1 reads as "1", 65535 as "ffff",
@@ -295,19 +300,40 @@ function hextets(n: number): string {
   return groups.join(":");
 }
 
-// A synthetic address in the prefix RFC 3849 reserves for documentation. A dotted IPv4-mapped literal names an IPv4 host, so it is answered from the IPv4 memory
-// and handed back in the mapped shape it arrived in: the two spellings of one host stay one host, and the cross-reference between the record that spells it one
-// way and the record that spells it the other survives. Every other literal is remembered under its canonical spelling in this family's own memory.
+// A synthetic address in the prefix RFC 3849 reserves for documentation. An IPv4-mapped literal names an IPv4 host in either spelling, so it is answered from the
+// IPv4 memory and handed back in the dotted mapped shape: the plain address and both spellings of the mapped one stay one host, and the cross-reference between
+// records that spell it differently survives. Every other literal is remembered under its canonical spelling in this family's own memory.
 function scrubIpv6(context: ScrubContext, value: string): string {
 
-  const [ , quad ] = IPV4_MAPPED.exec(value) ?? [];
+  const canonical = canonicalIpv6(value);
+  const [ , high, low ] = IPV4_MAPPED.exec(canonical) ?? [];
 
-  if(quad !== undefined) {
+  if((high !== undefined) && (low !== undefined)) {
 
-    return "::ffff:" + scrubIp(context, quad);
+    const upper = Number.parseInt(high, 16);
+    const lower = Number.parseInt(low, 16);
+
+    return "::ffff:" + scrubIp(context, [ upper >> 8, upper & 255, lower >> 8, lower & 255 ].join("."));
   }
 
-  return remember(context, "ipv6", canonicalIpv6(value), (index) => "2001:db8::" + hextets(index + 1));
+  return remember(context, "ipv6", canonical, (index) => "2001:db8::" + hextets(index + 1));
+}
+
+// The stand-in for an internet address in either family, or undefined for a value that is not one. This is the one place the family is decided, so every path
+// that meets an address - a value, an object key, a URL's host - answers it the same way.
+function scrubAddress(context: ScrubContext, value: string): string | undefined {
+
+  if(isIPv4(value)) {
+
+    return scrubIp(context, value);
+  }
+
+  if(isIPv6(value)) {
+
+    return scrubIpv6(context, value);
+  }
+
+  return undefined;
 }
 
 // A synthetic UUID that keeps the dash layout, so length and format checks downstream still pass.
@@ -342,41 +368,72 @@ function scrubName(context: ScrubContext, value: string, key: string): string {
   return remember(context, "name", hint + "|" + value, (index) => "Test " + hint + " " + (index + 1).toString());
 }
 
-// Clear a secret, preserving its length so a bundle still shows how long the real value was without showing any of it.
+// Clear a secret, preserving its length so a bundle still shows how long the real value was without showing any of it. A secret shorter than the prefix keeps as
+// much of it as fits, so a four-character secret reads "REDA" and short secrets may share a stand-in...which costs nothing, because a secret, unlike a serial, is
+// never read for its cross-references.
 function scrubToken(context: ScrubContext, value: string): string {
 
-  return remember(context, "token", value, (index) => "REDACTED-" + index.toString(16).padStart(8, "0") + "-" +
-    "x".repeat(Math.max(0, value.length - TOKEN_PREFIX_WIDTH)));
+  return remember(context, "token", value, (index) => ("REDACTED-" + index.toString(16).padStart(8, "0") + "-").padEnd(value.length, "x").slice(0, value.length));
 }
 
 // Replace a checksum with a same-length stand-in. The replacement is stable within a run but derived from encounter order rather than content, so it says nothing about
-// the original.
+// the original. The stand-in is the encounter count in hexadecimal, zero-padded to the value's width and cut to its low digits, so values of any length keep
+// distinct stand-ins while the count stays below sixteen to the power of that length.
 function scrubHash(context: ScrubContext, value: string): string {
 
-  return remember(context, "hash", value, (index) => ("0".repeat(Math.max(0, value.length - 8)) + index.toString(16).padStart(8, "0")).slice(0, value.length));
+  return remember(context, "hash", value, (index) => index.toString(16).padStart(value.length, "0").slice(-value.length));
 }
 
-// Strip any credentials embedded in a URL's authority. A capture can carry an RTSP or HTTP URL with a username and password in it, which no key catalog would catch,
-// because the secret is inside the value rather than under a telling key. A value that is not a URL is returned untouched for the rest of the pipeline to judge.
-function stripUrlCredentials(value: string): string {
+/* Scrub a URL's authority: its credentials are cleared, and an address host takes the stand-in the bare address takes. A capture can carry an RTSP or HTTP URL
+ * with a username and password in it, which no key catalog would catch, because the secret is inside the value rather than under a telling key. Its host is the
+ * same address a host key carries elsewhere in the document, so it goes through the one family helper, and the record naming an address and the URL pointing at
+ * it keep one stand-in. A hostname inside a URL is left as it stands, for the reason the shape rules leave a bare one alone: a guard for a word would also
+ * destroy the evidence a firmware or documentation URL carries.
+ *
+ * A value holding whitespace once it is trimmed is never handed to the parser, because the parser would percent-encode the spaces into a userinfo and read prose
+ * that opens with a link as credentials, clearing the words that follow it. The parser answers a value it refuses with null rather than a thrown exception, so
+ * the ordinary string that is no URL at all costs nothing extra. A value the parser refuses or is never asked to read, a zone-scoped host, an out-of-range port
+ * or a space in a path among them, still spells its authority out in its text, so its credentials are removed and an address host takes its stand-in by that
+ * text, as a parsed one does, while the rest of the value is left as it arrived; anything else is not written as a URL, matches neither pattern, and returns
+ * untouched for the rest of the pipeline to judge. The one value the text path cannot read is a userinfo that itself holds whitespace, which reads as prose and is
+ * kept with its credentials - the cost of never handing a value with whitespace to the parser. Such a userinfo is invalid under RFC 3986, and a controller writes
+ * its URLs percent-encoded, so the value is rare. A URL whose authority needs no change returns as it arrived, and one that changed is serialized by the parser,
+ * which may add a trailing slash to a URL of a special scheme.
+ */
+function scrubUrl(context: ScrubContext, value: string): string {
 
-  let url: URL;
+  const url = /\s/.test(value.trim()) ? null : URL.parse(value);
 
-  try {
+  if(url === null) {
 
-    url = new URL(value);
-  } catch {
+    return value.replace(URL_USERINFO_PATTERN, "$1").replace(URL_HOST_PATTERN, (match: string, prefix: string, host: string) => {
 
-    return value;
+      const bracketed = host.startsWith("[");
+
+      // A zone-scoped literal writes its "%" delimiter as "%25" inside a URL (RFC 6874), so the delimiter is decoded before the host is read, and the literal shares
+      // the stand-in its bare spelling takes. The parse path needs no such step, because the parser refuses every zone-scoped host.
+      const address = scrubAddress(context, bracketed ? host.slice(1, -1).replace("%25", "%") : host);
+
+      return (address === undefined) ? match : prefix + (bracketed ? "[" + address + "]" : address);
+    });
   }
 
-  if((url.username === "") && (url.password === "")) {
+  // The parser writes an IPv6 host inside brackets, so the bare literal is what the family helper reads and the brackets go back around its stand-in.
+  const bracketed = url.hostname.startsWith("[");
+  const address = scrubAddress(context, bracketed ? url.hostname.slice(1, -1) : url.hostname);
+
+  if((url.username === "") && (url.password === "") && (address === undefined)) {
 
     return value;
   }
 
   url.username = "";
   url.password = "";
+
+  if(address !== undefined) {
+
+    url.hostname = bracketed ? "[" + address + "]" : address;
+  }
 
   return url.toString();
 }
@@ -397,34 +454,33 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
     return value;
   }
 
-  const stripped = stripUrlCredentials(value);
-
-  // The key decides first, so a device named after an address is still pseudonymized as a name.
+  // The key decides first, so a device named after an address is still pseudonymized as a name. A catalog that replaces the whole value reads it as it arrived,
+  // because nothing of a URL inside it survives to need a stand-in of its own.
   if(key !== undefined) {
 
     if(SECRET_KEYS.has(key)) {
 
-      return scrubToken(context, stripped);
+      return scrubToken(context, value);
     }
 
     if(NAME_KEYS.has(key) || USERNAME_KEYS.has(key)) {
 
-      return scrubName(context, stripped, key);
+      return scrubName(context, value, key);
     }
 
     if(MAC_KEYS.has(key)) {
 
-      return scrubMac(context, stripped);
+      return scrubMac(context, value);
     }
 
     if(HOST_KEYS.has(key)) {
 
-      return isIPv4(stripped) ? scrubIp(context, stripped) : (isIPv6(stripped) ? scrubIpv6(context, stripped) : scrubHostname(context, stripped));
+      return scrubAddress(context, value) ?? scrubHostname(context, value);
     }
 
     if(HASH_KEYS.has(key)) {
 
-      return scrubHash(context, stripped);
+      return scrubHash(context, value);
     }
 
     // A locale value is answered from the fixed table rather than the replacement memory, so the lookup doubles as the test for whether this is a locale key at all.
@@ -437,9 +493,12 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
 
     if(VERSION_KEYS.has(key)) {
 
-      return stripped;
+      return scrubUrl(context, value);
     }
   }
+
+  // A URL's authority is scrubbed wherever its text survives, so the shape rules below read what is left of it.
+  const text = scrubUrl(context, value);
 
   // Shape decides for everything the catalogs above do not name. This is what covers fields on device classes the library has never seen, which is the whole reason a
   // capture is worth collecting and the reason novelty evidence is safe to include.
@@ -448,36 +507,33 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
   // digits: a guard for either would also match ordinary text and the public digests a bundle is full of. So the key catalogs are the whole boundary for both, and
   // a hostname or a checksum under a member no catalog names is left exactly as it stands. Guessing in either direction costs something a reader cannot get back -
   // guess too widely and evidence is destroyed, guess too narrowly and identity survives - and the person reading a bundle is the one who can tell which it was.
-  if(isMacAddress(stripped)) {
+  if(isMacAddress(text)) {
 
-    return scrubMac(context, stripped);
+    return scrubMac(context, text);
   }
 
-  if(isIPv4(stripped)) {
+  const address = scrubAddress(context, text);
 
-    return scrubIp(context, stripped);
+  if(address !== undefined) {
+
+    return address;
   }
 
-  if(isIPv6(stripped)) {
+  if(UUID_PATTERN.test(text)) {
 
-    return scrubIpv6(context, stripped);
+    return scrubUuid(context, text);
   }
 
-  if(UUID_PATTERN.test(stripped)) {
+  if(EMAIL_PATTERN.test(text)) {
 
-    return scrubUuid(context, stripped);
+    return scrubEmail(context, text);
   }
 
-  if(EMAIL_PATTERN.test(stripped)) {
-
-    return scrubEmail(context, stripped);
-  }
-
-  return stripped;
+  return text;
 }
 
 // Replace an object key that is itself identifying. Some controller maps are keyed by raw MAC or UUID, so a scrub that only touched values would leave the identifiers
-// sitting in the key positions.
+// sitting in the key positions, and a key that is a URL takes the same scrub a URL value does.
 function scrubKey(context: ScrubContext, key: string): string {
 
   if(isMacAddress(key)) {
@@ -490,17 +546,14 @@ function scrubKey(context: ScrubContext, key: string): string {
     return scrubUuid(context, key);
   }
 
-  if(isIPv4(key)) {
+  const address = scrubAddress(context, key);
 
-    return scrubIp(context, key);
+  if(address !== undefined) {
+
+    return address;
   }
 
-  if(isIPv6(key)) {
-
-    return scrubIpv6(context, key);
-  }
-
-  return key;
+  return scrubUrl(context, key);
 }
 
 /**
