@@ -452,12 +452,19 @@ describe("capture", () => {
 
       channels.schemaUnknownModelKey.publish({ action: "add", exampleId: "v1", modelKey: "vocsensor" });
       channels.connectionTransition.publish({ from: "connecting", to: "healthy" });
+      channels.eventsClosed.publish({ code: 1006, reason: "abnormal closure" });
+      channels.authRelogin.publish({ success: true });
     } });
 
     assert.equal(bundle.drift.length, 1);
     assert.equal((bundle.drift[0]?.payload as { modelKey: string }).modelKey, "vocsensor");
-    assert.equal(bundle.connection.length, 1);
+
+    // A closed events stream and a relogin explain a gap as a reconnect does, so each lands in the connection list under its own channel, in publish order.
+    assert.deepEqual(bundle.connection.map((observation) => observation.channel),
+      [ String(channels.connectionTransition.name), String(channels.eventsClosed.name), String(channels.authRelogin.name) ]);
     assert.equal((bundle.connection[0]?.payload as { to: string }).to, "healthy");
+    assert.deepEqual(bundle.connection[1]?.payload, { code: 1006, reason: "abnormal closure" });
+    assert.deepEqual(bundle.connection[2]?.payload, { success: true });
 
     // A time measured from the start of the window falls inside the window's own span, where a wall-clock stamp overshoots its end.
     for(const observation of [ bundle.connection[0], bundle.drift[0] ]) {

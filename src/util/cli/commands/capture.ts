@@ -46,10 +46,10 @@ const OPTIONS = {
   out: { type: "string" }
 } as const;
 
-// The channels whose observations explain a window rather than describe schema. A reconnect, a reboot, or a throttle in the middle of a capture is why a device went
-// quiet for two minutes, and without these the bundle would show an unexplained gap in the traffic.
-const HEALTH_CHANNELS = [ channels.connectionTransition, channels.connectionRebootDetected, channels.eventsReconnecting, channels.httpThrottleEntered,
-  channels.httpThrottleExited ];
+// The channels whose observations explain a window rather than describe schema. A reconnect, a closed events stream, a relogin, a reboot, or a throttle in the middle
+// of a capture is why a device went quiet for two minutes, and without these the bundle would show an unexplained gap in the traffic.
+const HEALTH_CHANNELS = [ channels.authRelogin, channels.connectionTransition, channels.connectionRebootDetected, channels.eventsClosed, channels.eventsReconnecting,
+  channels.httpThrottleEntered, channels.httpThrottleExited ];
 
 // Why a device is being followed. A device can be here for more than one reason at once, which is worth recording: it can say the operator asked for the very device
 // that also turned out to be new.
