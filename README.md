@@ -133,7 +133,7 @@ The UniFi Protect API is undocumented, and implementing a library like this one 
 
 So...how does UniFi Protect provide realtime events? On UniFi OS-based controllers, it uses a websocket called `updates`. This connection provides a realtime stream of health, status, and events that the cameras encounter - including motion events and doorbell ring events.
 
-The library handles this for you: `ProtectClient.connect()` opens the websocket, and `client.events()` hands you a typed, decoded event stream. The notes below document the binary protocol the library decodes, for the curious and for anyone exploring the API themselves. The decoder lives in [`src/protocol/packet.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/protocol/packet.ts), the event classifier in [`src/protocol/events.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/protocol/events.ts), and the wire/configuration types in [`src/types.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/types.ts).
+The library handles this for you: `ProtectClient.connect()` opens the websocket, and `client.events()` hands you a typed, decoded event stream. The notes below document the binary protocol the library decodes, for the curious and for anyone exploring the API themselves. The decoder lives in [`src/protocol/packet.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/protocol/packet.ts), the event classifier in [`src/protocol/events.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/protocol/events.ts), and the wire/configuration types in [`src/types/`](https://github.com/hjdhjd/unifi-protect/tree/main/src/types).
 
 The `updates` websocket uses a binary protocol to encode data, largely to minimize bandwidth and to allow more than JSON data if needed. Cameras continuously stream updates to the controller containing camera health, statistics, and - crucially - events such as motion and doorbell rings. A complete update packet is composed of four frames:
 
@@ -203,5 +203,5 @@ This is mostly of interest to the true developer nerds amongst us.
 
 [![License](https://img.shields.io/npm/l/unifi-protect?color=%230559C9&logo=open%20source%20initiative&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-protect/blob/main/LICENSE.md)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/hjdhjd/unifi-protect/ci.yml?branch=main&color=%230559C9&logo=github-actions&logoColor=%23FFFFFF&style=for-the-badge)](https://github.com/hjdhjd/unifi-protect/actions?query=workflow%3A%22Continuous+Integration%22)
-[![Dependencies](https://img.shields.io/librariesio/release/npm/unifi-protect?color=%230559C9&logo=dependabot&style=for-the-badge)](https://libraries.io/npm/uniti-protect)
+[![Dependencies](https://img.shields.io/librariesio/release/npm/unifi-protect?color=%230559C9&style=for-the-badge)](https://libraries.io/npm/unifi-protect)
 [![GitHub commits since latest release (by SemVer)](https://img.shields.io/github/commits-since/hjdhjd/unifi-protect/latest?color=%230559C9&logo=github&sort=semver&style=for-the-badge)](https://github.com/hjdhjd/unifi-protect/commits/main)

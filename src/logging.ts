@@ -17,6 +17,8 @@
  *
  * @remarks The library is silent by default, falling back to a no-op logger. To route output somewhere, inject your own logging functions covering all the alert levels
  * the library uses: `debug`, `error`, `info`, and `warn`.
+ *
+ * @category Utilities
  */
 export interface ProtectLogging {
 

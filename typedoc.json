@@ -12,7 +12,6 @@
   "excludePrivate": true,
   "excludeProtected": true,
   "expandObjects": true,
-  "gitRevision": "main",
   "hideGenerator": true,
   "indexFormat": "table",
   "mergeReadme": true,

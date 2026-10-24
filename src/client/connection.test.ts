@@ -215,9 +215,9 @@ function harness(options: { initialUpSince?: number; log?: ProtectLogging; throt
   };
 }
 
-// Let queued microtasks and the void recovery/observe loops settle. The reboot-observation loop registers its store observer on a microtask after construction, so a
-// short settle before driving state guarantees the observer is in place (an observer that registers after a dispatch would adopt the new value as its baseline and miss
-// the change).
+// Let queued microtasks and the void recovery/observe loops settle, so the work a test sets in motion - a recovery attempt, the reboot watcher's wake on a dispatched
+// bootstrap - runs to its next park before the test reads the outcome. The reboot watcher's store observer itself registers synchronously inside the monitor's
+// constructor, because the `for await` in `#watchReboots` starts the observe generator's body at once, so it is in place before any test drives state.
 function settle(): Promise<void> {
 
   return delay(10);

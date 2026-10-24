@@ -7,8 +7,8 @@ import { DeviceProjection } from "./device.ts";
 import type { ProtectSensorConfig } from "../types/index.ts";
 
 /**
- * A sensor projection. Inherits the read-through getters, live `observe`, and write-through `update` from {@link DeviceProjection}; sensor-specific behavior
- * (sensitivity, mount type, thresholds) is expressed through `update` payloads.
+ * A sensor projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from {@link DeviceProjection}; sensor-specific
+ * behavior (sensitivity, mount type, thresholds) is expressed through `update` payloads.
  *
  * @category Devices
  */

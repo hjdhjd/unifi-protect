@@ -735,8 +735,9 @@ function findDescriptor(bytes: Buffer, parent: Span, tag: number): Span | undefi
   return undefined;
 }
 
-// Read an unsigned big-endian integer `width` bytes wide at `offset` within a span, or undefined when the span is absent or the field runs past its end. Every fixed
-// field the walk reads comes through here, which is what keeps a truncated or malformed init from ever throwing.
+// Read an unsigned big-endian integer `width` bytes wide at `offset` within a span, or undefined when the span is absent or the field runs past its end. Every read the
+// walk makes is bounded by its span before it is made, which keeps a truncated or malformed init from ever throwing; this reader is that bound for a fixed-width
+// integer field.
 function readUInt(bytes: Buffer, span: Span | undefined, offset: number, width: 1 | 2 | 4): number | undefined {
 
   if((span === undefined) || ((span.start + offset + width) > span.end)) {

@@ -5,9 +5,11 @@
 import { setInterval as setIntervalAsync, setTimeout as setTimeoutAsync } from "node:timers/promises";
 
 /**
- * Source of time for any code that needs to know "what time is it now?" or "wake me up at intervals." Production code reads time exclusively through this
- * interface, never through `Date.now()` or `node:timers/promises` directly. Tests substitute a fake clock to drive time deterministically without real-time
- * waits or module-level mocking.
+ * Source of time for any code that needs to know "what time is it now?" or "wake me up at intervals." Every timer and timestamp in the library reads time through
+ * this interface rather than through `Date.now()` or `node:timers/promises` directly, with one exception: `Transport` arms each request's deadline with an ambient
+ * `AbortSignal.timeout`, so a fake clock cannot drive a request timeout, and a suite that needs one waits in real time or supplies its own signal. The `ufp` CLI is a
+ * consumer of the library and reads ambient time as any consumer does. Tests substitute a fake clock to drive time deterministically without real-time waits or
+ * module-level mocking.
  *
  * The interface is shaped by what consumers actually need - the canonical trio of clock, one-shot timeout, and repeating interval (`now` / `wait` / `setInterval`),
  * no more. Adding methods speculatively (setImmediate, etc.) would be YAGNI; adding them when a consumer first needs one is principled - `wait` earned its place when
@@ -60,8 +62,8 @@ export interface Clock {
 
 /**
  * The production clock. Reads wall-clock time via `Date.now()` and timers via `node:timers/promises`. This shim is the single bridge between the `Clock` interface and
- * Node's runtime; consumers always go through `Clock`, never directly to the Node primitives, so an unmocked call site behaves exactly like a direct `Date.now()` or
- * `node:timers/promises` call would.
+ * Node's runtime; every timer and timestamp in the library goes through `Clock` rather than directly to the Node primitives, the request deadline `Transport` arms with
+ * `AbortSignal.timeout` its one exception, so an unmocked call site behaves exactly like a direct `Date.now()` or `node:timers/promises` call would.
  *
  * Consumer tests (the `ConnectionMonitor`, `LivestreamPool`, `StateStore`, and the like) construct a fake clock instead of importing this; this module's own test
  * exercises `wallClock` directly to confirm it reads real time and drives real timers. Production code receives this as the default in every constructor that takes a

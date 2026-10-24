@@ -6,9 +6,9 @@
  * errno-resolution helpers behave across the shapes undici and Node produce.
  */
 import * as errorModule from "./errors.ts";
-import { FatalError, INSPECT_OPTIONS, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCodecChangeError,
-  ProtectError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError,
-  ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, isExpectedWsDisconnect, resolveErrnoCause } from "./errors.ts";
+import { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCodecChangeError, ProtectError,
+  ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError,
+  ProtectUnsupportedError, RecoverableError, assertNever, isExpectedWsDisconnect, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import { DOORBELL_INIT } from "./protocol/init-segment.fixtures.ts";
 import assert from "node:assert/strict";
@@ -196,14 +196,6 @@ describe("isExpectedWsDisconnect", () => {
 
     assert.equal(isExpectedWsDisconnect(new Error("a real failure")), false);
     assert.equal(isExpectedWsDisconnect("a string"), false);
-  });
-});
-
-describe("INSPECT_OPTIONS", () => {
-
-  test("is colored, unbounded in depth, and key-sorted", () => {
-
-    assert.deepEqual(INSPECT_OPTIONS, { colors: true, depth: null, sorted: true });
   });
 });
 

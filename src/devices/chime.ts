@@ -32,8 +32,8 @@ export interface PlaySpeakerOptions {
 }
 
 /**
- * A chime projection. Inherits the read-through getters, live `observe`, and write-through `update` from {@link DeviceProjection}; chime *configuration* (default
- * volume, per-camera ringtone assignment) is expressed through `update` payloads, while the things a chime can be told to *do* are first-class commands.
+ * A chime projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from {@link DeviceProjection}; chime *configuration*
+ * (default volume, per-camera ringtone assignment) is expressed through `update` payloads, while the things a chime can be told to *do* are first-class commands.
  *
  * The controller exposes each of the chime's sound sources through its own endpoint, so each is a distinct method rather than a single parameterized call:
  * {@link Chime.playSpeaker} plays a ringtone through the speaker, and {@link Chime.playBuzzer} plays the piezo buzzer. None is capability-gated - every chime has them

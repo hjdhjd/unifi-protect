@@ -7,8 +7,8 @@ import { DeviceProjection } from "./device.ts";
 import type { ProtectViewerConfig } from "../types/index.ts";
 
 /**
- * A viewer projection. Inherits the read-through getters, live `observe`, and write-through `update` from {@link DeviceProjection}; viewer-specific behavior
- * (assigned liveview) is expressed through `update` payloads.
+ * A viewer projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from {@link DeviceProjection}; viewer-specific
+ * behavior (assigned liveview) is expressed through `update` payloads.
  *
  * @category Devices
  */

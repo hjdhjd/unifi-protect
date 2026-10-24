@@ -13,12 +13,14 @@
  *
  * Three guarantees make the observation layer above this cheap and correct:
  *
- * - **Immutability.** No function here mutates its input. Every step returns either the same reference (nothing changed) or a new one (something did).
+ * - **Immutability.** No function here mutates its input. Every step returns either the same reference (nothing changed) or a new one (something did), except a
+ *   bootstrap, which always returns a new one.
  * - **Structural sharing.** A change rebuilds only the path from the root to the changed node; every untouched device, map, and nested object keeps its existing
- *   reference. The rule holds on the bootstrap path too: a record a refresh drifted keeps each nested object and array whose value did not change. This is what
+ *   reference. The rule holds on the bootstrap path too: a record a refresh drifted keeps each nested object and array whose value did not change, and a refresh that
+ *   finds no drift keeps every map and record it already held, which is what makes the refresh failsafe invisible to observers when nothing drifted. This is what
  *   makes `Object.is`-based change detection in selectors and observers both correct and nearly free.
- * - **No-op fidelity.** A patch, upsert, removal, or full re-bootstrap that changes nothing by *value* returns the same reference by *identity*. This is the
- *   property that makes "the 120-second refresh is invisible when nothing drifted" hold.
+ * - **No-op fidelity.** A patch, upsert, or removal that changes nothing by *value* returns the same reference by *identity*. A bootstrap is excluded: it always
+ *   mints a new state by `bootstrapId`, as `applyBootstrap` states.
  *
  * @module ProtectReducer
  */

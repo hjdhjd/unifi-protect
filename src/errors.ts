@@ -2,7 +2,6 @@
  *
  * errors.ts: The typed error hierarchy for the UniFi Protect library.
  */
-import type { InspectOptions } from "node:util";
 import type { LivestreamInit } from "./protocol/init-segment.ts";
 
 /**
@@ -361,15 +360,6 @@ export class ProtectUnsupportedError extends FatalError {
     this.feature = options?.feature;
   }
 }
-
-/**
- * A `util.inspect` options bag for diagnostic formatting - logs, debug dumps, and CLI output: stable colors, unlimited depth, and sorted object keys. A call site
- * that imports this constant instead of writing its own options literal gets a formatting change (disabling colors when stdout isn't a TTY, bounding `depth`,
- * adding `breakLength` for tight log lines) for free the next time this bag is updated.
- *
- * @category Utilities
- */
-export const INSPECT_OPTIONS: InspectOptions = { colors: true, depth: null, sorted: true };
 
 /**
  * Predicate for the WebSocket-error-handler suppression rule shared by every WebSocket subsystem in the library - the realtime events WS, the livestream WS, and

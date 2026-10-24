@@ -207,11 +207,10 @@ export const KNOWN_EVENT_TYPES: readonly string[] = [ ACCESS_EVENT_TYPE, ADMIN_A
  * an unknown model key, an action we do not handle, a device transition whose payload is not an object, or an `event` packet that does not self-describe as one of
  * the modeled occurrences. The caller observes the `null` and moves on (logging at debug if it wishes).
  *
- * Statelessness is what keeps this correct. Activity signals (`motionDetected`, `smartDetect`, `tamperDetected`, `authDetected`, `doorbellRing`, `accessEvent`) are
- * derived *exclusively* from the `event` model key, because that is the only packet that carries an occurrence's identity and metadata. Camera state - `lastMotion`,
- * `lastRing`, `isMotionDetected` - flows through the same classifier as a `devicePatched`; it is never re-synthesized into an activity signal, which would require
- * remembering the previous value and thus break purity. "Did motion happen?" has exactly one home (the occurrence); "what is the camera's current `lastMotion`?" has
- * exactly one home (the state).
+ * Statelessness is what keeps this correct. Every activity signal {@link TypedEvent} declares is derived *exclusively* from the `event` model key, because that is
+ * the only packet that carries an occurrence's identity and metadata. Camera state - `lastMotion`, `lastRing`, `isMotionDetected` - flows through the same classifier
+ * as a `devicePatched`; it is never re-synthesized into an activity signal, which would require remembering the previous value and thus break purity. "Did motion
+ * happen?" has exactly one home (the occurrence); "what is the camera's current `lastMotion`?" has exactly one home (the state).
  *
  * @param raw - A structurally valid packet from {@link ../protocol/packet | decodePacket}.
  *
@@ -229,8 +228,8 @@ export function classifyPacket(raw: RawPacket): TypedEvent | null {
     return classifyActivity(id, raw.payload);
   }
 
-  // Any model key we reduce into state becomes a state transition. We narrow the wire string to the reduced subset; a recognized-but-unmodeled key (`group`, `bridge`)
-  // or genuine drift returns null here, and the EventStream distinguishes the two against the ModelKey vocabulary for the diagnostic.
+  // Any model key we reduce into state becomes a state transition. We narrow the wire string to the reduced subset; a recognized-but-unmodeled key or genuine drift
+  // returns null here, and the EventStream distinguishes the two against the ModelKey vocabulary for the diagnostic.
   if(isStateModelKey(modelKey)) {
 
     return classifyStateTransition(action, modelKey, id, raw.payload);
@@ -242,8 +241,8 @@ export function classifyPacket(raw: RawPacket): TypedEvent | null {
 /**
  * The id(s) of the record(s) a {@link TypedEvent} concerns - the single, total mapping from an event to its subject(s), shared by every consumer that attributes an event
  * to a device (the CLI's `--device` filter and event rendering today; any future generic consumer tomorrow). A state transition concerns the one reduced record it
- * carries; a camera activity signal (`motionDetected`, `smartDetect`, `tamperDetected`, `authDetected`, `doorbellRing`) concerns its camera; an access occurrence
- * concerns its access device; the synthetic `bootstrapLoaded` concerns no single record and yields the empty array.
+ * carries; an activity signal concerns the one device it names, by its `cameraId` or its `deviceId`; the synthetic `bootstrapLoaded` concerns no single record and
+ * yields the empty array.
  *
  * Exhaustive by construction: a new {@link TypedEvent} kind that does not declare its subject is a *compile* error here (the `default` narrows to `never`), so
  * attribution can never silently drift from the union - the failure a per-consumer re-derivation would otherwise surface as silently dropped events on a device filter.
@@ -509,11 +508,12 @@ function isStateModelKey(value: string): value is StateModelKey {
 }
 
 /**
- * Whether the given wire model key is one the library recognizes at all - any {@link StateModelKey}, the recognized-but-unmodeled `group`/`bridge`, or
- * `event`. The single source of truth for the recognized model-key vocabulary: the `EventStream` consults it to distinguish a `classifyPacket` `null` that means
- * "genuine schema drift the controller introduced" (a key *outside* this vocabulary, worth surfacing on the `schema:unknownModelKey` diagnostic) from a `null` that
- * merely means "a recognized key we chose not to lift" (a non-self-describing `event`, an unhandled action, or a recognized-but-unmodeled collection). Keeping the test
- * here, beside the vocabulary it checks, means a new category is added in exactly one place.
+ * Whether the given wire model key is one the library recognizes at all - any {@link StateModelKey}, or one of the keys `KNOWN_MODEL_KEYS` holds beyond the state
+ * keys: the `event` activity channel and every recognized-but-unmodeled key. The single source of truth for the recognized model-key vocabulary: the
+ * `EventStream` consults it to distinguish a `classifyPacket` `null` that means "genuine schema drift the controller introduced" (a key *outside* this vocabulary,
+ * worth surfacing on the `schema:unknownModelKey` diagnostic) from a `null` that merely means "a recognized key we chose not to lift" (a non-self-describing `event`, an
+ * unhandled action, or a recognized-but-unmodeled collection). Keeping the test here, beside the vocabulary it checks, means a new category is added in exactly one
+ * place.
  *
  * @param value - The wire model-key string.
  *
