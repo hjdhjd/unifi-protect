@@ -509,7 +509,6 @@ export class Transport implements AsyncDisposable {
   async #dispatch(url: string, opts: SendOptions): Promise<{ body: Buffer; headers: IncomingHttpHeaders; statusCode: number }> {
 
     const method = opts.method ?? "GET";
-    const requestId = randomUUID();
     const timeout = opts.timeout ?? PROTECT_API_TIMEOUT;
 
     // Compose our timeout deadline with the caller's optional cancellation. #classifyTransportError later tells the caller's cancellation from our timeout by what
@@ -520,8 +519,15 @@ export class Transport implements AsyncDisposable {
     // The auth headers (cookie + CSRF) are the base; per-call headers override them. A request with no body carries no content-type - that is the caller's concern.
     const headers: Record<string, string> = { ...this.#getAuthHeaders?.(), ...opts.headers };
 
+    /* The request diagnostics cost nothing for a request no one listens to: the request id and each payload exist only when a subscriber does, and the id is minted
+     * by the first publish that needs one, so the start and the end of one request carry the same id. Each channel is read at its own publish rather than once up
+     * front, so a subscriber that attaches mid-request still sees that request's end.
+     */
+    let requestId: string | undefined;
+
     if(channels.httpRequestStart.hasSubscribers) {
 
+      requestId ??= randomUUID();
       channels.httpRequestStart.publish({ host: this.#host, method, requestId, url } satisfies HttpRequestStartPayload);
     }
 
@@ -532,15 +538,23 @@ export class Transport implements AsyncDisposable {
       const response = await request(url, { dispatcher: this.#dispatcher, headers, method, signal, ...((opts.body !== undefined) && { body: opts.body }) });
       const body = Buffer.from(await response.body.arrayBuffer());
 
-      this.#publishEnd({ durationMs: this.#clock.now() - startedAt, method, requestId, statusCode: response.statusCode, url });
+      if(channels.httpRequestEnd.hasSubscribers) {
+
+        requestId ??= randomUUID();
+        this.#publishEnd({ durationMs: this.#clock.now() - startedAt, method, requestId, statusCode: response.statusCode, url });
+      }
 
       return { body, headers: response.headers, statusCode: response.statusCode };
     } catch(error) {
 
       const classified = this.#classifyTransportError(error, opts.signal, this.#clock.now() - startedAt);
 
-      this.#publishEnd({ ...(callerCancelled(classified, opts.signal) && { cancelled: true }), durationMs: this.#clock.now() - startedAt,
-        error: classified.message, method, requestId, url });
+      if(channels.httpRequestEnd.hasSubscribers) {
+
+        requestId ??= randomUUID();
+        this.#publishEnd({ ...(callerCancelled(classified, opts.signal) && { cancelled: true }), durationMs: this.#clock.now() - startedAt,
+          error: classified.message, method, requestId, url });
+      }
 
       throw classified;
     }
@@ -650,14 +664,12 @@ export class Transport implements AsyncDisposable {
     return new ProtectNetworkError("A network error occurred communicating with the UniFi Protect controller.", { cause: error });
   }
 
-  // Publish the request:end diagnostic when anyone is listening. Centralized so the success and failure paths emit the same shape, and the controller host is stamped
-  // once here from this client's own address rather than repeated at each call site.
+  // Publish the request:end diagnostic. Centralized so the success and failure paths emit the same shape, and the controller host is stamped once here for both paths
+  // from this client's own address rather than repeated at each call site. It is called only under the end channel's subscriber gate, so its payload is built only when
+  // someone listens.
   #publishEnd(payload: Omit<HttpRequestEndPayload, "host">): void {
 
-    if(channels.httpRequestEnd.hasSubscribers) {
-
-      channels.httpRequestEnd.publish({ ...payload, host: this.#host } satisfies HttpRequestEndPayload);
-    }
+    channels.httpRequestEnd.publish({ ...payload, host: this.#host } satisfies HttpRequestEndPayload);
   }
 
   // Build the owned connection pool: certificate verification follows the `verifyTls` option (permissive by default, since controllers ship self-signed certs), HTTP/2
