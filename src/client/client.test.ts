@@ -7,7 +7,7 @@ import { ProtectAuthError, ProtectBootstrapError, ProtectNetworkError, ProtectPr
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
-import { makeBootstrap, makeCamera, makeChime, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
+import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
 import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
@@ -16,6 +16,7 @@ import { MockAgent } from "undici";
 import { PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
 import { ProtectClient } from "./client.ts";
 import type { RawPacket } from "../protocol/packet.ts";
+import { Transport } from "../transport/http.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -96,6 +97,7 @@ describe("ProtectClient.connect", () => {
 
         cameras: [makeCamera({ id: "c1" })],
         chimes: [makeChime({ id: "ch1" })],
+        fobs: [makeFob({ id: "f1" })],
         lights: [makeLight({ id: "l1" })],
         relays: [makeRelay({ id: "r1" })],
         sensors: [makeSensor({ id: "s1" })],
@@ -104,11 +106,14 @@ describe("ProtectClient.connect", () => {
 
       await using client = await connect(agent);
 
-      // Every collection getter returns its projections, and every typed lookup resolves its own device - exercising the registry and every projection constructor.
-      assert.deepEqual([ client.cameras.length, client.chimes.length, client.lights.length, client.relays.length, client.sensors.length, client.viewers.length ],
-        [ 1, 1, 1, 1, 1, 1 ]);
+      // Every collection getter returns its own projections, and every typed lookup resolves its own device - exercising the registry and every projection constructor.
+      // Each collection carries an id no other does, so a getter or lookup wired to another collection reads the wrong id or none.
+      const collections = [ client.cameras, client.chimes, client.fobs, client.lights, client.relays, client.sensors, client.viewers ];
+
+      assert.deepEqual(collections.map((devices) => devices.map((device) => device.id)), [ ["c1"], ["ch1"], ["f1"], ["l1"], ["r1"], ["s1"], ["v1"] ]);
       assert.equal(client.camera("c1")?.modelKey, "camera");
       assert.equal(client.chime("ch1")?.modelKey, "chime");
+      assert.equal(client.fob("f1")?.modelKey, "fob");
       assert.equal(client.light("l1")?.modelKey, "light");
       assert.equal(client.relay("r1")?.modelKey, "relay");
       assert.equal(client.sensor("s1")?.modelKey, "sensor");
@@ -127,7 +132,7 @@ describe("ProtectClient.connect", () => {
 
       // `state` is the data layer and `transport` is the documented raw-call escape hatch; both must be reachable on the public surface.
       assert.equal(client.state.snapshot().bootstrapId, 1);
-      assert.ok(client.transport, "the transport escape hatch must be exposed");
+      assert.ok(client.transport instanceof Transport, "the transport escape hatch must be exposed");
     });
 
     test("the refresh failsafe re-fetches the bootstrap on schedule", async () => {
@@ -194,27 +199,35 @@ describe("ProtectClient.connect", () => {
         return true;
       });
     });
-  });
 
-  describe("event subscription and teardown", () => {
-
-    test("on() returns a Disposable that is safe to dispose more than once", async () => {
+    test("connect rejects with no client left behind when the events WebSocket fails to open", async () => {
 
       const { agent, pool } = mockController();
 
       interceptLogin(pool);
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
 
-      await using client = await connect(agent);
+      // The socket closes before opening, so the atomic connect must reject and tear down everything it built. A close the socket reports itself never asks it to
+      // close; only the events stream's shutdown does, so a socket asked to close is the failed connect's teardown having run.
+      let captured: FakeWebSocket | undefined;
 
-      const sub = client.on("packet", () => { /* A no-op listener; nothing in this phase emits a packet event. */ });
+      await assert.rejects(ProtectClient.connect({ dispatcher: agent, host: HOST, log: silentLog(), password: "p", refreshIntervalMs: false, username: "u",
+        webSocket: (): FakeWebSocket => {
 
-      assert.equal(typeof sub[Symbol.dispose], "function");
+          const ws = new FakeWebSocket({ autoOpen: false });
 
-      // Disposal must be safe to repeat - the second dispose is a no-op.
-      sub[Symbol.dispose]();
-      sub[Symbol.dispose]();
+          captured = ws;
+          queueMicrotask(() => ws.emitClose(1006, "connection refused"));
+
+          return ws;
+        } }), ProtectNetworkError);
+
+      assert.ok(captured !== undefined, "the events WebSocket factory must have been invoked during connect");
+      assert.equal(captured.closeRequested, true, "the failed connect's teardown closed the socket it built");
     });
+  });
+
+  describe("event subscription and teardown", () => {
 
     test("once rejects when its signal aborts and stream terminates on abort", async () => {
 
@@ -225,12 +238,12 @@ describe("ProtectClient.connect", () => {
 
       await using client = await connect(agent);
 
-      // once() is the one-shot rail: an aborted wait rejects rather than hanging.
+      // once() is the one-shot rail: an aborted wait rejects with the abort error rather than hanging.
       const onceAc = new AbortController();
       const pending = client.once("packet", { signal: onceAc.signal });
 
       onceAc.abort();
-      await assert.rejects(pending);
+      await assert.rejects(pending, { name: "AbortError" });
 
       // stream() is the async-iterable rail: aborting its signal rejects the pending iteration with the abort reason - the raw rail's contract, unlike the smoothed
       // events()/rawPackets() sugar - delivering no emissions.
@@ -260,11 +273,13 @@ describe("ProtectClient.connect", () => {
       interceptLogin(pool);
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
 
-      const client = await connect(agent);
+      const { client, ws } = await connectCapturing(agent);
 
-      // Disposing twice must not throw - the events stream, store, session, and transport teardown are each safe to call more than once.
+      // Disposing twice must not throw - the events stream, store, session, and transport teardown are each safe to call more than once - and the teardown reaches the
+      // events stream's shutdown, the one path that closes its socket.
       await client[Symbol.asyncDispose]();
       await client[Symbol.asyncDispose]();
+      assert.equal(ws.closeRequested, true, "disposal closed the events WebSocket");
     });
   });
 
@@ -353,7 +368,7 @@ describe("ProtectClient.connect", () => {
       assert.equal(raw.length, 2);
       assert.equal(raw[0]?.header.modelKey, "camera");
       assert.equal(raw[1]?.header.modelKey, "garage");
-      assert.deepEqual(raw[1]?.payload, { id: "g1" });
+      assert.deepEqual(raw[1].payload, { id: "g1" });
 
       await client[Symbol.asyncDispose]();
     });
@@ -408,25 +423,6 @@ describe("ProtectClient.connect", () => {
 
       // The static is the one public door to the init reader, for init bytes a consumer holds of its own, so it must answer what the livestream session reads.
       assert.deepEqual(ProtectClient.describeInitSegment(DOORBELL_INIT), describeInitSegment(DOORBELL_INIT));
-    });
-
-    test("connect rejects with no client left behind when the events WebSocket fails to open", async () => {
-
-      const { agent, pool } = mockController();
-
-      interceptLogin(pool);
-      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
-
-      // The socket closes before opening, so the atomic connect must reject and tear down everything it built.
-      await assert.rejects(ProtectClient.connect({ dispatcher: agent, host: HOST, log: silentLog(), password: "p", refreshIntervalMs: false, username: "u",
-        webSocket: () => {
-
-          const ws = new FakeWebSocket({ autoOpen: false });
-
-          queueMicrotask(() => ws.emitClose(1006, "connection refused"));
-
-          return ws;
-        } }), ProtectNetworkError);
     });
   });
 

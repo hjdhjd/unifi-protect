@@ -317,6 +317,9 @@ function companionVideoTrak(id: number): Buffer {
 export const OPUS_INIT = init(companionVideoTrak(1), trak({ entries: [audioEntry("Opus", { channelCount: 1, sampleRate: 16000 },
   box("dOps", u8(0), u8(2), u16(312), u32(16000), u16(0), u8(0)))], handler: "soun", id: 2 }));
 
+// An Opus track whose entry carries no `dOps`, its own fields stating stereo at 48000 Hz, so a reader that fell back to those fields would describe the track.
+export const OPUS_WITHOUT_DOPS_INIT = init(trak({ entries: [audioEntry("Opus", { channelCount: 2, sampleRate: 48000 })], handler: "soun", id: 1 }));
+
 // An AAC track whose descriptor lengths each take the padded four-byte form, `80 80 80 nn`. The configuration is Protect's own, `14 08`: 00010 (AAC-LC),
 // 1000 (index 8, 16000 Hz), 0001 (one channel), then 000 (the GASpecificConfig flags).
 export const PADDED_DESCRIPTOR_INIT = init(trak({ entries: [audioEntry("mp4a", { channelCount: 2, sampleRate: 16000 },
@@ -356,6 +359,11 @@ export const OVERRUNNING_DESCRIPTOR_INIT = init(trak({ entries: [audioEntry("mp4
 // `esds`, the search for the decoder configuration begins at the box's end and finds none; unclamped, it would read past the end of the init.
 export const OVERRUNNING_DESCRIPTOR_PAST_BUFFER_INIT = init(trak({ entries: [audioEntry("mp4a", { channelCount: 2, sampleRate: 16000 },
   fullBox("esds", 0, 0, u8(3), u8(25), u16(2), u8(0)))], handler: "soun", id: 1 }));
+
+// An `mp4a` track, the last in the init, whose `esds` is the last child of its entry and holds only an elementary stream descriptor's tag, with no length byte
+// after it, so a read of that length would run past the end of the init.
+export const DESCRIPTOR_TAG_ON_LAST_BYTE_INIT = init(trak({ entries: [audioEntry("mp4a", { channelCount: 2, sampleRate: 16000 }, fullBox("esds", 0, 0, u8(3)))],
+  handler: "soun", id: 1 }));
 
 // An `mp4a` track whose decoder configuration names MPEG-2 AAC LC (object type indication 0x67) rather than MPEG-4 audio, over the configuration `14 08` that
 // MPEG-4 audio would read as AAC-LC at 16000 Hz mono. The reader interprets an `AudioSpecificConfig` under MPEG-4 audio alone, so the track reads as unknown.
@@ -572,6 +580,11 @@ export const EMPTY_STSD_INIT = init(trak({ entries: [], handler: "vide", id: 1 }
 
 // An audio track whose `stsd` counts one entry and holds none.
 export const STSD_COUNT_WITHOUT_ENTRY_INIT = init(trak({ entries: [], handler: "soun", id: 1, stsdCount: 1 }));
+
+// An audio track whose `stsd` count reads 0 while one `mp4a` entry follows it, an entry whose configuration `14 08` reads 00010 (AAC-LC), 1000 (index 8,
+// 16000 Hz), 0001 (one channel), then 000.
+export const STSD_ZERO_COUNT_WITH_ENTRY_INIT = init(trak({ entries: [audioEntry("mp4a", { channelCount: 2, sampleRate: 16000 }, esds(Buffer.from([ 0x14, 0x08 ])))],
+  handler: "soun", id: 1, stsdCount: 0 }));
 
 // An audio track whose `stsd` lists two entries: an `mp4a` entry whose configuration `14 08` reads 00010 (AAC-LC), 1000 (index 8, 16000 Hz), 0001 (one channel),
 // then 000, and then an Opus entry whose `dOps` reads an output channel count of 2.

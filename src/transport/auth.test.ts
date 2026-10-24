@@ -71,9 +71,11 @@ describe("AuthSession", () => {
       const { host, pool, transport } = makeMockTransport();
       const auth = new AuthSession({ transport });
 
+      // The retry intercept answers only a login carrying the fetched token, so the token the root handed back must reach the retried login.
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(403, "need csrf");
       pool.intercept({ method: "GET", path: ROOT_PATH }).reply(200, "", { headers: { "x-csrf-token": "fetched" } });
-      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=z; Path=/", "x-csrf-token": "final" } });
+      pool.intercept({ headers: { "x-csrf-token": "fetched" }, method: "POST", path: LOGIN_PATH })
+        .reply(200, "", { headers: { "set-cookie": "TOKEN=z; Path=/", "x-csrf-token": "final" } });
 
       await auth.login({ host, password: "p", username: "u" });
 
@@ -176,6 +178,12 @@ describe("AuthSession", () => {
 
       await assert.rejects(auth.login({ host, password: "p", username: "u" }), ProtectAuthError);
       assert.equal(auth.isAuthenticated, false);
+
+      // The other half: a 200 that carries the Set-Cookie but no CSRF token is just as incomplete.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=abc" } });
+
+      await assert.rejects(auth.login({ host, password: "p", username: "u" }), ProtectAuthError);
+      assert.equal(auth.isAuthenticated, false);
     });
   });
 
@@ -193,6 +201,10 @@ describe("AuthSession", () => {
 
       assert.equal(auth.isAuthenticated, false);
       assert.deepEqual(auth.authHeaders(), {});
+
+      // The controller would accept a fresh login, so only the forgotten credentials keep the relogin from re-establishing the session.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=def", "x-csrf-token": "csrf2" } });
+
       assert.equal(await auth.reauthenticate(), false, "after an explicit logout there are no credentials to re-authenticate with");
     });
 

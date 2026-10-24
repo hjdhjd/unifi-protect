@@ -1,9 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * http.test.ts: Unit tests for the HTTP transport - the send/request surface, ProtectResponse decoding and ensureOk classification, transport-error classification
- * (timeout vs caller-abort vs network), the auth-header hook and 401-relogin retry, the full throttle circuit-breaker FSM (closed -> open -> half-open -> closed),
- * the diagnostics-channel publishes for request start/end and throttle entered/exited, dispatcher-ownership semantics for an injected versus an owned pool, the
- * owned pool's handling of the statuses it retries, and the on/once/stream event-rail surface.
+ * http.test.ts: Unit tests for the HTTP transport - the send/request surface, ProtectResponse decoding, ensureOk classification and the responseOk 2xx test,
+ * transport-error classification (timeout vs caller-abort vs network), the auth-header hook and 401-relogin retry, the full throttle circuit-breaker FSM
+ * (closed -> open -> half-open -> closed), the diagnostics-channel publishes for request start/end and throttle entered/exited, dispatcher-ownership semantics for
+ * an injected versus an owned pool, the owned pool's handling of the statuses it retries, and the on/once/stream event-rail surface.
  *
  * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, a fake Clock advances breaker time
  * without real-time waits, and the rows that need a real connection open a loopback server of their own. The injected dispatcher and clock let these tests
@@ -15,6 +15,8 @@ import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../settings
 import { Pool, errors } from "undici";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectThrottledError,
   ProtectTimeoutError } from "../errors.ts";
+import { Transport, responseOk } from "./http.ts";
+import { capturingLog, expectAt, settlement } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
@@ -22,9 +24,7 @@ import type { AddressInfo } from "node:net";
 import type { ChannelListener } from "node:diagnostics_channel";
 import type { MockTransport } from "./mock-controller.helpers.ts";
 import type { SendOptions } from "./http.ts";
-import { Transport } from "./http.ts";
 import assert from "node:assert/strict";
-import { capturingLog } from "../testing.helpers.ts";
 import { createLoopbackHttpsPeer } from "./tls-peer.helpers.ts";
 import { createServer } from "node:http";
 import diagnosticsChannel from "node:diagnostics_channel";
@@ -169,6 +169,30 @@ describe("Transport", () => {
       assert.equal(thrown.headers?.["x-trace"], "abc");
     });
 
+    test("a non-2xx with an empty body classifies as ProtectRequestError carrying no body", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/e" }).reply(500, "");
+
+      const response = await transport.send(url(host, "/e"));
+
+      let thrown: unknown;
+
+      try {
+
+        response.ensureOk();
+      } catch(error) {
+
+        thrown = error;
+      }
+
+      // An empty answer carries nothing a consumer could read, so the error reports no body rather than an empty string.
+      assert.ok(thrown instanceof ProtectRequestError);
+      assert.equal(thrown.statusCode, 500);
+      assert.equal(thrown.body, undefined);
+    });
+
     test("ensureOk returns the response unchanged on 2xx", async () => {
 
       const { host, pool, transport } = makeMockTransport();
@@ -178,6 +202,14 @@ describe("Transport", () => {
       const response = await transport.send(url(host, "/ok"));
 
       assert.equal(response.ensureOk(), response, "ensureOk must return the same instance so calls can chain");
+    });
+  });
+
+  describe("responseOk", () => {
+
+    test("reads exactly the 2xx range as success, its boundaries included", () => {
+
+      assert.deepEqual([ 199, 200, 299, 300 ].map((statusCode) => responseOk(statusCode)), [ false, true, true, false ]);
     });
   });
 
@@ -248,6 +280,26 @@ describe("Transport", () => {
       assert.equal(response.statusCode, 401);
       assert.equal(calls, 1);
       assert.throws(() => response.ensureOk(), ProtectAuthError);
+    });
+
+    test("a 401 that persists after a successful relogin surfaces the retried 401 without another relogin", async () => {
+
+      let calls = 0;
+      const { host, pool, transport } = makeMockTransport({ onUnauthorized: async (): Promise<boolean> => {
+
+        calls++;
+
+        return true;
+      } });
+
+      // The relogin succeeds yet the retry is answered 401 again, so the one retry is spent and that 401 is the answer; a further attempt would find no intercept.
+      pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale");
+      pool.intercept({ method: "GET", path: "/x" }).reply(401, "still stale");
+
+      const response = await transport.send(url(host, "/x"));
+
+      assert.equal(response.statusCode, 401);
+      assert.equal(calls, 1, "a request is retried after a relogin at most once");
     });
 
     test("authRetry false bypasses relogin entirely", async () => {
@@ -553,6 +605,10 @@ describe("Transport", () => {
       assert.equal(transport.isThrottled, true, "a failed probe leaves the breaker open");
       assert.equal(entered, 1, "throttleEntered does not fire again on a failed probe");
       assert.equal(exited, 0, "throttleExited does not fire on a failed probe");
+
+      // At the trip's own deadline the re-armed cooldown still has the probe's offset to run, so the next send is turned away rather than dispatched.
+      clock.advance(COOLDOWN_MS - 1000);
+      await assert.rejects(transport.send(url(host, "/f")), { constructor: ProtectThrottledError, cooldownMs: 1000 });
     });
 
     test("logs the trip at error level and the recovery at info level", async () => {
@@ -785,8 +841,8 @@ describe("Transport", () => {
 
       assert.equal(ends.length, 1);
       assert.equal(ends[0]?.host, host, "the failure-path end payload still carries the configured controller host");
-      assert.equal(ends[0]?.statusCode, undefined, "a transport-level failure carries no status code");
-      assert.ok((ends[0]?.error ?? "").length > 0, "a transport-level failure carries an error message");
+      assert.equal(ends[0].statusCode, undefined, "a transport-level failure carries no status code");
+      assert.ok((ends[0].error ?? "").length > 0, "a transport-level failure carries an error message");
     });
 
     test("marks a cancelled request on the end payload and no other", async () => {
@@ -874,19 +930,34 @@ describe("Transport", () => {
 
     test("asyncDispose resolves without destroying an injected dispatcher", async () => {
 
-      const { transport } = makeMockTransport();
+      const { host, pool, transport } = makeMockTransport();
 
       await assert.doesNotReject(transport[Symbol.asyncDispose]());
+
+      // The injected dispatcher's lifecycle belongs to the injector, so it still serves a request after the transport is disposed.
+      pool.intercept({ method: "GET", path: "/x" }).reply(200, { ok: 1 });
+
+      assert.deepEqual(await transport.request<{ ok: number }>(url(host, "/x")), { ok: 1 }, "an injected dispatcher must survive asyncDispose");
     });
 
     test("owns and rebuilds its pool when no dispatcher is injected", async () => {
 
-      // No dispatcher injected, so the transport builds (and owns) a real undici pool - exercising the retry-interceptor construction. The pool is lazy, so no
-      // connection opens without a request; reset() rebuilds it and asyncDispose tears it down.
-      const transport = new Transport({ host: "127.0.0.1" });
+      // No dispatcher injected, so the transport builds (and owns) a real undici pool - exercising the retry-interceptor construction. A first request opens a
+      // keepalive connection to a loopback peer; reset() destroys that pool, closing the connection, and builds the fresh one the next request goes through, and
+      // asyncDispose tears it down. The peer is disposed after the transport, so the pool has released its connection by the time the server stops listening.
+      await using peer = await createLoopbackHttpsPeer();
+      const transport = new Transport({ host: peer.host });
 
       assert.equal(transport.isThrottled, false);
+      assert.equal((await transport.send(url(peer.host, "/ok"))).statusCode, 200);
+
+      const connection = await peer.connection(0);
+
       assert.doesNotThrow(() => transport.reset(), "reset must rebuild the owned pool without throwing");
+
+      // The discarded pool's idle keepalive connection would outlast this bounded wait unless reset() destroyed the pool holding it.
+      await expectAt(settlement(connection.closed), { message: "reset must destroy the pool it replaces, closing its connection" });
+      assert.equal((await transport.send(url(peer.host, "/ok"))).statusCode, 200, "the rebuilt pool serves the next request");
 
       await assert.doesNotReject(transport[Symbol.asyncDispose]());
     });

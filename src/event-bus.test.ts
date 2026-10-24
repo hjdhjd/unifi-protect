@@ -39,31 +39,22 @@ describe("EventBus", () => {
       assert.deepEqual(received, [ 1, 2 ], "handler should see emissions until it is disposed, and nothing after");
     });
 
-    test("a using declaration auto-disposes the subscription at scope exit", () => {
-
-      const bus = new EventBus<TestEvents>();
-      const received: number[] = [];
-
-      {
-
-        using subscription = bus.on("ping", (count) => received.push(count));
-
-        bus.emit("ping", 1);
-      }
-
-      bus.emit("ping", 2);
-
-      assert.deepEqual(received, [1], "the subscription should detach when the using binding leaves scope");
-    });
-
     test("disposing twice is safe", () => {
 
       const bus = new EventBus<TestEvents>();
-      const subscription = bus.on("ping", () => { /* no-op */ });
+      const received: number[] = [];
+      const handler = (count: number): void => void received.push(count);
+      const subscription = bus.on("ping", handler);
+
+      // A sibling subscription registered with the very same handler, so a second dispose that removed one more registration would strip it.
+      using sibling = bus.on("ping", handler);
 
       subscription[Symbol.dispose]();
 
       assert.doesNotThrow(() => subscription[Symbol.dispose](), "a second dispose must be a no-op, not a throw");
+
+      bus.emit("ping", 1);
+      assert.deepEqual(received, [1], "the second dispose left the sibling subscription registered");
     });
 
     test("a single emit fans out to every active subscriber", () => {

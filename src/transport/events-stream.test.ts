@@ -6,8 +6,8 @@
  */
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
 import { ProtectAbortedError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
+import { assertNoUnhandledRejections, capturingLog, expectAt, fakeClock, settlement, silentLog } from "../testing.helpers.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
-import { capturingLog, expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { EventStream } from "./events-stream.ts";
@@ -19,6 +19,7 @@ import type { ProtectLogging } from "../logging.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
+import { setTimeout as delay } from "node:timers/promises";
 
 const HOST = "10.0.0.1";
 
@@ -28,13 +29,15 @@ function encode(header: Partial<{ action: string; id: string; modelKey: string }
   return buildPacket(jsonActionFrame(makeActionHeader(header)), jsonDataFrame(payload));
 }
 
-// Construct an open stream over a fake socket, returning the stream, the socket, and the clock. The socket does not auto-open so each test controls the handshake.
-async function openStream(options: { clock?: FakeClock; log?: ProtectLogging } = {}): Promise<{ clock: FakeClock; stream: EventStream; ws: FakeWebSocket }> {
+// Construct an open stream over a fake socket, returning the stream, the socket, and the clock. The socket does not auto-open, so the stream opens only when this helper
+// emits the open. `webSocket` makes the fake for a row that needs one built its own way; that fake must not open itself, since this helper opens it.
+async function openStream(options: { clock?: FakeClock; log?: ProtectLogging;
+  webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: FakeClock; stream: EventStream; ws: FakeWebSocket }> {
 
   const clock = options.clock ?? fakeClock();
   const log = options.log ?? silentLog();
-  const ws = new FakeWebSocket({ autoOpen: false });
-  const stream = new EventStream({ clock, host: HOST, lastUpdateId: "u0", log, webSocket: () => ws });
+  const ws = options.webSocket?.() ?? new FakeWebSocket({ autoOpen: false });
+  const stream = new EventStream({ clock, host: HOST, lastUpdateId: "u0", log, webSocket: (): FakeWebSocket => ws });
 
   ws.emitOpen();
   await stream.opened;
@@ -68,9 +71,17 @@ describe("EventStream", () => {
 
     test("connect() resolves once the socket opens", async () => {
 
-      const ws = new FakeWebSocket();
+      const ws = new FakeWebSocket({ autoOpen: false });
+      const pending = EventStream.connect({ clock: fakeClock(), host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: (): FakeWebSocket => ws });
+      const settled = settlement(pending);
 
-      await using stream = await EventStream.connect({ host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: () => ws });
+      // The socket has not opened, so connect() must still be pending after a macrotask, and it settles once the socket reports open.
+      await delay(0);
+      assert.equal(settled(), false, "connect() must wait for the socket to open");
+
+      ws.emitOpen();
+
+      await using stream = await pending;
 
       assert.ok(stream instanceof EventStream);
     });
@@ -78,12 +89,28 @@ describe("EventStream", () => {
     test("opened rejects with a ProtectNetworkError when the socket closes before opening", async () => {
 
       const ws = new FakeWebSocket({ autoOpen: false });
-      const stream = new EventStream({ host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: (): FakeWebSocket => ws });
+      const errors = collect(stream, "error");
 
       ws.emitClose(1006, "handshake failed");
 
+      // A close before the socket opened settles the handshake as the failure and never starts a recovery, so nothing reaches the error rail.
       await assert.rejects(stream.opened, ProtectNetworkError);
+      assert.equal(errors.length, 0, "a pre-open close surfaces only through opened");
       await stream.close();
+    });
+
+    test("a pre-open close leaves no unhandled rejection for a consumer that never awaits opened", async () => {
+
+      // A consumer that only subscribes to the rails never awaits opened, so the handshake's rejection must already be handled when the socket closes before opening.
+      await assertNoUnhandledRejections(async () => {
+
+        const ws = new FakeWebSocket({ autoOpen: false });
+        const stream = new EventStream({ clock: fakeClock(), host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: (): FakeWebSocket => ws });
+
+        ws.emitClose(1006, "handshake failed");
+        await stream.close();
+      });
     });
 
     test("an already-aborted caller signal tears the stream down before it opens", async () => {
@@ -93,7 +120,7 @@ describe("EventStream", () => {
 
       controller.abort();
 
-      const stream = new EventStream({ host: HOST, lastUpdateId: "u0", log: silentLog(), signal: controller.signal, webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, lastUpdateId: "u0", log: silentLog(), signal: controller.signal, webSocket: (): FakeWebSocket => ws });
 
       await assert.rejects(stream.opened, ProtectAbortedError);
       assert.equal(ws.closeRequested, true);
@@ -103,7 +130,7 @@ describe("EventStream", () => {
 
       const ws = new FakeWebSocket({ autoOpen: false });
       const controller = new AbortController();
-      const stream = new EventStream({ host: HOST, lastUpdateId: "u0", log: silentLog(), signal: controller.signal, webSocket: () => ws });
+      const stream = new EventStream({ host: HOST, lastUpdateId: "u0", log: silentLog(), signal: controller.signal, webSocket: (): FakeWebSocket => ws });
 
       controller.abort();
 
@@ -182,7 +209,7 @@ describe("EventStream", () => {
       assert.equal(raw.length, 2);
       assert.equal(first(raw)[0].header.modelKey, "camera");
       assert.equal(raw[1]?.[0].header.modelKey, "garage");
-      assert.deepEqual(raw[1]?.[0].payload, { id: "g1" });
+      assert.deepEqual(raw[1][0].payload, { id: "g1" });
 
       await stream.close();
     });
@@ -233,11 +260,12 @@ describe("EventStream", () => {
 
       ws.emitMessage(encode({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1" }));
       await expectAt(() => collected.length === 1);
+      assert.equal(first(collected).kind, "deviceAdded");
 
       controller.abort();
 
-      // The raw stream rail rejects on abort (node:events' contract) - unlike the packets() sugar, which returns cleanly. Either way nothing more is delivered.
-      await assert.rejects(task);
+      // The raw stream rail rejects on abort with node:events' AbortError - unlike the packets() sugar, which returns cleanly. Either way nothing more is delivered.
+      await assert.rejects(task, { name: "AbortError" });
       assert.equal(collected.length, 1);
 
       await stream.close();
@@ -429,8 +457,10 @@ describe("EventStream", () => {
 
       ws.emitError(new Error("socket reset"));
 
+      // A socket error is a close forced from outside, so the stream closes with the abnormal-closure code.
       assert.ok(errors[0]?.[0] instanceof ProtectNetworkError);
       assert.equal(closed.length, 1);
+      assert.equal(first(closed)[0].code, 1006);
       assert.equal(ws.closeRequested, true);
 
       await stream.close();
@@ -454,9 +484,11 @@ describe("EventStream", () => {
 
       const [stallError] = first(errors);
 
+      // A stall is a close forced by the channel going silent, so the stream closes with the abnormal-closure code.
       assert.ok(stallError instanceof ProtectStallError);
       assert.equal(stallError.silentForMs, PROTECT_EVENTS_WATCHDOG_TIMEOUT);
       assert.equal(closed.length, 1);
+      assert.equal(first(closed)[0].code, 1006);
       assert.equal(ws.closeRequested, true);
     });
 
@@ -496,6 +528,18 @@ describe("EventStream", () => {
       assert.equal(packets.length, 0);
     });
 
+    test("close() swallows a socket close() fault and still tears down cleanly", async () => {
+
+      const { stream, ws } = await openStream({ webSocket: (): FakeWebSocket => new FakeWebSocket({ autoOpen: false, closeFault: true }) });
+      const closed = collect(stream, "closed");
+
+      // A faulting socket close() must not escape close(): #shutdown swallows the fault and #onClose releases everything regardless,
+      // so the close was requested and closed is announced once.
+      await assert.doesNotReject(stream.close());
+      assert.equal(ws.closeRequested, true);
+      assert.equal(closed.length, 1);
+    });
+
     test("a natural socket close emits closed, publishes the diagnostic, and settles disposal", async () => {
 
       const { stream, ws } = await openStream();
@@ -518,13 +562,18 @@ describe("EventStream", () => {
       const { stream, ws } = await openStream();
       const errors = collect(stream, "error");
       const closed = collect(stream, "closed");
+      const order: string[] = [];
+
+      stream.on("error", () => void order.push("error"));
+      stream.on("closed", () => void order.push("closed"));
 
       // The peer drops a live socket without our asking - exactly how a controller reboot arrives (a close event, no preceding socket error). This must reach the error
-      // rail so the ConnectionMonitor's recovery loop triggers on an unsolicited close, exactly as it does on a socket error.
+      // rail so the ConnectionMonitor's recovery loop triggers on an unsolicited close, exactly as it does on a socket error, and the error comes before closed.
       ws.emitClose(1006, "");
 
       assert.ok(first(errors)[0] instanceof ProtectNetworkError, "an unsolicited close must surface on the error rail so recovery triggers");
       assert.equal(closed.length, 1);
+      assert.deepEqual(order, [ "error", "closed" ], "the recoverable error precedes the closed emission");
 
       await stream[Symbol.asyncDispose]();
     });
@@ -535,11 +584,12 @@ describe("EventStream", () => {
       const errors = collect(stream, "error");
       const closed = collect(stream, "closed");
 
-      // A self-initiated close is a clean lifecycle end, not a fault - it must not trip recovery.
+      // A self-initiated close is a clean lifecycle end, not a fault - it must not trip recovery, and it closes with the normal-closure code.
       await stream.close();
 
       assert.equal(errors.length, 0, "a self-initiated close is not a fault");
       assert.equal(closed.length, 1);
+      assert.equal(first(closed)[0].code, 1000);
     });
 
     test("the connection lifecycle logs (connect and close) are debug, not info", async () => {
@@ -566,6 +616,20 @@ describe("EventStream", () => {
 
       clock.advance(1234);
       ws.emitMessage(encode({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1" }));
+
+      assert.equal(stream.lastMessageAt, 1234);
+
+      await stream.close();
+    });
+
+    test("lastMessageAt advances on a frame the stream skips as unsupported", async () => {
+
+      const clock = fakeClock();
+      const { stream, ws } = await openStream({ clock });
+
+      // Any frame from the controller proves the channel is alive, decodable or not, so the liveness stamp lands before the frame's type is read.
+      clock.advance(1234);
+      ws.emitMessage("a string frame the binary protocol never sends");
 
       assert.equal(stream.lastMessageAt, 1234);
 

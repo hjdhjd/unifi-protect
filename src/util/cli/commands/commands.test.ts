@@ -121,6 +121,19 @@ describe("info", () => {
     assert.ok(parsed.nvr !== null);
   });
 
+  test("--raw ignores a category positional and dumps every collection", async () => {
+
+    const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Cam" }], lights: [{ id: "l1", name: "Lamp" }] });
+    const { ctx, stdout } = makeCommandContext({ args: [ "lights", "--raw" ], client });
+
+    await info.run(ctx);
+
+    const parsed = JSON.parse(stdout()) as { cameras: { id: string }[]; lights: { id: string }[] };
+
+    assert.equal(parsed.cameras[0]?.id, "c1", "the cameras collection survives a lights category");
+    assert.equal(parsed.lights[0]?.id, "l1");
+  });
+
   test("--bootstrap dumps the raw controller JSON from a fresh fetch", async () => {
 
     const { client } = makeFakeClient();
@@ -131,6 +144,21 @@ describe("info", () => {
     const parsed = JSON.parse(stdout()) as { raw: boolean };
 
     assert.equal(parsed.raw, true);
+  });
+
+  test("--bootstrap takes precedence over --json and --raw", async () => {
+
+    // The fake's fresh-fetch document carries raw: true, and neither the curated summary nor the state dump carries a raw member, so the member names the view that ran.
+    for(const flag of [ "--json", "--raw" ]) {
+
+      const { client } = makeFakeClient();
+      const { ctx, stdout } = makeCommandContext({ args: [ "--bootstrap", flag ], client });
+
+      // eslint-disable-next-line no-await-in-loop
+      await info.run(ctx);
+
+      assert.equal((JSON.parse(stdout()) as { raw?: boolean }).raw, true, "--bootstrap takes precedence over " + flag);
+    }
   });
 
   test("a category positional narrows the inventory to that class", async () => {
@@ -269,7 +297,8 @@ describe("watch raw", () => {
 
     const out = stdout();
 
-    assert.match(out, /camera/);
+    // The context's palette is the identity, so the line is plain text and its columns read in the order they render, two spaces apart.
+    assert.match(out, /camera {2}update {2}Front Door {2}fields=name/, "the modelKey, the action, the resolved device and the payload summary render in turn");
     assert.match(out, /Front Door/, "the header id resolves to the device name");
     assert.match(out, /fields=name/, "the payload summary lists the changed fields");
     assert.match(out, /garage/, "the unmodeled frame is shown, unlike on watch events");
@@ -485,8 +514,10 @@ describe("watch events", () => {
     const { client } = makeFakeClient({ events: [motion] });
     const { ctx } = makeCommandContext({ args: [ "--duration", "30" ], client });
 
-    // A bare number has no unit; the command parses --duration before opening a client, so this fails fast as a CliError.
-    await assert.rejects(watchEvents.run(ctx), CliError);
+    ctx.openClient = (): Promise<ProtectClient> => Promise.reject(new ProtectAuthError("not authenticated", { statusCode: 401 }));
+
+    // A bare number has no unit. The opener rejects, so the duration's usage error surfacing in its place shows --duration is parsed before a client is opened.
+    await assert.rejects(watchEvents.run(ctx), { constructor: CliError, message: /--duration value must be/ });
   });
 
   test("renders a tamper event with its camera name and occurrence id", async () => {
@@ -523,15 +554,19 @@ describe("watch events", () => {
 
   test("--device filters a tamper event by its attributed camera", async () => {
 
-    const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }], events: [ tamper, patched ] });
+    const backYard: TypedEvent = { at: 0, cameraId: "c2", eventId: "e4", kind: "tamperDetected" };
+    const { client } = makeFakeClient({ cameras: [ { id: "c1", name: "Front Door" }, { id: "c2", name: "Back Yard" } ], events: [ tamper, backYard, patched ] });
     const { ctx, stdout } = makeCommandContext({ args: [ "--device", "Front Door" ], client });
 
     await watchEvents.run(ctx);
 
     const out = stdout();
 
-    // A tamper event is camera-attributed, so it must match a camera --device filter by name or id rather than being silently dropped.
-    assert.match(out, /tamperDetected/);
+    // A tamper event is camera-attributed, so it must match a camera --device filter by name or id rather than being silently dropped...and the same event on the
+    // other camera is the one the filter leaves out.
+    assert.match(out, /tamperDetected {2}Front Door {2}id=e2/);
+    assert.doesNotMatch(out, /Back Yard/, "the other camera's tamper event is filtered out");
+    assert.doesNotMatch(out, /id=e4/);
   });
 
   test("--kind filters the stream", async () => {
@@ -628,8 +663,7 @@ describe("camera snapshot", () => {
 
       const bytes = await readFile(out);
 
-      assert.equal(bytes[0], 0xFF);
-      assert.equal(bytes[1], 0xD8);
+      assert.deepEqual([...bytes], [ 0xFF, 0xD8, 0x42, 0xFF, 0xD9 ]);
       assert.match(stdout(), /Wrote Front Door snapshot/);
     } finally {
 
@@ -723,7 +757,7 @@ describe("camera talkback", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(cameraTalkback.run(ctx), CliError);
+    await assert.rejects(cameraTalkback.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("a send failure propagates as an error, but an aborted send ends quietly", async () => {
@@ -946,6 +980,17 @@ describe("watch livestream", () => {
     await assert.rejects(watchLivestream.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
+  test("--lens opens the stream on that lens rather than on a channel", async () => {
+
+    // --json with no scripted segments keeps the run off the real stdout and away from the subscription stats the basic fake camera leaves out.
+    const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
+    const { ctx } = makeCommandContext({ args: [ "c1", "--lens", "1", "--json" ], client });
+
+    await watchLivestream.run(ctx);
+
+    assert.deepEqual(calls.livestreams.map((call) => [ call.camera, call.opts.source ]), [[ "c1", { lens: 1, type: "lens" } ]]);
+  });
+
   test("pipes the concatenated segment bytes to stdout, keeping the summary off it", async () => {
 
     const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Cam", segments: [
@@ -1056,8 +1101,8 @@ describe("update", () => {
     const bad = makeCommandContext({ args: [ "Porch", "--patch", "not json" ], client });
     const array = makeCommandContext({ args: [ "Porch", "--patch", "[1,2]" ], client });
 
-    await assert.rejects(update.run(bad.ctx), CliError);
-    await assert.rejects(update.run(array.ctx), CliError);
+    await assert.rejects(update.run(bad.ctx), { constructor: CliError, exitCode: 2, message: /is not valid JSON/ });
+    await assert.rejects(update.run(array.ctx), { constructor: CliError, exitCode: 2, message: /must be a JSON object/ });
   });
 
   test("a missing device target is a usage error", async () => {
@@ -1090,6 +1135,17 @@ describe("reboot", () => {
     assert.match(stdout(), /Rebooting the UniFi Protect controller/);
   });
 
+  test("controller is a second spelling of nvr and reboots the controller", async () => {
+
+    const { calls, client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: ["controller"], client });
+
+    await reboot.run(ctx);
+
+    assert.deepEqual(calls.reboots, ["nvr"]);
+    assert.match(stdout(), /Rebooting the UniFi Protect controller/);
+  });
+
   test("a device target reboots that device", async () => {
 
     const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
@@ -1105,7 +1161,7 @@ describe("reboot", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [], client });
 
-    await assert.rejects(reboot.run(ctx), CliError);
+    await assert.rejects(reboot.run(ctx), { constructor: CliError, exitCode: 2 });
   });
 
   test("a category reboots every online device of that class and skips offline ones", async () => {
@@ -1200,7 +1256,7 @@ describe("command help paths", () => {
 
   // Every command short-circuits on --help before connecting (or, for the file-reading commands, before reading a byte), so these need no fake behavior - just the usage
   // banner. This table is the home for --help-path coverage: each command and device group gets a row rather than a duplicate inline per-command test. The one
-  // exception is the top-level `watch` group, whose usage is asserted separately below via its no-subcommand path (which also verifies the subcommand listing).
+  // exception is the top-level `watch` group, whose usage is read by its no-subcommand row in the subcommand-groups table, which also reads the subcommand listing.
   const cases: [ string, CommandSpec, RegExp ][] = [
 
     [ "camera (group)", camera, /Usage: ufp camera <subcommand>/ ],
@@ -1238,76 +1294,48 @@ describe("command help paths", () => {
       assert.match(stdout(), pattern);
     });
   }
-
-  test("watch (group) with no subcommand prints the group usage", async () => {
-
-    const { client } = makeFakeClient();
-    const { ctx, stdout } = makeCommandContext({ args: [], client });
-
-    await watch.run(ctx);
-
-    const out = stdout();
-
-    assert.match(out, /Usage: ufp watch <subcommand>/);
-    assert.match(out, /protocol-capture surface/, "each subcommand is listed beside the summary it declares");
-  });
 });
 
-describe("watch group", () => {
+describe("subcommand groups", () => {
 
-  test("an unknown subcommand is a usage error", async () => {
+  // Each group's usage and unknown-subcommand rows read from one table. The usage patterns are the group's banner and, where the group prints one, the line only it
+  // carries: camera's cross-reference to the livestream operation under watch, and the summary watch lists for its raw subcommand, which is this suite's one read of
+  // that registration. The unknown pattern is the group's whole subcommand list, so the diagnostic is read naming every subcommand the group dispatches.
+  const groups: [ string, CommandSpec, RegExp[], RegExp ][] = [
 
-    const { client } = makeFakeClient();
-    const { ctx } = makeCommandContext({ args: ["bogus"], client });
+    [ "camera", camera, [ /Usage: ufp camera <subcommand>/, /See also: ufp watch livestream <camera>/ ], /Expected one of: flashlight, snapshot, talkback, unlock\./ ],
+    [ "chime", chime, [/Usage: ufp chime <subcommand>/], /Expected one of: play-buzzer, play-speaker\./ ],
+    [ "relay", relay, [/Usage: ufp relay <subcommand>/], /Expected one of: toggle\./ ],
+    [ "watch", watch, [ /Usage: ufp watch <subcommand>/, /protocol-capture surface/ ], /Expected one of: events, livestream, raw, state\./ ]
+  ];
 
-    await assert.rejects(watch.run(ctx), { constructor: CliError, exitCode: 2 });
-  });
+  for(const [ name, spec, usage, unknown ] of groups) {
 
-  test("dispatches a known subcommand, forwarding the remaining args to it", async () => {
+    test(name + " with no subcommand prints the group usage", async () => {
 
-    const raw: RawPacket = { header: { action: "update", id: "c1", modelKey: "camera", newUpdateId: "u" }, payload: { name: "x" } };
-    const { client } = makeFakeClient({ rawPackets: [raw] });
-    const { ctx, stdout } = makeCommandContext({ args: ["raw"], client });
+      const { client } = makeFakeClient();
+      const { ctx, stdout } = makeCommandContext({ args: [], client });
 
-    await watch.run(ctx);
+      await spec.run(ctx);
 
-    assert.match(stdout(), /camera/, "the forwarded watch raw subcommand rendered the frame");
-  });
-});
+      const out = stdout();
 
-describe("camera group", () => {
+      for(const pattern of usage) {
 
-  test("no subcommand prints the group usage and exits zero", async () => {
-
-    const { client } = makeFakeClient();
-    const { ctx, stdout } = makeCommandContext({ args: [], client });
-
-    await camera.run(ctx);
-
-    const out = stdout();
-
-    assert.match(out, /Usage: ufp camera <subcommand>/);
-    assert.match(out, /See also: ufp watch livestream <camera>/, "the group cross-references the livestream operation under watch");
-  });
-
-  test("an unknown subcommand is a usage error listing the valid subcommands", async () => {
-
-    const { client } = makeFakeClient();
-    const { ctx } = makeCommandContext({ args: ["bogus"], client });
-
-    // The valid list is derived from the dispatch table, so the diagnostic names the real subcommands rather than a hand-maintained copy that could drift.
-    await assert.rejects(camera.run(ctx), (error: unknown): boolean => {
-
-      assert.ok(error instanceof CliError, "the failure is a CLI error");
-      assert.equal(error.exitCode, 2);
-      assert.match(error.message, /snapshot/);
-      assert.match(error.message, /unlock/);
-
-      return true;
+        assert.match(out, pattern);
+      }
     });
-  });
 
-  test("dispatches a known subcommand, forwarding the remaining args to it", async () => {
+    test(name + " rejects an unknown subcommand as a usage error naming every subcommand", async () => {
+
+      const { client } = makeFakeClient();
+      const { ctx } = makeCommandContext({ args: ["bogus"], client });
+
+      await assert.rejects(spec.run(ctx), { constructor: CliError, exitCode: 2, message: unknown });
+    });
+  }
+
+  test("camera dispatches a known subcommand, forwarding the remaining args to it", async () => {
 
     const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
     const { ctx } = makeCommandContext({ args: [ "unlock", "Front Door" ], client });
@@ -1316,29 +1344,18 @@ describe("camera group", () => {
 
     assert.deepEqual(calls.unlocks, ["c1"], "the forwarded camera unlock subcommand invoked the method");
   });
-});
 
-describe("relay group", () => {
+  test("chime dispatches a known subcommand, forwarding the remaining args to it", async () => {
 
-  test("no subcommand prints the group usage and exits zero", async () => {
+    const { calls, client } = makeFakeClient({ chimes: [{ id: "ch1", name: "Hallway" }] });
+    const { ctx } = makeCommandContext({ args: [ "play-buzzer", "Hallway" ], client });
 
-    const { client } = makeFakeClient();
-    const { ctx, stdout } = makeCommandContext({ args: [], client });
+    await chime.run(ctx);
 
-    await relay.run(ctx);
-
-    assert.match(stdout(), /Usage: ufp relay <subcommand>/);
+    assert.deepEqual(calls.playBuzzers, ["ch1"], "the forwarded chime play-buzzer subcommand invoked the method");
   });
 
-  test("an unknown subcommand is a usage error listing the valid subcommands", async () => {
-
-    const { client } = makeFakeClient();
-    const { ctx } = makeCommandContext({ args: ["bogus"], client });
-
-    await assert.rejects(relay.run(ctx), { constructor: CliError, exitCode: 2, message: /toggle/ });
-  });
-
-  test("dispatches a known subcommand, forwarding the remaining args to it", async () => {
+  test("relay dispatches a known subcommand, forwarding the remaining args to it", async () => {
 
     const { calls, client } = makeFakeClient({ relays: [{ id: "r1", name: "Garage", outputs: [{ id: 3, state: "off" }] }] });
     const { ctx } = makeCommandContext({ args: [ "toggle", "Garage" ], client });
@@ -1347,44 +1364,18 @@ describe("relay group", () => {
 
     assert.deepEqual(calls.toggles, [{ outputId: 3, relay: "r1" }], "the forwarded relay toggle subcommand invoked the method");
   });
-});
 
-describe("chime group", () => {
+  test("watch dispatches a known subcommand, forwarding the remaining args to it", async () => {
 
-  test("no subcommand prints the group usage and exits zero", async () => {
+    const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Cam" }], observations: 1 });
+    const { ctx, stdout } = makeCommandContext({ args: [ "state", "cameras", "--json" ], client });
 
-    const { client } = makeFakeClient();
-    const { ctx, stdout } = makeCommandContext({ args: [], client });
+    await watch.run(ctx);
 
-    await chime.run(ctx);
-
-    assert.match(stdout(), /Usage: ufp chime <subcommand>/);
-  });
-
-  test("an unknown subcommand is a usage error listing the valid subcommands", async () => {
-
-    const { client } = makeFakeClient();
-    const { ctx } = makeCommandContext({ args: ["bogus"], client });
-
-    await assert.rejects(chime.run(ctx), (error: unknown): boolean => {
-
-      assert.ok(error instanceof CliError, "the failure is a CLI error");
-      assert.equal(error.exitCode, 2);
-      assert.match(error.message, /play-buzzer/);
-      assert.match(error.message, /play-speaker/);
-
-      return true;
-    });
-  });
-
-  test("dispatches a known subcommand, forwarding the remaining args to it", async () => {
-
-    const { calls, client } = makeFakeClient({ chimes: [{ id: "ch1", name: "Hallway" }] });
-    const { ctx } = makeCommandContext({ args: [ "play-buzzer", "Hallway" ], client });
-
-    await chime.run(ctx);
-
-    assert.deepEqual(calls.playBuzzers, ["ch1"], "the forwarded chime play-buzzer subcommand invoked the method");
+    // The watch state subcommand takes its target from its first positional, so the one change it prints shows it received exactly the arguments after its own
+    // name: with none forwarded it has no target, and with its own name forwarded too "state" becomes the target.
+    assert.deepEqual(JSON.parse(stdout()), { count: 1, devices: [{ id: "c1", name: "Cam", state: "CONNECTED" }], selector: "cameras" },
+      "the forwarded watch state subcommand observed the cameras category");
   });
 });
 
@@ -1472,6 +1463,17 @@ describe("relay toggle", () => {
     assert.match(stdout(), /Toggled output 2 on Garage\./);
   });
 
+  test("an explicit output id of 0 toggles output 0", async () => {
+
+    // An output id may legitimately be 0, so the command has to accept it as a target rather than refuse it as a non-positive value.
+    const { calls, client } = makeFakeClient({ relays: [{ id: "r1", name: "Garage", outputs: [ { id: 0, state: "off" }, { id: 2, state: "on" } ] }] });
+    const { ctx } = makeCommandContext({ args: [ "Garage", "0" ], client });
+
+    await relayToggle.run(ctx);
+
+    assert.deepEqual(calls.toggles, [{ outputId: 0, relay: "r1" }]);
+  });
+
   test("with a single output and no id toggles that output's id (not its index)", async () => {
 
     // The sole output carries id 7; the command must toggle 7, not the array position 0 - the id-versus-index distinction the controller cares about.
@@ -1529,9 +1531,9 @@ describe("chime play-speaker", () => {
 
     assert.equal(calls.playSpeakers.length, 1);
     assert.equal(calls.playSpeakers[0]?.chime, "ch1");
-    assert.equal(calls.playSpeakers[0]?.opts.ringtoneId, "abc");
-    assert.equal(calls.playSpeakers[0]?.opts.volume, 80);
-    assert.equal(calls.playSpeakers[0]?.opts.repeatTimes, 2);
+    assert.equal(calls.playSpeakers[0].opts.ringtoneId, "abc");
+    assert.equal(calls.playSpeakers[0].opts.volume, 80);
+    assert.equal(calls.playSpeakers[0].opts.repeatTimes, 2);
     assert.deepEqual(calls.playBuzzers, []);
     assert.deepEqual(calls.unlocks, []);
     assert.match(stdout(), /Played Hallway's speaker\./);
@@ -1544,9 +1546,8 @@ describe("chime play-speaker", () => {
 
     await chimePlaySpeaker.run(ctx);
 
-    assert.equal(calls.playSpeakers[0]?.opts.ringtoneId, undefined);
-    assert.equal(calls.playSpeakers[0]?.opts.volume, undefined);
-    assert.equal(calls.playSpeakers[0]?.opts.repeatTimes, undefined);
+    // The options carry the signal alone: an absent flag leaves its key out rather than sending it as undefined, which is what leaves the controller its default.
+    assert.deepEqual(Object.keys(calls.playSpeakers[0]?.opts ?? {}), ["signal"]);
   });
 
   test("a missing chime target is a usage error", async () => {
@@ -1663,7 +1664,7 @@ describe("doctor", () => {
       assert.equal(parsed.ok, false);
       assert.equal(parsed.results.length, 1, "the early return records only the connect check");
       assert.equal(parsed.results[0]?.name, "Connect and authenticate");
-      assert.equal(parsed.results[0]?.status, "fail");
+      assert.equal(parsed.results[0].status, "fail");
       assert.equal(process.exitCode, 1);
     } finally {
 
@@ -1717,7 +1718,10 @@ describe("diagnostics", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [ "--channel", "zzznope" ], client });
 
-    await assert.rejects(diagnostics.run(ctx), { constructor: CliError, exitCode: 2 });
+    ctx.openClient = (): Promise<ProtectClient> => Promise.reject(new ProtectAuthError("not authenticated", { statusCode: 401 }));
+
+    // The opener rejects, so the channel's usage error surfacing in its place shows the pattern is checked before a client is opened.
+    await assert.rejects(diagnostics.run(ctx), { constructor: CliError, exitCode: 2, message: /No diagnostics channel matches/ });
   });
 
   test("--count resolves once the message budget is met, having rendered the diagnostic", async () => {

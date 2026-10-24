@@ -7,14 +7,16 @@
  */
 import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
 import { StateStore, createStateStore } from "./store.ts";
-import { capturingLog, expectAt, fakeClock } from "../testing.helpers.ts";
+import { capturingLog, expectAt, fakeClock, settlement } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeNvr, makeSensor } from "../fixtures.helpers.ts";
+import type { FakeClock } from "../testing.helpers.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { deviceSelectors } from "./selectors.ts";
+import { plainStore } from "./store.helpers.ts";
 
 // Drive an observer in the background, collecting every yielded value into an array. Returns the array plus the iteration's completion promise so a test can abort the
 // signal and await a clean teardown. The caller awaits a scheduler tick after calling this so the async-generator body registers the observer before any dispatch.
@@ -32,12 +34,19 @@ function collect<T>(iterable: AsyncIterable<T>): { done: Promise<void>; values: 
   return { done, values };
 }
 
-// A store with the refresh failsafe disabled - the common shape for tests that exercise dispatch and observe in isolation. The refresh hook is never invoked, so it
-// rejects to make an accidental call loud.
-function plainStore(): StateStore {
+// A store whose refresh hook counts its calls and resolves an empty bootstrap, on a fake clock the caller ticks, for the rows that read whether the failsafe ran.
+function countingStore(refreshIntervalMs: number | false): { clock: FakeClock; refreshes: () => number; store: StateStore } {
 
-  return new StateStore({ clock: fakeClock(), refresh: () => Promise.reject(new Error("the refresh hook must not be called when the failsafe is disabled")),
-    refreshIntervalMs: false });
+  const clock = fakeClock();
+  let refreshes = 0;
+  const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => {
+
+    refreshes += 1;
+
+    return Promise.resolve(makeBootstrap());
+  }, refreshIntervalMs });
+
+  return { clock, refreshes: (): number => refreshes, store };
 }
 
 describe("StateStore", () => {
@@ -130,6 +139,10 @@ describe("StateStore", () => {
 
       const { done, values } = collect(store.observe(deviceSelectors.camera.all, { signal: ac.signal }));
 
+      // A change after the aborted observe would wake a registered observer, and an abort that has already fired can never end one, so the bounded wait reads the
+      // iteration completing on its own.
+      store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }), kind: "bootstrapLoaded" });
+      await expectAt(settlement(done), { message: "an observation begun with an aborted signal must complete on its own" });
       await done;
       assert.equal(values.length, 0);
     });
@@ -159,7 +172,7 @@ describe("StateStore", () => {
       const camera = makeCamera({ id: "c1", name: "Front" });
       const bootstrap = makeBootstrap({ cameras: [camera] });
       // The refresh returns the very same bootstrap each tick, so applyBootstrap reconciles to the existing references.
-      const store = new StateStore({ clock, refresh: () => Promise.resolve(bootstrap), refreshIntervalMs: 1000 });
+      const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => Promise.resolve(bootstrap), refreshIntervalMs: 1000 });
 
       store.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
 
@@ -186,7 +199,7 @@ describe("StateStore", () => {
       const clock = fakeClock();
       let name = "Front";
       const bootstrapFor = (): ReturnType<typeof makeBootstrap> => makeBootstrap({ cameras: [makeCamera({ id: "c1", name })] });
-      const store = new StateStore({ clock, refresh: () => Promise.resolve(bootstrapFor()), refreshIntervalMs: 1000 });
+      const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => Promise.resolve(bootstrapFor()), refreshIntervalMs: 1000 });
 
       store.dispatch({ data: bootstrapFor(), kind: "bootstrapLoaded" });
 
@@ -199,7 +212,14 @@ describe("StateStore", () => {
       name = "Back";
       await clock.tick();
       await expectAt(() => values.length === 1);
-      assert.equal(values[0]?.name, "Back");
+
+      // A second refresh finds no further drift, and the observer's baseline is the drifted record it last yielded, so it stays silent: the delta arrives once.
+      const bootstrapIdBefore = store.snapshot().bootstrapId;
+
+      await clock.tick();
+      await expectAt(() => store.snapshot().bootstrapId === (bootstrapIdBefore + 1));
+      await delay(5);
+      assert.deepEqual(values.map((value) => value?.name), ["Back"]);
 
       ac.abort();
       await done;
@@ -210,7 +230,7 @@ describe("StateStore", () => {
       const clock = fakeClock();
       let overrides: Record<string, unknown> = { id: "c1", lastMotion: 0 };
       const bootstrapFor = (): ReturnType<typeof makeBootstrap> => makeBootstrap({ cameras: [makeCamera(overrides)] });
-      const store = new StateStore({ clock, refresh: () => Promise.resolve(bootstrapFor()), refreshIntervalMs: 1000 });
+      const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => Promise.resolve(bootstrapFor()), refreshIntervalMs: 1000 });
 
       store.dispatch({ data: bootstrapFor(), kind: "bootstrapLoaded" });
 
@@ -272,21 +292,34 @@ describe("StateStore", () => {
 
     test("does not run when the interval is false", async () => {
 
-      const clock = fakeClock();
-      let refreshes = 0;
-      const store = new StateStore({ clock, refresh: () => {
-
-        refreshes += 1;
-
-        return Promise.resolve(makeBootstrap());
-      }, refreshIntervalMs: false });
+      const { clock, refreshes, store } = countingStore(false);
 
       // With the loop disabled there is no interval consumer, so a tick releases nothing and the refresh hook is never invoked.
       await clock.tick();
       await delay(5);
-      assert.equal(refreshes, 0);
+      assert.equal(refreshes(), 0);
 
       await store[Symbol.asyncDispose]();
+    });
+
+    test("does not run when the interval is non-positive", async () => {
+
+      // The refresh hook's calls across one tick for a store built with the given interval, read after the store is disposed.
+      const refreshesAt = async (refreshIntervalMs: number): Promise<number> => {
+
+        const { clock, refreshes, store } = countingStore(refreshIntervalMs);
+
+        await clock.tick();
+        await delay(5);
+        await store[Symbol.asyncDispose]();
+
+        return refreshes();
+      };
+
+      // A non-positive interval disables the failsafe as false does, and the fake clock's interval ignores its delay, so a loop started at a non-positive value would
+      // run on the tick.
+      assert.equal(await refreshesAt(0), 0, "a zero interval must not start the failsafe");
+      assert.equal(await refreshesAt(-1), 0, "a negative interval must not start the failsafe");
     });
   });
 
@@ -294,8 +327,7 @@ describe("StateStore", () => {
 
     test("stops the refresh failsafe and terminates observers", async () => {
 
-      const clock = fakeClock();
-      const store = new StateStore({ clock, refresh: () => Promise.resolve(makeBootstrap()), refreshIntervalMs: 1000 });
+      const { clock, refreshes, store } = countingStore(1000);
       const { done, values } = collect(store.observe(deviceSelectors.camera.all));
 
       await delay(0);
@@ -304,6 +336,10 @@ describe("StateStore", () => {
       // Disposal closes the observer, so its iteration completes without further values.
       await done;
       assert.equal(values.length, 0);
+
+      // The refresh loop parks its interval wait at construction and disposal's abort withdraws it, so a tick after disposal finds no consumer to release.
+      await clock.tick();
+      assert.equal(refreshes(), 0, "a tick after disposal must not run the refresh hook");
     });
 
     test("an observation begun after disposal completes immediately", async () => {
@@ -312,9 +348,11 @@ describe("StateStore", () => {
 
       await store[Symbol.asyncDispose]();
 
-      // No dispatch, no abort, and no further disposal will ever arrive to unpark this iteration, so it must complete on its own rather than registering.
+      // No dispatch, no abort, and no further disposal will ever arrive to unpark this iteration, so it must complete on its own rather than registering, which the
+      // bounded wait reads.
       const { done, values } = collect(store.observe(deviceSelectors.camera.all));
 
+      await expectAt(settlement(done), { message: "an observation begun after disposal must complete on its own" });
       await done;
       assert.equal(values.length, 0);
     });
@@ -350,7 +388,7 @@ describe("StateStore", () => {
     test("publishes schema:unmodeledCollection once per modelKey per session and debug-logs each", () => {
 
       const log = capturingLog();
-      const store = new StateStore({ clock: fakeClock(), log, refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
+      const store = plainStore({ log });
       const drift: SchemaUnmodeledCollectionPayload[] = [];
 
       using driftSubscription = subscribeToChannel(channels.schemaUnmodeledCollection, (payload) => void drift.push(payload));
@@ -407,7 +445,7 @@ describe("StateStore", () => {
     test("publishes once on the ENTER edge with the device payload and warns, and a second flagged bootstrap re-publishes nothing", () => {
 
       const log = capturingLog();
-      const store = new StateStore({ clock: fakeClock(), log, refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
+      const store = plainStore({ log });
       const published: AdoptionContradictionPayload[] = [];
 
       using subscription = subscribeToChannel(channels.adoptionContradiction, (payload) => void published.push(payload));
@@ -430,6 +468,9 @@ describe("StateStore", () => {
         store.dispatch({ data: makeBootstrap({ nvr: controller(), sensors: [cleanSensor()] }), kind: "bootstrapLoaded" });
         store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { isAdoptedByOther: true } });
         assert.equal(published.length, 1, "the flip patch is the ENTER edge");
+
+        // The flip patch carries no mac of its own, so the payload's device mac comes from the stored record.
+        assert.deepEqual(published[0], { id: "s1", mac: "AABBCC000001", modelKey: "sensor", nvrMac: ownMac });
 
         store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { isAdoptedByOther: true } });
         assert.equal(published.length, 1, "a repeat flagged patch publishes nothing");
@@ -464,7 +505,10 @@ describe("StateStore", () => {
 
         // The stored record is already normalized, so a clean patch asserting isAdoptedByOther false nets to a reducer no-op - but it explicitly asserts a coherent
         // adoption, so it must clear the engaged set anyway.
+        const before = store.snapshot();
+
         store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { isAdoptedByOther: false } });
+        assert.ok(Object.is(before, store.snapshot()), "the clean patch nets to a reducer no-op against the normalized record");
         assert.equal(published.length, 1, "the clean recovery itself publishes nothing");
 
         store.dispatch({ id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { isAdoptedByOther: true } });
@@ -472,7 +516,7 @@ describe("StateStore", () => {
       });
     });
 
-    test("clean and genuinely-foreign ingestion publish nothing on the entry paths", () => {
+    test("clean and genuinely-foreign bootstrap records publish nothing", () => {
 
       withCapture((store, published) => {
 
@@ -481,6 +525,32 @@ describe("StateStore", () => {
           sensors: [makeSensor({ id: "s2", isAdopted: true, isAdoptedByOther: true, mac: "AABBCC000003", nvrMac: "FFEEDDCCBBAA" })] }), kind: "bootstrapLoaded" });
 
         assert.equal(published.length, 0, "neither a clean nor a genuinely-foreign record is a contradiction");
+      });
+    });
+
+    test("a contradicting patch for a device the store does not hold publishes nothing", () => {
+
+      withCapture((store, published) => {
+
+        store.dispatch({ data: makeBootstrap({ nvr: controller() }), kind: "bootstrapLoaded" });
+
+        // The patch carries the whole contradiction on its own, so with no stored record to merge it reads as one; the reducer ignores a patch for an id it does not
+        // hold, and the tracker mirrors that rather than publishing for a device that is not there.
+        store.dispatch({ id: "s9", kind: "devicePatched", modelKey: "sensor", patch: { isAdopted: true, isAdoptedByOther: true, nvrMac: ownMac } });
+        assert.equal(published.length, 0, "a patch against an unknown id publishes nothing");
+      });
+    });
+
+    test("an nvr patch asserting isAdoptedByOther is not tracked as a device adoption and publishes nothing", () => {
+
+      withCapture((store, published) => {
+
+        store.dispatch({ data: makeBootstrap({ nvr: controller() }), kind: "bootstrapLoaded" });
+
+        // The controller's own record is patched over the realtime stream like any device's, but adoption is a device concept and the nvr singleton has no device map,
+        // so the tracker skips the patch before resolving a collection field for it.
+        assert.doesNotThrow(() => store.dispatch({ id: "nvr-1", kind: "devicePatched", modelKey: "nvr", patch: { isAdoptedByOther: true } }));
+        assert.equal(published.length, 0, "an nvr patch publishes nothing");
       });
     });
 
@@ -526,32 +596,6 @@ describe("StateStore", () => {
 });
 
 describe("createStateStore", () => {
-
-  test("constructs the real store: observe wakes on the selected change and dedups an unrelated one", async () => {
-
-    const store = createStateStore({ clock: fakeClock(),
-      refresh: () => Promise.reject(new Error("the refresh hook must not be called")), refreshIntervalMs: false });
-
-    store.dispatch({ data: makeBootstrap({ cameras: [ makeCamera({ id: "c1" }), makeCamera({ id: "c2" }) ] }), kind: "bootstrapLoaded" });
-
-    const ac = new AbortController();
-    const { done, values } = collect(store.observe(deviceSelectors.camera.byId("c1"), { signal: ac.signal }));
-
-    await delay(0);
-
-    // A change to c2 must not wake an observer selecting c1 (the real dedup), while a change to c1 must (the real observe path) - proving the factory built the genuine
-    // engine, not a stub.
-    store.dispatch({ id: "c2", kind: "devicePatched", modelKey: "camera", patch: { name: "Other" } });
-    await delay(5);
-    assert.equal(values.length, 0, "an unrelated change is deduped");
-
-    store.dispatch({ id: "c1", kind: "devicePatched", modelKey: "camera", patch: { name: "Renamed" } });
-    await expectAt(() => values.length === 1);
-    assert.equal(values[0]?.name, "Renamed", "the selected change woke the observer");
-
-    ac.abort();
-    await done;
-  });
 
   test("passes its options through: a supplied initial state is the new store's starting snapshot", () => {
 

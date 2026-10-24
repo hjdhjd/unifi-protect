@@ -48,7 +48,7 @@ describe("generate-manifest", () => {
 
       assert.ok(node !== undefined, collection + " has a record tree");
       assert.equal(node.kind, "object", collection + " resolves to an object shape");
-      assert.equal((node.kind === "object") && node.open, true, collection + " is open through its inherited index signature");
+      assert.equal(node.open, true, collection + " is open through its inherited index signature");
     }
   });
 
@@ -59,7 +59,7 @@ describe("generate-manifest", () => {
     const featureFlags = nodeAt(manifest.records["cameras"] ?? { kind: "opaque" }, "featureFlags");
 
     assert.equal(featureFlags?.kind, "object");
-    assert.equal((featureFlags?.kind === "object") && featureFlags.open, false, "a shape with no index signature of its own is closed");
+    assert.equal(featureFlags.open, false, "a shape with no index signature of its own is closed");
   });
 
   test("a keys-are-data member resolves to a dictionary rather than an empty object", () => {
@@ -76,7 +76,7 @@ describe("generate-manifest", () => {
     const aqi = nodeAt(manifest.records["sensors"] ?? { kind: "opaque" }, "airQuality.aqi");
 
     assert.equal(aqi?.kind, "object", "airQuality.aqi resolves through two levels of nesting");
-    assert.deepEqual((aqi?.kind === "object") ? aqi.fields["value"] : undefined, { kind: "primitive", types: [ "null", "number" ] },
+    assert.deepEqual(aqi.fields["value"], { kind: "primitive", types: [ "null", "number" ] },
       "a nullable numeric metric declares both JSON types");
   });
 
@@ -90,7 +90,7 @@ describe("generate-manifest", () => {
 
     for(const member of [ "signalNoiseRatio", "signalQuality", "signalStrength" ]) {
 
-      assert.deepEqual((signalState?.kind === "object") ? signalState.fields[member] : undefined, { kind: "primitive", types: [ "null", "number" ] },
+      assert.deepEqual(signalState.fields[member], { kind: "primitive", types: [ "null", "number" ] },
         member + " declares both JSON types");
     }
   });
@@ -129,7 +129,7 @@ describe("generate-manifest", () => {
     const sirens = manifest.records["sirens"];
 
     assert.equal(sirens?.kind, "object", "the siren record tree is described rather than carried opaque");
-    assert.deepEqual(nodeAt(sirens ?? { kind: "opaque" }, "sirenStatus.isActive"), { kind: "primitive", types: ["boolean"] },
+    assert.deepEqual(nodeAt(sirens, "sirenStatus.isActive"), { kind: "primitive", types: ["boolean"] },
       "the sounder's active flag is a plain boolean rather than a nullable one");
     assert.ok(manifest.modelKeys.known.includes("siren"), "the siren is a recognized wire model key");
   });
@@ -141,7 +141,7 @@ describe("generate-manifest", () => {
     const agreements = manifest.records["agreements"];
 
     assert.equal(agreements?.kind, "object", "the agreements container is described rather than absent");
-    assert.deepEqual(nodeAt(agreements ?? { kind: "opaque" }, "aiReportingAgreement.status"), { kind: "primitive", types: [ "null", "string" ] },
+    assert.deepEqual(nodeAt(agreements, "aiReportingAgreement.status"), { kind: "primitive", types: [ "null", "string" ] },
       "an agreement's acceptance status is null until it is accepted");
   });
 
@@ -172,7 +172,7 @@ describe("generate-manifest", () => {
       const collection = manifest.recordKeys[modelKey];
 
       assert.ok(collection !== undefined, modelKey + " resolves to a record key");
-      assert.ok((collection !== undefined) && (collection in manifest.records), modelKey + " resolves to a record tree that exists");
+      assert.ok(collection in manifest.records, modelKey + " resolves to a record tree that exists");
     }
   });
 
@@ -210,6 +210,30 @@ describe("generate-manifest", () => {
     assert.equal(JSON.stringify(buildSchemaManifest()), JSON.stringify(manifest));
   });
 
+  test("every vocabulary is sorted in locale order with no repeats", () => {
+
+    // The generator sorts each vocabulary with localeCompare, so this reads the same comparator. Code-unit order sorts every uppercase letter before every lowercase one
+    // and localeCompare does not, so code-unit and locale order can part wherever a capital lines up against a lowercase letter. Each value comparing strictly after
+    // the one before it reads the array as sorted and free of repeats in one pass.
+    const vocabularies = { collection: manifest.modelKeys.collection, device: manifest.modelKeys.device, eventTypes: manifest.eventTypes,
+      known: manifest.modelKeys.known, state: manifest.modelKeys.state };
+
+    for(const [ name, values ] of Object.entries(vocabularies)) {
+
+      let previous: string | null = null;
+
+      for(const value of values) {
+
+        if(previous !== null) {
+
+          assert.ok(previous.localeCompare(value) < 0, name + " sorts " + previous + " strictly before " + value + ".");
+        }
+
+        previous = value;
+      }
+    }
+  });
+
   test("the written artifact is what the CLI loader accepts", async () => {
 
     // The generator and the loader are two halves of one contract, so the emitted bytes are round-tripped through the loader's own validation rather than merely
@@ -232,6 +256,11 @@ describe("generate-manifest", () => {
     for(const modelKey of manifest.modelKeys.collection) {
 
       assert.ok(manifest.modelKeys.device.includes(modelKey), modelKey + " is device-addressable");
+    }
+
+    for(const modelKey of manifest.modelKeys.device) {
+
+      assert.ok(manifest.modelKeys.state.includes(modelKey), modelKey + " is a realtime-reduced model key");
     }
 
     for(const modelKey of manifest.modelKeys.state) {

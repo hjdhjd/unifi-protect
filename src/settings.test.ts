@@ -2,9 +2,10 @@
  *
  * settings.test.ts: Unit tests for the project-wide constants in settings.ts. The constants are externally observable behavior - the error limit and retry interval
  * govern how aggressively the client retries against a controller, the API timeout bounds each request, the bootstrap refresh interval is the failsafe cadence, the
- * events watchdog timeout governs degraded-connection detection, and the heartbeat timeout governs livestream watchdog timing. Pinning them prevents an accidental
- * edit (a misplaced zero, a unit confusion) from silently changing behavior on every consumer.
+ * events watchdog timeout governs degraded-connection detection, and the heartbeat timeout governs livestream watchdog timing. Asserting each value keeps an
+ * accidental edit (a misplaced zero, a unit confusion) from silently changing behavior on every consumer.
  */
+import * as settings from "./settings.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_CAPTURE_DEFAULT_DURATION,
   PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
   PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
@@ -30,7 +31,12 @@ describe("settings", () => {
   test("PROTECT_API_TIMEOUT is 3500 ms and at most 5000 ms", () => {
 
     assert.equal(PROTECT_API_TIMEOUT, 3500, "API timeout must be 3500 ms");
-    assert.ok(PROTECT_API_TIMEOUT <= 5000, "API timeout must never exceed the documented 5000 ms ceiling");
+
+    // The constant's literal type makes the linter read a direct comparison as always true, and a number-typed local changes only how the linter reads it, leaving the
+    // comparison itself unchanged.
+    const timeout: number = PROTECT_API_TIMEOUT;
+
+    assert.ok(timeout <= 5000, "API timeout must never exceed the documented 5000 ms ceiling");
   });
 
   test("PROTECT_BOOTSTRAP_REFRESH_INTERVAL is 120000 ms", () => {
@@ -49,7 +55,7 @@ describe("settings", () => {
   });
 
   // The reboot-detection threshold sits far above the controller's observed millisecond upSince jitter and far below any realistic reboot delta (the prior uptime,
-  // minutes to hours), so it cleanly separates measurement noise from a genuine restart. Surfaced and pinned by live validation.
+  // minutes to hours), so it cleanly separates measurement noise from a genuine restart. Live validation surfaced the value and holds it fixed here.
   test("PROTECT_REBOOT_DETECTION_THRESHOLD is 5000 ms", () => {
 
     assert.equal(PROTECT_REBOOT_DETECTION_THRESHOLD, 5000, "reboot-detection noise floor must be 5000 ms");
@@ -88,7 +94,7 @@ describe("settings", () => {
   // Coherence of the recovery cadence: the unknown track must lead with a prompt probe (its leading zero), every staged backoff delay must be a non-negative integer, and
   // the steady floor must sit below the watchdog and throttle windows so recovery is prompt relative to the failures it responds to. These relationships - not just the
   // individual values - are the contract; a future edit that, say, set the floor above the watchdog would make recovery slower than the detection it answers.
-  test("the recovery curves are coherent: prompt unknown lead, staged delays at or below the steady floor, floor below the detection windows", () => {
+  test("the recovery curves are coherent: prompt unknown lead, non-negative integer delays, floor below the watchdog and the breaker cooldown", () => {
 
     assert.equal(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0], 0, "the unknown track must probe at once on the fault");
 
@@ -97,38 +103,35 @@ describe("settings", () => {
       assert.ok((delay >= 0) && Number.isInteger(delay), "every staged backoff delay must be a non-negative integer, got " + String(delay));
     }
 
-    assert.ok(PROTECT_RECOVERY_STEADY_INTERVAL_MS < PROTECT_EVENTS_WATCHDOG_TIMEOUT, "the steady floor must be prompt relative to the events watchdog window");
+    // Each constant's literal type makes the linter read a direct comparison as always true, and number-typed locals change only how the linter reads it, leaving the
+    // comparison itself unchanged.
+    const steadyFloor: number = PROTECT_RECOVERY_STEADY_INTERVAL_MS;
+    const watchdogWindow: number = PROTECT_EVENTS_WATCHDOG_TIMEOUT;
+
+    assert.ok(steadyFloor < watchdogWindow, "the steady floor must be prompt relative to the events watchdog window");
     assert.ok(PROTECT_RECOVERY_STEADY_INTERVAL_MS < (PROTECT_API_RETRY_INTERVAL * 1000), "the steady floor must be faster than the breaker's autonomous cooldown");
   });
 
-  // Sanity: each scalar constant covered by a per-value test above must be a finite positive integer. A negative or NaN value would indicate a typo and would corrupt the
-  // timing logic in subtle ways the per-value tests might miss. This cross-checks only the constants listed below - those the per-value tests pin; the backoff curves are
-  // arrays asserted exactly above, and the livestream and talkback scalars without a dedicated per-value test are not among them.
+  // Sanity: every scalar the module exports must be a finite positive integer. A negative, fractional or NaN value would indicate a typo and would corrupt the timing
+  // logic in subtle ways the per-value tests might miss. The row reads the module's own namespace, so a scalar without a per-value test is checked all the same, and an
+  // export that is neither a number nor an array fails here rather than being passed over. An array export is read only as an array.
   test("every exported scalar constant is a finite positive integer", () => {
 
-    const values = [
+    for(const [ name, value ] of Object.entries(settings)) {
 
-      [ "PROTECT_API_ERROR_LIMIT", PROTECT_API_ERROR_LIMIT ],
-      [ "PROTECT_API_RETRY_INTERVAL", PROTECT_API_RETRY_INTERVAL ],
-      [ "PROTECT_API_TIMEOUT", PROTECT_API_TIMEOUT ],
-      [ "PROTECT_BOOTSTRAP_REFRESH_INTERVAL", PROTECT_BOOTSTRAP_REFRESH_INTERVAL ],
-      [ "PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS", PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS ],
-      [ "PROTECT_EVENTS_WATCHDOG_TIMEOUT", PROTECT_EVENTS_WATCHDOG_TIMEOUT ],
-      [ "PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT", PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT ],
-      [ "PROTECT_REBOOT_ANTICIPATION_WINDOW_MS", PROTECT_REBOOT_ANTICIPATION_WINDOW_MS ],
-      [ "PROTECT_REBOOT_DETECTION_THRESHOLD", PROTECT_REBOOT_DETECTION_THRESHOLD ],
-      [ "PROTECT_RECOVERY_STEADY_INTERVAL_MS", PROTECT_RECOVERY_STEADY_INTERVAL_MS ]
-    ] as const;
+      if(Array.isArray(value)) {
 
-    for(const [ name, value ] of values) {
+        continue;
+      }
 
+      assert.equal(typeof value, "number", name + " must be a number or an array, got " + typeof value);
       assert.ok(Number.isInteger(value), name + " must be an integer, got " + String(value));
       assert.ok(value > 0, name + " must be positive, got " + String(value));
       assert.ok(Number.isFinite(value), name + " must be finite, got " + String(value));
     }
   });
 
-  // The capture window is a documented user-facing default, so it is pinned like the rest: fifteen minutes is long enough to span several air-quality reading cycles,
+  // The capture window is a documented user-facing default, so it is asserted like the rest: fifteen minutes is long enough to span several air-quality reading cycles,
   // which is what makes a default-length capture useful for a slow-reporting sensor rather than merely non-empty.
   test("PROTECT_CAPTURE_DEFAULT_DURATION is 15 minutes", () => {
 

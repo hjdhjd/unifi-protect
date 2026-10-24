@@ -24,10 +24,12 @@ interface ListenerEntry {
  *
  * - `autoOpen` (default `true`) schedules an `open` event on the next microtask, so a consumer that simply `await`s the stream's open handshake connects without the
  *   test having to drive `emitOpen()` by hand. Tests that scrutinize the handshake itself pass `false` and open explicitly.
+ * - `closeFault` (default `false`) makes `close()` throw after it records the request, so a test can prove a consumer's teardown survives a faulting socket close.
  */
 export interface FakeWebSocketOptions {
 
   autoOpen?: boolean;
+  closeFault?: boolean;
 }
 
 /**
@@ -42,9 +44,12 @@ export class FakeWebSocket implements ProtectWebSocket {
   // Whether close() has been requested on the socket, for tests that assert the EventStream asked the underlying socket to close.
   closeRequested = false;
 
+  readonly #closeFault: boolean;
   readonly #listeners = new Map<string, Set<ListenerEntry>>();
 
   constructor(options: FakeWebSocketOptions = {}) {
+
+    this.#closeFault = options.closeFault ?? false;
 
     // Open on the next microtask by default, after the EventStream constructor has synchronously attached its listeners.
     if(options.autoOpen ?? true) {
@@ -68,10 +73,18 @@ export class FakeWebSocket implements ProtectWebSocket {
     options.signal?.addEventListener("abort", () => set.delete(entry), { once: true });
   }
 
-  /** Request the socket close. Records the request; teardown in EventStream flows through its own close path rather than waiting on a close event here. */
+  /**
+   * Request the socket close. Records the request; teardown in EventStream flows through its own close path rather than waiting on a close event here. When constructed
+   * with `closeFault`, it throws after recording the request.
+   */
   close(): void {
 
     this.closeRequested = true;
+
+    if(this.#closeFault) {
+
+      throw new Error("the underlying socket close() faulted");
+    }
   }
 
   /** Fire the `open` event. */

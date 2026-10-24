@@ -73,8 +73,15 @@ interface Bundle {
   drift: { atMs: number; channel: string; payload: unknown }[];
   frames: { occurrences: { kept: TypedEvent[]; seen: number }; raw: { kept: RawPacket[]; seen: number } };
   inventory: { id: string; modelKey: string }[];
-  novelty: { collection?: string; kind: string; occurrenceCount: number; path?: string; recordId?: string }[];
-  run: { controller: { firmwareVersion: string | null; version: string | null }; manifestVersion: string; mode: string; selection: Record<string, string[]> };
+  novelty: { collection?: string; eventType?: string; kind: string; modelKey?: string; occurrenceCount: number; path?: string; recordId?: string }[];
+  run: {
+
+    controller: { firmwareVersion: string | null; version: string | null };
+    manifestVersion: string;
+    mode: string;
+    selection: Record<string, string[]>;
+    window: { durationMs: number };
+  };
   undeclared: { collection: string; kept: Record<string, unknown>[]; members: { observedType: string; path: string }[]; seen: number }[];
   unmodeled: { collection: string; kept: Record<string, unknown>[]; seen: number }[];
 }
@@ -184,8 +191,8 @@ describe("capture", () => {
     const finding = bundle.novelty.find((entry) => entry.kind === "unknownField");
 
     assert.equal(finding?.path, "airQuality.voc");
-    assert.equal(finding?.recordId, "s1");
-    assert.equal(finding?.collection, "sensors");
+    assert.equal(finding.recordId, "s1");
+    assert.equal(finding.collection, "sensors");
 
     // A device the controller describes in terms this version does not know is a device worth following for the rest of the window.
     assert.deepEqual(bundle.run.selection["s1"], ["novelty"]);
@@ -207,6 +214,7 @@ describe("capture", () => {
 
     assert.equal(bundle.frames.raw.kept.length, 1);
     assert.equal(bundle.novelty.filter((entry) => entry.kind === "unknownEventType").length, 1);
+    assert.equal(bundle.novelty.find((entry) => entry.kind === "unknownEventType")?.eventType, "vocThresholdCrossed", "the finding names the type it met");
   });
 
   test("a recognized event type is neither novelty nor a reason to keep a frame", async () => {
@@ -221,11 +229,14 @@ describe("capture", () => {
 
   test("a frame whose model key is outside the vocabulary is kept for that reason alone", async () => {
 
-    // No subject-map entry and no event type: the unknown class is the only thing keeping this frame.
+    // No subject-map entry and no event type: the unknown class is the only thing keeping this frame, and its record is diffed
+    // for the finding and its id is not followed.
     const { bundle } = await runCapture({ rawPackets: [frame("vocsensor", "add", "v1", { id: "v1" })] });
 
     assert.equal(bundle.frames.raw.kept.length, 1);
     assert.equal(bundle.novelty.filter((entry) => entry.kind === "unknownModelKey").length, 1);
+    assert.equal(bundle.novelty.find((entry) => entry.kind === "unknownModelKey")?.modelKey, "vocsensor", "the finding names the class it met");
+    assert.equal(bundle.run.selection["v1"], undefined, "the frame is kept for its class, not because its id joined the selection");
   });
 
   test("--device follows a device that is not novel at all", async () => {
@@ -249,6 +260,15 @@ describe("capture", () => {
 
     assert.equal(bundle.run.selection["u1"], undefined, "a user is not a device, whatever it is called");
     assert.deepEqual(bundle.frames.raw.kept, []);
+  });
+
+  test("--device follows a device added mid-window under a matching name", async () => {
+
+    // The camera is absent from the bootstrap, so only the add frame can bring it into the selection. Its payload carries only declared fields, so no novelty finding
+    // follows it either.
+    const { bundle } = await runCapture({ args: [ "--device", "Front" ], rawPackets: [frame("camera", "add", "c7", { id: "c7", name: "Front Gate" })] });
+
+    assert.deepEqual(bundle.run.selection["c7"], ["deviceFlag"]);
   });
 
   test("a device that turns novel mid-window is followed from its own triggering frame onward", async () => {
@@ -275,8 +295,8 @@ describe("capture", () => {
     const finding = bundle.novelty.find((entry) => entry.kind === "unknownField");
 
     assert.equal(finding?.collection, "nvr");
-    assert.equal(finding?.path, "vocReporting");
-    assert.equal(finding?.recordId, "n1");
+    assert.equal(finding.path, "vocReporting");
+    assert.equal(finding.recordId, "n1");
   });
 
   test("a binary frame payload neither crashes the diff nor invents findings", async () => {
@@ -339,7 +359,7 @@ describe("capture", () => {
     const exemplar = entry?.kept[0];
 
     assert.equal(entry?.seen, 4, "the count says how many records the exemplars were drawn from, so a truncated snapshot never reads as a complete one");
-    assert.equal(entry?.kept.length, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
+    assert.equal(entry.kept.length, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
 
     assert.notEqual(exemplar?.["mac"], "AABBCCDDEE07", "the real address never reaches the bundle");
     assert.match(String(exemplar?.["mac"]), /^[0-9A-F]{12}$/, "the replacement is still address-shaped");
@@ -368,9 +388,9 @@ describe("capture", () => {
 
     assert.equal(bundle.undeclared.length, 1, "four sensors reporting the same new member are one shape, sampled once");
     assert.equal(entry?.collection, "sensors");
-    assert.deepEqual(entry?.members, [{ observedType: "object", path: "smokeStatus" }]);
-    assert.equal(entry?.seen, 4, "the count says how many records share the set, so a truncated sample never reads as a complete one");
-    assert.equal(entry?.kept.length, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
+    assert.deepEqual(entry.members, [{ observedType: "object", path: "smokeStatus" }]);
+    assert.equal(entry.seen, 4, "the count says how many records share the set, so a truncated sample never reads as a complete one");
+    assert.equal(entry.kept.length, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS);
 
     assert.notEqual(exemplar?.["mac"], "AABBCCDDEE02", "the real address never reaches the bundle");
     assert.match(String(exemplar?.["mac"]), /^[0-9A-F]{12}$/, "the replacement is still address-shaped");
@@ -425,7 +445,14 @@ describe("capture", () => {
     assert.equal((bundle.drift[0]?.payload as { modelKey: string }).modelKey, "vocsensor");
     assert.equal(bundle.connection.length, 1);
     assert.equal((bundle.connection[0]?.payload as { to: string }).to, "healthy");
-    assert.ok((bundle.connection[0]?.atMs ?? -1) >= 0, "the observation is stamped against the start of the window, not a wall clock");
+
+    // A time measured from the start of the window falls inside the window's own span, where a wall-clock stamp overshoots its end.
+    for(const observation of [ bundle.connection[0], bundle.drift[0] ]) {
+
+      const atMs = observation?.atMs ?? -1;
+
+      assert.ok((atMs >= 0) && (atMs <= bundle.run.window.durationMs), "the observation is stamped against the start of the window, not a wall clock");
+    }
   });
 
   test("the inventory is read after the window closes, so a device adopted during it appears", async () => {
@@ -491,7 +518,7 @@ describe("capture lifetime", () => {
     assert.match(stdout, /Wrote /);
   });
 
-  test("an abort while the bootstrap is still being fetched takes the cancellation path", async () => {
+  test("an abort before the bootstrap arrives takes the cancellation path and writes nothing", async () => {
 
     // A cancellation before the subject map exists has nothing to finalize, so the run ends as a cancellation rather than as a bundle.
     const cancel = new AbortController();
@@ -501,7 +528,8 @@ describe("capture lifetime", () => {
 
       const result = await runCaptureRaw({ bootstrapHoldsOpen: true, publish: () => cancel.abort(), signal: cancel.signal }, dir);
 
-      assert.ok(result.thrown instanceof ProtectAbortedError, "a cancelled fetch surfaces as the library's typed abort, which the entry point renders as exit 130");
+      assert.ok(result.thrown instanceof ProtectAbortedError,
+        "an abort before the fetch surfaces as the library's typed abort, which the entry point renders as exit 130");
       assert.deepEqual((await readdir(dir)).filter((entry) => entry !== "schema-manifest.json"), [], "nothing was written");
     } finally {
 

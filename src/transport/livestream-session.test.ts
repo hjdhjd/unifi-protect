@@ -4,10 +4,10 @@
  * and teardown. Driven through an injected fake WebSocket, a fake resolver, and a fake Clock, so the session is exercised deterministically without a live controller.
  */
 import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
-import { FRAME_END_SEGMENT, FRAME_MOOF, buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
 import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
 import { ProtectAbortedError, ProtectNetworkError, ProtectStallError } from "../errors.ts";
+import { buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { describe, test } from "node:test";
 import { fakeClock, silentLog } from "../testing.helpers.ts";
 import type { FakeClock } from "../testing.helpers.ts";
@@ -23,33 +23,35 @@ import { settle } from "homebridge-plugin-utils/testing";
 const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
 
 // Construct a session over a fake socket, wait for the socket to be built (so its listeners are attached), and open it. The socket is built only after the async URL
-// negotiation, so we synchronize on the factory being invoked rather than emitting `open` synchronously the way the events-stream harness can.
+// negotiation, so we synchronize on the factory being invoked rather than emitting `open` synchronously the way the events-stream harness can. `webSocket` makes the
+// fake for a row that needs one built its own way; that fake must not open itself, since this helper opens it. The URL the session handed its socket factory is
+// returned beside the socket.
 async function openSession(options: { clock?: FakeClock; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
-  spec?: Partial<LivestreamSpec>; } = {}): Promise<{ clock: FakeClock; session: LivestreamSession; ws: FakeWebSocket }> {
+  spec?: Partial<LivestreamSpec>; webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: FakeClock; session: LivestreamSession; url: string; ws: FakeWebSocket }> {
 
   const clock = options.clock ?? fakeClock();
-  const { promise, resolve } = Promise.withResolvers<FakeWebSocket>();
+  const { promise, resolve } = Promise.withResolvers<{ url: string; ws: FakeWebSocket }>();
   const session = new LivestreamSession({
 
     clock,
     log: silentLog(),
     resolveUrl: options.resolveUrl ?? fixedUrl,
     spec: { cameraId: "cam1", ...options.spec },
-    webSocket: () => {
+    webSocket: (url: string): FakeWebSocket => {
 
-      const ws = new FakeWebSocket({ autoOpen: false });
+      const ws = options.webSocket?.() ?? new FakeWebSocket({ autoOpen: false });
 
-      resolve(ws);
+      resolve({ url, ws });
 
       return ws;
     }
   });
 
-  const ws = await promise;
+  const { url, ws } = await promise;
 
   ws.emitOpen();
 
-  return { clock, session, ws };
+  return { clock, session, url, ws };
 }
 
 // Collect every segment emitted on the session's rail, for synchronous assertions after driving the socket.
@@ -184,7 +186,7 @@ describe("LivestreamSession", () => {
       assert.deepEqual(session.initSegment, { codec: "hev1.1.6.L180.90,mp4a.40.2", data: DOORBELL_INIT, description });
 
       // The description is read once per init frame: the emitted segment and the cache carry the same object.
-      assert.equal(segment.description, session.initSegment?.description);
+      assert.equal(segment.description, session.initSegment.description);
     });
 
     test("an init with no codec-information frame before it carries an empty codec label and its description", async () => {
@@ -252,6 +254,17 @@ describe("LivestreamSession", () => {
 
       // Opting in adds the extendedVideoMetadata negotiation flag.
       assert.ok(capture[0]?.has("extendedVideoMetadata"));
+
+      // A session that did not opt in ignores a timestamp frame on the wire, so the media segment after it carries no timestamps.
+      const defaults = await openSession();
+      const defaultSegments = collectSegments(defaults.session);
+
+      defaults.ws.emitMessage(buildMediaSegment({ mdat: Buffer.from("M"), moof: Buffer.from("F"), timestamps: [ 0, 3000, 6000 ] }));
+
+      const [defaultSegment] = defaultSegments;
+
+      assert.ok(defaultSegment?.type === "media");
+      assert.equal(defaultSegment.timestamps, undefined, "a session that did not opt in must not attach the timestamps a stray frame carries");
     });
 
     test("a frame split across two WebSocket messages is reassembled", async () => {
@@ -274,6 +287,27 @@ describe("LivestreamSession", () => {
       assert.deepEqual(reassembled.data, Buffer.from("SPLITINIT"));
     });
 
+    test("a frame header split across WebSocket messages is reassembled", async () => {
+
+      const { session, ws } = await openSession();
+      const segments = collectSegments(session);
+      const init = buildInitSegment({ codec: "avc1", data: Buffer.from("SPLITINIT") });
+
+      // Split inside the codec frame's 4-byte header: the first message leaves a tail too short to read a frame length from, which the session must carry into the next.
+      ws.emitMessage(init.subarray(0, 2));
+      assert.equal(segments.length, 0);
+
+      ws.emitMessage(init.subarray(2));
+
+      assert.equal(segments.length, 1);
+
+      const [reassembled] = segments;
+
+      assert.ok(reassembled?.type === "init");
+      assert.equal(reassembled.codec, "avc1", "the frame whose header was split must decode as the codec it carries");
+      assert.deepEqual(reassembled.data, Buffer.from("SPLITINIT"));
+    });
+
     test("an unsupported (non-binary) message frame is skipped without crashing", async () => {
 
       const { session, ws } = await openSession();
@@ -290,10 +324,15 @@ describe("LivestreamSession", () => {
       const { session, ws } = await openSession();
       const segments = collectSegments(session);
 
-      // A frame type byte of 0 is not a valid frame; the decoder abandons the packet rather than emitting anything.
-      ws.emitMessage(buildLiveFrame(0, Buffer.from("garbage")));
+      // A frame type byte of 0 is not a valid frame, so the decoder abandons the rest of the packet, the valid init frame behind it included.
+      ws.emitMessage(Buffer.concat([ buildLiveFrame(0, Buffer.from("garbage")), buildInitSegment({ data: Buffer.from("I") }) ]));
 
-      assert.equal(segments.length, 0);
+      assert.equal(segments.length, 0, "nothing after an invalid frame header in the same packet may decode");
+
+      // Nothing of the abandoned packet is carried over, so the next message decodes afresh.
+      ws.emitMessage(buildInitSegment({ data: Buffer.from("I") }));
+
+      assert.equal(segments.length, 1, "the message after an abandoned packet must decode");
     });
 
     test("video and audio boxes are concatenated into the fragment after moof and mdat", async () => {
@@ -322,7 +361,7 @@ describe("LivestreamSession", () => {
       const result = await iterator.next();
 
       assert.equal(result.done, false);
-      assert.equal(result.value?.[0].type, "init");
+      assert.equal(result.value[0].type, "init");
 
       controller.abort();
     });
@@ -354,6 +393,12 @@ describe("LivestreamSession", () => {
       assert.equal(params.get("chunkSize"), "8192");
       assert.equal(params.get("fragmentDurationMillis"), "200");
       assert.equal(params.has("extendedVideoMetadata"), false);
+
+      // The controller reads allowPartialGOP and progressive by presence alone, so each is sent with an empty value. The request label is the spec's default, built
+      // from the camera and the channel.
+      assert.equal(params.get("allowPartialGOP"), "");
+      assert.equal(params.get("progressive"), "");
+      assert.equal(params.get("requestId"), "cam1-2");
     });
 
     test("build params serialize a lens source", async () => {
@@ -380,6 +425,13 @@ describe("LivestreamSession", () => {
       assert.equal(params.get("chunkSize"), "8192");
       assert.equal(params.get("fragmentDurationMillis"), "200");
       assert.equal(params.has("extendedVideoMetadata"), false);
+    });
+
+    test("the socket factory is handed the URL the resolver negotiated", async () => {
+
+      const { url } = await openSession({ resolveUrl: async (): Promise<string> => "wss://controller/livestream?token=negotiated" });
+
+      assert.equal(url, "wss://controller/livestream?token=negotiated", "the socket must be built on the URL the resolver returned");
     });
   });
 
@@ -433,9 +485,9 @@ describe("LivestreamSession", () => {
       const session = new LivestreamSession({
 
         log: silentLog(),
-        resolveUrl: async () => { throw new Error("connect refused"); },
+        resolveUrl: async (): Promise<never> => { throw new Error("connect refused"); },
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
-        webSocket: () => {
+        webSocket: (): FakeWebSocket => {
 
           built = true;
 
@@ -464,9 +516,9 @@ describe("LivestreamSession", () => {
       const session = new LivestreamSession({
 
         log: silentLog(),
-        resolveUrl: async () => { throw thrown; },
+        resolveUrl: async (): Promise<never> => { throw thrown; },
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
-        webSocket: () => new FakeWebSocket({ autoOpen: false })
+        webSocket: (): FakeWebSocket => new FakeWebSocket({ autoOpen: false })
       });
 
       session.on("closed", (info) => closed.resolve(info));
@@ -548,12 +600,16 @@ describe("LivestreamSession", () => {
     test("close() requests the socket close and is safe to call more than once", async () => {
 
       const { session, ws } = await openSession();
+      let closedEvents = 0;
+
+      session.on("closed", () => { closedEvents++; });
 
       await session.close();
       await session.close();
 
       assert.equal(ws.closeRequested, true);
       assert.equal(session.state, "closed");
+      assert.equal(closedEvents, 1, "a second close() must not announce the closure again");
     });
 
     test("dispose delegates to close", async () => {
@@ -562,6 +618,17 @@ describe("LivestreamSession", () => {
 
       await session[Symbol.asyncDispose]();
 
+      assert.equal(ws.closeRequested, true);
+      assert.equal(session.state, "closed");
+    });
+
+    test("close() swallows a socket close() fault and still tears down cleanly", async () => {
+
+      const { session, ws } = await openSession({ webSocket: (): FakeWebSocket => new FakeWebSocket({ autoOpen: false, closeFault: true }) });
+
+      // The disposal contract is that close() (and [Symbol.asyncDispose]) never throw, even when the underlying socket's own close() faults: #shutdown swallows the fault
+      // and #onClose releases everything regardless, so the session still reaches the closed state and the close was attempted.
+      await assert.doesNotReject(session.close());
       assert.equal(ws.closeRequested, true);
       assert.equal(session.state, "closed");
     });
@@ -579,7 +646,7 @@ describe("LivestreamSession", () => {
         resolveUrl: fixedUrl,
         signal: controller.signal,
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
-        webSocket: () => {
+        webSocket: (): FakeWebSocket => {
 
           built = true;
 
@@ -617,7 +684,7 @@ describe("LivestreamSession", () => {
         resolveUrl,
         signal: controller.signal,
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
-        webSocket: () => new FakeWebSocket({ autoOpen: false })
+        webSocket: (): FakeWebSocket => new FakeWebSocket({ autoOpen: false })
       });
 
       const errors = collectErrors(session);
@@ -636,6 +703,35 @@ describe("LivestreamSession", () => {
       assert.equal(session.state, "closed");
     });
 
+    test("a close() while URL negotiation is in flight builds no socket once the negotiation resolves", async () => {
+
+      const negotiation = Promise.withResolvers<string>();
+      let built = false;
+
+      // No caller signal is passed, so the resolver is never cancelled: it resolves only after close() has torn the session down, and the connect must see that
+      // teardown and bail rather than open a socket nothing would ever close.
+      const session = new LivestreamSession({
+
+        log: silentLog(),
+        resolveUrl: async (): Promise<string> => negotiation.promise,
+        spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
+        webSocket: (): FakeWebSocket => {
+
+          built = true;
+
+          return new FakeWebSocket({ autoOpen: false });
+        }
+      });
+
+      await settle();
+      await session.close();
+      negotiation.resolve("wss://controller/livestream");
+      await settle();
+
+      assert.equal(built, false, "a negotiation that resolves after a close must not build a socket");
+      assert.equal(session.state, "closed");
+    });
+
     test("an already-aborted caller signal records the ProtectAbortedError as the close cause", () => {
 
       const controller = new AbortController();
@@ -649,7 +745,7 @@ describe("LivestreamSession", () => {
         resolveUrl: fixedUrl,
         signal: controller.signal,
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
-        webSocket: () => new FakeWebSocket({ autoOpen: false })
+        webSocket: (): FakeWebSocket => new FakeWebSocket({ autoOpen: false })
       });
 
       assert.ok(session.closeCause instanceof ProtectAbortedError);
@@ -666,7 +762,7 @@ describe("LivestreamSession", () => {
         resolveUrl: fixedUrl,
         signal: controller.signal,
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
-        webSocket: () => {
+        webSocket: (): FakeWebSocket => {
 
           const ws = new FakeWebSocket({ autoOpen: false });
 
@@ -708,6 +804,22 @@ describe("LivestreamSession", () => {
       assert.equal("cause" in info, false);
     });
 
+    test("a peer close reaches closed and carries the peer's code and reason", async () => {
+
+      const { session, ws } = await openSession();
+      const closed = Promise.withResolvers<{ cause?: ProtectError; code: number; reason: string }>();
+
+      session.on("closed", (info) => closed.resolve(info));
+
+      ws.emitClose(4000, "bye");
+
+      const info = await closed.promise;
+
+      // A close the peer starts reaches #onClose directly, so the payload carries the frame's own code and reason, and no cause.
+      assert.deepEqual(info, { code: 4000, reason: "bye" });
+      assert.equal(session.state, "closed");
+    });
+
     test("first cause wins: a later plain close() does not overwrite the recorded abort cause", async () => {
 
       const controller = new AbortController();
@@ -718,7 +830,7 @@ describe("LivestreamSession", () => {
         resolveUrl: fixedUrl,
         signal: controller.signal,
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
-        webSocket: () => {
+        webSocket: (): FakeWebSocket => {
 
           const ws = new FakeWebSocket({ autoOpen: false });
 
@@ -750,14 +862,8 @@ describe("LivestreamSession", () => {
 
       ws.emitMessage(Buffer.concat([ first, second ]));
 
-      assert.equal(segments.length, 2);
+      // Each begin-segment frame starts a fresh accumulator, so each segment carries its own boxes and none of the one before it.
+      assert.deepEqual(segments.map((segment) => segment.data.toString()), [ "aA", "bB" ]);
     });
   });
-});
-
-// Reference the otherwise-unused frame constants so the helper's named exports are covered by an explicit assertion of their wire values.
-test("livestream frame constants match the wire protocol", () => {
-
-  assert.equal(FRAME_MOOF, 251);
-  assert.equal(FRAME_END_SEGMENT, 255);
 });

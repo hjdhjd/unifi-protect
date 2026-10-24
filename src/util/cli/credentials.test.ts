@@ -77,7 +77,7 @@ describe("loadCredentials", () => {
 
     await withDirs(async (cwd, home) => {
 
-      await assert.rejects(loadCredentials({ cwd, home }), CliError);
+      await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /No ufp.json configuration was found/ });
     });
   });
 
@@ -85,9 +85,12 @@ describe("loadCredentials", () => {
 
     await withDirs(async (cwd, home) => {
 
+      // The valid home file beside the malformed one is what a loader that probed past a broken file would settle on, so the first file found has to be the one
+      // that fails.
       await writeFile(path.join(cwd, "ufp.json"), "{ not json");
+      await writeFile(path.join(home, ".ufp.json"), JSON.stringify({ controller: "home-host", password: "p", username: "u" }));
 
-      await assert.rejects(loadCredentials({ cwd, home }), CliError);
+      await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /is not valid JSON/ });
     });
   });
 
@@ -95,9 +98,11 @@ describe("loadCredentials", () => {
 
     await withDirs(async (cwd, home) => {
 
+      // The valid home file beside the incomplete one is where a loader that probed past a broken file would land, so the first file found has to be the one that fails.
       await writeFile(path.join(cwd, "ufp.json"), JSON.stringify({ controller: "host", username: "u" }));
+      await writeFile(path.join(home, ".ufp.json"), JSON.stringify({ controller: "home-host", password: "p", username: "u" }));
 
-      await assert.rejects(loadCredentials({ cwd, home }), CliError);
+      await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /missing the required "password" field/ });
     });
   });
 
@@ -108,7 +113,14 @@ describe("loadCredentials", () => {
       // "http://[" carries a scheme, so normalization takes the URL-parse path - but it is not a valid URL, so the typed CliError surfaces rather than a raw URL throw.
       await writeFile(path.join(cwd, "ufp.json"), JSON.stringify({ controller: "http://[", password: "p", username: "u" }));
 
-      await assert.rejects(loadCredentials({ cwd, home }), CliError);
+      await assert.rejects(loadCredentials({ cwd, home }), (error: unknown): boolean => {
+
+        assert.ok(error instanceof CliError, "the failure is a CLI error");
+        assert.match(error.message, /is not a valid URL/);
+        assert.ok(error.cause instanceof TypeError, "the parser's own refusal is carried as the cause");
+
+        return true;
+      });
     });
   });
 
@@ -117,10 +129,11 @@ describe("loadCredentials", () => {
     await withDirs(async (cwd, home) => {
 
       // A directory named ufp.json makes readFile fail with EISDIR rather than ENOENT. A present-but-unreadable file is a hard error the operator is told about, never
-      // silently skipped the way a genuinely-absent file is.
+      // silently skipped the way a genuinely-absent file is...and the valid home file beside it is where a skipped failure would land.
       await mkdir(path.join(cwd, "ufp.json"));
+      await writeFile(path.join(home, ".ufp.json"), JSON.stringify({ controller: "home-host", password: "p", username: "u" }));
 
-      await assert.rejects(loadCredentials({ cwd, home }), CliError);
+      await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /Unable to read the ufp.json configuration/ });
     });
   });
 
@@ -128,9 +141,14 @@ describe("loadCredentials", () => {
 
     await withDirs(async (cwd, home) => {
 
+      // A number fails the object check by its type and null by its own clause.
       await writeFile(path.join(cwd, "ufp.json"), "123");
 
-      await assert.rejects(loadCredentials({ cwd, home }), CliError);
+      await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /must be a JSON object/ }, "a number is not an object");
+
+      await writeFile(path.join(cwd, "ufp.json"), "null");
+
+      await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /must be a JSON object/ }, "null is not an object");
     });
   });
 
@@ -277,6 +295,17 @@ describe("loadCredentials interactive prompt", () => {
     });
   });
 
+  test("the save offer takes yes in any case", async () => {
+
+    await withDirs(async (cwd, home) => {
+
+      const { interactive } = scriptedPrompt([ "10.0.0.5", "admin", "hunter2", "YES" ]);
+      const prompted = await loadCredentials({ cwd, home, interactive });
+
+      assert.deepEqual(await loadCredentials({ cwd, home }), prompted, "the uppercase answer saved the file a later run reads");
+    });
+  });
+
   test("declining the offer still connects and writes nothing", async () => {
 
     await withDirs(async (cwd, home) => {
@@ -347,9 +376,12 @@ describe("loadCredentials interactive prompt", () => {
 
     await withDirs(async (cwd, home) => {
 
-      const { interactive } = scriptedPrompt([ "10.0.0.5", "admin", "hunter2", "n" ], { signal: AbortSignal.abort() });
+      const { interactive, text } = scriptedPrompt([ "10.0.0.5", "admin", "hunter2", "n" ], { signal: AbortSignal.abort() });
 
       await assert.rejects(loadCredentials({ cwd, home, interactive }), ProtectAbortedError);
+
+      // The introduction is written before the first question, so the output is not empty...what never reaches it is the question itself.
+      assert.doesNotMatch(text(), /Controller address/);
     });
   });
 
@@ -395,7 +427,7 @@ describe("loadCredentials interactive prompt", () => {
 
       const { interactive, text } = scriptedPrompt([ "10.0.0.5", "admin", "hunter2", "n" ]);
 
-      await assert.rejects(loadCredentials({ cwd, home, interactive }), CliError);
+      await assert.rejects(loadCredentials({ cwd, home, interactive }), { constructor: CliError, message: /missing the required "password" field/ });
       assert.equal(text(), "", "nothing was asked");
     });
   });

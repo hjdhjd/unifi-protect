@@ -128,4 +128,11 @@ describe("buildNameResolver", () => {
     assert.equal(resolve("nvr1"), "Winterfell");
     assert.equal(resolve("unknown"), undefined);
   });
+
+  test("a controller with no NVR record still resolves its devices", () => {
+
+    const resolve = buildNameResolver(fakeClient({ cameras: [{ id: "c1", name: "Front Door" }], nvr: null }));
+
+    assert.equal(resolve("c1"), "Front Door");
+  });
 });

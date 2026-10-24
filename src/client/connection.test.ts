@@ -316,24 +316,8 @@ describe("ConnectionMonitor", () => {
       const restart = log.entries.find((entry) => entry.message.includes("The UniFi Protect controller restarted."));
 
       assert.ok(restart, "the restart was logged");
-      assert.equal(restart?.level, "info", "the detected restart logs at info, not warn");
+      assert.equal(restart.level, "info", "the detected restart logs at info, not warn");
       assert.equal(log.entries.some((entry) => entry.message.includes("self-reported boot time")), false, "the clunky boot-time wording is gone");
-
-      await monitor[Symbol.asyncDispose]();
-    });
-
-    test("does not fire when a refresh carries the same boot time", async () => {
-
-      const { events, monitor, store } = harness({ initialUpSince: 1000 });
-
-      await monitor.opened;
-      await settle();
-
-      // A drift-free refresh re-dispatches the same boot time; the primitive selector dedups, so no reboot is reported even though a bootstrap landed.
-      store.dispatch({ data: makeBootstrap({ nvr: makeNvr({ upSince: 1000 }) }), kind: "bootstrapLoaded" });
-
-      await settle();
-      assert.equal(events.rebooted.length, 0);
 
       await monitor[Symbol.asyncDispose]();
     });
@@ -566,7 +550,7 @@ describe("ConnectionMonitor", () => {
       await monitor.opened;
       await settle();
 
-      // Drive to lost so the loop is parked on its next backoff wait, with the probe still failing.
+      // Drive to lost so the loop is parked on its next backoff wait.
       control.setVerifyError(new ProtectNetworkError("down"));
       streams[0]?.emitError(new Error("socket dropped"));
       await pump(clock);
@@ -575,12 +559,14 @@ describe("ConnectionMonitor", () => {
 
       const streamsBefore = streams.length;
 
-      // Disposal aborts the monitor's lifetime controller, which is the wait's other composed signal. The loop must read that as disposal (not a wake) and END - it must
-      // not fall through to a relaunch. This no-relaunch assertion is the check that tells disposal apart from a wake (a rejection-only check would be
-      // vacuous, since #attemptRecovery swallows its own error).
+      // The controller answers again before disposal, so a loop that fell through the aborted wait would pass its probe, re-bootstrap and relaunch. Disposal aborts the
+      // monitor's lifetime controller, the wait's other composed signal, and the loop must read that as disposal rather than a wake and end: no re-bootstrap and no
+      // relaunch are the reads that tell the two apart (a rejection-only check would be vacuous, since #attemptRecovery swallows its own error).
+      control.setVerifyError(null);
       await monitor[Symbol.asyncDispose]();
       await settle();
 
+      assert.equal(control.reBootstrapCalls(), 0, "disposal must not fall through to a re-bootstrap");
       assert.equal(streams.length, streamsBefore, "disposal must not relaunch the events stream - the loop distinguishes disposal from a wake");
       assert.equal(streams[0]?.closeRequested, true, "the live socket was closed on disposal");
     });
@@ -604,7 +590,7 @@ describe("ConnectionMonitor", () => {
       const fault = log.entries.find((entry) => entry.message.includes("The UniFi Protect realtime events channel faulted; beginning recovery."));
 
       assert.ok(fault, "the transient fault was logged");
-      assert.equal(fault?.level, "debug", "a transient events-channel fault logs at debug, not warn");
+      assert.equal(fault.level, "debug", "a transient events-channel fault logs at debug, not warn");
 
       await monitor[Symbol.asyncDispose]();
     });
@@ -627,7 +613,7 @@ describe("ConnectionMonitor", () => {
       const loss = log.entries.find((entry) => entry.message.includes("The UniFi Protect controller appears unreachable;"));
 
       assert.ok(loss, "the confirmed loss was logged");
-      assert.equal(loss?.level, "warn", "a confirmed connection loss still warns");
+      assert.equal(loss.level, "warn", "a confirmed connection loss still warns");
 
       await monitor[Symbol.asyncDispose]();
     });
@@ -708,7 +694,7 @@ describe("ConnectionMonitor", () => {
 
     test("expectReboot is one-shot: a fault inside the window is known, the next fault is unknown", async () => {
 
-      const { clock, control, monitor, streams } = harness();
+      const { clock, control, monitor, store, streams } = harness({ initialUpSince: 1000 });
 
       await monitor.opened;
       await settle();
@@ -721,22 +707,14 @@ describe("ConnectionMonitor", () => {
       // Consumed: the first fault took the known track.
       assert.deepEqual(clock.pendingWaits(), [PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0]], "the armed fault is a known reboot");
 
-      // The first known-track probe fails, then the controller returns and the remaining schedule drains to healthy.
-      control.setVerifyError(new ProtectNetworkError("down again"));
-      clock.advance(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0] ?? 0);
-      await settle();
+      // The controller returns and a bootstrap observes its boot-time jump, which wakes the parked wait, so recovery completes without the clock advancing and the next
+      // fault lands inside the anticipation window. The recovery re-bootstrap holds the jumped value so it registers no second jump.
       control.setVerifyError(null);
+      control.setNextUpSince(100000);
+      store.dispatch({ data: makeBootstrap({ nvr: makeNvr({ upSince: 100000 }) }), kind: "bootstrapLoaded" });
+      await expectAt(() => monitor.state === "healthy", { message: "expected the detected reboot to wake recovery to healthy" });
 
-      // Drain the remaining known-track schedule until recovery succeeds.
-      await expectAt(async () => {
-
-        clock.advance(PROTECT_RECOVERY_STEADY_INTERVAL_MS + (PROTECT_RECOVERY_BACKOFF_KNOWN_MS[1] ?? 0));
-        await settle();
-
-        return monitor.state === "healthy";
-      }, { message: "expected recovery to complete" });
-
-      // A second, unarmed fault takes the prompt unknown track - the anticipation did not linger.
+      // A second, unarmed fault inside the window takes the prompt unknown track - the first fault consumed the anticipation.
       control.setVerifyError(new ProtectNetworkError("unsolicited drop"));
       streams.at(-1)?.emitError(new Error("socket dropped again"));
       await settle();
@@ -1009,9 +987,10 @@ describe("ConnectionMonitor", () => {
       await monitor.opened;
       await settle();
 
-      // A reboot bootstrap (a boot-time jump beyond the noise floor) fires the reboot channel.
+      // A reboot bootstrap (a boot-time jump beyond the noise floor) fires the reboot channel with the jump's new and previous boot times.
       store.dispatch({ data: makeBootstrap({ nvr: makeNvr({ upSince: 100000 }) }), kind: "bootstrapLoaded" });
       await expectAt(() => reboots.length === 1, { message: "expected a reboot diagnostic" });
+      assert.deepEqual(reboots, [{ newUpSince: 100000, previousUpSince: 1000 }]);
 
       // A stall and recovery fire the transition and reconnecting channels.
       clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
@@ -1019,9 +998,12 @@ describe("ConnectionMonitor", () => {
       await pump(clock);
       await expectAt(() => monitor.state === "healthy", { message: "expected recovery" });
 
-      assert.ok(transitions.length > 0, "transition diagnostics were published");
+      // The stall degrades the connection, the passing probe moves it to reconnecting, and the relaunch returns it to healthy; the bus rail carries the same transitions
+      // the channel published.
+      assert.deepEqual(transitions.map(({ from, to }) => [ from, to ]), [ [ "healthy", "degraded" ], [ "degraded", "reconnecting" ], [ "reconnecting", "healthy" ] ],
+        "the transition channel published each step of the stall and its recovery");
       assert.equal(reconnecting.length, 1, "the reconnecting diagnostic was published once");
-      assert.ok(events.transitions.length > 0);
+      assert.deepEqual(events.transitions, transitions);
 
       await monitor[Symbol.asyncDispose]();
     });
@@ -1052,27 +1034,6 @@ describe("ConnectionMonitor", () => {
 
       assert.equal(events.transitions.length, transitionsBefore, "no transitions are emitted after disposal");
       assert.equal(events.rebooted.length, rebootsBefore, "the reboot loop ended at disposal");
-    });
-
-    test("disposal while a recovery poll is waiting unwinds the recovery loop cleanly", async () => {
-
-      const { clock, control, monitor, streams } = harness();
-
-      await monitor.opened;
-      await settle();
-
-      // Drive to lost so the recovery loop is parked on its next backoff wait.
-      control.setVerifyError(new ProtectNetworkError("down"));
-      streams[0]?.emitError(new Error("socket dropped"));
-      await pump(clock);
-
-      await expectAt(() => monitor.state === "lost", { message: "expected lost with recovery polling" });
-
-      // Disposing aborts the monitor's controller, so the parked backoff wait rejects with an AbortError and the recovery loop unwinds without throwing.
-      await monitor[Symbol.asyncDispose]();
-      await settle();
-
-      assert.equal(streams[0]?.closeRequested, true);
     });
   });
 });

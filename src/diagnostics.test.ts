@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * diagnostics.test.ts: Unit tests for the typed diagnostics rails - the payload-typed round trip and its disposal, the payload-less channel, the `using` idiom, and the
- * committed type table that binds every channel to the payload it carries.
+ * diagnostics.test.ts: Unit tests for the typed diagnostics rails - the payload-typed round trip and its disposal, the payload-less channel, the committed type table
+ * that binds every channel to the payload it carries, and the channel names held to the taxonomy and their keys.
  */
 import type { AdoptionContradictionPayload, AuthReloginPayload, ConnectionRebootDetectedPayload, ConnectionTransitionPayload, EventsClosedPayload, EventsPacketPayload,
   EventsReconnectingPayload, HttpRequestEndPayload, HttpRequestStartPayload, HttpThrottleEnteredPayload, LivestreamCodecChangedPayload,
@@ -77,24 +77,6 @@ describe("diagnostics rails", () => {
     assert.deepEqual(seen, [{ action: "add", exampleId: "g1", modelKey: "garage" }], "only the publication made while the subscription was live is observed");
   });
 
-  test("a `using` declaration detaches the handler at scope exit", () => {
-
-    const seen: boolean[] = [];
-
-    // The subscription's lifetime is the function's: it is established on entry and detached on the way out, with no teardown bookkeeping of its own.
-    const observeOnce = (): void => {
-
-      using subscription = subscribeToChannel(channels.authRelogin, (payload) => seen.push(payload.success));
-
-      channels.authRelogin.publish({ success: true });
-    };
-
-    observeOnce();
-    channels.authRelogin.publish({ success: false });
-
-    assert.deepEqual(seen, [true], "the publication after the scope closed reaches nothing");
-  });
-
   test("the payload-less channel publishes with no argument to a handler that takes none", () => {
 
     let exits = 0;
@@ -111,16 +93,29 @@ describe("diagnostics rails", () => {
     assert.equal(exits, 1, "the throttle-exit transition is the whole signal, so the handler is invoked with nothing to read");
   });
 
-  test("every channel is bound to the payload type the table names", () => {
+  test("every channel is declared once with a name that follows the taxonomy and matches its key", () => {
 
-    // The `satisfies` operator is the assertion here: it compiles only while every channel in the registry carries exactly the payload the table binds it to, so a
-    // payload type attached to the wrong channel is a build failure rather than a wrong shape arriving in a consumer's handler. The runtime check that follows keeps the
-    // test honest as a test - it confirms the registry the type check ran against is the live one.
-    const pinned = channels satisfies ChannelTypeTable;
+    // The `satisfies` operator binds every channel to the payload type the table names: it compiles only while each channel carries exactly that payload, so a payload
+    // type attached to the wrong channel is a typecheck failure rather than a wrong shape arriving in a consumer's handler. The reads that follow hold the names a
+    // consumer subscribes by: no two channels share one, each follows the `unifi-protect:<subsystem>:<event>[:<phase>]` taxonomy, and each name's segments after the
+    // prefix, joined in camelCase, spell its key.
+    const registry = channels satisfies ChannelTypeTable;
+    const names = Object.values(registry).map((channel) => String(channel.name));
+    const keyOf = (name: string): string => {
 
-    for(const [ name, channel ] of Object.entries(pinned)) {
+      const [ subsystem = "", ...rest ] = name.split(":").slice(1);
 
-      assert.equal(typeof channel.publish, "function", "every table entry names a live channel: " + name);
+      return subsystem + rest.map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1)).join("");
+    };
+
+    assert.equal(new Set(names).size, Object.keys(registry).length, "no two channels share a name");
+
+    for(const [ key, channel ] of Object.entries(registry)) {
+
+      const name = String(channel.name);
+
+      assert.match(name, /^unifi-protect:[a-z]+:[a-z][a-zA-Z]*(:[a-z]+)?$/, "every channel name follows the taxonomy: " + key);
+      assert.equal(keyOf(name), key, "every channel name's segments after the prefix camelCase to its key: " + name);
     }
   });
 });

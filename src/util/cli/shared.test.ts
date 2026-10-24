@@ -185,6 +185,12 @@ describe("matchesEvent", () => {
     }
   });
 
+  test("a flag holding only commas and spaces imposes no constraint", () => {
+
+    // A list that parses to no terms leaves its axis out of the filter, the same as an absent flag, so it matches every event rather than none.
+    assert.equal(matchesEvent(buildEventFilter({ kind: " , " }), motion, resolveName), true);
+  });
+
   test("--kind matches the exact kind and excludes others", () => {
 
     const filter = buildEventFilter({ kind: "motionDetected" });

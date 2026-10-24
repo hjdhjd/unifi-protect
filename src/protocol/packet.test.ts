@@ -4,8 +4,8 @@
  * deflated JSON, UTF-8 string, raw buffer), the boundary cases (empty and large payloads), and the malformed-input guards - which throw ProtectProtocolError
  * rather than returning null, since a codec either yields a structurally valid packet or it does not. Encode coverage proves the inverse round-trips.
  */
-import { PACKET_TYPE_ACTION, PACKET_TYPE_DATA, PAYLOAD_FORMAT_JSON, bufferDataFrame, buildFrame, buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader,
-  stringDataFrame } from "./packet.helpers.ts";
+import { HEADER_SIZE, PACKET_TYPE_ACTION, PACKET_TYPE_DATA, PAYLOAD_FORMAT_BUFFER, PAYLOAD_FORMAT_JSON, PAYLOAD_FORMAT_STRING, bufferDataFrame, buildFrame, buildPacket,
+  jsonActionFrame, jsonDataFrame, makeActionHeader, stringDataFrame } from "./packet.helpers.ts";
 import { decodePacket, encodePacket } from "./packet.ts";
 import { describe, test } from "node:test";
 import { ProtectProtocolError } from "../errors.ts";
@@ -60,6 +60,24 @@ describe("decodePacket - happy paths", () => {
     assert.deepEqual(decoded.payload, bytes, "buffer payload bytes should round-trip exactly");
   });
 
+  test("decodes a raw-buffer data frame from a Uint8Array view at a byte offset without copying its bytes", () => {
+
+    // The packet is laid at a byte offset into a Uint8Array of its own rather than handed over as the pooled Buffer the builders return, because a copy of a pooled
+    // Buffer can land in the same pool and share its memory by chance. Over a dedicated backing, the payload shares the backing's memory only when the decoder viewed
+    // the input rather than copying it.
+    const bytes = Buffer.from([ 0xde, 0xad, 0xbe, 0xef, 0x00, 0xff, 0x10 ]);
+    const packet = buildPacket(jsonActionFrame(makeActionHeader()), bufferDataFrame(bytes));
+    const backing = new Uint8Array(8 + packet.length);
+
+    backing.set(packet, 8);
+
+    const decoded = decodePacket(backing.subarray(8));
+
+    assert.ok(Buffer.isBuffer(decoded.payload), "buffer data frame should decode to a Buffer");
+    assert.deepEqual(decoded.payload, bytes, "buffer payload bytes should round-trip exactly");
+    assert.equal(decoded.payload.buffer, backing.buffer, "the payload is a view over the input's memory rather than a copy of it");
+  });
+
   test("preserves arbitrary extra header fields from the action JSON", () => {
 
     const header = { ...makeActionHeader(), extraField: "value", nested: { inside: true } };
@@ -103,7 +121,7 @@ describe("decodePacket - boundaries", () => {
     assert.deepEqual(decoded.payload, {}, "empty object should round-trip through deflate/inflate");
   });
 
-  test("decodes an empty UTF-8 string data frame (null check, not falsy check)", () => {
+  test("decodes an empty UTF-8 string data frame to the empty string", () => {
 
     const decoded = decodePacket(buildPacket(jsonActionFrame(makeActionHeader()), stringDataFrame("")));
 
@@ -154,14 +172,15 @@ describe("decodePacket - malformed input throws ProtectProtocolError", () => {
 
     const full = buildPacket(jsonActionFrame(makeActionHeader()), jsonDataFrame({ ok: true }));
 
-    assert.throws(() => decodePacket(full.subarray(0, full.length - 5)), ProtectProtocolError);
+    assert.throws(() => decodePacket(full.subarray(0, full.length - 5)), { constructor: ProtectProtocolError, message: /does not match its header/ });
   });
 
   test("throws when the packet has trailing garbage past the declared frame sizes", () => {
 
     const full = buildPacket(jsonActionFrame(makeActionHeader()), jsonDataFrame({ ok: true }));
 
-    assert.throws(() => decodePacket(Buffer.concat([ full, Buffer.from([ 0x00, 0x01, 0x02 ]) ])), ProtectProtocolError);
+    assert.throws(() => decodePacket(Buffer.concat([ full, Buffer.from([ 0x00, 0x01, 0x02 ]) ])),
+      { constructor: ProtectProtocolError, message: /does not match its header/ });
   });
 
   test("throws when the action frame declares a payload larger than the whole packet", () => {
@@ -187,23 +206,33 @@ describe("decodePacket - malformed input throws ProtectProtocolError", () => {
     assert.throws(() => decodePacket(buildPacket(primitiveAction, jsonDataFrame({ ok: true }))), ProtectProtocolError);
   });
 
+  test("throws when the action frame JSON is null rather than an object", () => {
+
+    // JSON null is the one primitive whose typeof reads "object", so it reaches the header check's own null test rather than the typeof test a bare number meets.
+    const nullAction = buildFrame({ packetType: PACKET_TYPE_ACTION, payload: Buffer.from("null"), payloadFormat: PAYLOAD_FORMAT_JSON });
+
+    assert.throws(() => decodePacket(buildPacket(nullAction, jsonDataFrame({ ok: true }))),
+      { constructor: ProtectProtocolError, message: /missing one or more required header fields/ });
+  });
+
   test("throws when the action and data frames are swapped (frame ordering)", () => {
 
-    assert.throws(() => decodePacket(buildPacket(jsonDataFrame({ ok: true }), jsonActionFrame(makeActionHeader()))), ProtectProtocolError);
+    assert.throws(() => decodePacket(buildPacket(jsonDataFrame({ ok: true }), jsonActionFrame(makeActionHeader()))),
+      { constructor: ProtectProtocolError, message: /expected an action frame first/ });
   });
 
   test("throws when the action frame is a UTF-8 string instead of JSON", () => {
 
-    const stringAction = buildFrame({ packetType: PACKET_TYPE_ACTION, payload: Buffer.from("not a json"), payloadFormat: 2 });
+    const stringAction = buildFrame({ packetType: PACKET_TYPE_ACTION, payload: Buffer.from("not a json"), payloadFormat: PAYLOAD_FORMAT_STRING });
 
-    assert.throws(() => decodePacket(buildPacket(stringAction, jsonDataFrame({ ok: true }))), ProtectProtocolError);
+    assert.throws(() => decodePacket(buildPacket(stringAction, jsonDataFrame({ ok: true }))), { constructor: ProtectProtocolError, message: /action frame is not JSON/ });
   });
 
   test("throws when the action frame is a raw buffer instead of JSON", () => {
 
-    const bufferAction = buildFrame({ packetType: PACKET_TYPE_ACTION, payload: Buffer.from([ 0x01, 0x02 ]), payloadFormat: 3 });
+    const bufferAction = buildFrame({ packetType: PACKET_TYPE_ACTION, payload: Buffer.from([ 0x01, 0x02 ]), payloadFormat: PAYLOAD_FORMAT_BUFFER });
 
-    assert.throws(() => decodePacket(buildPacket(bufferAction, jsonDataFrame({ ok: true }))), ProtectProtocolError);
+    assert.throws(() => decodePacket(buildPacket(bufferAction, jsonDataFrame({ ok: true }))), { constructor: ProtectProtocolError, message: /action frame is not JSON/ });
   });
 
   test("throws when the action JSON is valid but missing required header fields", () => {
@@ -244,6 +273,36 @@ describe("decodePacket - malformed input throws ProtectProtocolError", () => {
 
     assert.throws(() => decodePacket(buildPacket(jsonActionFrame(makeActionHeader()), corrupt)), ProtectProtocolError);
   });
+
+  test("throws when a required header field is present with a non-string type", () => {
+
+    // Every required header field must be a string, so a field that is present but typed otherwise fails the header check just as an absent one does.
+    const numericId = buildFrame({ packetType: PACKET_TYPE_ACTION, payload: Buffer.from(JSON.stringify({ ...makeActionHeader(), id: 42 })),
+      payloadFormat: PAYLOAD_FORMAT_JSON });
+
+    assert.throws(() => decodePacket(buildPacket(numericId, jsonDataFrame({ ok: true }))),
+      { constructor: ProtectProtocolError, message: /missing one or more required header fields/ });
+  });
+
+  test("throws when the action frame's deflated flag is set but its payload is not valid zlib", () => {
+
+    const corrupt = buildFrame({ packetType: PACKET_TYPE_ACTION, payload: Buffer.from([ 0xff, 0xff, 0xff, 0xff ]), payloadFormat: PAYLOAD_FORMAT_JSON });
+
+    // Force the deflate flag on after construction so the flag and the bytes disagree, as the data frame's row does: the action frame inflates through the same reader.
+    corrupt.writeUInt8(1, 2);
+
+    assert.throws(() => decodePacket(buildPacket(corrupt, jsonDataFrame({ ok: true }))), { constructor: ProtectProtocolError, message: /could not be inflated/ });
+  });
+
+  test("encodePacket throws an unwrapped TypeError for a circular payload", () => {
+
+    // A payload JSON cannot serialize fails as the serializer's own TypeError, propagated unwrapped rather than as the codec's typed error, as the encoder documents.
+    const payload: Record<string, unknown> = {};
+
+    payload["self"] = payload;
+
+    assert.throws(() => encodePacket({ header: makeActionHeader(), payload }), { constructor: TypeError, message: /circular/ });
+  });
 });
 
 describe("encodePacket - round-trips through decodePacket", () => {
@@ -260,9 +319,14 @@ describe("encodePacket - round-trips through decodePacket", () => {
   test("a string payload round-trips", () => {
 
     const packet: RawPacket = { header: makeActionHeader(), payload: "a plain string payload" };
-    const decoded = decodePacket(encodePacket(packet));
+    const encoded = encodePacket(packet);
+    const decoded = decodePacket(encoded);
 
     assert.equal(decoded.payload, "a plain string payload");
+
+    // A string encoded as JSON would round-trip just the same, so the data frame's format byte is read too: the data frame opens past the action frame's header and
+    // the payload size that header carries at byte 4, and the format is the second byte of the data frame's own header.
+    assert.equal(encoded.readUInt8(encoded.readUInt32BE(4) + HEADER_SIZE + 1), PAYLOAD_FORMAT_STRING, "a string payload is encoded as a UTF-8 string data frame");
   });
 
   test("a buffer payload round-trips", () => {

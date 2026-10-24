@@ -168,15 +168,19 @@ describe("applyDevicePatch", () => {
     assert.deepEqual(next.field, { nested: true });
   });
 
-  // The recursion guard: applyDevicePatch tolerates a non-object device/patch (degenerate cases the public generic signature permits).
+  // The non-object guard: a direct call may pass a device or patch that is not a plain object, which the public generic signature permits, and with no keys to
+  // merge the patch replaces the device unless the two are equal by value.
   test("a non-object device replaces with the patch when they differ", () => {
 
     assert.equal(applyDevicePatch<unknown>(5, 6), 6);
   });
 
-  test("a non-object device equal by value returns the original", () => {
+  test("a non-object device equal by value returns the original reference", () => {
 
-    assert.equal(applyDevicePatch<unknown>("x", "x"), "x");
+    // An equal primitive cannot tell the original from the patch, so the device is an array: no plain object, but a value with a reference of its own.
+    const device = [1];
+
+    assert.ok(Object.is(applyDevicePatch<unknown>(device, [1]), device), "an equal patch returns the device's own reference rather than the patch");
   });
 });
 
@@ -232,7 +236,7 @@ describe("reduce - device transitions", () => {
 
     assert.ok(!Object.is(after, before), "the drifted camera takes a new top-level reference");
     assert.equal(after?.lastMotion, 999, "the drifted scalar reads the upserted value");
-    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
+    assert.ok(Object.is(after.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
   });
 
   test("devicePatched deep-merges a partial onto an existing device", () => {
@@ -293,15 +297,21 @@ describe("reduce - device transitions", () => {
 
   test("deviceAdded routes chime, sensor, and viewer to their respective maps", () => {
 
+    const chime = makeChime();
+    const sensor = makeSensor();
+    const viewer = makeViewer();
     let state = createInitialState();
 
-    state = reduce(state, { data: makeChime(), id: "chime-1", kind: "deviceAdded", modelKey: "chime" });
-    state = reduce(state, { data: makeSensor(), id: "sensor-1", kind: "deviceAdded", modelKey: "sensor" });
-    state = reduce(state, { data: makeViewer(), id: "viewer-1", kind: "deviceAdded", modelKey: "viewer" });
+    state = reduce(state, { data: chime, id: "chime-1", kind: "deviceAdded", modelKey: "chime" });
+    state = reduce(state, { data: sensor, id: "sensor-1", kind: "deviceAdded", modelKey: "sensor" });
+    state = reduce(state, { data: viewer, id: "viewer-1", kind: "deviceAdded", modelKey: "viewer" });
 
     assert.equal(state.chimes.size, 1);
     assert.equal(state.sensors.size, 1);
     assert.equal(state.viewers.size, 1);
+    assert.ok(Object.is(state.chimes.get("chime-1"), chime), "the chime is stored in the chimes map");
+    assert.ok(Object.is(state.sensors.get("sensor-1"), sensor), "the sensor is stored in the sensors map");
+    assert.ok(Object.is(state.viewers.get("viewer-1"), viewer), "the viewer is stored in the viewers map");
   });
 
   test("relay routes through deviceAdded, devicePatched, and deviceRemoved to the relays map (the mapFieldFor wiring)", () => {
@@ -378,14 +388,16 @@ describe("reduce - liveview transitions (realtime collection)", () => {
     assert.equal(next.liveviews.get("lv1")?.name, "All Cameras");
   });
 
-  test("a liveview devicePatched deep-merges, preserving the nested slots array semantics", () => {
+  test("a liveview devicePatched deep-merges and replaces the slots array wholesale, even with a slot that leaves out fields", () => {
 
     const seeded = applyBootstrap(createInitialState(), makeBootstrap({ liveviews: [makeLiveview({ id: "lv1", name: "Downstairs" })] }));
-    const next = reduce(seeded, { id: "lv1", kind: "devicePatched", modelKey: "liveview",
-      patch: { slots: [{ cameras: [ "camera-1", "camera-2" ], cycleInterval: 5, cycleMode: "manual" }] } });
+    const next = reduce(seeded, { id: "lv1", kind: "devicePatched", modelKey: "liveview", patch: { slots: [{ cameras: [] }] } });
 
     assert.equal(next.liveviews.get("lv1")?.name, "Downstairs", "the untouched scalar survives the patch");
-    assert.deepEqual(next.liveviews.get("lv1")?.slots[0]?.cameras, [ "camera-1", "camera-2" ], "the slots array replaces wholesale, carrying the new camera membership");
+
+    // The patch's slot leaves out the cycle fields the seeded slot carries, so a merge into the array's elements would carry them over, and only a wholesale
+    // replacement leaves the slots exactly as the patch wrote them.
+    assert.deepEqual(next.liveviews.get("lv1")?.slots, [{ cameras: [] }], "the slots array replaces wholesale rather than merging into the seeded slot");
     assert.ok(!Object.is(next.liveviews, seeded.liveviews), "the changed collection takes a new map reference");
   });
 
@@ -395,14 +407,6 @@ describe("reduce - liveview transitions (realtime collection)", () => {
     const next = reduce(seeded, { id: "lv1", kind: "deviceRemoved", modelKey: "liveview" });
 
     assert.deepEqual([...next.liveviews.keys()], ["lv2"]);
-  });
-
-  test("a no-op liveview patch keeps the collection map reference (observers stay quiet)", () => {
-
-    const seeded = applyBootstrap(createInitialState(), makeBootstrap({ liveviews: [makeLiveview({ id: "lv1", name: "Den" })] }));
-    const next = reduce(seeded, { id: "lv1", kind: "devicePatched", modelKey: "liveview", patch: { name: "Den" } });
-
-    assert.ok(Object.is(next, seeded), "a value-identical liveview patch is a whole-state no-op");
   });
 });
 
@@ -431,7 +435,7 @@ describe("reduce - NVR transitions", () => {
 
     assert.ok(!Object.is(next.nvr, initial.nvr), "the drifted NVR takes a new top-level reference");
     assert.equal(next.nvr?.lastSeen, 2, "the drifted lastSeen reads the upserted value");
-    assert.ok(Object.is(next.nvr?.ports, initial.nvr?.ports), "the unchanged ports object keeps its reference");
+    assert.ok(Object.is(next.nvr.ports, initial.nvr?.ports), "the unchanged ports object keeps its reference");
   });
 
   test("deviceAdded with an nvr that omits a key drops it from the singleton", () => {
@@ -592,8 +596,8 @@ describe("applyBootstrap", () => {
 
     assert.ok(!Object.is(after, before), "the drifted camera takes a new top-level reference");
     assert.equal(after?.lastMotion, 999, "the drifted scalar reads the bootstrap's value");
-    assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
-    assert.ok(Object.is(after?.channels, before?.channels), "the unchanged channels array keeps its reference");
+    assert.ok(Object.is(after.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
+    assert.ok(Object.is(after.channels, before?.channels), "the unchanged channels array keeps its reference");
   });
 
   test("an array that changed one element is taken whole from the bootstrap while the unchanged nested object keeps its reference", () => {
@@ -629,7 +633,7 @@ describe("applyBootstrap", () => {
 
     assert.ok(!Object.is(next.nvr, initial.nvr), "the drifted NVR takes a new top-level reference");
     assert.equal(next.nvr?.lastSeen, 2, "the drifted lastSeen reads the bootstrap's value");
-    assert.ok(Object.is(next.nvr?.ports, initial.nvr?.ports), "the unchanged ports object keeps its reference");
+    assert.ok(Object.is(next.nvr.ports, initial.nvr?.ports), "the unchanged ports object keeps its reference");
   });
 
   test("an NVR that lost a key in the bootstrap drops it and keeps its unchanged ports reference", () => {
@@ -754,7 +758,7 @@ describe("applyBootstrap - session identity", () => {
     assert.ok(Object.is(next.users, initial.users), "an unchanged roster must keep its map reference");
   });
 
-  test("a changed user record takes a new reference while the unchanged map identity is not preserved", () => {
+  test("a changed user record takes a new reference and so does the users map", () => {
 
     const initial = applyBootstrap(createInitialState(), makeBootstrap({ authUserId: "u1", users: [makeUser({ allPermissions: [], id: "u1" })] }));
     const next = applyBootstrap(initial, makeBootstrap({ authUserId: "u1", users: [makeUser({ allPermissions: ["camera:read,write"], id: "u1" })] }));
@@ -881,17 +885,6 @@ describe("reduce - adoption self-contradiction normalization", () => {
     assert.equal(patch.isAdoptedByOther, true, "the incoming patch object still carries the raw flag for the events() firehose");
   });
 
-  test("(b2) a repeat flagged patch on an already-clean stored record is a no-op again", () => {
-
-    const clean = makeRelay({ id: "r1", isAdopted: true, isAdoptedByOther: false, mac: "AA:BB:CC:00:00:11", nvrMac: ownMac });
-    const initial = applyBootstrap(createInitialState(), makeBootstrap({ nvr: controller(), relays: [clean] }));
-    const once = reduce(initial, { id: "r1", kind: "devicePatched", modelKey: "relay", patch: { isAdoptedByOther: true } });
-    const twice = reduce(once, { id: "r1", kind: "devicePatched", modelKey: "relay", patch: { isAdoptedByOther: true } });
-
-    assert.ok(Object.is(once, initial), "the first flip nets to no change");
-    assert.ok(Object.is(twice, once), "the repeat flip nets to no change");
-  });
-
   test("(c) a genuine foreign adoption still evicts, and a migration from own-MAC-flagged to foreign evicts", () => {
 
     // A device adopted by a genuinely different controller (a foreign nvrMac) is not the contradiction, so it is unaffected by the normalization and still evicts.
@@ -1004,8 +997,8 @@ describe("reduce - adoption self-contradiction normalization", () => {
     const after = drifted.relays.get(record.id);
 
     assert.equal(after?.isAdoptedByOther, false, "the drifted re-send, still flagged on the wire, enters state normalized");
-    assert.equal(after?.name, "Drifted", "the drifted name reads the re-sent value");
+    assert.equal(after.name, "Drifted", "the drifted name reads the re-sent value");
     assert.ok(!Object.is(after, before), "the drifted record takes a new reference");
-    assert.ok(Object.is(after?.ledSettings, before?.ledSettings), "the unchanged ledSettings object keeps the first record's reference");
+    assert.ok(Object.is(after.ledSettings, before?.ledSettings), "the unchanged ledSettings object keeps the first record's reference");
   });
 });

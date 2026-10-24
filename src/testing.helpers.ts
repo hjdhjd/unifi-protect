@@ -3,8 +3,8 @@
  * testing.helpers.ts: Cross-cutting helpers shared across every unit test in the codebase.
  *
  * These helpers exist as code rather than data because they encapsulate behavior the test runtime needs (no-op logging, log capture, temporary directory lifecycle,
- * unhandled-rejection detection, eventual-consistency assertions, deterministic time control). They live in src/ so they are co-located with the production code they
- * support, and they are excluded from the build emit by the helpers exclude pattern in tsconfig.build.json.
+ * unhandled-rejection detection, eventual-consistency assertions, promise-settlement probes, deterministic time control). They live in src/ so they are co-located with
+ * the production code they support, and they are excluded from the build emit by the helpers exclude pattern in tsconfig.build.json.
  *
  * Adding new cross-cutting helpers here is preferable to per-test reinvention. If a helper is specific to a single source module, place it next to that module as a
  * sibling helpers file instead.
@@ -171,6 +171,30 @@ export async function expectAt(predicate: () => boolean | Promise<boolean>,
   }
 
   assert.fail(message);
+}
+
+/**
+ * Answer whether a promise has settled, without awaiting it. The probe marks on both outcomes, so a rejection counts as settled and leaves no unhandled derived
+ * rejection behind. Pair it with `expectAt` to wait for a promise to settle, or read it in a plain assertion to hold that a promise is still pending.
+ *
+ * A caller that needs fulfilment awaits the promise after the read, since a rejection counts as settled too.
+ *
+ * @param promise - The promise to watch.
+ *
+ * @returns a predicate that reads true once the promise has fulfilled or rejected.
+ */
+export function settlement(promise: Promise<unknown>): () => boolean {
+
+  let settled = false;
+
+  const mark = (): void => {
+
+    settled = true;
+  };
+
+  void promise.then(mark, mark);
+
+  return (): boolean => settled;
 }
 
 /**

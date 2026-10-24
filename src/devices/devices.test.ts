@@ -19,11 +19,12 @@ import type { MockTransport } from "../transport/mock-controller.helpers.ts";
 import { Nvr } from "./nvr.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import { Relay } from "./relay.ts";
-import { StateStore } from "../state/store.ts";
+import type { StateStore } from "../state/store.ts";
 import { TalkbackSession } from "../transport/talkback-session.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
+import { plainStore } from "../state/store.helpers.ts";
 import { talkbackUrlResolver } from "../transport/ws-endpoint.ts";
 
 // Build a device context backed by a real (mocked-transport) store seeded with the given bootstrap. Returns the mock-transport bundle too, so a test can set up
@@ -31,13 +32,13 @@ import { talkbackUrlResolver } from "../transport/ws-endpoint.ts";
 function deviceFixture(bootstrap: ProtectNvrBootstrap): { ctx: DeviceContext; mock: MockTransport; store: StateStore } {
 
   const mock = makeMockTransport();
-  const store = new StateStore({ clock: fakeClock(), refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
+  const store = plainStore();
 
   store.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
 
   // The pool is lazy - it negotiates nothing until a camera is subscribed - and these device tests never call `camera.livestream()`, so an inert pool with a rejecting
   // resolver satisfies the context's `livestreamPool` member honestly, without a cast.
-  const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: () => Promise.reject(new Error("unused")) });
+  const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
 
   // The real talkback factory, bound to the mock transport's talkback URL resolver - so a test asserting `camera.talkback()`'s capability guard is pre-negotiation can
   // register a talkback interceptor and prove it stays pending (the factory would negotiate through the transport if the guard ever failed to fire first).
@@ -140,7 +141,12 @@ describe("device projections", () => {
 
       await expectAt(() => received.length === 1);
       assert.ok(received[0] === camera, "observe yields the same live projection handle");
-      assert.equal(received[0]?.name, "Back");
+      assert.equal(received[0].name, "Back");
+
+      // A second change yields the handle again, so the stream follows every change rather than ending after the first.
+      store.dispatch({ id: "c1", kind: "devicePatched", modelKey: "camera", patch: { name: "Side" } });
+
+      await expectAt(() => received.length === 2);
 
       ac.abort();
       await done;
@@ -396,13 +402,13 @@ describe("device projections", () => {
       // With the speaker present the guard passes and the projection delegates to the composition-root-bound talkback factory, passing only its own id and the signal -
       // Layer 3 holds no WebSocket wire knowledge. We use a real store (so the config read-through guard sees hasSpeaker) and a capturing factory (so no socket is
       // opened).
-      const store = new StateStore({ clock: fakeClock(), refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
+      const store = plainStore();
 
       store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ featureFlags: { hasSpeaker: true }, id: "c1", name: "Front" })] }), kind: "bootstrapLoaded" });
 
       const fakeSession = {} as unknown as TalkbackSession;
       const controller = new AbortController();
-      let captured: { opts?: { signal?: AbortSignal }; params: { cameraId: string } } | null = null;
+      const calls: { opts?: { signal?: AbortSignal }; params: { cameraId: string } }[] = [];
       const ctx = {
 
         host: "10.0.0.1",
@@ -411,7 +417,7 @@ describe("device projections", () => {
         store,
         talkback: (params: { cameraId: string }, opts?: { signal?: AbortSignal }): Promise<TalkbackSession> => {
 
-          captured = { opts, params };
+          calls.push({ opts, params });
 
           return Promise.resolve(fakeSession);
         },
@@ -420,11 +426,12 @@ describe("device projections", () => {
 
       const camera = new Camera(ctx, "c1");
       const session = await camera.talkback({ signal: controller.signal });
+      const captured = calls.at(-1);
 
       assert.equal(session, fakeSession);
-      assert.ok(captured !== null);
-      assert.deepEqual((captured as { params: { cameraId: string } }).params, { cameraId: "c1" });
-      assert.equal((captured as { opts?: { signal?: AbortSignal } }).opts?.signal, controller.signal);
+      assert.ok(captured !== undefined);
+      assert.deepEqual(captured.params, { cameraId: "c1" });
+      assert.equal(captured.opts?.signal, controller.signal);
     });
 
     test("update PATCHes the device endpoint and does not fold the response into the store", async () => {
@@ -747,8 +754,8 @@ describe("Nvr projection", () => {
 
     // A store with no bootstrap dispatched: state.nvr is still null, so the absent-record guard must fire rather than return an empty object. A connected client never
     // reaches this, since connect() awaits the bootstrap - but the contract is defined and tested.
-    const store = new StateStore({ clock: fakeClock(), refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
-    const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: () => Promise.reject(new Error("unused")) });
+    const store = plainStore();
+    const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
     const ctx: DeviceContext = { host: "127.0.0.1", livestreamPool, log: silentLog(), store, talkback: () => Promise.reject(new Error("unused")),
       transport: makeMockTransport().transport };
     const nvr = new Nvr(ctx);
@@ -769,8 +776,8 @@ describe("Nvr projection", () => {
 
     // Pre-bootstrap: state.nvr is still null - the singleton's own absent-record condition, mapped to undefined by the bound selector. peek() reports it as undefined (no
     // throw) while config throws, exactly as a removed device behaves for a device projection.
-    const store = new StateStore({ clock: fakeClock(), refresh: () => Promise.reject(new Error("unused")), refreshIntervalMs: false });
-    const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: () => Promise.reject(new Error("unused")) });
+    const store = plainStore();
+    const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
     const ctx: DeviceContext = { host: "127.0.0.1", livestreamPool, log: silentLog(), store, talkback: () => Promise.reject(new Error("unused")),
       transport: makeMockTransport().transport };
     const preBootstrap = new Nvr(ctx);
@@ -804,7 +811,7 @@ describe("Nvr projection", () => {
     store.dispatch({ id: "nvr-1", kind: "devicePatched", modelKey: "nvr", patch: { name: "B" } });
     await expectAt(() => received.length === 1);
     assert.ok(received[0] === nvr, "observe yields the same live projection handle");
-    assert.equal(received[0]?.name, "B");
+    assert.equal(received[0].name, "B");
 
     ac.abort();
     await done;

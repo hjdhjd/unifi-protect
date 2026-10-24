@@ -2,7 +2,7 @@
  *
  * fake-client.helpers.ts: A minimal, configurable fake ProtectClient and command-context harness for unit-testing CLI commands through the injected openClient hook.
  */
-import type { PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment, TypedEvent } from "../../index.ts";
+import type { LivestreamOptions, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment, TypedEvent } from "../../index.ts";
 import type { CommandContext } from "./shared.ts";
 import { Output } from "./output/format.ts";
 import { ProtectAbortedError } from "../../index.ts";
@@ -136,12 +136,14 @@ async function *driveRail<T>(elements: readonly T[], opts: { error?: Error; hold
 }
 
 // The calls a command made, captured for assertions: device reboots and the controller reboot (by id or "nvr"), update payloads, talkback streams (camera + bytes
-// drained), the special-endpoint device actions (camera unlock/flashlight, relay output toggles, chime speaker/buzzer plays), and the dispose count. Each action records
-// into its own bucket so a per-verb test can assert its verb hit exactly its method and no sibling.
+// drained), livestream subscriptions (camera + the options the subscription was opened with), the special-endpoint device actions (camera unlock/flashlight, relay
+// output toggles, chime speaker/buzzer plays), and the dispose count. Each action records into its own bucket so a per-verb test can assert its verb hit exactly its
+// method and no sibling.
 export interface FakeCalls {
 
   disposed: number;
   flashlights: string[];
+  livestreams: { camera: string; opts: LivestreamOptions }[];
   playBuzzers: string[];
   playSpeakers: { chime: string; opts: PlaySpeakerOptions }[];
   reboots: string[];
@@ -256,8 +258,8 @@ function makeDevice(spec: FakeDeviceSpec, modelKey: string, calls: FakeCalls, ob
   return device;
 }
 
-// Build a fake camera: a device plus snapshot bytes and a livestream that yields the scripted segments then ends. The `observations` count is threaded into the device
-// beneath so the camera's `observe` yields the same fixed number of times.
+// Build a fake camera: a device plus snapshot bytes and a livestream that records the options it was opened with, then yields the scripted segments and ends. The
+// `observations` count is threaded into the device beneath so the camera's `observe` yields the same fixed number of times.
 function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number): Record<string, unknown> {
 
   const device = makeDevice(spec, "camera", calls, observations);
@@ -266,17 +268,22 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
   return {
 
     ...device,
-    livestream: (): AsyncIterable<Segment> & AsyncDisposable => ({
+    livestream: (opts: LivestreamOptions): AsyncIterable<Segment> & AsyncDisposable => {
 
-      async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
+      calls.livestreams.push({ camera: spec.id, opts });
 
-        for(const segment of segments) {
+      return {
 
-          yield segment;
-        }
-      },
-      [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve()
-    }),
+        async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
+
+          for(const segment of segments) {
+
+            yield segment;
+          }
+        },
+        [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve()
+      };
+    },
     // A snapshot: the spec's bytes when supplied, else the minimal valid JPEG - the SOI marker (0xFF 0xD8) immediately followed by the EOI marker (0xFF 0xD9) - standing
     // in for a real snapshot payload without embedding one.
     snapshot: (): Promise<Buffer> => Promise.resolve(spec.snapshot ?? Buffer.from([ 0xFF, 0xD8, 0xFF, 0xD9 ])),
@@ -324,7 +331,10 @@ export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandl
     throw new Error("A fake rail cannot both hold open and fail - the two claim the same behavior after its script runs out.");
   }
 
-  const calls: FakeCalls = { disposed: 0, flashlights: [], playBuzzers: [], playSpeakers: [], reboots: [], talkback: [], toggles: [], unlocks: [], updates: [] };
+  const calls: FakeCalls = {
+
+    disposed: 0, flashlights: [], livestreams: [], playBuzzers: [], playSpeakers: [], reboots: [], talkback: [], toggles: [], unlocks: [], updates: []
+  };
 
   // How many times each fake observe (state.observe and every device.observe) yields before ending. Default 0 keeps observe a no-op.
   const observations = options.observations ?? 0;

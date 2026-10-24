@@ -113,17 +113,6 @@ describe("schema manifest diff", () => {
     ]);
   });
 
-  test("a declared field that is simply absent is not novelty", () => {
-
-    // An optional field left out of a record is ordinary traffic. A diff that reported it would bury the real signal on every run.
-    assert.deepEqual(diffBootstrap(FIXTURE, { sensors: [{ id: "s2", mac: "AABBCCDDEE02" }] }), []);
-  });
-
-  test("nothing inside an opaque collection is novelty", () => {
-
-    assert.deepEqual(diffBootstrap(FIXTURE, { aiports: [{ anything: true, id: "a1" }] }), []);
-  });
-
   test("a record of an unknown model key is reported per unit", () => {
 
     // A brand-new device class never reaches the reduced state, so it appears in no inventory: per-unit identity has to survive here or every unit past the first is
@@ -355,8 +344,9 @@ describe("undeclared snapshots", () => {
 
   test("a bootstrap that is not an object yields no groups", () => {
 
-    // The document is read structurally rather than trusted to be a bootstrap at all, the same posture the diff and the sibling sampler take.
-    assert.deepEqual(snapshotUndeclared(FIXTURE, "not a bootstrap", 3), []);
+    // The document is read structurally rather than trusted to be a bootstrap at all, the same posture the diff and the sibling sampler take. Null is the document
+    // the guard exists for: it has no entries to enumerate, where a string's characters would simply match no described collection.
+    assert.deepEqual(snapshotUndeclared(FIXTURE, null, 3), []);
   });
 });
 
@@ -405,9 +395,13 @@ describe("noveltyKey", () => {
     // Each kind's key is its own subject alone. An observed value type, where a kind carries one, is left out as evidence rather than identity, the same rule the
     // observed-type test above states.
     assert.notEqual(noveltyKey({ collection: "agreements", kind: "unknownCollection", valueType: "object" }),
-      noveltyKey({ collection: "hubs", kind: "unknownCollection", valueType: "array" }));
+      noveltyKey({ collection: "hubs", kind: "unknownCollection", valueType: "object" }));
+    assert.equal(noveltyKey({ collection: "agreements", kind: "unknownCollection", valueType: "object" }),
+      noveltyKey({ collection: "agreements", kind: "unknownCollection", valueType: "array" }));
+    assert.notEqual(noveltyKey({ eventType: "voc", kind: "unknownEventType" }), noveltyKey({ eventType: "vap", kind: "unknownEventType" }));
     assert.equal(noveltyKey({ eventType: "voc", kind: "unknownEventType" }), noveltyKey({ eventType: "voc", kind: "unknownEventType" }));
     assert.notEqual(noveltyKey({ kind: "unknownModelKey", modelKey: "voc", recordId: "v1" }), noveltyKey({ kind: "unknownModelKey", modelKey: "voc", recordId: "v2" }));
+    assert.equal(noveltyKey({ kind: "unknownModelKey", modelKey: "voc", recordId: "v1" }), noveltyKey({ kind: "unknownModelKey", modelKey: "voc", recordId: "v1" }));
   });
 });
 

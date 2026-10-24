@@ -4,7 +4,7 @@
  * specializations (both GET), the shared no-URL / non-2xx failure paths, and forwarding the caller's abort signal to the transport, driven through an undici
  * MockAgent so no live controller is needed.
  */
-import { ProtectAbortedError, ProtectError, ProtectProtocolError } from "../errors.ts";
+import { ProtectAbortedError, ProtectAuthorizationError, ProtectProtocolError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { livestreamUrlResolver, talkbackUrlResolver, wsEndpointResolver } from "./ws-endpoint.ts";
 import assert from "node:assert/strict";
@@ -36,7 +36,8 @@ describe("wsEndpointResolver", () => {
 
       const { agent, host, pool, transport } = makeMockTransport();
 
-      pool.intercept({ method: "GET", path: (path) => path.startsWith("/proxy/protect/api/ws/talkback") })
+      // The intercept answers only the exact path, so the camera parameter must reach the request's query.
+      pool.intercept({ method: "GET", path: (path) => path === "/proxy/protect/api/ws/talkback?camera=cam1" })
         .reply(200, { url: "wss://internal-host:7443/ws/talkback?token=xyz789" });
 
       const resolve = talkbackUrlResolver(transport, host);
@@ -71,7 +72,8 @@ describe("wsEndpointResolver", () => {
 
       const resolve = livestreamUrlResolver(transport, host);
 
-      await assert.rejects(resolve(new URLSearchParams(), {}), ProtectError);
+      // The 403 body carries no URL, so only the status classification makes it the authorization error rather than a protocol error.
+      await assert.rejects(resolve(new URLSearchParams(), {}), { constructor: ProtectAuthorizationError, statusCode: 403 });
 
       await agent.close();
     });

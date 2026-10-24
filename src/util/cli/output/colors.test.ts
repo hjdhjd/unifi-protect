@@ -4,10 +4,27 @@
  */
 import { colorsEnabled, createPalette } from "./colors.ts";
 import { describe, test } from "node:test";
+import type { Palette } from "./colors.ts";
 import assert from "node:assert/strict";
 
 // The ESC control character, built rather than embedded so the test source carries no literal control byte.
 const ESC = String.fromCharCode(27);
+
+// Each palette member's text "x" as the enabled palette wraps it. Node's native styleText emits precise per-attribute reset codes (foreground 39, intensity 22) rather
+// than a blanket reset, which is what lets styled spans nest. The table is typed by the palette's own members, so a member it leaves out fails the typecheck, every
+// palette row iterates it, and each member is read against its own codes, so a member mapped to the wrong format cannot pass.
+const ESCAPES: Record<keyof Palette, string> = {
+
+  blue: ESC + "[34mx" + ESC + "[39m",
+  bold: ESC + "[1mx" + ESC + "[22m",
+  cyan: ESC + "[36mx" + ESC + "[39m",
+  dim: ESC + "[2mx" + ESC + "[22m",
+  gray: ESC + "[90mx" + ESC + "[39m",
+  green: ESC + "[32mx" + ESC + "[39m",
+  magenta: ESC + "[35mx" + ESC + "[39m",
+  red: ESC + "[31mx" + ESC + "[39m",
+  yellow: ESC + "[33mx" + ESC + "[39m"
+};
 
 describe("createPalette", () => {
 
@@ -15,9 +32,9 @@ describe("createPalette", () => {
 
     const palette = createPalette(false);
 
-    for(const color of [ palette.blue, palette.bold, palette.cyan, palette.dim, palette.gray, palette.green, palette.magenta, palette.red, palette.yellow ]) {
+    for(const member of Object.keys(ESCAPES) as (keyof Palette)[]) {
 
-      assert.equal(color("text"), "text");
+      assert.equal(palette[member]("text"), "text", member);
     }
   });
 
@@ -25,10 +42,10 @@ describe("createPalette", () => {
 
     const palette = createPalette(true);
 
-    // Node's native styleText emits precise per-attribute reset codes (foreground 39, intensity 22) rather than a blanket reset, which is what lets styled spans nest.
-    assert.equal(palette.red("x"), ESC + "[31mx" + ESC + "[39m");
-    assert.equal(palette.bold("x"), ESC + "[1mx" + ESC + "[22m");
-    assert.equal(palette.green("x"), ESC + "[32mx" + ESC + "[39m");
+    for(const member of Object.keys(ESCAPES) as (keyof Palette)[]) {
+
+      assert.equal(palette[member]("x"), ESCAPES[member], member);
+    }
   });
 });
 

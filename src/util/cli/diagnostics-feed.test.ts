@@ -43,6 +43,16 @@ describe("renderDiagnostic", () => {
     assert.deepEqual(JSON.parse(lines.join("")), { channel: "unifi-protect:http:request", payload: { method: "GET" } });
   });
 
+  test("gives a payload-less event an explicit null payload when json is set", () => {
+
+    const { lines, output } = captureOutput();
+
+    // JSON drops an undefined member, so the explicit null is what keeps the payload member present on every object.
+    renderDiagnostic(output, "unifi-protect:schema:unknownModelKey", undefined, { json: true });
+
+    assert.deepEqual(JSON.parse(lines.join("")), { channel: "unifi-protect:schema:unknownModelKey", payload: null });
+  });
+
   test("emits a timestamped human line carrying the channel and the stringified payload when json is not set", () => {
 
     const { lines, output } = captureOutput();
@@ -51,6 +61,8 @@ describe("renderDiagnostic", () => {
 
     const line = lines.join("");
 
+    // The dim styling wraps the whole stamp, so its digits stay contiguous under color.
+    assert.match(line, /\d{2}:\d{2}:\d{2}\.\d{3}/, "the line carries an HH:MM:SS.mmm receive time");
     assert.match(line, /unifi-protect:events:packet/);
     assert.match(line, /\{"id":"c1"\}/);
   });

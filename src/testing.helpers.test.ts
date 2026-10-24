@@ -6,7 +6,7 @@
  */
 import { access, constants } from "node:fs/promises";
 import { afterEach, beforeEach, describe, test } from "node:test";
-import { assertNoUnhandledRejections, capturingLog, expectAt, fakeClock, silentLog, withTempDir } from "./testing.helpers.ts";
+import { assertNoUnhandledRejections, capturingLog, expectAt, fakeClock, settlement, silentLog, withTempDir } from "./testing.helpers.ts";
 import assert from "node:assert/strict";
 import { settle } from "homebridge-plugin-utils/testing";
 
@@ -26,27 +26,18 @@ describe("silentLog", () => {
 
     const log = silentLog();
 
-    log.error("test message", { context: 1 });
-
     // silentLog wires each method to mock.fn() so the test infrastructure exposes a `.mock` property carrying call records. We read it through an `as unknown as`
     // cast to the minimal `.mock` shape this test depends on. The cast is precisely what lets this compile whatever the real runtime shape is, so if the helper
-    // switched away from mock.fn the `.mock` would be undefined and the `assert.ok` below would fail at runtime, not at compile time.
-    const errorRecord = (log.error as unknown as { mock?: { callCount(): number } }).mock;
+    // switched any level away from mock.fn, that level's `.mock` would be undefined and the `assert.ok` below would fail at runtime, not at compile time.
+    for(const level of [ "debug", "error", "info", "warn" ] as const) {
 
-    assert.ok(errorRecord, "silentLog.error must be a mock.fn (exposes a .mock property)");
-    assert.equal(errorRecord.callCount(), 1, "the mock must record exactly the calls the test made");
-  });
+      log[level]("test message", { context: 1 });
 
-  test("methods do not throw when called with mixed argument types", () => {
+      const record = (log[level] as unknown as { mock?: { callCount(): number } }).mock;
 
-    const log = silentLog();
-
-    // Call each level with a different, deliberately mixed argument shape - a context object, an Error, a primitive, nullish values and an array - to prove none of
-    // them throws.
-    log.debug("debug message", { id: "x" });
-    log.error("error message", new Error("test error"));
-    log.info("info message", 42);
-    log.warn("warn message", null, undefined, [ 1, 2, 3 ]);
+      assert.ok(record, "silentLog." + level + " must be a mock.fn (exposes a .mock property)");
+      assert.equal(record.callCount(), 1, "the " + level + " mock must record exactly the calls the test made");
+    }
   });
 });
 
@@ -92,36 +83,28 @@ describe("capturingLog", () => {
     assert.equal(log.entries.length, 0, "reset must clear entries");
     assert.equal(log.entries, entriesRef, "reset must mutate in place, not replace the array");
   });
-
-  test("reset() is safe to call when entries is already empty", () => {
-
-    const log = capturingLog();
-
-    log.reset();
-
-    assert.equal(log.entries.length, 0);
-  });
 });
 
 describe("withTempDir", () => {
 
   test("creates a directory, passes its path to the callback, and resolves to the callback's value", async () => {
 
-    let observedPath: string | null = null;
+    const observedPaths: string[] = [];
 
     const result = await withTempDir(async (dir) => {
 
-      observedPath = dir;
+      observedPaths.push(dir);
 
       // The directory must exist for the callback's lifetime.
       await access(dir, constants.F_OK);
 
       return "callback-return-value";
     });
+    const observedPath = observedPaths.at(-1);
 
     assert.equal(result, "callback-return-value", "withTempDir must return the callback's resolved value");
-    assert.ok(observedPath, "the callback must have run with a non-null path");
-    assert.match(observedPath ?? "", /ufp-test-/, "the temp directory name must use the documented prefix");
+    assert.ok(observedPath, "the callback must have run with a path");
+    assert.match(observedPath, /ufp-test-/, "the temp directory name must use the documented prefix");
   });
 
   test("removes the directory after the callback resolves", async () => {
@@ -189,15 +172,6 @@ describe("withTempDir", () => {
 
 describe("assertNoUnhandledRejections", () => {
 
-  test("resolves when the wrapped function does not produce any unhandled rejection", async () => {
-
-    await assertNoUnhandledRejections(async () => {
-
-      // A body that settles cleanly produces no unhandled rejection.
-      await Promise.resolve("ok");
-    });
-  });
-
   test("removes the unhandledRejection listener after the wrapped function resolves", async () => {
 
     const listenersBefore = process.listenerCount("unhandledRejection");
@@ -230,6 +204,39 @@ describe("assertNoUnhandledRejections", () => {
 
     assert.equal(listenersAfter, listenersBefore, "the helper must remove its listener via the finally block on throw too");
   });
+
+  test("rejects naming the captured reason when the wrapped function leaves a rejection unhandled", async () => {
+
+    /* The test runner keeps an unhandledRejection listener of its own, which fails the running test with the planted rejection before the helper's assertion can
+     * be read. We take every listener already registered off for the planted span and put each one back in the finally, so the helper's listener is the only one
+     * the rejection reaches and the runner's own listeners are restored on every path.
+     */
+    const runnerListeners = process.listeners("unhandledRejection");
+
+    for(const listener of runnerListeners) {
+
+      process.off("unhandledRejection", listener);
+    }
+
+    try {
+
+      await assert.rejects(
+
+        async () => assertNoUnhandledRejections(async () => {
+
+          void Promise.reject(new Error("a planted rejection nothing handles"));
+        }),
+        { constructor: assert.AssertionError, message: /^expected no unhandled rejections, captured: Error: a planted rejection nothing handles/ },
+        "the helper must fail, naming the rejection it captured, when the wrapped function leaves one unhandled"
+      );
+    } finally {
+
+      for(const listener of runnerListeners) {
+
+        process.on("unhandledRejection", listener);
+      }
+    }
+  });
 });
 
 describe("expectAt", () => {
@@ -259,7 +266,7 @@ describe("expectAt", () => {
       return count >= 3;
     });
 
-    assert.ok(count >= 3, "predicate must be polled until it returns true");
+    assert.equal(count, 3, "predicate must be polled until it returns true, and not again once it has");
   });
 
   test("supports an async predicate that returns a Promise<boolean>", async () => {
@@ -273,7 +280,7 @@ describe("expectAt", () => {
       return Promise.resolve(count >= 2);
     });
 
-    assert.ok(count >= 2);
+    assert.equal(count, 2, "an async predicate must be polled until its promise resolves true, and not again once it has");
   });
 
   test("rejects with the supplied message when the predicate never becomes true within the timeout", async () => {
@@ -320,6 +327,38 @@ describe("expectAt", () => {
     assert.ok(elapsed >= 100, "expectAt must wait the full timeout before rejecting (got " + elapsed.toString() + "ms)");
     assert.ok(count >= 1, "predicate must be polled at least once");
     assert.ok(count <= 6, "predicate must be polled at the interval's cadence (got " + count.toString() + " polls)");
+  });
+});
+
+describe("settlement", () => {
+
+  test("reads false for a promise still pending after a yielded turn", async () => {
+
+    const settled = settlement(new Promise<never>(() => undefined));
+
+    await settle();
+    assert.equal(settled(), false, "a promise that never settles must read as pending");
+  });
+
+  test("reads true for a resolved promise after a yielded turn", async () => {
+
+    const settled = settlement(Promise.resolve());
+
+    await settle();
+    assert.equal(settled(), true, "a resolved promise must read as settled");
+  });
+
+  test("reads true for a rejected promise and leaves no unhandled rejection behind", async () => {
+
+    // The rejection is handed to the probe in the statement that builds it, so the probe's own handler is the only one it ever has: a probe that marked on
+    // fulfilment alone would leave it unhandled and read false.
+    await assertNoUnhandledRejections(async () => {
+
+      const settled = settlement(Promise.reject(new Error("a rejection the probe absorbs")));
+
+      await settle();
+      assert.equal(settled(), true, "a rejection must count as settled");
+    });
   });
 });
 
@@ -390,6 +429,7 @@ describe("fakeClock", () => {
   test("setInterval terminates when the abort signal fires", async () => {
 
     const clock = fakeClock();
+    const caught: unknown[] = [];
     let iterationsCompleted = 0;
     let loopSettled = false;
 
@@ -401,10 +441,11 @@ describe("fakeClock", () => {
 
           iterationsCompleted++;
         }
-      } catch {
+      } catch(error) {
 
-        // The async iterator from setInterval rejects with AbortError on signal abort - that's the documented termination path. We absorb it here so the
-        // settled flag observably tracks the loop's actual termination.
+        // The async iterator from setInterval rejects with AbortError on signal abort - that's the documented termination path. We capture it here so the test can
+        // read what the loop ended on, and the settled flag observably tracks the loop's actual termination.
+        caught.push(error);
       } finally {
 
         loopSettled = true;
@@ -420,6 +461,9 @@ describe("fakeClock", () => {
 
     assert.equal(loopSettled, true, "loop must terminate after abort");
     assert.equal(iterationsCompleted, 1, "no further iterations after abort");
+    assert.equal(caught.length, 1, "the loop must end on its iterator rejecting, not on a clean done");
+    assert.ok(caught[0] instanceof Error, "the iterator must reject with an Error");
+    assert.equal(caught[0].name, "AbortError", "the iterator must reject with an AbortError when the signal aborts");
   });
 
   test("setInterval pre-aborted signal terminates immediately on first next()", async () => {
@@ -488,13 +532,38 @@ describe("fakeClock", () => {
     await Promise.all([ consumerALoop, consumerBLoop ]);
   });
 
-  test("tick() with no pending waiters is a no-op (does not throw)", async () => {
+  test("tick() with no pending waiters is not banked for a consumer that starts later", async () => {
 
     const clock = fakeClock();
+    const ticks: number[] = [];
 
-    // No setInterval consumer registered. tick() should not throw.
+    // No setInterval consumer is registered yet, so the idle ticks below release nothing and must not throw.
     await clock.tick();
     await clock.tick();
+
+    // A consumer that starts afterwards must wait for a tick of its own: neither idle tick is held over for it.
+    const loop = (async (): Promise<void> => {
+
+      try {
+
+        for await (const _t of clock.setInterval(1000, { signal: fakeAbort.signal })) {
+
+          ticks.push(clock.now());
+        }
+      } catch {
+
+        // AbortError is the clean shutdown path.
+      }
+    })();
+
+    await settle();
+    assert.equal(ticks.length, 0, "the idle ticks must release nothing a later consumer receives");
+
+    await clock.tick();
+    assert.equal(ticks.length, 1, "the first tick after the consumer starts releases its first iteration");
+
+    fakeAbort.abort();
+    await loop;
   });
 
   test("aborting a signal removes its waiter from the pending queue", async () => {
@@ -554,22 +623,18 @@ describe("fakeClock", () => {
   test("wait resolves only once advance() reaches its deadline", async () => {
 
     const clock = fakeClock();
-    let resolved = false;
-
-    const pending = clock.wait(100, { signal: fakeAbort.signal }).then(() => {
-
-      resolved = true;
-    });
+    const pending = clock.wait(100, { signal: fakeAbort.signal });
+    const resolved = settlement(pending);
 
     // Advancing short of the deadline leaves the wait pending.
     clock.advance(99);
     await settle();
-    assert.equal(resolved, false, "wait stays pending until the clock reaches its deadline");
+    assert.equal(resolved(), false, "wait stays pending until the clock reaches its deadline");
 
     // Crossing the deadline resolves it.
     clock.advance(1);
     await pending;
-    assert.equal(resolved, true, "wait resolves once advance() reaches the deadline");
+    assert.equal(resolved(), true, "wait resolves once advance() reaches the deadline");
   });
 
   test("advance() resolves several due waits in deadline order", async () => {

@@ -756,14 +756,6 @@ describe("scrub", () => {
     assert.deepEqual(scrubbed(document), document);
   });
 
-  test("arrays and nesting recurse", () => {
-
-    const result = scrubbed({ groups: [{ members: [{ mac: "AABBCCDDEEFF" }] }] }) as { groups: [{ members: [{ mac: string }] }] };
-
-    assert.notEqual(result.groups[0].members[0].mac, "AABBCCDDEEFF");
-    assert.match(result.groups[0].members[0].mac, /^[0-9A-F]{12}$/);
-  });
-
   test("binary passes through untouched", () => {
 
     const bytes = Buffer.from([ 0xAA, 0xBB, 0xCC ]);

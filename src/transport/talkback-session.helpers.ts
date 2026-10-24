@@ -24,10 +24,12 @@ interface ListenerEntry {
  *
  * - `autoOpen` (default `true`) schedules an `open` event on the next microtask, so a consumer that simply `await`s the session's open handshake connects without the
  *   test having to drive `emitOpen()` by hand. Tests that scrutinize the handshake itself pass `false` and open explicitly.
+ * - `closeFault` (default `false`) makes `close()` throw after it records the request, so a test can prove the session's teardown survives a faulting socket close.
  */
 export interface FakeWritableWebSocketOptions {
 
   autoOpen?: boolean;
+  closeFault?: boolean;
 }
 
 /**
@@ -47,9 +49,12 @@ export class FakeWritableWebSocket implements ProtectWritableWebSocket {
   // Every frame the session sent, in order, for order-preserving assertions.
   readonly sent: Uint8Array[] = [];
 
+  readonly #closeFault: boolean;
   readonly #listeners = new Map<string, Set<ListenerEntry>>();
 
   constructor(options: FakeWritableWebSocketOptions = {}) {
+
+    this.#closeFault = options.closeFault ?? false;
 
     // Open on the next microtask by default, after the TalkbackSession's connect has synchronously attached its listeners.
     if(options.autoOpen ?? true) {
@@ -72,10 +77,18 @@ export class FakeWritableWebSocket implements ProtectWritableWebSocket {
     options.signal?.addEventListener("abort", () => set.delete(entry), { once: true });
   }
 
-  /** Request the socket close. Records the request; teardown in TalkbackSession flows through its own close path rather than waiting on a close event here. */
+  /**
+   * Request the socket close. Records the request; teardown in TalkbackSession flows through its own close path rather than waiting on a close event here. When
+   * constructed with `closeFault`, it throws after recording the request.
+   */
   close(): void {
 
     this.closeRequested = true;
+
+    if(this.#closeFault) {
+
+      throw new Error("the underlying socket close() faulted");
+    }
   }
 
   /** Queue a binary frame for transmission. Records it in {@link FakeWritableWebSocket.sent} so a send-direction test can assert the bytes and their order. */

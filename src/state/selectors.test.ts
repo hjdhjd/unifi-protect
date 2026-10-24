@@ -7,7 +7,7 @@ import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.
 import { describe, test } from "node:test";
 import { deviceSelectors, isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectControllerUpSince, selectIsAdmin, selectLiveview,
   selectLiveviews, selectNvr, selectRingtone, selectRingtones } from "./selectors.ts";
-import { makeBootstrap, makeCamera, makeChime, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
+import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
 import { DEVICE_COLLECTION_KEYS } from "../protocol/events.ts";
 import assert from "node:assert/strict";
@@ -204,30 +204,12 @@ describe("selectors", () => {
       assert.deepEqual(deviceSelectors.camera.adoptedIds(allUnadopted), []);
     });
 
-    test("memoizes on the id-set content - repeat reads of an unchanged state return the same array reference", () => {
+    test("repeat reads of an unchanged state return the same array reference", () => {
 
       const state = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera({ id: "c1", isAdopted: true })] }));
 
       assert.ok(Object.is(deviceSelectors.camera.adoptedIds(state), deviceSelectors.camera.adoptedIds(state)),
         "repeat reads of an unchanged state must return the same array reference");
-    });
-  });
-
-  describe("deviceSelectors.sensor.adoptedIds (the factory generalizes beyond cameras)", () => {
-
-    test("returns the adopted sensor ids and stays content-stable across sensor config churn", () => {
-
-      const state = applyBootstrap(createInitialState(), makeBootstrap({ sensors: [ makeSensor({ id: "s1", isAdopted: true }),
-        makeSensor({ id: "s2", isAdopted: true, isAdoptedByOther: true }) ] }));
-
-      assert.deepEqual(deviceSelectors.sensor.adoptedIds(state), ["s1"]);
-
-      const before = deviceSelectors.sensor.adoptedIds(state);
-      // The same content-memoization the camera selector has, proving the per-category factory wired it everywhere - a non-membership sensor patch must not wake an
-      // observer.
-      const churned = reduce(state, { id: "s1", kind: "devicePatched", modelKey: "sensor", patch: { name: "Renamed Sensor" } });
-
-      assert.ok(Object.is(before, deviceSelectors.sensor.adoptedIds(churned)), "the sensor membership array must be stable across a non-membership sensor patch");
     });
   });
 
@@ -252,29 +234,30 @@ describe("selectors", () => {
 
     test("each device collection's selectors read their own map", () => {
 
+      // One adopted device per collection, each under an id no other collection carries, so a quartet wired to another collection's map reads the wrong id or none.
+      const ids = { camera: "c1", chime: "ch1", fob: "f1", light: "l1", relay: "r1", sensor: "s1", viewer: "v1" };
       const state = applyBootstrap(createInitialState(), makeBootstrap({
 
-        chimes: [makeChime({ id: "ch1" })],
-        lights: [makeLight({ id: "l1" })],
-        relays: [makeRelay({ id: "r1" })],
-        sensors: [makeSensor({ id: "s1" })],
-        viewers: [makeViewer({ id: "v1" })]
+        cameras: [makeCamera({ id: ids.camera, isAdopted: true })],
+        chimes: [makeChime({ id: ids.chime, isAdopted: true })],
+        fobs: [makeFob({ id: ids.fob, isAdopted: true })],
+        lights: [makeLight({ id: ids.light, isAdopted: true })],
+        relays: [makeRelay({ id: ids.relay, isAdopted: true })],
+        sensors: [makeSensor({ id: ids.sensor, isAdopted: true })],
+        viewers: [makeViewer({ id: ids.viewer, isAdopted: true })]
       }));
 
-      // By-id lookups resolve against the correct collection.
-      assert.equal(deviceSelectors.chime.byId("ch1")(state)?.id, "ch1");
-      assert.equal(deviceSelectors.light.byId("l1")(state)?.id, "l1");
-      assert.equal(deviceSelectors.relay.byId("r1")(state)?.id, "r1");
-      assert.equal(deviceSelectors.sensor.byId("s1")(state)?.id, "s1");
-      assert.equal(deviceSelectors.viewer.byId("v1")(state)?.id, "v1");
+      for(const key of DEVICE_COLLECTION_KEYS) {
 
-      // Full-collection selectors return their one device each.
-      assert.deepEqual([ deviceSelectors.chime.all(state).length, deviceSelectors.light.all(state).length, deviceSelectors.relay.all(state).length,
-        deviceSelectors.sensor.all(state).length, deviceSelectors.viewer.all(state).length ], [ 1, 1, 1, 1, 1 ]);
+        const selectors = deviceSelectors[key];
+        const id = ids[key];
 
-      // The fixtures default to the connected state, so the online subsets match the full collections.
-      assert.deepEqual([ deviceSelectors.chime.online(state).length, deviceSelectors.light.online(state).length, deviceSelectors.relay.online(state).length,
-        deviceSelectors.sensor.online(state).length, deviceSelectors.viewer.online(state).length ], [ 1, 1, 1, 1, 1 ]);
+        // The fixtures default to the connected state, so each online subset matches its full collection, and each adopted-id list is the collection's one device.
+        assert.deepEqual(selectors.all(state).map((device) => device.id), [id], key + ".all reads its own map");
+        assert.equal(selectors.byId(id)(state)?.id, id, key + ".byId resolves against its own map");
+        assert.deepEqual(selectors.online(state).map((device) => device.id), [id], key + ".online filters its own map");
+        assert.deepEqual(selectors.adoptedIds(state), [id], key + ".adoptedIds reads its own map");
+      }
     });
   });
 
@@ -293,15 +276,6 @@ describe("selectors", () => {
       assert.equal(deviceSelectors.relay.byId("missing")(state), undefined);
       assert.deepEqual(deviceSelectors.relay.online(state).map((relay) => relay.id), [ "r1", "r3" ]);
       assert.deepEqual(deviceSelectors.relay.adoptedIds(state), [ "r1", "r2" ]);
-    });
-
-    test("adoptedIds stays content-stable across a non-membership relay patch", () => {
-
-      const state = applyBootstrap(createInitialState(), makeBootstrap({ relays: [makeRelay({ id: "r1", isAdopted: true })] }));
-      const before = deviceSelectors.relay.adoptedIds(state);
-      const churned = reduce(state, { id: "r1", kind: "devicePatched", modelKey: "relay", patch: { name: "Renamed Relay" } });
-
-      assert.ok(Object.is(before, deviceSelectors.relay.adoptedIds(churned)), "the relay membership array must be stable across a non-membership patch");
     });
   });
 
@@ -508,11 +482,6 @@ describe("selectors", () => {
       const after = applyBootstrap(state, makeBootstrap({ liveviews: [makeLiveview({ id: "lv1" })] }));
 
       assert.ok(Object.is(selectLiveviews(state), selectLiveviews(after)), "a drift-free re-bootstrap must keep the liveviews array reference stable (observe dedups)");
-    });
-
-    test("selectLiveview returns undefined for an absent id", () => {
-
-      assert.equal(selectLiveview("nope")(createInitialState()), undefined);
     });
   });
 

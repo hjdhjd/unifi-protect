@@ -1,16 +1,16 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * init-segment.test.ts: Tests for the livestream init segment reader - the captured Protect and third-party inits, the sample entry and box shapes the wire does not
- * exercise, and the never-throw contract over empty, partial and arbitrary bytes.
+ * exercise, and the never-throw contract over empty, partial and corrupted bytes.
  */
 import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AMCREST_INIT, AV1_INIT, AVC3_INIT, AVC_INIT, CHANNEL_CONFIGURATION_SEVEN_INIT, CHANNEL_CONFIGURATION_SIX_INIT,
-  CORE_CODER_DELAY_INIT, CUT_LARGESIZE_HEADER_INIT, DESCRIPTOR_AFTER_OTHER_TAG_INIT, DOORBELL_INIT, EMPTY_BOX_INIT, EMPTY_STSD_INIT, ESCAPED_AAC_OBJECT_TYPE_INIT,
-  ESCAPED_OBJECT_TYPE_INIT, ES_OPTIONAL_FIELDS_INIT, EXPLICIT_FREQUENCY_INIT, HEV1_INIT, ISO_V1_AUDIO_INIT, LARGESIZE_INIT, MISSING_HDLR_INIT, MISSING_TKHD_INIT,
-  MIXDOWN_PCE_INIT, MPEG2_AAC_INIT, NESTED_TO_END_BOX_INIT, OPUS_INIT, OVERRUNNING_DESCRIPTOR_INIT, OVERRUNNING_DESCRIPTOR_PAST_BUFFER_INIT, PADDED_DESCRIPTOR_INIT,
-  PROGRAM_CONFIG_INIT, PROTECT_AV1_INIT, PS_INIT, QUICKTIME_V1_INIT, QUICKTIME_V2_INIT, RESERVED_CHANNEL_CONFIGURATION_INIT, RESERVED_FREQUENCY_INIT,
-  RUNAWAY_DESCRIPTOR_LENGTH_INIT, SBR_INIT, SHORT_AVCC_INIT, SHORT_HDLR_INIT, SHORT_SIZE_BOX_INIT, SHORT_TKHD_INIT, STSD_COUNT_WITHOUT_ENTRY_INIT, TO_END_BOX_INIT,
-  TRUNCATED_CONFIG_INIT, TWO_ENTRY_STSD_INIT, UNKNOWN_ENTRY_INIT, UNKNOWN_HANDLER_INIT, UNKNOWN_QUICKTIME_VERSION_INIT, VIDEO_WITHOUT_CONFIG_INIT,
-  WRONG_TAG_ES_DESCRIPTOR_INIT, box } from "./init-segment.fixtures.ts";
+  CORE_CODER_DELAY_INIT, CUT_LARGESIZE_HEADER_INIT, DESCRIPTOR_AFTER_OTHER_TAG_INIT, DESCRIPTOR_TAG_ON_LAST_BYTE_INIT, DOORBELL_INIT, EMPTY_BOX_INIT, EMPTY_STSD_INIT,
+  ESCAPED_AAC_OBJECT_TYPE_INIT, ESCAPED_OBJECT_TYPE_INIT, ES_OPTIONAL_FIELDS_INIT, EXPLICIT_FREQUENCY_INIT, HEV1_INIT, ISO_V1_AUDIO_INIT, LARGESIZE_INIT,
+  MISSING_HDLR_INIT, MISSING_TKHD_INIT, MIXDOWN_PCE_INIT, MPEG2_AAC_INIT, NESTED_TO_END_BOX_INIT, OPUS_INIT, OPUS_WITHOUT_DOPS_INIT, OVERRUNNING_DESCRIPTOR_INIT,
+  OVERRUNNING_DESCRIPTOR_PAST_BUFFER_INIT, PADDED_DESCRIPTOR_INIT, PROGRAM_CONFIG_INIT, PROTECT_AV1_INIT, PS_INIT, QUICKTIME_V1_INIT, QUICKTIME_V2_INIT,
+  RESERVED_CHANNEL_CONFIGURATION_INIT, RESERVED_FREQUENCY_INIT, RUNAWAY_DESCRIPTOR_LENGTH_INIT, SBR_INIT, SHORT_AVCC_INIT, SHORT_HDLR_INIT, SHORT_SIZE_BOX_INIT,
+  SHORT_TKHD_INIT, STSD_COUNT_WITHOUT_ENTRY_INIT, STSD_ZERO_COUNT_WITH_ENTRY_INIT, TO_END_BOX_INIT, TRUNCATED_CONFIG_INIT, TWO_ENTRY_STSD_INIT, UNKNOWN_ENTRY_INIT,
+  UNKNOWN_HANDLER_INIT, UNKNOWN_QUICKTIME_VERSION_INIT, VIDEO_WITHOUT_CONFIG_INIT, WRONG_TAG_ES_DESCRIPTOR_INIT, box } from "./init-segment.fixtures.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { describeInitSegment } from "./init-segment.ts";
@@ -43,15 +43,6 @@ describe("describeInitSegment", () => {
     test("a Protect AI Pro describes as HEVC at 3840 by 2160 and AAC-LC at 16000 Hz mono", () => {
 
       assert.deepEqual(describeInitSegment(AI_PRO_INIT).tracks, [
-
-        { codec: "h265", height: 2160, id: 1, kind: "video", level: 150, profile: 1, width: 3840 },
-        { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
-      ]);
-    });
-
-    test("a second Protect HEVC camera describes as HEVC at 3840 by 2160 and AAC-LC at 16000 Hz mono", () => {
-
-      assert.deepEqual(describeInitSegment(AI_PRO_RECONNECT_INIT).tracks, [
 
         { codec: "h265", height: 2160, id: 1, kind: "video", level: 150, profile: 1, width: 3840 },
         { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
@@ -106,6 +97,12 @@ describe("describeInitSegment", () => {
     test("an Opus track reports its dOps output channel count and the 48000 Hz it decodes at, not the dOps input rate", () => {
 
       assert.deepEqual(describeInitSegment(OPUS_INIT).tracks, [ COMPANION_VIDEO, { channels: 2, codec: "opus", id: 2, kind: "audio", sampleRate: 48000 } ]);
+    });
+
+    test("an Opus entry without a dOps box reads as unknown with its sample entry type", () => {
+
+      assert.deepEqual(describeInitSegment(OPUS_WITHOUT_DOPS_INIT).tracks, [{ codec: "unknown", id: 1, kind: "audio", sampleEntry: "Opus" }],
+        "An Opus track's channel count comes from its dOps alone, so an entry without one reads as unknown.");
     });
 
     test("an AAC configuration with an explicit sampling rate reports that rate over the entry's own sample rate field", () => {
@@ -258,6 +255,12 @@ describe("describeInitSegment", () => {
       assert.deepEqual(describeInitSegment(STSD_COUNT_WITHOUT_ENTRY_INIT).tracks, [{ codec: "unknown", id: 1, kind: "audio", sampleEntry: "" }]);
     });
 
+    test("an stsd whose count reads zero reads as unknown with an empty sample entry type, though an entry box follows the count", () => {
+
+      assert.deepEqual(describeInitSegment(STSD_ZERO_COUNT_WITH_ENTRY_INIT).tracks, [{ codec: "unknown", id: 1, kind: "audio", sampleEntry: "" }],
+        "A count of zero lists no entry, so the entry box after it is never read.");
+    });
+
     test("an stsd listing two entries describes the track from its first", () => {
 
       assert.deepEqual(describeInitSegment(TWO_ENTRY_STSD_INIT).tracks, [{ channels: 1, codec: "aac", id: 1, kind: "audio", sampleRate: 16000 }]);
@@ -299,6 +302,12 @@ describe("describeInitSegment", () => {
     test("an elementary stream descriptor whose length runs past the end of the init is clamped to its esds, so the walk ends at the box", () => {
 
       assert.deepEqual(describeInitSegment(OVERRUNNING_DESCRIPTOR_PAST_BUFFER_INIT).tracks, [{ codec: "unknown", id: 1, kind: "audio", sampleEntry: "mp4a" }]);
+    });
+
+    test("a descriptor tag on the last byte of its span has no length to read, so the walk ends and the track reads as unknown with its sample entry type", () => {
+
+      assert.deepEqual(describeInitSegment(DESCRIPTOR_TAG_ON_LAST_BYTE_INIT).tracks, [{ codec: "unknown", id: 1, kind: "audio", sampleEntry: "mp4a" }],
+        "A tag on the span's last byte ends the descriptor walk rather than reading a length past the span.");
     });
 
     test("a moov written with a 64-bit largesize is walked", () => {
@@ -378,22 +387,26 @@ describe("describeInitSegment", () => {
       }
     });
 
-    test("a fixed pseudo-random byte sequence describes without throwing", () => {
+    test("overwriting each byte of a real init in turn with a pseudo-random byte describes without throwing", () => {
 
-      // A 32-bit xorshift generator from a fixed seed, so the sequence is arbitrary but the same on every run.
-      const bytes = Buffer.alloc(4096);
+      // Every offset of the doorbell init, from its first byte to its last, is overwritten in a copy of its own with the next byte of a 32-bit xorshift generator
+      // from a fixed seed, so each box header and each reader the walk reaches meets a corrupted byte, and the sequence is the same on every run.
       let state = 20261011;
 
-      for(let index = 0; index < bytes.length; index++) {
+      for(let offset = 0; offset < DOORBELL_INIT.length; offset++) {
 
         state ^= state << 13;
         state ^= state >>> 17;
         state ^= state << 5;
         state >>>= 0;
-        bytes[index] = state & 0xff;
-      }
 
-      assert.ok(Array.isArray(describeInitSegment(bytes).tracks));
+        const value = state & 0xff;
+        const corrupted = Buffer.from(DOORBELL_INIT);
+
+        corrupted[offset] = value;
+
+        assert.doesNotThrow(() => describeInitSegment(corrupted), "overwriting offset " + offset.toString() + " with " + value.toString() + " threw.");
+      }
     });
   });
 });

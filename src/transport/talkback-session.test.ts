@@ -4,7 +4,7 @@
  * failure, backpressure ceiling, ffmpeg-style Readable, and which exits wait on the source's cleanup), the FSM, teardown, and the diagnostics channels. Driven
  * through an injected fake WebSocket and a fake resolver, so the write-only channel is exercised deterministically without a live controller.
  */
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectRequestError } from "../errors.ts";
+import { ProtectAbortedError, ProtectNetworkError, ProtectRequestError } from "../errors.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
 import { assertNoUnhandledRejections, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
@@ -20,22 +20,29 @@ import { settle } from "homebridge-plugin-utils/testing";
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
 
-// Connect a session over a fake socket that auto-opens, returning the live session and the fake socket the test drives. The factory assigns `ws` synchronously before
-// returning, so it is set by the time the auto-open microtask fires and `connect()` resolves.
+// Connect a session over a fake socket that auto-opens, returning the live session, the fake socket the test drives, and the URL the session handed its socket
+// factory. The factory assigns `url` and `ws` synchronously before returning, so each is set by the time the auto-open microtask fires and `connect()` resolves.
 async function openSession(options: { cameraId?: string; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
-  signal?: AbortSignal; } = {}): Promise<{ session: TalkbackSession; ws: FakeWritableWebSocket }> {
+  signal?: AbortSignal; } = {}): Promise<{ session: TalkbackSession; url: string; ws: FakeWritableWebSocket }> {
 
+  let url!: string;
   let ws!: FakeWritableWebSocket;
   const session = await TalkbackSession.connect({
 
     cameraId: options.cameraId ?? "cam1",
     log: silentLog(),
     resolveUrl: options.resolveUrl ?? fixedUrl,
-    webSocket: () => (ws = new FakeWritableWebSocket({ autoOpen: true })),
+    webSocket: (socketUrl: string): FakeWritableWebSocket => {
+
+      url = socketUrl;
+      ws = new FakeWritableWebSocket({ autoOpen: true });
+
+      return ws;
+    },
     ...((options.signal !== undefined) && { signal: options.signal })
   });
 
-  return { session, ws };
+  return { session, url, ws };
 }
 
 // An async generator that yields `first`, then parks forever on its second pull - so a drain in progress is left waiting on the source while a test fires a socket
@@ -86,18 +93,6 @@ function sentText(ws: FakeWritableWebSocket): string[] {
   return ws.sent.map((chunk) => Buffer.from(chunk).toString());
 }
 
-// A fake whose close() faults, to prove the session's teardown swallows a socket close() error: the disposal contract is that close() / [Symbol.asyncDispose] never
-// throw, even when the underlying socket's own close() does. It still records the close request before faulting, so the test can assert the close was attempted.
-class ThrowingCloseWebSocket extends FakeWritableWebSocket {
-
-  override close(): void {
-
-    this.closeRequested = true;
-
-    throw new Error("the underlying socket close() faulted");
-  }
-}
-
 describe("TalkbackSession", () => {
 
   describe("connect", () => {
@@ -119,9 +114,10 @@ describe("TalkbackSession", () => {
         return "wss://controller/talkback";
       };
 
-      await openSession({ cameraId: "front-door", resolveUrl });
+      const { url } = await openSession({ cameraId: "front-door", resolveUrl });
 
       assert.equal(captured[0]?.get("camera"), "front-door");
+      assert.equal(url, "wss://controller/talkback", "the socket must be built on the URL the resolver returned");
     });
 
     test("throws a typed FatalError when negotiation returns a non-2xx (ProtectRequestError)", async () => {
@@ -188,6 +184,33 @@ describe("TalkbackSession", () => {
       ws.emitError(new Error("socket boom"));
 
       await assert.rejects(connecting, ProtectNetworkError);
+    });
+
+    test("a socket close before open rejects connect with a ProtectNetworkError saying it closed before connecting", async () => {
+
+      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const connecting = TalkbackSession.connect({
+
+        cameraId: "cam1",
+        log: silentLog(),
+        resolveUrl: fixedUrl,
+        webSocket: () => {
+
+          const ws = new FakeWritableWebSocket({ autoOpen: false });
+
+          resolve(ws);
+
+          return ws;
+        }
+      });
+
+      const ws = await promise;
+
+      // The peer drops the socket before it ever opens. A session that was never live did not close unexpectedly; it never finished connecting, and the rejection
+      // says so.
+      ws.emitClose(1006, "dropped");
+
+      await assert.rejects(connecting, { constructor: ProtectNetworkError, message: /closed before it finished connecting/ });
     });
   });
 
@@ -268,6 +291,21 @@ describe("TalkbackSession", () => {
 
       await assert.rejects(sending, ProtectNetworkError);
       assert.equal(session.state, "closed");
+    });
+
+    test("a send after the peer closes a live socket rejects with the unexpected-close failure", async () => {
+
+      const { session, ws } = await openSession();
+
+      ws.emitClose(1006, "dropped");
+
+      const source = async function *(): AsyncGenerator<Uint8Array> {
+
+        yield Buffer.from("a");
+      };
+
+      // The peer's close of a live socket stores its failure, so a later send reports why the session ended rather than a bare not-connected error.
+      await assert.rejects(session.send(source()), { constructor: ProtectNetworkError, message: /closed unexpectedly/ });
     });
 
     test("a source whose return() rejects never replaces the typed fault", { timeout: 2000 }, async () => {
@@ -354,7 +392,8 @@ describe("TalkbackSession", () => {
         yield Buffer.from("a");
       };
 
-      await assert.rejects(session.send(source()), ProtectError);
+      // A close the session asked for stores no failure, so the send reports the plain not-connected error rather than an unexpected close.
+      await assert.rejects(session.send(source()), { constructor: ProtectNetworkError, message: /not connected/ });
     });
   });
 
@@ -389,13 +428,20 @@ describe("TalkbackSession", () => {
 
     test("close() requests the socket close, sets state closed, and is safe to call more than once", async () => {
 
-      const { session, ws } = await openSession();
+      const payloads: TalkbackSessionClosedPayload[] = [];
+
+      using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed, (payload) => void payloads.push(payload));
+
+      const { session, ws } = await openSession({ cameraId: "cam-closed-twice" });
 
       await session.close();
       await session.close();
 
       assert.equal(ws.closeRequested, true);
       assert.equal(session.state, "closed");
+
+      // A second close() is a no-op, so the session publishes its closure once. The camera is this row's own, so a closure from any other session reads as a mismatch.
+      assert.deepEqual(payloads.map((payload) => payload.cameraId), ["cam-closed-twice"]);
     });
 
     test("dispose delegates to close", async () => {
@@ -455,6 +501,39 @@ describe("TalkbackSession", () => {
       await assert.rejects(connecting, ProtectAbortedError);
     });
 
+    test("an abort while URL negotiation is in flight builds no socket once the negotiation resolves", async () => {
+
+      const controller = new AbortController();
+      const negotiation = Promise.withResolvers<string>();
+      let built = false;
+
+      // The resolver ignores the signal it is handed and resolves only after the abort has torn the session down, so the connect must see that teardown and bail
+      // rather than open a socket nothing would ever close.
+      const connecting = TalkbackSession.connect({
+
+        cameraId: "cam1",
+        log: silentLog(),
+        resolveUrl: async (): Promise<string> => negotiation.promise,
+        signal: controller.signal,
+        webSocket: () => {
+
+          built = true;
+
+          return new FakeWritableWebSocket({ autoOpen: false });
+        }
+      });
+
+      await settle();
+      controller.abort();
+
+      await assert.rejects(connecting, ProtectAbortedError);
+
+      negotiation.resolve("wss://controller/talkback");
+      await settle();
+
+      assert.equal(built, false, "a negotiation that resolves after an abort must not build a socket");
+    });
+
     test("aborting the session signal after it is live tears the session down and rejects an in-flight send", { timeout: 2000 }, async () => {
 
       const controller = new AbortController();
@@ -478,13 +557,13 @@ describe("TalkbackSession", () => {
 
     test("close() swallows a socket close() fault and still tears down cleanly", async () => {
 
-      let ws!: ThrowingCloseWebSocket;
+      let ws!: FakeWritableWebSocket;
       const session = await TalkbackSession.connect({
 
         cameraId: "cam1",
         log: silentLog(),
         resolveUrl: fixedUrl,
-        webSocket: () => (ws = new ThrowingCloseWebSocket({ autoOpen: true }))
+        webSocket: () => (ws = new FakeWritableWebSocket({ autoOpen: true, closeFault: true }))
       });
 
       // The disposal contract is that close() (and [Symbol.asyncDispose]) never throw, even when the underlying socket's own close() faults: #shutdown swallows the fault
@@ -520,9 +599,8 @@ describe("TalkbackSession", () => {
 
       await session.close();
 
-      assert.equal(payloads.length, 1);
-      assert.equal(payloads[0]?.cameraId, "cam-9");
-      assert.equal(typeof payloads[0]?.reason, "string");
+      // The reason is the teardown cause the session's own close records.
+      assert.deepEqual(payloads, [{ cameraId: "cam-9", reason: "the talkback session was closed by the client" }]);
     });
   });
 });

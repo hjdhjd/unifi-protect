@@ -32,8 +32,8 @@ describe("classifyPacket - device transitions", () => {
     const result = classifyPacket(pkt({ action: "add", id: "camera-1", modelKey: "camera", payload: data }));
 
     assert.equal(result?.kind, "deviceAdded");
-    assert.ok((result?.kind === "deviceAdded") && Object.is(result.data, data), "the data is the payload reference");
-    assert.equal((result?.kind === "deviceAdded") && result.modelKey, "camera");
+    assert.ok(Object.is(result.data, data), "the data is the payload reference");
+    assert.equal(result.modelKey, "camera");
   });
 
   test("an update for a modeled device becomes devicePatched carrying the payload as patch", () => {
@@ -42,7 +42,7 @@ describe("classifyPacket - device transitions", () => {
     const result = classifyPacket(pkt({ action: "update", id: "camera-1", modelKey: "camera", payload: patch }));
 
     assert.equal(result?.kind, "devicePatched");
-    assert.ok((result?.kind === "devicePatched") && Object.is(result.patch, patch));
+    assert.ok(Object.is(result.patch, patch));
   });
 
   test("a remove for a modeled device becomes deviceRemoved", () => {
@@ -50,7 +50,7 @@ describe("classifyPacket - device transitions", () => {
     const result = classifyPacket(pkt({ action: "remove", id: "camera-1", modelKey: "camera" }));
 
     assert.equal(result?.kind, "deviceRemoved");
-    assert.equal((result?.kind === "deviceRemoved") && result.id, "camera-1");
+    assert.equal(result.id, "camera-1");
   });
 
   test("an nvr update becomes devicePatched with modelKey nvr", () => {
@@ -58,7 +58,7 @@ describe("classifyPacket - device transitions", () => {
     const result = classifyPacket(pkt({ action: "update", id: "nvr-1", modelKey: "nvr", payload: { name: "NVR" } }));
 
     assert.equal(result?.kind, "devicePatched");
-    assert.equal((result?.kind === "devicePatched") && result.modelKey, "nvr");
+    assert.equal(result.modelKey, "nvr");
   });
 
   test("a user update becomes devicePatched with modelKey user (the roster reduces in realtime)", () => {
@@ -67,16 +67,18 @@ describe("classifyPacket - device transitions", () => {
     const result = classifyPacket(pkt({ action: "update", id: "user-1", modelKey: "user", payload: patch }));
 
     assert.equal(result?.kind, "devicePatched");
-    assert.equal((result?.kind === "devicePatched") && result.modelKey, "user");
-    assert.ok((result?.kind === "devicePatched") && Object.is(result.patch, patch));
+    assert.equal(result.modelKey, "user");
+    assert.ok(Object.is(result.patch, patch));
   });
 
   test("a user add and remove become deviceAdded and deviceRemoved with modelKey user", () => {
 
     const data = { id: "user-2", modelKey: "user", name: "Guest" };
+    const added = classifyPacket(pkt({ action: "add", id: "user-2", modelKey: "user", payload: data }));
+    const removed = classifyPacket(pkt({ action: "remove", id: "user-2", modelKey: "user" }));
 
-    assert.equal(classifyPacket(pkt({ action: "add", id: "user-2", modelKey: "user", payload: data }))?.kind, "deviceAdded");
-    assert.equal(classifyPacket(pkt({ action: "remove", id: "user-2", modelKey: "user" }))?.kind, "deviceRemoved");
+    assert.deepEqual(added, { data, id: "user-2", kind: "deviceAdded", modelKey: "user" });
+    assert.deepEqual(removed, { id: "user-2", kind: "deviceRemoved", modelKey: "user" });
   });
 
   test("a liveview update becomes devicePatched with modelKey liveview (the collection reduces in realtime)", () => {
@@ -85,16 +87,18 @@ describe("classifyPacket - device transitions", () => {
     const result = classifyPacket(pkt({ action: "update", id: "lv-1", modelKey: "liveview", payload: patch }));
 
     assert.equal(result?.kind, "devicePatched");
-    assert.equal((result?.kind === "devicePatched") && result.modelKey, "liveview");
-    assert.ok((result?.kind === "devicePatched") && Object.is(result.patch, patch));
+    assert.equal(result.modelKey, "liveview");
+    assert.ok(Object.is(result.patch, patch));
   });
 
   test("a liveview add and remove become deviceAdded and deviceRemoved with modelKey liveview", () => {
 
     const data = { id: "lv-2", modelKey: "liveview", name: "Upstairs" };
+    const added = classifyPacket(pkt({ action: "add", id: "lv-2", modelKey: "liveview", payload: data }));
+    const removed = classifyPacket(pkt({ action: "remove", id: "lv-2", modelKey: "liveview" }));
 
-    assert.equal(classifyPacket(pkt({ action: "add", id: "lv-2", modelKey: "liveview", payload: data }))?.kind, "deviceAdded");
-    assert.equal(classifyPacket(pkt({ action: "remove", id: "lv-2", modelKey: "liveview" }))?.kind, "deviceRemoved");
+    assert.deepEqual(added, { data, id: "lv-2", kind: "deviceAdded", modelKey: "liveview" });
+    assert.deepEqual(removed, { id: "lv-2", kind: "deviceRemoved", modelKey: "liveview" });
   });
 
   test("an add or update with a non-object payload classifies as null", () => {
@@ -154,7 +158,6 @@ describe("classifyPacket - activity signals (event model key only)", () => {
     const result = classifyPacket(pkt({ action: "add", id: "evt-9", modelKey: "event", payload: { cameraId: "camera-1", start: 111, type: "motion" } }));
 
     assert.equal(result?.kind, "motionDetected");
-    assert.ok(result?.kind === "motionDetected");
     assert.equal(result.cameraId, "camera-1");
     assert.equal(result.eventId, "evt-9", "the occurrence identity is the header id, not a payload field");
     assert.equal(result.at, 111);
@@ -164,27 +167,23 @@ describe("classifyPacket - activity signals (event model key only)", () => {
 
     const result = classifyPacket(pkt({ action: "add", modelKey: "event", payload: { cameraId: "camera-1", start: 5, type: "ring" } }));
 
-    assert.equal(result?.kind, "doorbellRing");
+    assert.deepEqual(result, { at: 5, cameraId: "camera-1", eventId: "id-1", kind: "doorbellRing" });
   });
 
-  test("each smart event type becomes smartDetect carrying its object types", () => {
+  test("each smart event type becomes smartDetect carrying its object types, or an empty list when it names none", () => {
 
+    // The object-type fallback classifies a packet with a populated list as smartDetect even under a type the classifier does not recognize, so each type is also
+    // read bare: only a packet naming no object types shows that the type itself is recognized.
     for(const type of [ "smartDetectZone", "smartDetectLine", "smartAudioDetect" ]) {
 
-      const result = classifyPacket(pkt({ action: "add", modelKey: "event", payload: { cameraId: "camera-1", smartDetectTypes: [ "person", "vehicle" ], type } }));
+      const bare = classifyPacket(pkt({ action: "add", modelKey: "event", payload: { cameraId: "camera-1", type } }));
+      const typed = classifyPacket(pkt({ action: "add", modelKey: "event", payload: { cameraId: "camera-1", smartDetectTypes: [ "person", "vehicle" ], type } }));
 
-      assert.equal(result?.kind, "smartDetect", type + " should classify as smartDetect");
-      assert.ok(result?.kind === "smartDetect");
-      assert.deepEqual(result.objectTypes, [ "person", "vehicle" ]);
+      assert.equal(bare?.kind, "smartDetect", type + " with no object types should classify as smartDetect");
+      assert.deepEqual(bare.objectTypes, []);
+      assert.equal(typed?.kind, "smartDetect", type + " should classify as smartDetect");
+      assert.deepEqual(typed.objectTypes, [ "person", "vehicle" ]);
     }
-  });
-
-  test("a smart type with no detected object types still classifies as smartDetect with an empty list", () => {
-
-    const result = classifyPacket(pkt({ action: "add", modelKey: "event", payload: { cameraId: "camera-1", type: "smartDetectZone" } }));
-
-    assert.equal(result?.kind, "smartDetect");
-    assert.deepEqual((result?.kind === "smartDetect") && result.objectTypes, []);
   });
 
   test("a finalizing update with no type but populated smartDetectTypes classifies as smartDetect", () => {
@@ -200,7 +199,6 @@ describe("classifyPacket - activity signals (event model key only)", () => {
       payload: { cameraId: "camera-1", metadata: { reason: "lensObscured" }, start: 222, type: "smartDetectTamper" } }));
 
     assert.equal(result?.kind, "tamperDetected");
-    assert.ok(result?.kind === "tamperDetected");
     assert.equal(result.cameraId, "camera-1");
     assert.equal(result.eventId, "evt-t", "the occurrence identity is the header id, not a payload field");
     assert.equal(result.at, 222);
@@ -222,7 +220,7 @@ describe("classifyPacket - activity signals (event model key only)", () => {
 
     assert.equal(plain?.kind, "tamperDetected");
     assert.equal(withStray?.kind, "tamperDetected", "an explicit tamper type wins over the smart-detection objectTypes fallback");
-    assert.notEqual(withStray?.kind, "smartDetect");
+    assert.notEqual(withStray.kind, "smartDetect");
   });
 
   test("a fingerprint scan becomes authDetected with method \"fingerprint\", camera-attributed with the header id and its metadata carried through", () => {
@@ -231,7 +229,6 @@ describe("classifyPacket - activity signals (event model key only)", () => {
       payload: { cameraId: "camera-1", metadata: { fingerprint: { ulpId: "ulp-1" } }, start: 333, type: "fingerprintIdentified" } }));
 
     assert.equal(result?.kind, "authDetected");
-    assert.ok(result?.kind === "authDetected");
     assert.equal(result.method, "fingerprint", "the classifier lifts the method it resolved from the wire type, so the consumer never re-derives it from metadata shape");
     assert.equal(result.cameraId, "camera-1");
     assert.equal(result.eventId, "evt-f", "the occurrence identity is the header id, not a payload field");
@@ -245,7 +242,6 @@ describe("classifyPacket - activity signals (event model key only)", () => {
       payload: { camera: "camera-2", metadata: { nfc: { nfcId: "card-9", ulpId: "ulp-2" } }, start: 444, type: "nfcCardScanned" } }));
 
     assert.equal(result?.kind, "authDetected");
-    assert.ok(result?.kind === "authDetected");
     assert.equal(result.method, "nfc");
     assert.equal(result.cameraId, "camera-2", "cameraId is read from the camera field when cameraId is absent");
     assert.equal(result.at, 444);
@@ -262,8 +258,8 @@ describe("classifyPacket - activity signals (event model key only)", () => {
       payload: { cameraId: "camera-1", metadata: { accessEventId: "a-1", nfc: { nfcId: "card-9" } }, type: "nfcCardScanned" } }));
 
     assert.equal(result?.kind, "authDetected", "an explicit auth type wins over the accessEvent metadata fallback");
-    assert.equal((result?.kind === "authDetected") && result.method, "nfc", "the lifted method survives even a hypothetical access co-stamp");
-    assert.notEqual(result?.kind, "accessEvent");
+    assert.equal(result.method, "nfc", "the lifted method survives even a hypothetical access co-stamp");
+    assert.notEqual(result.kind, "accessEvent");
   });
 
   test("an auth scan with no camera id classifies as null (auth is camera-attributed)", () => {
@@ -280,7 +276,6 @@ describe("classifyPacket - activity signals (event model key only)", () => {
       payload: { camera: "camera-1", metadata: { fingerprint: { ulpId: null } }, start: 555, type: "fingerprintIdentified" } }));
 
     assert.equal(result?.kind, "authDetected");
-    assert.ok(result?.kind === "authDetected");
     assert.equal(result.method, "fingerprint");
     assert.equal(result.cameraId, "camera-1", "auth is camera-attributed via the payload camera field");
     assert.deepEqual(result.metadata, { fingerprint: { ulpId: null } }, "the unmatched identity is carried through unchanged as data for the consumer to read");
@@ -292,7 +287,6 @@ describe("classifyPacket - activity signals (event model key only)", () => {
       payload: { metadata: { accessEventId: "a-1", action: "entry", deviceId: { text: "door-1" } } } }));
 
     assert.equal(result?.kind, "accessEvent");
-    assert.ok(result?.kind === "accessEvent");
     assert.equal(result.deviceId, "door-1");
     assert.equal(result.action, "entry");
     assert.equal(result.eventId, "evt-a");
@@ -314,7 +308,6 @@ describe("classifyPacket - activity signals (event model key only)", () => {
       metadata: { accessEventId: "ae-1", action: "door_bell", direction: "entry", doorName: "Door Hub", openSuccess: true }, type: "ring" } }));
 
     assert.equal(result?.kind, "accessEvent", "a ring carrying the accessEventId marker is decided as accessEvent, not doorbellRing");
-    assert.ok(result?.kind === "accessEvent");
     assert.equal(result.deviceId, "door-hub", "deviceId resolves via the camera fallback when the metadata carries no device text");
     assert.equal(result.action, "door_bell");
   });
@@ -353,7 +346,6 @@ describe("classifyPacket - activity signals (event model key only)", () => {
         type: "sensorButtonPressed" } }));
 
     assert.equal(result?.kind, "buttonPressed");
-    assert.ok(result?.kind === "buttonPressed");
     assert.equal(result.deviceId, "fob-1");
     assert.equal(result.button, "arm");
     assert.equal(result.pressType, "press");
@@ -398,7 +390,10 @@ describe("classifyPacket - activity signals (event model key only)", () => {
 
   test("an event with a non-object payload classifies as null", () => {
 
+    // A string payload reads every field as undefined and falls out at the camera id check, so only a null one, what a JSON data frame of null decodes to, reads the
+    // payload's own guard: past that guard, the first field read on null would throw.
     assert.equal(classifyPacket(pkt({ modelKey: "event", payload: "nope" })), null);
+    assert.equal(classifyPacket(pkt({ modelKey: "event", payload: null })), null);
   });
 
   test("an event whose type is unmodeled and which carries no object types classifies as null", () => {

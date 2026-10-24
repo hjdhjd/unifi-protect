@@ -4,11 +4,14 @@
  */
 import { Output, alignedList, compareCodeUnit, formatBytes, formatDuration, formatTracks, nowStamp, serializeJson } from "./format.ts";
 import { describe, test } from "node:test";
+import type { OutputOptions } from "./format.ts";
 import assert from "node:assert/strict";
+import { stripVTControlCharacters } from "node:util";
 
-// A capturing stream: collects every write so the test can assert exactly what Output emitted. Colorization is forced off via the explicit `colorize: false` option;
-// the `isTTY: false` field just shapes the fake stream realistically and never reaches the colorization decision, which short-circuits on the explicit false.
-function capture(): { output: Output; written: () => string } {
+// A capturing stream: collects every write so the test can assert exactly what Output emitted. On the default call, colorization is forced off via the explicit
+// `colorize: false` option, which short-circuits the decision. A caller passing its own options replaces that default, so the stream's `isTTY: false` reaches the
+// decision whenever the caller passes no `colorize`, and `colorize: true` forces color on.
+function capture(options: Pick<OutputOptions, "colorize"> = { colorize: false }): { output: Output; written: () => string } {
 
   const chunks: string[] = [];
   const stream = {
@@ -22,7 +25,7 @@ function capture(): { output: Output; written: () => string } {
     }
   };
 
-  return { output: new Output({ colorize: false, env: {}, stream }), written: (): string => chunks.join("") };
+  return { output: new Output({ ...options, env: {}, stream }), written: (): string => chunks.join("") };
 }
 
 describe("Output", () => {
@@ -108,9 +111,21 @@ describe("Output", () => {
     assert.equal(written(), "A    BB\n1    22\n333  4\n");
   });
 
+  test("table measures a colored cell by its visible width, so the columns still align", () => {
+
+    const { output, written } = capture({ colorize: true });
+
+    output.table([ "A", "B" ], [ [ output.colors.red("1"), "x" ], [ "22", "y" ] ]);
+
+    // The bold header and the red cell carry escapes, and the layout is read with them stripped, which is what a terminal shows.
+    assert.notEqual(stripVTControlCharacters(written()), written(), "the table really is colored");
+    assert.equal(stripVTControlCharacters(written()), "A   B\n1   x\n22  y\n");
+  });
+
   test("colorize defaults off for a non-TTY stream, so output is plain", () => {
 
-    const { output, written } = capture();
+    // No colorize option reaches the Output, so the non-TTY stream makes the decision.
+    const { output, written } = capture({});
 
     output.line(output.colors.red("x"));
 

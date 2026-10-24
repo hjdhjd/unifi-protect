@@ -61,6 +61,19 @@ describe("createCliLogger", () => {
     assert.match(lines[1] ?? "", /^\[error\] failed Error: boom/);
     assert.equal(lines[2], "[error] plain\n");
   });
+
+  test("renders a context nested four levels deep in full", () => {
+
+    const { lines, stream } = capture();
+    const log = createCliLogger({ debug: false, stream });
+
+    // The innermost object sits four levels down, so it renders only when the inspection depth reaches four, and one level less collapses it to "[Object]". The
+    // rendering wraps across lines, so the reads are unanchored.
+    log.warn("nested", { a: { b: { c: { d: { e: 1 } } } } });
+
+    assert.match(lines[0] ?? "", /e: 1/);
+    assert.doesNotMatch(lines[0] ?? "", /\[Object\]/, "no level collapses to [Object]");
+  });
 });
 
 describe("resolveInteractivePrompt", () => {
@@ -80,8 +93,8 @@ describe("resolveInteractivePrompt", () => {
     const resolved = resolveInteractivePrompt({ input, output, signal });
 
     assert.equal(resolved?.input, input, "the option carries the very streams it was handed");
-    assert.equal(resolved?.output, output);
-    assert.equal(resolved?.signal, signal, "the prompt is cancellable by the same signal the run is");
+    assert.equal(resolved.output, output);
+    assert.equal(resolved.signal, signal, "the prompt is cancellable by the same signal the run is");
   });
 
   test("the signal is left off entirely when the caller has none", () => {
