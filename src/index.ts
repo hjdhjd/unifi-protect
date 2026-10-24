@@ -62,6 +62,9 @@ export type { AuthMethod, DeviceCollectionKey, SmartDetectType, StateModelKey, T
 // consumer calls both as free functions. A consumer keys its own devices by the folded spelling because the controller varies the case of one device's address
 // from one record to the next, so a map keyed on the text as it arrived splits a single device in two the first time the case changes.
 export { isMacAddress, normalizeMacAddress } from "./protocol/address.ts";
+// The plain-object test - whether a value is a record with fields to read, the shape parsed JSON gives an object, so an array, a Buffer or a class instance never
+// reads as one. A value export: a consumer calls it as a free function over a payload, a bootstrap or a file it parsed, as the CLI does.
+export { isPlainObject } from "./protocol/plain-object.ts";
 // Talkback - the send-direction two-way-audio session a consumer receives from `camera.talkback()` and its lifecycle-state type. Type-only: a consumer never constructs
 // one (the camera factory does), drives it through `send`/`close`/dispose, and reads `state`.
 export type { TalkbackSession, TalkbackState } from "./transport/talkback-session.ts";

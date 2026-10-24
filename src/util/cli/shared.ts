@@ -180,31 +180,6 @@ export function parseList(value: string | undefined): string[] {
   return value.split(",").map((term) => term.trim()).filter((term) => term.length > 0);
 }
 
-/**
- * Whether a value is a plain JSON object - the shape a record, an object node, and a dictionary all require, and the one payload shape with fields to read.
- *
- * The test is the prototype rather than `typeof`, because a raw frame's payload is whatever the codec produced: parsed JSON, a UTF-8 string, or a `Buffer`. A buffer
- * answers `typeof` as an object and enumerates as numeric index keys, so a looser test would walk one and read every byte as a field. Parsed JSON always carries the
- * ordinary object prototype, so this admits exactly what a record can be and nothing else, and an array, which a walk over JSON handles on its own path, answers false.
- *
- * @param value - The value to test.
- *
- * @returns `true` when the value is an object whose prototype is the ordinary object prototype or null.
- *
- * @category CLI
- */
-export function isPlainObject(value: unknown): value is Record<string, unknown> {
-
-  if((typeof value !== "object") || (value === null)) {
-
-    return false;
-  }
-
-  const prototype: unknown = Object.getPrototypeOf(value);
-
-  return (prototype === Object.prototype) || (prototype === null);
-}
-
 // A flag value made of decimal digits alone. The integer parsers hold a value to it before trusting what `Number` makes of it, because `Number` reads an empty value
 // as zero and accepts surrounding whitespace, a sign, and hex and exponent spellings, so `--channel ""` would select channel 0 and `--count 0x10` would count
 // sixteen. The integer check behind it is not redundant: a long enough run of digits reads as `Infinity`.

@@ -281,7 +281,8 @@ describe("generate-manifest", () => {
 
       const target = writeSchemaManifest(path.join(dir, "schema-manifest.json"));
 
-      assert.deepEqual(await loadSchemaManifest(target), manifest);
+      // The loaded tables carry no prototype and a strict deep equality compares prototypes, so the loaded manifest is compared in its JSON form.
+      assert.deepEqual(JSON.parse(JSON.stringify(await loadSchemaManifest(target))), manifest);
     } finally {
 
       await rm(dir, { force: true, recursive: true });

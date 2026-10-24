@@ -3,11 +3,11 @@
  * capture.ts: `ufp capture` - observe a controller against the known schema and emit one scrubbed bundle carrying whatever it says that this library does not model.
  */
 import type { AnyProtectDiagnosticsChannel, RawPacket, TypedEvent } from "../../../index.ts";
-import { COMMON_OPTIONS, axisMatches, boundedSignal, compileAxis, isPlainObject, parseDuration, readVersion } from "../shared.ts";
+import { COMMON_OPTIONS, axisMatches, boundedSignal, compileAxis, parseDuration, readVersion } from "../shared.ts";
 import type { CommandHandler, CommandSpec, CompiledAxis } from "../shared.ts";
 import type { NoveltyFinding, SchemaManifest, UndeclaredSnapshot, UnmodeledSnapshot } from "../manifest.ts";
 import { PROTECT_CAPTURE_DEFAULT_DURATION, PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } from "../../../settings.ts";
-import { ProtectClient, channels, subscribeToChannel } from "../../../index.ts";
+import { ProtectClient, channels, isPlainObject, subscribeToChannel } from "../../../index.ts";
 import { compareCodeUnit, fileStamp, formatDuration, serializeJson } from "../output/format.ts";
 import { createScrubContext, scrub } from "../scrub.ts";
 import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, snapshotUndeclared, snapshotUnmodeled } from "../manifest.ts";
@@ -161,8 +161,9 @@ function seedSubjects(window: Window, manifest: SchemaManifest, bootstrap: unkno
   for(const [ collection, value ] of Object.entries(bootstrap)) {
 
     // Only the described collections are worth matching names against; an opaque or scalar member holds no records to target. Every described collection is
-    // admitted, devices and non-device records alike, so a pattern that matches a user's or a liveview's name follows that record too.
-    if(!Array.isArray(value) || !(collection in manifest.records)) {
+    // admitted, devices and non-device records alike, so a pattern that matches a user's or a liveview's name follows that record too. Only the records table's own
+    // entries count: a plain lookup also finds what every object inherits, so a member named `constructor` would pass for a described collection.
+    if(!Array.isArray(value) || !Object.hasOwn(manifest.records, collection)) {
 
       continue;
     }

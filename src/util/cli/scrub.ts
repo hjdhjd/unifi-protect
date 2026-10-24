@@ -25,8 +25,7 @@
  * @module ProtectCliScrub
  */
 import { isIPv4, isIPv6 } from "node:net";
-import { isMacAddress, normalizeMacAddress } from "../../index.ts";
-import { isPlainObject } from "./shared.ts";
+import { isMacAddress, isPlainObject, normalizeMacAddress } from "../../index.ts";
 
 // The replacement categories. Each keeps its own memory, so a hostname and a device name that happen to share text never collapse onto one pseudonym. The two
 // internet-address families keep separate memories so each family's sequence of stand-ins stays dense and readable.

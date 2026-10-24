@@ -7,6 +7,7 @@ import type { CommandHandler, CommandSpec } from "../shared.ts";
 import type { Output } from "../output/format.ts";
 import type { RawPacket } from "../../../index.ts";
 import { buildNameResolver } from "../lookup.ts";
+import { isPlainObject } from "../../../index.ts";
 import { nowStamp } from "../output/format.ts";
 import { parseArgs } from "node:util";
 
@@ -84,8 +85,8 @@ function actionColor(colors: Output["colors"], action: string): (text: string) =
 // (--json's job).
 function payloadSummary(payload: unknown): string {
 
-  // A JSON-null data frame is a real possibility, and `typeof null` is "object" - so we name it explicitly here rather than let it fall through to the object branch
-  // (where it would be reported as a fieldless object) or the final `typeof`.
+  // A JSON-null data frame is a real possibility, and `typeof null` is "object" - so we name it explicitly here rather than let it fall through to the final `typeof`,
+  // which would report it as an object.
   if(payload === null) {
 
     return "null";
@@ -101,8 +102,9 @@ function payloadSummary(payload: unknown): string {
     return "len=" + payload.length.toString();
   }
 
-  // Null was handled above, so an "object" here is non-null: a plain JSON object whose keys are the changed fields.
-  if(typeof payload === "object") {
+  // A record is named by the same plain-object test the classifier reads a payload through, so the frames listed by their changed fields are exactly the ones the
+  // classifier treats as records.
+  if(isPlainObject(payload)) {
 
     const keys = Object.keys(payload);
 

@@ -2,9 +2,9 @@
  *
  * credentials.ts: Discovery, validation, and normalization of the ufp.json credentials the CLI connects with.
  */
+import { ProtectAbortedError, isPlainObject } from "../../index.ts";
 import { readFile, writeFile } from "node:fs/promises";
 import { CliError } from "./shared.ts";
-import { ProtectAbortedError } from "../../index.ts";
 import { Writable } from "node:stream";
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
@@ -399,20 +399,18 @@ export async function loadCredentials(opts: LoadCredentialsOptions = {}): Promis
     throw new CliError("The ufp.json configuration at " + source + " is not valid JSON.", { cause: error });
   }
 
-  if((typeof parsed !== "object") || (parsed === null)) {
+  if(!isPlainObject(parsed)) {
 
     throw new CliError("The ufp.json configuration at " + source + " must be a JSON object.");
   }
 
-  // An array also passes the object check above, but it carries none of the named fields, so `requireField` rejects it; the record view is safe either way.
-  const record = parsed as Record<string, unknown>;
-  const verifyTls = readVerifyTls(record, source);
+  const verifyTls = readVerifyTls(parsed, source);
 
   return {
 
-    host: normalizeHost(requireField(record, "controller", source)),
-    password: requireField(record, "password", source),
-    username: requireField(record, "username", source),
+    host: normalizeHost(requireField(parsed, "controller", source)),
+    password: requireField(parsed, "password", source),
+    username: requireField(parsed, "username", source),
     ...((verifyTls !== undefined) && { verifyTls })
   };
 }

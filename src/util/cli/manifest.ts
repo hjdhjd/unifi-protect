@@ -3,9 +3,10 @@
  * manifest.ts: The schema manifest - the known-surface vocabulary the build generates, the loader that validates it, the diff that reports wire novelty against it, and
  * the exemplar records that evidence what it does not model, whole collections and undeclared members alike.
  */
-import { CliError, isPlainObject } from "./shared.ts";
+import { CliError } from "./shared.ts";
 import type { RawPacket } from "../../index.ts";
 import { compareCodeUnit } from "./output/format.ts";
+import { isPlainObject } from "../../index.ts";
 import { readFile } from "node:fs/promises";
 
 /**
@@ -309,6 +310,13 @@ function extendPath(path: string, segment: string): string {
   return (path === "") ? segment : (path + "." + segment);
 }
 
+// The entry a table holds under a key as its own, or undefined. Only a table's own entries count: a plain lookup also finds what every object inherits, so a bootstrap
+// member, a record field or a model key named `constructor` or `toString` would reach a property that is no entry at all and read it as a node or a record key.
+function ownEntry<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 // Read a record's own id, structurally. Records carry `id`; the empty string stands in for one that does not, so a finding always has a record field even when the
 // wire gave nothing to attribute it to.
 function recordIdOf(record: unknown): string {
@@ -368,7 +376,7 @@ function walkNode(node: SchemaNode, value: unknown, path: string, ctx: WalkConte
 
         for(const [ key, inner ] of Object.entries(value)) {
 
-          const declared = node.fields[key];
+          const declared = ownEntry(node.fields, key);
 
           if(declared === undefined) {
 
@@ -429,7 +437,7 @@ export function diffBootstrap(manifest: SchemaManifest, bootstrap: unknown): Nov
 
   for(const [ key, value ] of Object.entries(bootstrap)) {
 
-    const node = manifest.records[key];
+    const node = ownEntry(manifest.records, key);
 
     if(node === undefined) {
 
@@ -489,7 +497,7 @@ export function snapshotUnmodeled(manifest: SchemaManifest, bootstrap: unknown, 
 
   for(const [ key, value ] of Object.entries(bootstrap)) {
 
-    const node = manifest.records[key];
+    const node = ownEntry(manifest.records, key);
 
     // A described member is already modeled, and its records are reported field by field by the diff instead.
     if((node !== undefined) && (node.kind !== "opaque")) {
@@ -569,7 +577,7 @@ export function snapshotUndeclared(manifest: SchemaManifest, bootstrap: unknown,
 
   for(const [ key, value ] of Object.entries(bootstrap)) {
 
-    const node = manifest.records[key];
+    const node = ownEntry(manifest.records, key);
 
     // A member with no described shape belongs to snapshotUnmodeled, which samples it whole: nothing inside one can be undeclared against a shape that does not exist.
     if((node === undefined) || (node.kind === "opaque")) {
@@ -631,8 +639,8 @@ export function diffRecord(manifest: SchemaManifest, subject: { modelKey: string
     return [{ kind: "unknownModelKey", modelKey: subject.modelKey, recordId: subject.recordId }];
   }
 
-  const collection = manifest.recordKeys[subject.modelKey];
-  const node = (collection === undefined) ? undefined : manifest.records[collection];
+  const collection = ownEntry(manifest.recordKeys, subject.modelKey);
+  const node = (collection === undefined) ? undefined : ownEntry(manifest.records, collection);
 
   if((collection === undefined) || (node === undefined)) {
 
@@ -754,7 +762,8 @@ function requireNode(value: unknown, source: string, path: string): SchemaNode {
         malformed(source, "the object node at \"" + path + "\" must express its \"open\" flag as a boolean");
       }
 
-      const validated: Record<string, SchemaNode> = {};
+      // Built with no prototype, as the manifest's own tables are, so a field the file names `__proto__` lands as an own entry.
+      const validated = Object.create(null) as Record<string, SchemaNode>;
 
       for(const [ key, field ] of Object.entries(fields)) {
 
@@ -874,14 +883,17 @@ export function parseSchemaManifest(text: string, source: string): SchemaManifes
 
   const eventTypes = requireStringArray(parsed, "eventTypes", source);
   const modelKeys = requireVocabulary(parsed, source);
-  const records: Record<string, SchemaNode> = {};
+
+  // The tables are built with no prototype, so every key the file names lands as an own entry, `__proto__` among them rather than reaching the inherited setter that
+  // would swap the table's prototype, and no lookup into a table this loader returns can answer with something every object inherits.
+  const records = Object.create(null) as Record<string, SchemaNode>;
 
   for(const [ key, node ] of Object.entries(rawRecords)) {
 
     records[key] = requireNode(node, source, key);
   }
 
-  const recordKeys: Record<string, string> = {};
+  const recordKeys = Object.create(null) as Record<string, string>;
 
   for(const [ modelKey, collection ] of Object.entries(rawRecordKeys)) {
 
@@ -890,7 +902,7 @@ export function parseSchemaManifest(text: string, source: string): SchemaManifes
       malformed(source, "its \"recordKeys\" entry for " + JSON.stringify(modelKey) + " is not a string");
     }
 
-    if(!(collection in records)) {
+    if(!Object.hasOwn(records, collection)) {
 
       malformed(source, "its \"recordKeys\" entry for " + JSON.stringify(modelKey) + " names the absent record " + JSON.stringify(collection));
     }
@@ -902,7 +914,7 @@ export function parseSchemaManifest(text: string, source: string): SchemaManifes
   // during a diff can never come up empty on a manifest this loader accepted.
   for(const modelKey of modelKeys.state) {
 
-    if(!(modelKey in recordKeys)) {
+    if(!Object.hasOwn(recordKeys, modelKey)) {
 
       malformed(source, "its \"modelKeys.state\" member " + JSON.stringify(modelKey) + " has no \"recordKeys\" entry");
     }

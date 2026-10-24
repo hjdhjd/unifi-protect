@@ -141,7 +141,7 @@ describe("loadCredentials", () => {
 
     await withDirs(async (cwd, home) => {
 
-      // A number fails the object check by its type and null by its own clause.
+      // A number fails the plain-object test by its type, null by its own clause, and an array by its prototype.
       await writeFile(path.join(cwd, "ufp.json"), "123");
 
       await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /must be a JSON object/ }, "a number is not an object");
@@ -149,6 +149,10 @@ describe("loadCredentials", () => {
       await writeFile(path.join(cwd, "ufp.json"), "null");
 
       await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /must be a JSON object/ }, "null is not an object");
+
+      await writeFile(path.join(cwd, "ufp.json"), "[]");
+
+      await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /must be a JSON object/ }, "an array is not an object");
     });
   });
 

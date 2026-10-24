@@ -27,6 +27,7 @@ import type { DeepPartial, ProtectCameraConfig, ProtectChimeConfig, ProtectFobCo
 import type { StateModelKey, TypedEvent } from "./events.ts";
 import { assertNever } from "../errors.ts";
 import { isDeepStrictEqual } from "node:util";
+import { isPlainObject } from "./plain-object.ts";
 import { normalizeMacAddress } from "./address.ts";
 
 /**
@@ -180,9 +181,9 @@ export function reduce(state: ProtectState, event: TypedEvent): ProtectState {
 }
 
 /**
- * Recursively merge a partial patch onto a device record. Objects merge by key; arrays and primitives replace wholesale; an explicit `null` clears a field. The
- * merge is value-aware: it returns the *same reference* when the patch changes nothing, and rebuilds only the nodes on the path to an actual change (every untouched
- * nested object keeps its reference). This is the structural-sharing engine the no-op fidelity guarantee depends on.
+ * Recursively merge a partial patch onto a device record. Plain objects merge by key; arrays, buffers and primitives replace wholesale; an explicit `null` clears a
+ * field. The merge is value-aware: it returns the *same reference* when the patch changes nothing, and rebuilds only the nodes on the path to an actual change (every
+ * untouched nested object keeps its reference). This is the structural-sharing engine the no-op fidelity guarantee depends on.
  *
  * @param device - The current device record.
  * @param patch  - The partial update to merge onto it.
@@ -395,13 +396,20 @@ function mergeObjects(device: Record<string, unknown>, patch: Record<string, unk
 
   for(const key of Object.keys(patch)) {
 
+    // Parsed JSON gives a key named `__proto__` as an own property, and assigning it onto the record's literal copy would reach the inherited setter and swap the
+    // record's prototype rather than write a field. No controller record has a field by that name, so refusing the key here, before anything reads it, loses nothing.
+    if(key === "__proto__") {
+
+      continue;
+    }
+
     const patchValue = patch[key];
     const deviceValue = device[key];
     let isChange: boolean;
     let nextValue: unknown;
 
-    // Object onto object recurses (and inherits the reference-preserving no-op). Anything else - primitives, arrays, null, or a type mismatch - replaces wholesale,
-    // and counts as a change only when the new value differs by value from the old one (or introduces a previously absent key).
+    // Plain object onto plain object recurses (and inherits the reference-preserving no-op). Anything else - primitives, arrays, buffers, null, or a type mismatch -
+    // replaces wholesale, and counts as a change only when the new value differs by value from the old one (or introduces a previously absent key).
     if(isPlainObject(patchValue) && isPlainObject(deviceValue)) {
 
       nextValue = mergeObjects(deviceValue, patchValue);
@@ -409,7 +417,7 @@ function mergeObjects(device: Record<string, unknown>, patch: Record<string, unk
     } else {
 
       nextValue = patchValue;
-      isChange = !(key in device) || !isDeepStrictEqual(deviceValue, patchValue);
+      isChange = !Object.hasOwn(device, key) || !isDeepStrictEqual(deviceValue, patchValue);
     }
 
     if(isChange) {
@@ -426,7 +434,8 @@ function mergeObjects(device: Record<string, unknown>, patch: Record<string, unk
 // key over the incoming object's keys, so a nested object whose value did not change comes back as its prior reference. Anything else - an array, a primitive, null,
 // or a type mismatch - is a leaf, kept whole when value-equal and otherwise taken whole from the incoming record, exactly as mergeObjects treats one. It differs from
 // mergeObjects in what an absent key means: a patch is a partial that merges, so a key it does not name is kept, while a full record states the whole device, so a
-// key it omits is dropped. The prior reference comes back only when the key sets match and every value came back as its prior reference.
+// key it omits is dropped. The prior reference comes back only when the key sets match, the incoming one read without a `__proto__` key, and every value came back
+// as its prior reference.
 function reconcileRecord<T>(prior: T, incoming: T): T {
 
   if(!isPlainObject(prior) || !isPlainObject(incoming)) {
@@ -434,14 +443,16 @@ function reconcileRecord<T>(prior: T, incoming: T): T {
     return isDeepStrictEqual(prior, incoming) ? prior : incoming;
   }
 
-  const keys = Object.keys(incoming);
+  // A key named `__proto__` is refused for the reason mergeObjects gives, and it leaves the key list before anything counts or walks it, because a full record that
+  // omits a field while carrying the key would otherwise match the prior key count, read as unchanged and keep the field the controller dropped.
+  const keys = Object.keys(incoming).filter((key) => key !== "__proto__");
   const result: Record<string, unknown> = {};
   let isChange = keys.length !== Object.keys(prior).length;
 
   for(const key of keys) {
 
     // A key the prior object carries reconciles against its prior value. A key it lacks is new: its value is taken as is and counted as a change even when it is
-    // `undefined`, which the value compare alone would miss, so key sets of the same size that differ still read as a change.
+    // `undefined`, which the value compare alone would miss, so an incoming key set without `__proto__` that differs at the same size still reads as a change.
     const isNew = !Object.hasOwn(prior, key);
     const nextValue = isNew ? incoming[key] : reconcileRecord(prior[key], incoming[key]);
 
@@ -515,12 +526,6 @@ export function mapFieldFor(modelKey: MapBackedStateModelKey): DeviceMapField {
 
       return assertNever(modelKey);
   }
-}
-
-// A non-null, non-array object - the shape that deep-merges rather than replaces.
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-
-  return (typeof value === "object") && (value !== null) && !Array.isArray(value);
 }
 
 // Adoption normalization: refuse the self-contradictory adopted-by-other record at the ingestion boundary.

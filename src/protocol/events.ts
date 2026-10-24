@@ -7,8 +7,9 @@
  * The typed-event taxonomy for the UniFi Protect realtime stream, the pure {@link classifyPacket} that lifts a {@link RawPacket} into it, and the bootstrap-dimension
  * {@link findUnmodeledDeviceCollections} that lifts an applied bootstrap into the device collections the reducer does not model.
  *
- * This module is Layer 1: it depends only on the codec's output shape and the domain types, performs no I/O, and holds no state. It is the second half
- * of the protocol contract - {@link ../protocol/packet | packet.ts} turns bytes into a `RawPacket`; this turns a `RawPacket` into a {@link TypedEvent}. Because it owns
+ * This module is Layer 1: it reads the codec's output shape and the domain types by type alone, value-imports only the error module's `assertNever` and the
+ * plain-object predicate `isPlainObject`, performs no I/O, and holds no state. It is the second half of the protocol contract -
+ * {@link ../protocol/packet | packet.ts} turns bytes into a `RawPacket`; this turns a `RawPacket` into a {@link TypedEvent}. Because it owns
  * the modelKey vocabulary ({@link DEVICE_MODEL_KEYS} / {@link KNOWN_MODEL_KEYS}), it also hosts the bootstrap-dimension classifier: where `classifyPacket` catches
  * an unmodeled class that *emits a realtime packet*, `findUnmodeledDeviceCollections` catches one that merely *lives in the bootstrap* - the standing twin the realtime
  * tripwire is structurally blind to. Both lifts read the same vocabulary, so a class becoming modeled drops out of both with a single edit.
@@ -18,6 +19,7 @@
 import type { DeepPartial, ProtectNvrBootstrap, ProtectStateRecord } from "../types/index.ts";
 import type { RawPacket } from "./packet.ts";
 import { assertNever } from "../errors.ts";
+import { isPlainObject } from "./plain-object.ts";
 
 // The modelKey taxonomy nests DeviceCollectionKey inside DeviceModelKey inside StateModelKey inside ModelKey, each declared once as the single source of truth
 // for both its type and its runtime membership test. The controller emits realtime `update` packets for more than the projectable devices, so the tiers separate
@@ -340,7 +342,7 @@ export function findUnmodeledDeviceCollections(bootstrap: ProtectNvrBootstrap): 
 
     const first = value[0];
 
-    if(!isRecord(first)) {
+    if(!isPlainObject(first)) {
 
       continue;
     }
@@ -367,18 +369,19 @@ export function findUnmodeledDeviceCollections(bootstrap: ProtectNvrBootstrap): 
 }
 
 // Map a reduced-model-key packet to a state transition. The wire actions are `add` (upsert from full data), `update` (deep-merge a partial), and `remove` (delete).
-// An add/update whose payload is not an object cannot carry a config record, so it classifies as null rather than a malformed transition.
+// An add/update whose payload is not a plain object (a string, an array, a Buffer) cannot carry a config record, so it classifies as null rather than a malformed
+// transition.
 function classifyStateTransition(action: string, modelKey: StateModelKey, id: string, payload: unknown): TypedEvent | null {
 
   switch(action) {
 
     case "add":
 
-      return isRecord(payload) ? { data: payload as ProtectStateRecord, id, kind: "deviceAdded", modelKey } : null;
+      return isPlainObject(payload) ? { data: payload as ProtectStateRecord, id, kind: "deviceAdded", modelKey } : null;
 
     case "update":
 
-      return isRecord(payload) ? { id, kind: "devicePatched", modelKey, patch: payload as DeepPartial<ProtectStateRecord> } : null;
+      return isPlainObject(payload) ? { id, kind: "devicePatched", modelKey, patch: payload as DeepPartial<ProtectStateRecord> } : null;
 
     case "remove":
 
@@ -395,7 +398,7 @@ function classifyStateTransition(action: string, modelKey: StateModelKey, id: st
 // and any finalizing update so a consumer can correlate them.
 function classifyActivity(eventId: string, payload: unknown): TypedEvent | null {
 
-  if(!isRecord(payload)) {
+  if(!isPlainObject(payload)) {
 
     return null;
   }
@@ -539,12 +542,6 @@ export function isDeviceModelKey(value: string): value is DeviceModelKey {
   return (DEVICE_MODEL_KEYS as readonly string[]).includes(value);
 }
 
-// True for a non-null, non-array object - the shape a device record or event payload must have.
-function isRecord(value: unknown): value is Record<string, unknown> {
-
-  return (typeof value === "object") && (value !== null) && !Array.isArray(value);
-}
-
 // A family of defensive field readers over untyped wire records: each returns the requested property only when it is present and of the expected runtime type
 // (string, number, nested object), and undefined otherwise. Centralizing the `typeof` guard here keeps the classifiers free of repeated inline type checks when they
 // read fields off a raw record.
@@ -566,7 +563,7 @@ function recordField(record: Record<string, unknown>, key: string): Record<strin
 
   const value = record[key];
 
-  return isRecord(value) ? value : undefined;
+  return isPlainObject(value) ? value : undefined;
 }
 
 // Read a property as an array of strings, keeping only the string elements. Returns an empty array if absent or not an array, so callers can branch on length.
@@ -581,5 +578,5 @@ function stringArrayField(record: Record<string, unknown>, key: string): readonl
 // and `buttonPressType` fields share - or undefined if it does not match.
 function readNestedText(value: unknown): string | undefined {
 
-  return isRecord(value) ? stringField(value, "text") : undefined;
+  return isPlainObject(value) ? stringField(value, "text") : undefined;
 }

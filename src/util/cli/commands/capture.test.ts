@@ -111,8 +111,9 @@ function frameTriggering(source: RawPacket, effect: () => void): RawPacket {
 // How a test grows the fake's device collections while a run is in flight.
 type Adopt = (category: "sensors", spec: { id: string; name: string }) => void;
 
-// What a capture run needs beyond the fake client itself: its arguments, a hook that publishes on the real channels as the client opens, and the Ctrl-C signal.
-type RunOptions = FakeClientOptions & { args?: string[]; publish?: () => void; signal?: AbortSignal };
+// What a capture run needs beyond the fake client itself: its arguments, a hook that publishes on the real channels as the client opens, the Ctrl-C signal, and a
+// manifest loader standing in for the fixture file's when a test needs the manifest as a literal rather than as the loader returns it.
+type RunOptions = FakeClientOptions & { args?: string[]; loadManifest?: () => Promise<SchemaManifest>; publish?: () => void; signal?: AbortSignal };
 
 // Run capture against a fixture manifest and a fake client, without assuming a bundle was written - the failure paths drive this half too.
 async function runCaptureRaw(options: RunOptions, dir: string, withAdopt?: (adopt: Adopt) => void): Promise<{ stdout: string; thrown?: unknown }> {
@@ -136,7 +137,7 @@ async function runCaptureRaw(options: RunOptions, dir: string, withAdopt?: (adop
     return realOpen(opts);
   };
 
-  const run = createCaptureHandler(() => loadSchemaManifest(manifestPath));
+  const run = createCaptureHandler(options.loadManifest ?? ((): Promise<SchemaManifest> => loadSchemaManifest(manifestPath)));
 
   try {
 
@@ -269,6 +270,18 @@ describe("capture", () => {
     const { bundle } = await runCapture({ args: [ "--device", "Front" ], rawPackets: [frame("camera", "add", "c7", { id: "c7", name: "Front Gate" })] });
 
     assert.deepEqual(bundle.run.selection["c7"], ["deviceFlag"]);
+  });
+
+  test("--device does not follow a record in a bootstrap member named like an inherited object property", async () => {
+
+    // Every object inherits a constructor, so a records lookup that did not ask for an own entry would take the member for a described collection and follow the
+    // record whose name matches. The manifest is handed over as its literal, whose tables keep the ordinary prototype, because the loaded manifest's tables carry none
+    // and would refuse the name whichever way the lookup were written.
+    const { bundle } = await runCapture({ args: [ "--device", "Front" ], bootstrap: { ...CLEAN_BOOTSTRAP, constructor: [{ id: "x1", name: "Front Gate" }] },
+      loadManifest: (): Promise<SchemaManifest> => Promise.resolve(MANIFEST) });
+
+    assert.equal(bundle.run.selection["x1"], undefined, "a record outside the described collections is not followed, whatever it is called");
+    assert.deepEqual(bundle.run.selection["c1"], ["deviceFlag"], "the described camera the pattern names is still followed");
   });
 
   test("a device that turns novel mid-window is followed from its own triggering frame onward", async () => {

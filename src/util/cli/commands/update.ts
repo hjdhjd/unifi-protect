@@ -4,8 +4,9 @@
  */
 import { COMMON_OPTIONS, CliError } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
-import type { DeviceProjection, ProtectDeviceConfig } from "../../../index.ts";
+import type { DeepPartial, DeviceProjection, ProtectDeviceConfig } from "../../../index.ts";
 import { findDevice } from "../lookup.ts";
+import { isPlainObject } from "../../../index.ts";
 import { parseArgs } from "node:util";
 
 const USAGE = [
@@ -29,7 +30,7 @@ const USAGE = [
 
 /**
  * `ufp update`. Resolves the device, parses the `--patch` JSON, and either previews it (`--dry-run`) or applies it through the device's write-through `update`. The patch
- * is arbitrary user JSON, so it crosses into the typed `update` through a single explicit cast at this boundary; the controller validates it and the library surfaces a
+ * is arbitrary user JSON, so it crosses into the typed `update` through explicit casts at this one boundary; the controller validates it and the library surfaces a
  * typed error (e.g. `ProtectAuthorizationError` when the account is not admin) on rejection.
  *
  * @category CLI
@@ -68,7 +69,7 @@ const updateHandler: CommandHandler = async (ctx) => {
     throw new CliError("The --patch value is not valid JSON.", { cause: error, exitCode: 2 });
   }
 
-  if((typeof patch !== "object") || (patch === null) || Array.isArray(patch)) {
+  if(!isPlainObject(patch)) {
 
     throw new CliError("The --patch value must be a JSON object.", { exitCode: 2 });
   }
@@ -86,8 +87,9 @@ const updateHandler: CommandHandler = async (ctx) => {
   }
 
   // The patch is arbitrary user JSON - it cannot be type-checked against a specific device category at compile time - so we cross into the generically-typed `update`
-  // through one explicit cast on the shared base. The controller is the validator; a rejected patch surfaces as a typed error.
-  await (device as unknown as DeviceProjection<ProtectDeviceConfig>).update(patch, { signal: ctx.signal });
+  // through explicit casts of the device to the shared base and of the patch to its partial, both at this one call. The controller is the validator; a rejected patch
+  // surfaces as a typed error.
+  await (device as unknown as DeviceProjection<ProtectDeviceConfig>).update(patch as DeepPartial<ProtectDeviceConfig>, { signal: ctx.signal });
 
   ctx.output.line("Updated " + device.modelKey + " \"" + device.name + "\" (" + device.id + ").");
 };

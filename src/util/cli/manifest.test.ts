@@ -192,6 +192,38 @@ describe("schema manifest diff", () => {
 
     assert.deepEqual(diffBootstrap(FIXTURE, "not a bootstrap"), []);
   });
+
+  test("a record field named like an inherited object property is undeclared", () => {
+
+    // Every object inherits a constructor, so a field lookup that did not ask for an own entry would take that function for the field's declaration and report
+    // nothing. The fixture's tables keep the ordinary prototype, which is what makes the inherited name reachable here.
+    assert.deepEqual(diffBootstrap(FIXTURE, { cameras: [{ constructor: "Front", id: "c1" }] }),
+      [{ collection: "cameras", kind: "unknownField", observedType: "string", open: false, path: "constructor", recordId: "c1" }]);
+  });
+
+  test("a bootstrap member named like an inherited object property is an unknown collection", () => {
+
+    assert.deepEqual(diffBootstrap(FIXTURE, { toString: [{ id: "t1" }] }), [{ collection: "toString", kind: "unknownCollection", valueType: "array" }]);
+  });
+
+  test("a field named __proto__ is undeclared, and a parsed manifest's tables carry no prototype", () => {
+
+    // A parsed document carries "__proto__" as an own key. Through a table with the ordinary prototype, a lookup of that key finds the prototype itself, and a loader
+    // building its tables as literals would take a "__proto__" entry the file names for the table's prototype rather than its key. The parsed manifest's tables carry
+    // none, so the key the file names is an own entry, and the diff reports the field through either manifest.
+    const parsed = parseSchemaManifest(fixtureWith({ records: { ...FIXTURE.records, ...(JSON.parse("{\"__proto__\":{\"kind\":\"opaque\"}}") as object) } }),
+      "fixture.json");
+    const cameras = parsed.records["cameras"];
+    const bootstrap: unknown = JSON.parse("{\"cameras\":[{\"__proto__\":{\"x\":1},\"id\":\"c1\"}]}");
+    const finding = { collection: "cameras", kind: "unknownField", observedType: "object", open: false, path: "__proto__", recordId: "c1" };
+
+    assert.equal(Object.getPrototypeOf(parsed.records), null, "the records table carries no prototype");
+    assert.equal(Object.getPrototypeOf(parsed.recordKeys), null, "the recordKeys table carries no prototype");
+    assert.ok((cameras?.kind === "object") && (Object.getPrototypeOf(cameras.fields) === null), "an object node's fields carry no prototype");
+    assert.ok(Object.hasOwn(parsed.records, "__proto__"), "a record the file names __proto__ is an own entry");
+    assert.deepEqual(diffBootstrap(parsed, bootstrap), [finding]);
+    assert.deepEqual(diffBootstrap(FIXTURE, bootstrap), [finding]);
+  });
 });
 
 describe("unmodeled snapshots", () => {
@@ -229,6 +261,12 @@ describe("unmodeled snapshots", () => {
 
     // The document is read structurally rather than trusted to be a bootstrap at all, the same posture the diff takes.
     assert.deepEqual(snapshotUnmodeled(FIXTURE, "not a bootstrap", 3), []);
+  });
+
+  test("a member named like an inherited object property is sampled as unmodeled", () => {
+
+    // A records lookup that did not ask for an own entry would take the inherited function for a described shape and skip the member as modeled.
+    assert.deepEqual(snapshotUnmodeled(FIXTURE, { toString: [{ id: "t1" }] }, 3), [{ collection: "toString", kept: [{ id: "t1" }], seen: 1 }]);
   });
 });
 
@@ -415,7 +453,8 @@ describe("loadSchemaManifest", () => {
 
       await writeFile(file, JSON.stringify(FIXTURE));
 
-      assert.deepEqual(await loadSchemaManifest(file), FIXTURE);
+      // The loaded tables carry no prototype and a strict deep equality compares prototypes, so the loaded manifest is compared in its JSON form.
+      assert.deepEqual(JSON.parse(JSON.stringify(await loadSchemaManifest(file))), FIXTURE);
     });
   });
 
@@ -456,8 +495,12 @@ describe("parseSchemaManifest", () => {
       "the node at \"cameras\" is not an object" ],
     [ "a recordKeys entry naming an absent record", fixtureWith({ recordKeys: { ...FIXTURE.recordKeys, doorlock: "doorlocks" } }),
       "names the absent record \"doorlocks\"" ],
+    [ "a recordKeys entry naming an inherited object property", fixtureWith({ recordKeys: { ...FIXTURE.recordKeys, doorlock: "constructor" } }),
+      "names the absent record \"constructor\"" ],
     [ "a state model key with no recordKeys entry", fixtureWith({ modelKeys: { ...FIXTURE.modelKeys, state: [ ...FIXTURE.modelKeys.state, "chime" ] } }),
       "\"chime\" has no \"recordKeys\" entry" ],
+    [ "a state model key named like an inherited object property",
+      fixtureWith({ modelKeys: { ...FIXTURE.modelKeys, state: [ ...FIXTURE.modelKeys.state, "toString" ] } }), "\"toString\" has no \"recordKeys\" entry" ],
     [ "a node carrying an unrecognized kind", fixtureWith({ records: { ...FIXTURE.records, cameras: { kind: "scalar" } } }), "unrecognized kind \"scalar\"" ],
     [ "an object node with no fields object", fixtureWith({ records: { ...FIXTURE.records, cameras: { kind: "object", open: false } } }),
       "has no \"fields\" object" ],

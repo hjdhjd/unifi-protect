@@ -5,6 +5,7 @@
  * The reconciliation surface is covered rule by rule: each merge rule and each reconciliation outcome (zero drift, partial drift, full replacement, the nested sharing
  * of a drifted record) has a row that reddens when it regresses, and every event-kind category is representatively exercised.
  */
+import type { DeepPartial, ProtectStateRecord } from "../types/index.ts";
 import { applyBootstrap, applyDevicePatch, createInitialState, reduce } from "./reducer.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
@@ -182,6 +183,17 @@ describe("applyDevicePatch", () => {
 
     assert.ok(Object.is(applyDevicePatch<unknown>(device, [1]), device), "an equal patch returns the device's own reference rather than the patch");
   });
+
+  test("a Buffer patch replaces the record rather than merging into it", () => {
+
+    // A Buffer enumerates an index key per byte, so a merge would write every byte onto the record as a field. It is no plain object, so it replaces wholesale as an
+    // array does, at the top level and in a nested object.
+    const patch = Buffer.from("{\"name\":\"Back\"}");
+    const device: { name: string; nested: unknown } = { name: "Front", nested: { name: "Front" } };
+
+    assert.ok(Object.is(applyDevicePatch<unknown>(device, patch), patch), "the Buffer replaces the whole record");
+    assert.ok(Object.is(applyDevicePatch(device, { nested: patch }).nested, patch), "the Buffer replaces the nested object");
+  });
 });
 
 describe("reduce - device transitions", () => {
@@ -262,6 +274,37 @@ describe("reduce - device transitions", () => {
     const next = reduce(initial, { id: "camera-1", kind: "devicePatched", modelKey: "camera", patch: { name: "Front Door" } });
 
     assert.ok(Object.is(next, initial), "a value-identical patch must not churn state");
+  });
+
+  test("an own __proto__ key in a patch lands nowhere and the record's prototype stays ordinary", () => {
+
+    // The patch is parsed from JSON text, as the codec hands one over, so `__proto__` is an own key of it where an object literal's `__proto__` would set its
+    // prototype instead and the row would plant nothing.
+    const initial = stateWithCamera();
+    const patch = JSON.parse("{\"__proto__\":{\"polluted\":true},\"lastMotion\":999}") as DeepPartial<ProtectStateRecord>;
+
+    assert.ok(Object.hasOwn(patch, "__proto__"), "the parsed patch carries __proto__ as an own key");
+
+    const record = reduce(initial, { id: "camera-1", kind: "devicePatched", modelKey: "camera", patch }).cameras.get("camera-1");
+
+    assert.equal(record?.lastMotion, 999, "the patch's real field change lands");
+    assert.equal(Object.getPrototypeOf(record), Object.prototype, "the record's prototype is the ordinary object prototype");
+    assert.equal("polluted" in record, false, "no field of the planted value reads through the record");
+    assert.equal(Object.hasOwn(record, "__proto__"), false, "the key lands as no own field of the record");
+  });
+
+  test("a patch carrying only an own __proto__ key is a no-op that keeps the record reference", () => {
+
+    // The refused key is the patch's only key, so the merge has nothing to write and the patch reads as any value-identical one does.
+    const initial = stateWithCamera();
+    const patch = JSON.parse("{\"__proto__\":{\"polluted\":true}}") as DeepPartial<ProtectStateRecord>;
+
+    assert.ok(Object.hasOwn(patch, "__proto__"), "the parsed patch carries __proto__ as an own key");
+
+    const next = reduce(initial, { id: "camera-1", kind: "devicePatched", modelKey: "camera", patch });
+
+    assert.ok(Object.is(next, initial), "the state keeps its reference");
+    assert.ok(Object.is(next.cameras.get("camera-1"), initial.cameras.get("camera-1")), "the record keeps its reference");
   });
 
   test("deviceRemoved deletes an existing device", () => {
@@ -737,6 +780,42 @@ describe("applyBootstrap", () => {
     assert.equal(Object.hasOwn(after ?? {}, "marketName"), false, "the swapped-out key is absent");
     assert.equal(Object.hasOwn(after ?? {}, "nickname"), true, "the new key is an own key of the stored record despite its undefined value");
     assert.ok(Object.is(after?.featureFlags, before?.featureFlags), "the unchanged featureFlags object keeps its reference");
+  });
+
+  test("a bootstrap record carrying an own __proto__ key reconciles with an ordinary prototype and no planted field", () => {
+
+    // The record also drifts in lastMotion, so it fails the whole-record compare and is reconciled key by key, the planted key among them. Its overrides are parsed
+    // from JSON text, so `__proto__` is an own key of the record they spread into.
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera()] }));
+    const record = makeCamera(JSON.parse("{\"__proto__\":{\"polluted\":true},\"lastMotion\":999}") as Record<string, unknown>);
+
+    assert.ok(Object.hasOwn(record, "__proto__"), "the bootstrap's record carries __proto__ as an own key");
+
+    const after = applyBootstrap(initial, makeBootstrap({ cameras: [record] })).cameras.get("camera-1");
+
+    assert.equal(after?.lastMotion, 999, "the drifted field reads the bootstrap's value");
+    assert.equal(Object.getPrototypeOf(after), Object.prototype, "the reconciled record's prototype is the ordinary object prototype");
+    assert.equal("polluted" in after, false, "no field of the planted value reads through the reconciled record");
+    assert.equal(Object.hasOwn(after, "__proto__"), false, "the key lands as no own field of the reconciled record");
+  });
+
+  test("a full record that omits a field and carries an own __proto__ key drops the field", () => {
+
+    // The bootstrap's record omits host and carries the planted key in its place, so its own keys match the stored record's in number and every value it shares with
+    // that record is unchanged...only the count leaving `__proto__` out marks it as changed. The key is parsed from JSON text and spread in, and the rest pattern that
+    // sheds host copies it across as an own key.
+    const initial = applyBootstrap(createInitialState(), makeBootstrap({ cameras: [makeCamera()] }));
+    const { host: _host, ...record } = makeCamera(JSON.parse("{\"__proto__\":{\"polluted\":true}}") as Record<string, unknown>);
+
+    assert.ok(Object.hasOwn(record, "__proto__"), "the bootstrap's record carries __proto__ as an own key");
+    assert.equal(Object.hasOwn(record, "host"), false, "the bootstrap's record omits host");
+
+    const before = initial.cameras.get("camera-1");
+    const after = applyBootstrap(initial, makeBootstrap({ cameras: [record as ReturnType<typeof makeCamera>] })).cameras.get("camera-1");
+
+    assert.ok(!Object.is(after, before), "the record that dropped host takes a new reference");
+    assert.equal(Object.hasOwn(after ?? {}, "host"), false, "the field the bootstrap's record omits is absent");
+    assert.equal(Object.getPrototypeOf(after), Object.prototype, "the reconciled record's prototype is the ordinary object prototype");
   });
 });
 

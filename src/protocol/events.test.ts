@@ -107,6 +107,16 @@ describe("classifyPacket - device transitions", () => {
     assert.equal(classifyPacket(pkt({ action: "update", modelKey: "camera", payload: 42 })), null);
   });
 
+  test("a Buffer payload on an add or update classifies as null", () => {
+
+    // A binary data frame decodes to a Buffer, which answers typeof as an object and carries an index key per byte, so a test looser than the prototype would hand it
+    // to the reducer as a record or a patch.
+    const payload = Buffer.from("{\"id\":\"camera-1\"}");
+
+    assert.equal(classifyPacket(pkt({ action: "add", id: "camera-1", modelKey: "camera", payload })), null);
+    assert.equal(classifyPacket(pkt({ action: "update", id: "camera-1", modelKey: "camera", payload })), null);
+  });
+
   test("an unrecognized action classifies as null", () => {
 
     assert.equal(classifyPacket(pkt({ action: "frobnicate", modelKey: "camera", payload: {} })), null);
