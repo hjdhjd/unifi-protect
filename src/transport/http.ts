@@ -85,7 +85,9 @@ export interface SendOptions extends RequestOptions {
 }
 
 /**
- * Construction options for {@link Transport}. `host` is the controller address; everything else is an injected dependency.
+ * Construction options for {@link Transport}. `host` is the controller address exactly as configured, which every request diagnostics payload carries verbatim, and
+ * `origin` is the URL origin the owned pool connects to: the scheme and the controller's URL authority, an IPv6 literal bracketed (`https://[fe80::1]`). Everything
+ * else is an injected dependency.
  *
  * - `dispatcher` substitutes the undici dispatcher (an `undici.MockAgent` in tests, or a consumer-supplied pool). When injected, the transport never destroys or
  *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher.
@@ -105,6 +107,7 @@ export interface TransportOptions {
   host: string;
   log?: ProtectLogging;
   onUnauthorized?: () => Promise<boolean>;
+  origin: string;
   verifyTls?: boolean;
 }
 
@@ -301,6 +304,7 @@ export class Transport implements AsyncDisposable {
   readonly #host: string;
   readonly #log: ProtectLogging;
   readonly #onUnauthorized: (() => Promise<boolean>) | undefined;
+  readonly #origin: string;
   readonly #ownsDispatcher: boolean;
   readonly #verifyTls: boolean;
 
@@ -318,8 +322,9 @@ export class Transport implements AsyncDisposable {
     this.#log = options.log ?? noopLog;
     this.#onUnauthorized = options.onUnauthorized;
 
-    // The certificate posture is settled before the pool is built, because #buildPool reads it. reset() rebuilds the pool from this same field, so a rebuilt pool
-    // carries the posture the transport was constructed with.
+    // The origin and the certificate posture are settled before the pool is built, because #buildPool reads them. reset() rebuilds the pool from these same fields,
+    // so a rebuilt pool reaches the controller the transport was constructed for, with the posture it was constructed with.
+    this.#origin = options.origin;
     this.#verifyTls = options.verifyTls ?? false;
 
     // When a dispatcher is injected we adopt it and never touch its lifecycle - the injector owns construction and teardown. Otherwise we build (and own) the pool.
@@ -701,7 +706,7 @@ export class Transport implements AsyncDisposable {
       return dispatch(dispatchOptions, handler);
     };
 
-    return new Pool("https://" + this.#host, { allowH2: true, clientTtl: 60000, connect: { preferH2: true, rejectUnauthorized: this.#verifyTls }, connections: 5 })
+    return new Pool(this.#origin, { allowH2: true, clientTtl: 60000, connect: { preferH2: true, rejectUnauthorized: this.#verifyTls }, connections: 5 })
       .compose(userAgent, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
         statusCodes: [...RETRY_STATUS_CODES], throwOnError: false, timeoutFactor: 2 }));
   }

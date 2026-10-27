@@ -13,8 +13,9 @@ import type { Transport } from "../transport/http.ts";
  * narrow, so a projection couples to exactly what it needs and nothing of the full `ProtectClient` surface leaks into Layer 3's device classes. Tests build a tiny fake
  * context rather than a whole client.
  *
- * A projection reads its config through `store` (snapshot for sync getters, observe for the change stream) and issues its write-through commands through `transport`. It
- * never holds device state of its own - it is a live view over the single source of truth.
+ * A projection reads its config through `store` (snapshot for sync getters, observe for the change stream) and issues its write-through commands through `transport`, to
+ * the endpoint URLs it builds on `host`, the controller's URL authority (an IPv6 literal bracketed, any port kept). It never holds device state of its own - it is a
+ * live view over the single source of truth.
  *
  * The `livestreamPool` and `talkback` members are the binary-channel dependencies the composition root binds: a projection reaches the shared livestream pool through the
  * former and opens a per-call talkback session through the latter, in both cases passing only its own id while the WebSocket wire knowledge stays in Layer 2. `talkback`

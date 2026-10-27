@@ -6,9 +6,9 @@
  * errno-resolution helpers behave across the shapes undici and Node produce.
  */
 import * as errorModule from "./errors.ts";
-import { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCodecChangeError, ProtectError,
-  ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError,
-  ProtectUnsupportedError, RecoverableError, assertNever, isExpectedWsDisconnect, resolveErrnoCause } from "./errors.ts";
+import { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCodecChangeError, ProtectConfigurationError,
+  ProtectError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError,
+  ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, isExpectedWsDisconnect, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import { DOORBELL_INIT } from "./protocol/init-segment.fixtures.ts";
 import assert from "node:assert/strict";
@@ -34,6 +34,7 @@ describe("ProtectError hierarchy", () => {
     new ProtectAuthorizationError("authz", { statusCode: 403 }),
     new ProtectBootstrapError("bootstrap", { stage: "fetch" }),
     new ProtectCodecChangeError("codec", { from: init, to: init }),
+    new ProtectConfigurationError("configuration"),
     new ProtectLivestreamUnavailableError("unavailable", { attempts: 1, phase: "establishing" }),
     new ProtectProtocolError("protocol"),
     new ProtectRequestError("request", { statusCode: 500 }),
@@ -79,6 +80,7 @@ describe("typed error fields and cause chaining", () => {
       new ProtectAuthorizationError("m", { cause: root }),
       new ProtectBootstrapError("m", { cause: root, stage: "fetch" }),
       new ProtectCodecChangeError("m", { cause: root, from: init, to: init }),
+      new ProtectConfigurationError("m", { cause: root }),
       new ProtectLivestreamUnavailableError("m", { attempts: 1, cause: root, phase: "establishing" }),
       new ProtectNetworkError("m", { cause: root }),
       new ProtectProtocolError("m", { cause: root }),

@@ -35,6 +35,7 @@ export function makeMockTransport(options: {
 } = {}): MockTransport {
 
   const host = options.host ?? "10.0.0.1";
+  const origin = "https://" + host;
   const agent = new MockAgent();
 
   // Disable real network connections so a request that misses every configured intercept fails immediately instead of silently reaching a live host.
@@ -46,12 +47,13 @@ export function makeMockTransport(options: {
     clock,
     dispatcher: agent,
     host,
+    origin,
     ...((options.getAuthHeaders !== undefined) && { getAuthHeaders: options.getAuthHeaders }),
     ...((options.log !== undefined) && { log: options.log }),
     ...((options.onUnauthorized !== undefined) && { onUnauthorized: options.onUnauthorized })
   });
 
-  return { agent, clock, host, pool: agent.get("https://" + host), transport };
+  return { agent, clock, host, pool: agent.get(origin), transport };
 }
 
 /**

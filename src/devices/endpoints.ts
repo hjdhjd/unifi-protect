@@ -22,7 +22,7 @@ const DEVICE_API_PATH: Record<DeviceModelKey, string> = {
  * Build the REST endpoint URL for a device collection or a specific device. The Protect application API is reached through the controller's `/proxy/protect/api/`
  * prefix; the device's model key selects the collection and the optional id addresses one device within it.
  *
- * @param host     - The controller address (no scheme).
+ * @param host     - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
  * @param modelKey - The device category whose collection to address.
  * @param id       - The specific device id; omit to address the collection root itself (`.../cameras`, or the `.../nvr` singleton, which carries no id suffix).
  *

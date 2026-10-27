@@ -11,8 +11,8 @@
  * which is composed only onto a pool the transport builds itself; the owned-pool describe covers it against a loopback peer.
  */
 import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../diagnostics.ts";
+import { MockAgent, Pool, errors } from "undici";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../settings.ts";
-import { Pool, errors } from "undici";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectThrottledError,
   ProtectTimeoutError } from "../errors.ts";
 import { Transport, responseOk } from "./http.ts";
@@ -447,7 +447,7 @@ describe("Transport", () => {
 
       const origin = "http://127.0.0.1:" + String((server.address() as AddressInfo).port);
       const dispatcher = new Pool(origin);
-      const transport = new Transport({ dispatcher, host: new URL(origin).host });
+      const transport = new Transport({ dispatcher, host: new URL(origin).host, origin });
       const ends: HttpRequestEndPayload[] = [];
 
       using endSubscription = subscribeToChannel(channels.httpRequestEnd, (payload) => void ends.push(payload));
@@ -845,6 +845,30 @@ describe("Transport", () => {
       assert.ok((ends[0].error ?? "").length > 0, "a transport-level failure carries an error message");
     });
 
+    test("stamps a bare IPv6 controller address verbatim while its requests go to the bracketed origin", async () => {
+
+      const starts: HttpRequestStartPayload[] = [];
+      const ends: HttpRequestEndPayload[] = [];
+
+      using startSubscription = subscribeToChannel(channels.httpRequestStart, (payload) => void starts.push(payload));
+      using endSubscription = subscribeToChannel(channels.httpRequestEnd, (payload) => void ends.push(payload));
+
+      // The address and the origin differ only by the brackets, which belong to the URL rather than to the controller's name, so the payloads carry none.
+      const agent = new MockAgent();
+
+      agent.disableNetConnect();
+      agent.get("https://[fe80::1]").intercept({ method: "GET", path: "/d" }).reply(200, {});
+
+      const transport = new Transport({ dispatcher: agent, host: "fe80::1", origin: "https://[fe80::1]" });
+
+      await transport.send("https://[fe80::1]/d");
+
+      assert.deepEqual(starts.map((payload) => payload.host), ["fe80::1"], "the start payload carries the address as configured");
+      assert.deepEqual(ends.map((payload) => payload.host), ["fe80::1"], "the end payload carries the address as configured");
+
+      await agent.close();
+    });
+
     test("marks a cancelled request on the end payload and no other", async () => {
 
       const ends: HttpRequestEndPayload[] = [];
@@ -946,7 +970,7 @@ describe("Transport", () => {
       // keepalive connection to a loopback peer; reset() destroys that pool, closing the connection, and builds the fresh one the next request goes through, and
       // asyncDispose tears it down. The peer is disposed after the transport, so the pool has released its connection by the time the server stops listening.
       await using peer = await createLoopbackHttpsPeer();
-      const transport = new Transport({ host: peer.host });
+      const transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
 
       assert.equal(transport.isThrottled, false);
       assert.equal((await transport.send(url(peer.host, "/ok"))).statusCode, 200);
@@ -961,6 +985,19 @@ describe("Transport", () => {
 
       await assert.doesNotReject(transport[Symbol.asyncDispose]());
     });
+
+    test("an owned pool reaches a controller on an IPv6 address through its bracketed origin", async () => {
+
+      /* A real pool over a real connection, because an injected dispatcher never dials the origin the owned pool is built on. The host is the bare literal and the
+       * origin its bracketed form, as connect hands them to a transport, with the peer's ephemeral port on the origin alone, so a pool built from the host would fail
+       * to parse rather than reach the peer. The peer is disposed after the transport, so the pool has released its keepalive connection by the time the server
+       * stops listening.
+       */
+      await using peer = await createLoopbackHttpsPeer({ ipv6: true });
+      await using transport = new Transport({ host: "::1", origin: "https://" + peer.host });
+
+      assert.equal((await transport.send(url(peer.host, "/ok"))).statusCode, 200);
+    });
   });
 
   describe("certificate verification", () => {
@@ -969,7 +1006,7 @@ describe("Transport", () => {
 
       // The peer is disposed after the transport, so the pool has released its keepalive connection by the time the server stops listening.
       await using peer = await createLoopbackHttpsPeer();
-      await using transport = new Transport({ host: peer.host });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
 
       const response = await transport.send(url(peer.host, "/ok"));
 
@@ -979,7 +1016,7 @@ describe("Transport", () => {
     test("refuses a certificate that does not verify when strict verification is asked for", async () => {
 
       await using peer = await createLoopbackHttpsPeer();
-      await using transport = new Transport({ host: peer.host, verifyTls: true });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host, verifyTls: true });
 
       /* The same peer and the same request as above, one option apart. A handshake the client will not complete is a connect-phase failure, which the transport
        * classifies as the reachability fault it is, and the errno lifted from the cause chain is what says the refusal was about the certificate rather than about
@@ -999,7 +1036,7 @@ describe("Transport", () => {
       // reset() discards the owned pool and builds a fresh one, which is the one lifecycle boundary that could silently drop the certificate posture and leave a
       // strict transport trusting anything from its next request onward.
       await using peer = await createLoopbackHttpsPeer();
-      await using transport = new Transport({ host: peer.host, verifyTls: true });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host, verifyTls: true });
 
       transport.reset();
 
@@ -1019,7 +1056,7 @@ describe("Transport", () => {
 
       // PATCH is held out of the retried verbs, so the interceptor hands the first answer straight back and send returns it for ensureOk to classify.
       await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{\"error\":\"missing\"}", status: 404 }) });
-      await using transport = new Transport({ host: peer.host });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
 
       const response = await transport.send(url(peer.host, "/missing"), { method: "PATCH" });
 
@@ -1034,7 +1071,7 @@ describe("Transport", () => {
        * most of the default request deadline, which leaves little margin on a loaded machine, so this row gives the request a deadline of its own.
        */
       await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{\"error\":\"starting\"}", status: 503 }) });
-      await using transport = new Transport({ host: peer.host });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
 
       const response = await transport.send(url(peer.host, "/busy"), { timeout: 10000 });
 
@@ -1047,7 +1084,7 @@ describe("Transport", () => {
     test("a GET answered 503 twice and then 200 returns the 200 after three requests", async () => {
 
       await using peer = await createLoopbackHttpsPeer({ respond: (request) => ((request <= 2) ? { body: "{}", status: 503 } : { body: "{\"ok\":true}", status: 200 }) });
-      await using transport = new Transport({ host: peer.host });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
 
       const response = await transport.send(url(peer.host, "/recovering"));
 

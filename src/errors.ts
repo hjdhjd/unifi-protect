@@ -255,6 +255,21 @@ export function assertNever(value: never): never {
 }
 
 /**
+ * A connect option the library cannot act on, refused by `connect()` before any request is sent: a controller address no URL can carry, such as an IPv6 literal with
+ * a zone (`fe80::1%en0`) or a value carrying credentials, a path, a query or a fragment. The message names the address as configured. Fatal because the same
+ * configuration is refused the same way on every attempt, so the caller corrects it rather than retrying.
+ *
+ * @category Errors
+ */
+export class ProtectConfigurationError extends FatalError {
+
+  constructor(message: string, options?: { cause?: unknown }) {
+
+    super(message, { cause: options?.cause });
+  }
+}
+
+/**
  * The bootstrap sequence failed while fetching or parsing the controller bootstrap document. `stage` marks which - `"fetch"` when the bootstrap endpoint returns
  * a non-2xx status, `"parse"` when the body cannot be decoded - so the caller and the diagnostics surface can report the precise point of failure rather than a
  * generic "connect failed." A login or reachability failure is not wrapped here: a transport-level failure reaching the endpoint propagates as its own typed error

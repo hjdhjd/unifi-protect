@@ -1,16 +1,21 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * client.test.ts: Integration tests for ProtectClient.connect() - the atomic login+bootstrap factory, the projection surface over a real bootstrap, the typed-error
- * mapping for each failure stage, the Disposable event subscription, and clean teardown. Driven against an undici MockAgent.
+ * mapping for each failure stage, the Disposable event subscription, clean teardown, and the controller's URL authority at every URL the client composes. Driven
+ * against an undici MockAgent.
  */
-import { ProtectAuthError, ProtectBootstrapError, ProtectNetworkError, ProtectProtocolError } from "../errors.ts";
+import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectConfigurationError, ProtectNetworkError,
+  ProtectProtocolError } from "../errors.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
+import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
 import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
 import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
+import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
+import type { HttpRequestStartPayload } from "../diagnostics.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
 import { PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
@@ -567,6 +572,177 @@ describe("ProtectClient.connect", () => {
       await delay(10);
 
       assert.deepEqual(clock.pendingWaits(), [0], "a failed reboot must leave the next fault on the prompt unknown track");
+    });
+  });
+
+  describe("an IPv6 controller address", () => {
+
+    /* The address as configured and the authority every URL the client composes carries it in. The mock answers only on the bracketed origin, and a URL composed
+     * from the bare literal is one the parser refuses before a request leaves, so each intercept below that answers is a builder the composition root handed the
+     * authority. A builder handed the bare literal fails its row as a network error instead.
+     */
+    const ADDRESS = "fe80::1";
+    const AUTHORITY = "[fe80::1]";
+
+    // A MockAgent bound to the bracketed origin, with net connections disabled so any unmocked request fails loudly.
+    function mockBracketedController(): { agent: MockAgent; pool: Interceptable } {
+
+      const agent = new MockAgent();
+
+      agent.disableNetConnect();
+
+      return { agent, pool: agent.get("https://" + AUTHORITY) };
+    }
+
+    // One WebSocket the client dialed: the URL it was handed and the socket built for it.
+    interface Dialed {
+
+      socket: FakeWebSocket;
+      url: string;
+    }
+
+    // Connect to the bare address, recording each WebSocket the client dials in `dialed`, in order.
+    async function connectBare(agent: MockAgent, options: { clock?: FakeClock; dialed?: Dialed[]; refreshIntervalMs?: number | false } = {}): Promise<ProtectClient> {
+
+      return ProtectClient.connect({ clock: options.clock ?? fakeClock(), dispatcher: agent, host: ADDRESS, log: silentLog(), password: "p",
+        refreshIntervalMs: options.refreshIntervalMs ?? false, username: "u", webSocket: (url: string): FakeWebSocket => {
+
+          const socket = new FakeWebSocket();
+
+          options.dialed?.push({ socket, url });
+
+          return socket;
+        } });
+    }
+
+    test("signs in through the CSRF retry, bootstraps and opens the events stream on the bracketed authority, reporting the address as configured", async () => {
+
+      const { agent, pool } = mockBracketedController();
+      const dialed: Dialed[] = [];
+      const hosts: string[] = [];
+
+      using startSubscription = subscribeToChannel(channels.httpRequestStart, (payload) => void hosts.push(payload.host));
+
+      // The first sign-in is rejected, so the session fetches a CSRF token from the controller root and signs in again, reaching the login URL and the root alike.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "");
+      pool.intercept({ method: "GET", path: "/" }).reply(200, "", { headers: { "x-csrf-token": "csrf0" } });
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
+
+      await using client = await connectBare(agent, { dialed });
+
+      agent.assertNoPendingInterceptors();
+      assert.equal(dialed.length, 1);
+      assert.ok(dialed[0]?.url.startsWith("wss://" + AUTHORITY + "/proxy/protect/ws/updates?"), "the events stream dials the bracketed authority");
+      assert.deepEqual([...new Set(hosts)], [ADDRESS], "every request's diagnostics payload carries the address as configured");
+    });
+
+    test("negotiates the livestream and talkback endpoints on the bracketed authority", async () => {
+
+      const { agent, pool } = mockBracketedController();
+      const dialed: Dialed[] = [];
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ cameras: [makeCamera({ featureFlags: { hasSpeaker: true }, id: "c1" })] }));
+      pool.intercept({ method: "GET", path: (path) => path.startsWith("/proxy/protect/api/ws/livestream?") })
+        .reply(200, { url: "wss://internal-host:7442/ws/livestream?token=t" });
+
+      // The talkback negotiation is refused, so the row ends there: connect injects no talkback socket, and a minted URL the session could dial would reach the network.
+      pool.intercept({ method: "GET", path: "/proxy/protect/api/ws/talkback?camera=c1" }).reply(403, {});
+
+      await using client = await connectBare(agent, { dialed });
+
+      const camera = client.camera("c1");
+
+      assert.ok(camera !== undefined);
+
+      await using subscription = camera.livestream({ source: { channel: 0, type: "channel" } });
+
+      await expectAt(() => dialed.length === 2);
+      assert.equal(dialed[1]?.url, "wss://" + AUTHORITY + ":7442/ws/livestream?token=t", "the livestream negotiates on the authority and dials its hostname");
+
+      // A forbidden answer classified as the authorization error is the negotiation having reached the bracketed origin, where a bare literal fails before any status
+      // exists.
+      await assert.rejects(camera.talkback(), { constructor: ProtectAuthorizationError, statusCode: 403 });
+    });
+
+    test("sends a device command, the raw bootstrap fetch and the controller reboot on the bracketed authority", async () => {
+
+      const { agent, pool } = mockBracketedController();
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
+      pool.intercept({ method: "POST", path: "/proxy/protect/api/cameras/c1/reboot" }).reply(200, {});
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
+      pool.intercept({ method: "POST", path: "/api/system/reboot" }).reply(200, "{}");
+
+      await using client = await connectBare(agent);
+
+      await client.camera("c1")?.reboot();
+      await client.fetchBootstrap();
+      await client.reboot();
+
+      agent.assertNoPendingInterceptors();
+    });
+
+    test("re-fetches the bootstrap on the bracketed authority for the refresh, the liveness probe and recovery, which relaunches the events stream there", async () => {
+
+      const { agent, pool } = mockBracketedController();
+      const clock = fakeClock();
+      const dialed: Dialed[] = [];
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
+
+      await using client = await connectBare(agent, { clock, dialed, refreshIntervalMs: 1000 });
+
+      // The refresh failsafe's fetch.
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
+      await clock.tick();
+      await expectAt(() => agent.pendingInterceptors().length === 0);
+
+      // The liveness probe's fetch.
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
+      await client.connection.verify();
+
+      // The events socket drops, so recovery waits out its prompt first delay, then verifies with one fetch, re-bootstraps with another, and relaunches the events
+      // stream.
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap()).times(2);
+      dialed[0]?.socket.emitError(new Error("socket dropped"));
+      await expectAt(() => clock.pendingWaits().length === 1);
+      clock.advance(0);
+      await expectAt(() => dialed.length === 2);
+
+      agent.assertNoPendingInterceptors();
+      assert.ok(dialed[1]?.url.startsWith("wss://" + AUTHORITY + "/proxy/protect/ws/updates?"), "the relaunched events stream dials the bracketed authority");
+    });
+
+    test("builds its own pool on the bracketed origin", async () => {
+
+      /* No dispatcher is injected, so connect builds the pool itself, and a pool built on an origin composed from the bare literal throws the URL parser's error as it
+       * is constructed. The caller's signal has already aborted, so the pool that is built ends the sign-in before any request leaves, and connect reports that abort.
+       */
+      await assert.rejects(ProtectClient.connect({ host: ADDRESS, log: silentLog(), password: "p", refreshIntervalMs: false, signal: AbortSignal.abort(), username: "u",
+        webSocket: () => new FakeWebSocket() }), ProtectAbortedError);
+    });
+
+    test("refuses a zoned literal before any request is sent, naming the address", async () => {
+
+      const { agent } = mockBracketedController();
+      const starts: HttpRequestStartPayload[] = [];
+
+      using startSubscription = subscribeToChannel(channels.httpRequestStart, (payload) => void starts.push(payload));
+
+      await assert.rejects(ProtectClient.connect({ dispatcher: agent, host: "fe80::1%en0", log: silentLog(), password: "p", refreshIntervalMs: false, username: "u",
+        webSocket: () => new FakeWebSocket() }), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectConfigurationError);
+        assert.ok(error.message.includes("\"fe80::1%en0\""), "the refusal names the address as configured");
+
+        return true;
+      });
+
+      assert.equal(starts.length, 0, "the refusal comes before any request");
     });
   });
 });

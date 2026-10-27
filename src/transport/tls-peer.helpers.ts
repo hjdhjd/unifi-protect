@@ -24,8 +24,8 @@ export interface LoopbackConnection {
 }
 
 /**
- * A listening loopback peer. `host` is the bare `address:port` the library's own URL builders expect, so a test hands it straight to a client as the controller
- * address. Dispose it (or call `close()`) to sever every connection and stop listening.
+ * A listening loopback peer. `host` is the `address:port` authority the library's own URL builders expect, `127.0.0.1:<port>` or, for a peer bound to IPv6,
+ * `[::1]:<port>`, so a test hands it straight to a client as the controller address. Dispose it (or call `close()`) to sever every connection and stop listening.
  *
  * `handshakes` counts the TLS handshakes that completed, which is what distinguishes a client that accepted the certificate from one that refused it: both open a TCP
  * connection, and only the accepting one gets above it. `connection(index)` resolves with the connection at that position in accept order, and `whenHandshakes(count)`
@@ -51,12 +51,22 @@ export interface LoopbackHttpsPeer extends LoopbackTlsPeer {
 }
 
 /**
- * Options for {@link createLoopbackHttpsPeer}.
+ * Options every loopback peer takes.
+ *
+ * - `ipv6` binds the peer to the IPv6 loopback address `::1` rather than to `127.0.0.1`, so a client reaches it through a bracketed authority. It defaults to `false`.
+ */
+export interface LoopbackPeerOptions {
+
+  ipv6?: boolean;
+}
+
+/**
+ * Options for {@link createLoopbackHttpsPeer}, beside every {@link LoopbackPeerOptions} member.
  *
  * - `respond` decides each answer from the 1-based index of the request being answered, so a test scripts a sequence (two 503s, then a 200) as readily as a fixed
  *   reply. Each answer goes out under a JSON content type. It defaults to a 200 with `{"ok":true}` for every request.
  */
-export interface LoopbackHttpsPeerOptions {
+export interface LoopbackHttpsPeerOptions extends LoopbackPeerOptions {
 
   respond?: (request: number) => { body: string; status: number };
 }
@@ -76,7 +86,7 @@ const answerOk = (): { body: string; status: number } => ({ body: "{\"ok\":true}
  *
  * @returns The listening peer.
  */
-export async function createLoopbackHttpsPeer({ respond = answerOk }: LoopbackHttpsPeerOptions = {}): Promise<LoopbackHttpsPeer> {
+export async function createLoopbackHttpsPeer({ ipv6 = false, respond = answerOk }: LoopbackHttpsPeerOptions = {}): Promise<LoopbackHttpsPeer> {
 
   let requests = 0;
 
@@ -90,7 +100,7 @@ export async function createLoopbackHttpsPeer({ respond = answerOk }: LoopbackHt
     response.end(body);
   });
 
-  const peer = await startPeer(server);
+  const peer = await startPeer(server, { ipv6 });
   const close = async (): Promise<void> => peer.close();
 
   // The peer is wrapped member by member rather than spread, because a spread copies the `handshakes` getter's value once and would freeze the count at that moment.
@@ -121,9 +131,11 @@ export async function createLoopbackHttpsPeer({ respond = answerOk }: LoopbackHt
  * handshake completes at all - which the client's `open` event answers on its own. The frame protocol above the socket is the injected-fake suites' subject, not
  * this peer's.
  *
+ * @param options - The peer's options; see {@link LoopbackPeerOptions}.
+ *
  * @returns The listening peer.
  */
-export async function createLoopbackWebSocketPeer(): Promise<LoopbackTlsPeer> {
+export async function createLoopbackWebSocketPeer({ ipv6 = false }: LoopbackPeerOptions = {}): Promise<LoopbackTlsPeer> {
 
   // The peer offers only http/1.1 over ALPN because the WebSocket upgrade it answers by hand is an HTTP/1.1 exchange.
   const server = createTlsServer({ ALPNProtocols: ["http/1.1"], cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture });
@@ -160,7 +172,7 @@ export async function createLoopbackWebSocketPeer(): Promise<LoopbackTlsPeer> {
     });
   });
 
-  return startPeer(server);
+  return startPeer(server, { ipv6 });
 }
 
 // The handshake's proof that the peer speaks the protocol: the client's key concatenated with the RFC's fixed value, hashed and encoded. A client that does not see its
@@ -170,9 +182,9 @@ function acceptDigest(key: string): string {
   return createHash("sha1").update(key + WEBSOCKET_ACCEPT_GUID).digest("base64");
 }
 
-// Bind the server to an ephemeral loopback port and wrap it as a disposable peer. Shared by every peer above so the listen, address, and teardown semantics are
-// identical whichever protocol runs on top.
-async function startPeer(server: Server): Promise<LoopbackTlsPeer> {
+// Bind the server to an ephemeral port on the loopback address of the family asked for and wrap it as a disposable peer. Shared by every peer above so the listen,
+// address, and teardown semantics are identical whichever protocol runs on top.
+async function startPeer(server: Server, { ipv6 }: Required<LoopbackPeerOptions>): Promise<LoopbackTlsPeer> {
 
   const connections: LoopbackConnection[] = [];
   const listening = Promise.withResolvers<undefined>();
@@ -216,7 +228,7 @@ async function startPeer(server: Server): Promise<LoopbackTlsPeer> {
     waiting.delete(index);
   });
 
-  server.listen(0, "127.0.0.1", () => listening.resolve(undefined));
+  server.listen(0, ipv6 ? "::1" : "127.0.0.1", () => listening.resolve(undefined));
 
   await listening.promise;
 
@@ -265,7 +277,7 @@ async function startPeer(server: Server): Promise<LoopbackTlsPeer> {
 
       return handshakes;
     },
-    host: "127.0.0.1:" + address.port.toString(),
+    host: (ipv6 ? "[::1]:" : "127.0.0.1:") + address.port.toString(),
     whenHandshakes: async (count: number): Promise<void> => {
 
       if(handshakes >= count) {

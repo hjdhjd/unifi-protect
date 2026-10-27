@@ -1,8 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * ws-endpoint.test.ts: Tests for the shared WebSocket-endpoint negotiator - the parse-{url}-and-host-rewrite core, exercised through both the livestream and talkback
- * specializations (both GET), the shared no-URL / non-2xx failure paths, and forwarding the caller's abort signal to the transport, driven through an undici
- * MockAgent so no live controller is needed.
+ * specializations (each over GET), the hostname rewrite from an authority carrying a port, the shared no-URL / non-2xx failure paths, and forwarding the caller's abort
+ * signal to the transport, driven through an undici MockAgent so no live controller is needed.
  */
 import { ProtectAbortedError, ProtectAuthorizationError, ProtectProtocolError } from "../errors.ts";
 import { describe, test } from "node:test";
@@ -44,6 +44,37 @@ describe("wsEndpointResolver", () => {
       const resolved = await resolve(new URLSearchParams({ camera: "cam1" }), {});
 
       assert.equal(resolved, "wss://" + host + ":7443/ws/talkback?token=xyz789");
+
+      await agent.close();
+    });
+  });
+
+  describe("hostname rewrite", () => {
+
+    test("a configured address carrying a port rewrites the hostname alone, keeping the controller's port", async () => {
+
+      const { agent, host, pool, transport } = makeMockTransport({ host: "nvr.local:8443" });
+
+      pool.intercept({ method: "GET", path: (path) => path.startsWith("/proxy/protect/api/ws/livestream") })
+        .reply(200, { url: "wss://internal-host:7443/ws/livestream?token=abc123" });
+
+      const resolved = await livestreamUrlResolver(transport, host)(new URLSearchParams({ camera: "cam1" }), {});
+
+      assert.equal(resolved, "wss://nvr.local:7443/ws/livestream?token=abc123", "the minted port survives and the configured one is neither added nor substituted");
+
+      await agent.close();
+    });
+
+    test("a bracketed IPv6 authority carrying a port rewrites the hostname to the bracketed literal, keeping the controller's port", async () => {
+
+      const { agent, host, pool, transport } = makeMockTransport({ host: "[::1]:8443" });
+
+      pool.intercept({ method: "GET", path: (path) => path === "/proxy/protect/api/ws/talkback?camera=cam1" })
+        .reply(200, { url: "wss://internal-host:7443/ws/talkback?token=xyz789" });
+
+      const resolved = await talkbackUrlResolver(transport, host)(new URLSearchParams({ camera: "cam1" }), {});
+
+      assert.equal(resolved, "wss://[::1]:7443/ws/talkback?token=xyz789", "the literal keeps its brackets and the minted port survives");
 
       await agent.close();
     });

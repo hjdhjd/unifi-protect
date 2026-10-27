@@ -46,8 +46,8 @@ import { wallClock } from "../clock.ts";
 /**
  * Construction options for {@link EventStream}.
  *
- * - `host` and `lastUpdateId` build the WebSocket URL; `lastUpdateId` is handed to the controller so it replays any events that fired between the bootstrap snapshot
- *   and the WebSocket coming online.
+ * - `host` and `lastUpdateId` build the WebSocket URL. `host` is the controller's URL authority, an IPv6 literal bracketed and any port kept, and `lastUpdateId` is
+ *   handed to the controller so it replays any events that fired between the bootstrap snapshot and the WebSocket coming online.
  * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses).
  * - `webSocket` is the injected I/O dependency; omit it to use the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connection attempt and, once open, the stream - if it aborts before the socket opens, {@link EventStream.opened} rejects with

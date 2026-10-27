@@ -53,14 +53,22 @@ import { TalkbackSession } from "../transport/talkback-session.ts";
 import { Transport } from "../transport/http.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import type { Viewer } from "../devices/viewer.ts";
+import { controllerAuthority } from "../transport/url-host.ts";
 import { decodePacket } from "../protocol/packet.ts";
 import { describeInitSegment } from "../protocol/init-segment.ts";
 import { noopLog } from "../logging.ts";
 import { wallClock } from "../clock.ts";
 
 /**
- * Options for {@link ProtectClient.connect}. `host`, `username`, and `password` are the required controller address and credentials; the rest are optional injected
- * dependencies, each defaulted at the composition root:
+ * Options for {@link ProtectClient.connect}. `host`, `username`, and `password` are the required controller address and credentials.
+ *
+ * `host` is the controller's address without a scheme: a hostname or an IPv4 address, with an optional `:port`, or an IPv6 literal, accepted bare (`fe80::1`) or
+ * bracketed (`[fe80::1]`), with a port only after the bracketed form (`[fe80::1]:7443`), because a bare literal's own colons leave no way to tell a port from its
+ * last group. A single trailing `/` is accepted and dropped, so `nvr.local/` connects as `nvr.local`, because it is the empty path every URL places after the
+ * address anyway. An address no URL can carry is refused with {@link ProtectConfigurationError} before any request is sent: an IPv6 literal with a zone
+ * (`fe80::1%en0`), or a value carrying credentials, a path, a query or a fragment.
+ *
+ * The rest are optional injected dependencies, each defaulted at the composition root:
  *
  * - `clock` is the time source threaded into every subsystem (transport, store, event stream, livestream pool); it defaults to the wall clock, and tests inject a
  *   fake to drive timers deterministically.
@@ -114,6 +122,7 @@ export interface ProtectClientEvents {
 
 // The internal parts the private constructor assembles into a client. Built by `connect()` once login and the initial bootstrap have succeeded; the constructor wires the
 // ConnectionMonitor from the events-channel hooks (factory, re-bootstrap, verify) and the firehose packet sink, then `connect()` awaits the monitor's initial open.
+// `host` is the controller's URL authority (an IPv6 literal bracketed, any port kept), which the device endpoints, the raw bootstrap fetch and the reboot are built on.
 interface ProtectClientParts {
 
   auth: AuthSession;
@@ -131,7 +140,8 @@ interface ProtectClientParts {
   verify: (signal?: AbortSignal) => Promise<void>;
 }
 
-// The controller bootstrap endpoint. One home for the path, shared by the full fetch and the cheap liveness probe so they can never address different endpoints.
+// The controller bootstrap endpoint on the controller's URL authority, `host`. One home for the path, shared by the full fetch and the cheap liveness probe so they can
+// never address different endpoints.
 function bootstrapUrl(host: string): string {
 
   return "https://" + host + "/proxy/protect/api/bootstrap";
@@ -250,13 +260,19 @@ export class ProtectClient implements AsyncDisposable {
    *
    * @returns A fully-ready client.
    *
-   * @throws {@link ProtectAuthError} on bad credentials, {@link ProtectNetworkError} when the controller is unreachable, {@link ProtectBootstrapError} when the
-   *   bootstrap cannot be fetched or parsed - and any other typed `FatalError` the login or fetch surfaces. No partial client escapes a failure.
+   * @throws {@link ProtectConfigurationError} when no URL can carry the controller address, {@link ProtectAuthError} on bad credentials, {@link ProtectNetworkError}
+   *   when the controller is unreachable, {@link ProtectBootstrapError} when the bootstrap cannot be fetched or parsed - and any other typed `FatalError` the login or
+   *   fetch surfaces. No partial client escapes a failure.
    */
   static async connect(opts: ConnectOptions): Promise<ProtectClient> {
 
     const clock = opts.clock ?? wallClock;
     const log = opts.log ?? noopLog;
+
+    // Every URL the client composes - each request, each WebSocket and each device endpoint - is the scheme, this authority and a path, so a bare IPv6 literal is
+    // bracketed once here rather than at each builder. It is derived before anything is built, so an address no URL can carry is refused with nothing to tear down.
+    // The transport alone also takes the address as configured, because its diagnostics payloads report the controller as the consumer named it.
+    const authority = controllerAuthority(opts.host);
 
     // Wire the transport's auth hooks to the session through a late-binding closure: the arrows below run only when a request is dispatched, which is strictly after
     // `auth` is assigned, so there is no temporal-dead-zone hazard. This is what lets the transport stamp auth headers and trigger relogin without importing upward. The
@@ -270,6 +286,7 @@ export class ProtectClient implements AsyncDisposable {
       host: opts.host,
       log,
       onUnauthorized: (): Promise<boolean> => auth.reauthenticate(),
+      origin: "https://" + authority,
       ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
       ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
     });
@@ -283,10 +300,10 @@ export class ProtectClient implements AsyncDisposable {
       // Stage 1: authenticate. A credential failure throws the fatal `ProtectAuthError`, a login answered with a status that is no verdict on the credentials (a
       // readiness answer the transport already retried among them) the fatal `ProtectRequestError`, and an unreachable controller the recoverable
       // `ProtectNetworkError` - each already typed, propagated as-is rather than wrapped, so the caller sees the precise cause.
-      await auth.login({ host: opts.host, password: opts.password, username: opts.username }, (opts.signal !== undefined) ? { signal: opts.signal } : {});
+      await auth.login({ host: authority, password: opts.password, username: opts.username }, (opts.signal !== undefined) ? { signal: opts.signal } : {});
 
       // Stage 2: fetch the initial bootstrap. Not a probe - the breaker is closed at connect time, and the initial fetch should respect the gate like any normal request.
-      bootstrap = await fetchBootstrap(transport, opts.host, (opts.signal !== undefined) ? { signal: opts.signal } : {});
+      bootstrap = await fetchBootstrap(transport, authority, (opts.signal !== undefined) ? { signal: opts.signal } : {});
     } catch(error) {
 
       // No client exists yet, so tear down the transport (destroying the owned pool) directly - nothing else has been built to leak.
@@ -301,7 +318,7 @@ export class ProtectClient implements AsyncDisposable {
 
       clock,
       log,
-      refresh: (): Promise<ProtectNvrBootstrap> => fetchBootstrap(transport, opts.host),
+      refresh: (): Promise<ProtectNvrBootstrap> => fetchBootstrap(transport, authority),
       ...((opts.refreshIntervalMs !== undefined) && { refreshIntervalMs: opts.refreshIntervalMs })
     });
 
@@ -315,7 +332,7 @@ export class ProtectClient implements AsyncDisposable {
 
       clock,
       getAuthHeaders: (): Record<string, string> => auth.authHeaders(),
-      host: opts.host,
+      host: authority,
       lastUpdateId,
       log,
       ...((signal !== undefined) && { signal }),
@@ -327,14 +344,14 @@ export class ProtectClient implements AsyncDisposable {
 
       // The recovery re-bootstrap carries `probe: true`: it runs only while the monitor is recovering, after a verify probe has already confirmed reachability, so it
       // must dispatch through a possibly-still-open breaker rather than be refused by the cooldown gate. The monitor's backoff curve is the rate limiter here.
-      const refreshed = await fetchBootstrap(transport, opts.host, { probe: true, ...((signal !== undefined) && { signal }) });
+      const refreshed = await fetchBootstrap(transport, authority, { probe: true, ...((signal !== undefined) && { signal }) });
 
       store.dispatch({ data: refreshed, kind: "bootstrapLoaded" });
 
       return refreshed.lastUpdateId;
     };
 
-    const verify = (signal?: AbortSignal): Promise<void> => probeBootstrap(transport, opts.host, signal);
+    const verify = (signal?: AbortSignal): Promise<void> => probeBootstrap(transport, authority, signal);
 
     // The livestream pool, composed with the transport-backed URL resolver and the shared WebSocket factory. It owns no transport itself - it negotiates through the
     // injected resolver - and lazily opens an underlying session only when a camera is first subscribed.
@@ -343,7 +360,7 @@ export class ProtectClient implements AsyncDisposable {
       clock,
       log,
       ...((opts.recoveryPolicy !== undefined) && { recoveryPolicy: opts.recoveryPolicy }),
-      resolveUrl: livestreamUrlResolver(transport, opts.host),
+      resolveUrl: livestreamUrlResolver(transport, authority),
       ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls }),
       ...((opts.webSocket !== undefined) && { webSocket: opts.webSocket })
     });
@@ -354,7 +371,7 @@ export class ProtectClient implements AsyncDisposable {
     // talkback session uses its own default (writable) WebSocket factory: the `opts.webSocket` ConnectOptions hook is the receive-direction socket factory
     // (ProtectWebSocket, for the events stream and livestream pool) and does not fit the write-direction ProtectWritableWebSocket talkback needs, so it is deliberately
     // not threaded here - the send socket is faked at the TalkbackSession level, not through the full client.
-    const resolveTalkbackUrl = talkbackUrlResolver(transport, opts.host);
+    const resolveTalkbackUrl = talkbackUrlResolver(transport, authority);
     const talkback = (params: { cameraId: string }, callOpts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> => TalkbackSession.connect({
 
       cameraId: params.cameraId,
@@ -371,7 +388,7 @@ export class ProtectClient implements AsyncDisposable {
       auth,
       clock,
       eventStreamFactory,
-      host: opts.host,
+      host: authority,
       initialLastUpdateId: bootstrap.lastUpdateId,
       livestreamPool,
       log,

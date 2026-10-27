@@ -12,8 +12,8 @@ import { channels } from "../diagnostics.ts";
 import { noopLog } from "../logging.ts";
 
 /**
- * The credentials for a Protect controller. `host` is the controller address without a scheme (e.g., `"192.168.1.1"`); the session derives the UniFi OS login URL
- * from it.
+ * The credentials for a Protect controller. `host` is the controller's URL authority, the address without a scheme as a URL carries it: an IPv6 literal bracketed and
+ * any port kept (e.g., `"192.168.1.1"` or `"[fe80::1]"`). The session derives the UniFi OS login URL from it and names the controller by it in the sign-in log.
  *
  * @category Transport
  */

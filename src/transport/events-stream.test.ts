@@ -136,6 +136,16 @@ describe("EventStream", () => {
 
       await assert.rejects(stream.opened, ProtectAbortedError);
     });
+
+    test("the upgrade reaches a controller on an IPv6 address through its bracketed authority", async () => {
+
+      // A real TLS peer rather than the injected fake, because only the default factory's socket dials the URL the stream composes.
+      await using peer = await createLoopbackWebSocketPeer({ ipv6: true });
+      const stream = new EventStream({ clock: fakeClock(), host: peer.host, lastUpdateId: "u0", log: silentLog() });
+
+      await stream.opened;
+      await stream.close();
+    });
   });
 
   describe("certificate verification", () => {
