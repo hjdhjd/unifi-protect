@@ -1,15 +1,16 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * connection.test.ts: Tests for ConnectionMonitor - the derived-state FSM, reboot detection via the controller's boot time, throttle/stall folding, and the guarded
- * auto-recovery sequence (verify -> re-bootstrap -> relaunch). Driven with a fake clock, a fake throttle source, and injected events-stream/verify/re-bootstrap hooks,
+ * auto-recovery sequence (verify -> re-bootstrap -> relaunch). Driven with a `TestClock`, a fake throttle source, and injected events-stream/verify/re-bootstrap hooks,
  * so every path is exercised without a live controller.
  */
 import type { ConnectionState, ConnectionTransition, ThrottleSource } from "./connection.ts";
 import { PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
   PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
 import { ProtectError, ProtectNetworkError } from "../errors.ts";
+import { TestClock, present } from "homebridge-plugin-utils/testing";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
-import { capturingLog, expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
+import { capturingLog, expectAt, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeNvr } from "../fixtures.helpers.ts";
@@ -85,7 +86,7 @@ interface CapturedEvents {
 // Build a ConnectionMonitor over fakes: a real StateStore (failsafe disabled, seeded with one bootstrap), a fake throttle source, an events-stream factory that hands out
 // FakeWebSockets we can drive, and controllable verify / re-bootstrap hooks. Returns the monitor plus the levers a test pulls.
 function harness(options: { initialUpSince?: number; log?: ProtectLogging; throttledAtStart?: boolean } = {}): {
-  clock: ReturnType<typeof fakeClock>;
+  clock: TestClock;
   control: {
     reBootstrapCalls: () => number;
     setNextUpSince: (value: number) => void;
@@ -102,7 +103,7 @@ function harness(options: { initialUpSince?: number; log?: ProtectLogging; throt
   throttle: ThrottleControl;
 } {
 
-  const clock = fakeClock();
+  const clock = new TestClock();
   const log = options.log ?? silentLog();
   const initialUpSince = options.initialUpSince ?? BOOT_TIME;
   const store = new StateStore({ clock, log, refresh: (): Promise<never> => new Promise<never>(() => undefined), refreshIntervalMs: false });
@@ -223,17 +224,48 @@ function settle(): Promise<void> {
   return delay(10);
 }
 
-// Release the recovery loop's next scheduled probe. The loop parks on a single `clock.wait(delay)` between probes; the leading settle guarantees that wait is registered,
-// advancing past the steady floor fires it (every unknown-track delay is at most the floor), and the trailing settle lets that probe's verify -> re-bootstrap -> relaunch
-// run. Used by tests that assert recovery *progresses*, not the exact backoff durations - those assert `clock.pendingWaits()` directly. Known-track tests, whose first
-// delay exceeds the floor, advance explicitly.
-async function pump(clock: ReturnType<typeof fakeClock>): Promise<void> {
+// Release the recovery loop's next scheduled probe. The loop parks on a single `clock.delay(delay)` between probes; the leading settle guarantees that delay is
+// registered, advancing past the steady floor fires it (every unknown-track delay is at most the floor), and the trailing settle lets that probe's verify ->
+// re-bootstrap -> relaunch run. Used by tests that assert recovery *progresses*, not the exact backoff durations - those read the timeline's next deadline or walk
+// the schedule through `assertRecoveryDelays`. Known-track tests, whose first delay exceeds the floor, advance explicitly.
+async function pump(clock: TestClock): Promise<void> {
 
   await settle();
 
   clock.advance(PROTECT_RECOVERY_STEADY_INTERVAL_MS);
 
   await settle();
+}
+
+/* Read a recovery schedule behaviorally: for each expected delay, advancing by one less than it must not release the probe, and advancing the last millisecond must.
+ * The expected delays come out of the exported constants, so a changed delay fails here loudly rather than passing against a restated number, and the label names
+ * the walk in every assertion so a failure says which walk it was. Each probe in a walk fails, so it parks the loop on the next delay rather than ending recovery.
+ */
+async function assertRecoveryDelays(options: { delays: readonly number[]; label: string; rig: Pick<ReturnType<typeof harness>, "clock" | "control"> }): Promise<void> {
+
+  const { clock, control } = options.rig;
+  let probes = control.verifyCalls();
+
+  for(const delay of options.delays) {
+
+    if(delay > 0) {
+
+      clock.advance(delay - 1);
+
+      // eslint-disable-next-line no-await-in-loop
+      await settle();
+
+      assert.equal(control.verifyCalls(), probes, options.label + ": no probe runs before its scheduled delay of " + delay.toString() + " has elapsed");
+    }
+
+    clock.advance((delay > 0) ? 1 : 0);
+
+    // eslint-disable-next-line no-await-in-loop
+    await settle();
+
+    assert.equal(control.verifyCalls(), probes + 1, options.label + ": the probe runs once its delay of " + delay.toString() + " has elapsed");
+    probes += 1;
+  }
 }
 
 describe("ConnectionMonitor", () => {
@@ -353,9 +385,9 @@ describe("ConnectionMonitor", () => {
       await monitor.opened;
       await settle();
 
-      // Drive the events stream's silence watchdog: advance past the window, then release the watchdog interval so it concludes the channel stalled and faults.
+      // Drive the events stream's silence watchdog: advance to its deadline and let it wake, so it concludes the channel stalled and faults.
       clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
-      await clock.tick();
+      await settle();
 
       // The unknown-track schedule opens with a zero delay ("probe at once"); release it. The probe succeeds, so recovery walks straight back to healthy.
       await pump(clock);
@@ -525,7 +557,8 @@ describe("ConnectionMonitor", () => {
 
       // The loop is parked on the known track's long first delay - sourced from the constant, never hardcoded. Without a wake, this parked wait is the only place the
       // recovery loop can leave from.
-      assert.deepEqual(clock.pendingWaits(), [PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0]], "a known reboot parks on the long first delay before its first probe");
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0], "the known track's first delay"),
+        "a known reboot parks on the long first delay before its first probe");
 
       // The controller answers liveness again now that it has returned; the periodic bootstrap refresh observes the return as a boot-time jump. We hold the recovery
       // re-bootstrap on the same jumped value so it does not register a second spurious jump.
@@ -633,23 +666,9 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await settle();
 
-      // The schedule is the staged unknown-track prefix, then the steady floor forever. We read the single pending wait before each release.
-      const expected = [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS ];
-      const observed: number[] = [];
-
-      for(const delay of expected) {
-
-        observed.push((clock.pendingWaits())[0] ?? -1);
-
-        // Fire exactly the pending wait, then let the failed probe register the next one.
-
-        clock.advance(delay);
-
-        // eslint-disable-next-line no-await-in-loop
-        await settle();
-      }
-
-      assert.deepEqual(observed, expected, "the unknown track is [0, 5000, 15000, 30000] then the 60000 floor repeating");
+      // The schedule is the staged unknown-track prefix, then the steady floor forever. Each probe fails, so each one parks the loop on the next delay of the walk.
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS ],
+        label: "the unknown track then the steady floor", rig: { clock, control } });
 
       await monitor[Symbol.asyncDispose]();
     });
@@ -668,23 +687,12 @@ describe("ConnectionMonitor", () => {
       await settle();
 
       // The first scheduled probe is the long initial wait, not the prompt zero.
-      assert.deepEqual(clock.pendingWaits(), [PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0]], "a known reboot waits out the controller's return before probing");
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0], "the known track's first delay"),
+        "a known reboot waits out the controller's return before probing");
 
       // Walk the staged known-track delays, then the steady floor.
-      const expected = [ ...PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS ];
-      const observed: number[] = [];
-
-      for(const delay of expected) {
-
-        observed.push((clock.pendingWaits())[0] ?? -1);
-
-        clock.advance(delay);
-
-        // eslint-disable-next-line no-await-in-loop
-        await settle();
-      }
-
-      assert.deepEqual(observed, expected, "the known track is [300000, 120000] then the 60000 floor");
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS ], label: "the known track then the steady floor",
+        rig: { clock, control } });
 
       await monitor[Symbol.asyncDispose]();
     });
@@ -705,7 +713,7 @@ describe("ConnectionMonitor", () => {
       await settle();
 
       // Consumed: the first fault took the known track.
-      assert.deepEqual(clock.pendingWaits(), [PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0]], "the armed fault is a known reboot");
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0], "the known track's first delay"), "the armed fault is a known reboot");
 
       // The controller returns and a bootstrap observes its boot-time jump, which wakes the parked wait, so recovery completes without the clock advancing and the next
       // fault lands inside the anticipation window. The recovery re-bootstrap holds the jumped value so it registers no second jump.
@@ -719,7 +727,8 @@ describe("ConnectionMonitor", () => {
       streams.at(-1)?.emitError(new Error("socket dropped again"));
       await settle();
 
-      assert.deepEqual(clock.pendingWaits(), [PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0]], "an unarmed fault probes at once, not on the long curve");
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0], "the unknown track's first delay"),
+        "an unarmed fault probes at once, not on the long curve");
 
       await monitor[Symbol.asyncDispose]();
     });
@@ -740,7 +749,8 @@ describe("ConnectionMonitor", () => {
       streams[0]?.emitError(new Error("socket dropped"));
       await settle();
 
-      assert.deepEqual(clock.pendingWaits(), [PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0]], "an expired anticipation falls back to the prompt track");
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0], "the unknown track's first delay"),
+        "an expired anticipation falls back to the prompt track");
 
       await monitor[Symbol.asyncDispose]();
     });
@@ -822,7 +832,7 @@ describe("ConnectionMonitor", () => {
 
       // Transient stall -> recovery relaunches the events stream, building a second socket. The watchdog faults the channel; pump releases the prompt first probe.
       clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
-      await clock.tick();
+      await settle();
       await pump(clock);
 
       await expectAt(() => monitor.state === "healthy", { message: "expected relaunch to complete" });
@@ -849,7 +859,7 @@ describe("ConnectionMonitor", () => {
 
       // The same transient-stall relaunch as the packet-bridge test above.
       clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
-      await clock.tick();
+      await settle();
       await pump(clock);
 
       await expectAt(() => monitor.state === "healthy", { message: "expected relaunch to complete" });
@@ -994,7 +1004,7 @@ describe("ConnectionMonitor", () => {
 
       // A stall and recovery fire the transition and reconnecting channels.
       clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
-      await clock.tick();
+      await settle();
       await pump(clock);
       await expectAt(() => monitor.state === "healthy", { message: "expected recovery" });
 

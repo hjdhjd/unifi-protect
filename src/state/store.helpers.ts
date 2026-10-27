@@ -8,7 +8,7 @@
  */
 import type { ProtectLogging } from "../logging.ts";
 import { StateStore } from "./store.ts";
-import { fakeClock } from "../testing.helpers.ts";
+import { TestClock } from "homebridge-plugin-utils/testing";
 
 /**
  * Build a store with the refresh failsafe disabled - the common shape for a test that exercises dispatch and observe in isolation, or that drives state through
@@ -17,10 +17,10 @@ import { fakeClock } from "../testing.helpers.ts";
  * @param options     - The store's optional collaborators.
  * @param options.log - The logger the store writes to. Defaults to the store's own silent logger.
  *
- * @returns a store on a fake clock whose refresh failsafe never runs.
+ * @returns a store on a `TestClock` whose refresh failsafe never runs.
  */
 export function plainStore({ log }: { log?: ProtectLogging } = {}): StateStore {
 
-  return new StateStore({ clock: fakeClock(), log, refresh: () => Promise.reject(new Error("the refresh hook must not be called when the failsafe is disabled")),
+  return new StateStore({ clock: new TestClock(), log, refresh: () => Promise.reject(new Error("the refresh hook must not be called when the failsafe is disabled")),
     refreshIntervalMs: false });
 }

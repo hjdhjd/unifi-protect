@@ -1,23 +1,22 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * livestream-session.test.ts: Tests for LivestreamSession - URL negotiation, the fMP4 frame decode (init/media/reassembly/timestamps), the FSM, the silence watchdog,
- * and teardown. Driven through an injected fake WebSocket, a fake resolver, and a fake Clock, so the session is exercised deterministically without a live controller.
+ * and teardown. Driven through an injected fake WebSocket, a fake resolver, and a `TestClock`, so the session is exercised deterministically without a live controller.
  */
 import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
 import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
 import { ProtectAbortedError, ProtectNetworkError, ProtectStallError } from "../errors.ts";
+import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { assertNoUnhandledRejections, silentLog } from "../testing.helpers.ts";
 import { buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { describe, test } from "node:test";
-import { fakeClock, silentLog } from "../testing.helpers.ts";
-import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
 import { PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT } from "../settings.ts";
 import type { ProtectError } from "../errors.ts";
 import assert from "node:assert/strict";
 import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
-import { settle } from "homebridge-plugin-utils/testing";
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
@@ -26,10 +25,10 @@ const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
 // negotiation, so we synchronize on the factory being invoked rather than emitting `open` synchronously the way the events-stream harness can. `webSocket` makes the
 // fake for a row that needs one built its own way; that fake must not open itself, since this helper opens it. The URL the session handed its socket factory is
 // returned beside the socket.
-async function openSession(options: { clock?: FakeClock; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
-  spec?: Partial<LivestreamSpec>; webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: FakeClock; session: LivestreamSession; url: string; ws: FakeWebSocket }> {
+async function openSession(options: { clock?: TestClock; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+  spec?: Partial<LivestreamSpec>; webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: TestClock; session: LivestreamSession; url: string; ws: FakeWebSocket }> {
 
-  const clock = options.clock ?? fakeClock();
+  const clock = options.clock ?? new TestClock();
   const { promise, resolve } = Promise.withResolvers<{ url: string; ws: FakeWebSocket }>();
   const session = new LivestreamSession({
 
@@ -439,7 +438,7 @@ describe("LivestreamSession", () => {
 
     test("a silent channel beyond the heartbeat window emits a ProtectStallError and closes", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { session, ws } = await openSession({ clock });
       const errors = collectErrors(session);
       let closeInfo: { cause?: ProtectError; code: number; reason: string } | undefined;
@@ -447,7 +446,7 @@ describe("LivestreamSession", () => {
       session.on("closed", (info) => { closeInfo = info; });
 
       clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
-      await clock.tick();
+      await settle();
 
       assert.equal(errors.length, 1);
       assert.ok(errors[0] instanceof ProtectStallError);
@@ -461,18 +460,52 @@ describe("LivestreamSession", () => {
 
     test("the watchdog does not trip while frames are flowing", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { session, ws } = await openSession({ clock });
       const errors = collectErrors(session);
 
-      // A frame arrives partway through the window, refreshing liveness; the next tick finds the channel live.
+      // A frame arrives partway through the window, refreshing liveness; the wake at the deadline finds the channel live.
       clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT - 1);
       ws.emitMessage(buildInitSegment({ data: Buffer.from("I") }));
       clock.advance(1);
-      await clock.tick();
+      await settle();
 
       assert.equal(errors.length, 0);
       assert.notEqual(session.state, "closed");
+    });
+
+    test("the watchdog wakes at its period and not before", async () => {
+
+      const clock = new TestClock();
+      const { session, ws } = await openSession({ clock });
+      const errors = collectErrors(session);
+
+      // The watchdog is the session's only reader of the clock's timers, so the timeline's next deadline is its next wake: one heartbeat window out from the open.
+      assert.equal(clock.nextDeadline, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, "the first wake comes due one heartbeat window after the socket opens");
+
+      // A frame just short of the first wake keeps the channel live through it, and the loop parks for one more window from the moment it woke.
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT - 1);
+      ws.emitMessage(buildInitSegment({ data: Buffer.from("I") }));
+      clock.advance(1);
+      await settle();
+
+      assert.equal(errors.length, 0, "the first wake found the channel live");
+      assert.equal(clock.nextDeadline, 2 * PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, "the second wake comes due one window after the first");
+
+      // By the end of this advance the silence since the frame has reached the window, yet nothing reads it until the next wake, so detection lands inside the
+      // [threshold, 2 x threshold) window rather than at the threshold itself.
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT - 1);
+      await settle();
+
+      assert.equal(errors.length, 0, "no wake comes between the deadlines");
+
+      clock.advance(1);
+      await settle();
+
+      assert.equal(errors.length, 1);
+      assert.ok(errors[0] instanceof ProtectStallError);
+      assert.equal(errors[0].silentForMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + 1, "the second wake reads the silence since the frame");
+      assert.equal(session.state, "closed");
     });
   });
 
@@ -599,17 +632,21 @@ describe("LivestreamSession", () => {
 
     test("close() requests the socket close and is safe to call more than once", async () => {
 
-      const { session, ws } = await openSession();
-      let closedEvents = 0;
+      // The watchdog armed at open is parked on its delay when the close aborts it, so the row also reads that the loop's end leaves no rejection behind.
+      await assertNoUnhandledRejections(async () => {
 
-      session.on("closed", () => { closedEvents++; });
+        const { session, ws } = await openSession();
+        let closedEvents = 0;
 
-      await session.close();
-      await session.close();
+        session.on("closed", () => { closedEvents++; });
 
-      assert.equal(ws.closeRequested, true);
-      assert.equal(session.state, "closed");
-      assert.equal(closedEvents, 1, "a second close() must not announce the closure again");
+        await session.close();
+        await session.close();
+
+        assert.equal(ws.closeRequested, true);
+        assert.equal(session.state, "closed");
+        assert.equal(closedEvents, 1, "a second close() must not announce the closure again");
+      });
     });
 
     test("dispose delegates to close", async () => {

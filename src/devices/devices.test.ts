@@ -6,7 +6,7 @@
 import { FatalError, ProtectAbortedError, ProtectAuthorizationError, ProtectError, ProtectProtocolError, ProtectRequestError,
   ProtectUnsupportedError } from "../errors.ts";
 import { describe, test } from "node:test";
-import { expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
+import { expectAt, silentLog } from "../testing.helpers.ts";
 import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeNvr, makeRelay } from "../fixtures.helpers.ts";
 import { Camera } from "./camera.ts";
 import { Chime } from "./chime.ts";
@@ -21,6 +21,7 @@ import type { ProtectNvrBootstrap } from "../types/index.ts";
 import { Relay } from "./relay.ts";
 import type { StateStore } from "../state/store.ts";
 import { TalkbackSession } from "../transport/talkback-session.ts";
+import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
@@ -38,7 +39,7 @@ function deviceFixture(bootstrap: ProtectNvrBootstrap): { ctx: DeviceContext; mo
 
   // The pool is lazy - it negotiates nothing until a camera is subscribed - and these device tests never call `camera.livestream()`, so an inert pool with a rejecting
   // resolver satisfies the context's `livestreamPool` member honestly, without a cast.
-  const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
+  const livestreamPool = new LivestreamPool({ clock: new TestClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
 
   // The real talkback factory, bound to the mock transport's talkback URL resolver - so a test asserting `camera.talkback()`'s capability guard is pre-negotiation can
   // register a talkback interceptor and prove it stays pending (the factory would negotiate through the transport if the guard ever failed to fire first).
@@ -755,7 +756,7 @@ describe("Nvr projection", () => {
     // A store with no bootstrap dispatched: state.nvr is still null, so the absent-record guard must fire rather than return an empty object. A connected client never
     // reaches this, since connect() awaits the bootstrap - but the contract is defined and tested.
     const store = plainStore();
-    const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
+    const livestreamPool = new LivestreamPool({ clock: new TestClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
     const ctx: DeviceContext = { host: "127.0.0.1", livestreamPool, log: silentLog(), store, talkback: () => Promise.reject(new Error("unused")),
       transport: makeMockTransport().transport };
     const nvr = new Nvr(ctx);
@@ -777,7 +778,7 @@ describe("Nvr projection", () => {
     // Pre-bootstrap: state.nvr is still null - the singleton's own absent-record condition, mapped to undefined by the bound selector. peek() reports it as undefined (no
     // throw) while config throws, exactly as a removed device behaves for a device projection.
     const store = plainStore();
-    const livestreamPool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
+    const livestreamPool = new LivestreamPool({ clock: new TestClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
     const ctx: DeviceContext = { host: "127.0.0.1", livestreamPool, log: silentLog(), store, talkback: () => Promise.reject(new Error("unused")),
       transport: makeMockTransport().transport };
     const preBootstrap = new Nvr(ctx);

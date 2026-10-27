@@ -5,14 +5,14 @@
  * (closed -> open -> half-open -> closed), the diagnostics-channel publishes for request start/end and throttle entered/exited, dispatcher-ownership semantics for
  * an injected versus an owned pool, the owned pool's handling of the statuses it retries, and the on/once/stream event-rail surface.
  *
- * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, a fake Clock advances breaker time
- * without real-time waits, and the rows that need a real connection open a loopback server of their own. The injected dispatcher and clock let these tests
- * assert the transport's throttle breaker and its 401-relogin retry exactly and without flakiness. The injected rows bypass the status-code retry interceptor,
- * which is composed only onto a pool the transport builds itself; the owned-pool describe covers it against a loopback peer.
+ * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, a `TestClock` advances breaker time and
+ * fires request deadlines without real-time waits, and the rows that need a real connection open a loopback server of their own. The injected dispatcher and clock
+ * let these tests assert the transport's throttle breaker, its request deadline and its 401-relogin retry exactly and without flakiness. The injected rows bypass
+ * the status-code retry interceptor, which is composed only onto a pool the transport builds itself; the owned-pool describe covers it against a loopback peer.
  */
 import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../diagnostics.ts";
 import { MockAgent, Pool, errors } from "undici";
-import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../settings.ts";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectThrottledError,
   ProtectTimeoutError } from "../errors.ts";
 import { Transport, responseOk } from "./http.ts";
@@ -28,8 +28,9 @@ import assert from "node:assert/strict";
 import { createLoopbackHttpsPeer } from "./tls-peer.helpers.ts";
 import { createServer } from "node:http";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { settle } from "homebridge-plugin-utils/testing";
 
-// The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the fake-clock advances line up with the gate math.
+// The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the clock's advances line up with the gate math.
 const COOLDOWN_MS = PROTECT_API_RETRY_INTERVAL * 1000;
 
 // Drive `count` sequential failing requests through the transport against a path the caller has set up to fail. Sequential awaits are intentional - the breaker
@@ -340,11 +341,76 @@ describe("Transport", () => {
 
     test("our timeout deadline surfaces as ProtectTimeoutError", async () => {
 
-      const { host, pool, transport } = makeMockTransport();
+      const { clock, host, pool, transport } = makeMockTransport();
+
+      /* The mock holds its reply open by its own delay, so the exchange is still in flight when the deadline fires rather than answered ahead of it. The deadline is
+       * the injected clock's, so firing it is an advance rather than a real wait, and the abort it raises ends the held reply on undici's side.
+       */
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
+
+      const pending = transport.send(url(host, "/slow"), { timeout: 20 });
+
+      await settle();
+      clock.advance(20);
+
+      await assert.rejects(pending, ProtectTimeoutError);
+    });
+
+    test("a caller's timeout option sets the deadline", async () => {
+
+      const { clock, host, pool, transport } = makeMockTransport();
 
       pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
 
-      await assert.rejects(transport.send(url(host, "/slow"), { timeout: 20 }), ProtectTimeoutError);
+      const pending = transport.send(url(host, "/slow"), { timeout: 50 });
+      const settled = settlement(pending);
+
+      await settle();
+      clock.advance(49);
+      await settle();
+
+      assert.equal(settled(), false, "a deadline one millisecond short of the caller's value must leave the request in flight");
+
+      clock.advance(1);
+
+      // The elapsed time the error carries is the injected clock's own measurement, which is what makes the caller's value and the reported one the same number.
+      await assert.rejects(pending, { constructor: ProtectTimeoutError, elapsedMs: 50 });
+    });
+
+    test("a settled request leaves no deadline on the clock, whether a reply, its caller or the deadline settled it", async () => {
+
+      const { clock, host, pool, transport } = makeMockTransport();
+      const controller = new AbortController();
+
+      pool.intercept({ method: "GET", path: "/ok" }).reply(200, {});
+      pool.intercept({ method: "GET", path: "/cancel" }).reply(200, {}).delay(2000);
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
+
+      await transport.send(url(host, "/ok"));
+
+      assert.equal(clock.pending, 0, "a request answered ahead of its deadline releases the deadline's timer");
+
+      // The cancel lands once the request is in flight with its deadline armed, so the release it is read for is the one the cancelled exchange makes.
+      const cancelled = transport.send(url(host, "/cancel"), { signal: controller.signal });
+      const cancelledSettled = settlement(cancelled);
+
+      await settle();
+
+      assert.equal(cancelledSettled(), false, "the request is still in flight when its caller cancels it");
+      assert.equal(clock.pending, 1, "the request in flight holds its deadline on the clock");
+
+      controller.abort();
+
+      await assert.rejects(cancelled, ProtectAbortedError);
+      assert.equal(clock.pending, 0, "a request its caller cancelled releases the deadline's timer");
+
+      const pending = transport.send(url(host, "/slow"));
+
+      await settle();
+      clock.advance(PROTECT_API_TIMEOUT);
+
+      await assert.rejects(pending, { constructor: ProtectTimeoutError, message: "The UniFi Protect controller did not respond before the request deadline elapsed." });
+      assert.equal(clock.pending, 0, "a request the deadline settled leaves no timer behind either");
     });
 
     test("a socket-level failure surfaces as ProtectNetworkError with the errno code", async () => {
@@ -725,13 +791,23 @@ describe("Transport", () => {
 
     test("our own deadline books though the caller's signal is live", async () => {
 
-      const { host, pool, transport } = makeMockTransport();
+      const { clock, host, pool, transport } = makeMockTransport();
       const controller = new AbortController();
 
       pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000).times(PROTECT_API_ERROR_LIMIT);
 
-      await sendRejections(transport, url(host, "/slow"), PROTECT_API_ERROR_LIMIT,
-        { expected: ProtectTimeoutError, sendOptions: () => ({ signal: controller.signal, timeout: 20 }) });
+      // Each request is held open until our own deadline fires on the clock, one request at a time, because the breaker counts consecutive failures in order.
+      for(let index = 0; index < PROTECT_API_ERROR_LIMIT; index++) {
+
+        const pending = transport.send(url(host, "/slow"), { signal: controller.signal, timeout: 20 });
+
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+        clock.advance(20);
+
+        // eslint-disable-next-line no-await-in-loop
+        await assert.rejects(pending, ProtectTimeoutError);
+      }
 
       assert.equal(transport.isThrottled, true);
     });

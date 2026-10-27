@@ -7,6 +7,7 @@ import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOU
 import { Pool, errors, interceptors, request } from "undici";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectThrottledError,
   ProtectTimeoutError } from "../errors.ts";
+import { armDeadline, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import type { Dispatcher } from "undici";
 import { EventBus } from "../event-bus.ts";
@@ -17,7 +18,6 @@ import type { StreamOptions } from "../event-bus.ts";
 import { channels } from "../diagnostics.ts";
 import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
-import { wallClock } from "../clock.ts";
 
 // The transient-failure status codes the undici retry interceptor retries before `send` observes the controller's last answer. These are intentional and specific to
 // how Protect controllers behave under load and during reboots - they must not be trimmed (notably 400 and 404, which a controller transiently returns mid-reboot).
@@ -516,10 +516,13 @@ export class Transport implements AsyncDisposable {
     const method = opts.method ?? "GET";
     const timeout = opts.timeout ?? PROTECT_API_TIMEOUT;
 
-    // Compose our timeout deadline with the caller's optional cancellation. #classifyTransportError later tells the caller's cancellation from our timeout by what
-    // undici threw: the caller's own abort reason, or undici's RequestAbortedError when that reason is falsy, is the caller's cancel, and any other abort is ours.
-    const timeoutSignal = AbortSignal.timeout(timeout);
-    const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, timeoutSignal ]) : timeoutSignal;
+    /* Compose our own deadline with the caller's optional cancellation. The deadline is armed on the injected clock rather than on the platform, so a suite fires it
+     * on virtual time instead of waiting it out. It is held for exactly this exchange: `using` releases it when the method returns, on every path, so a settled request
+     * leaves no timer behind. #classifyTransportError later tells the caller's cancellation from our deadline by what undici threw: the caller's own abort reason, or
+     * undici's RequestAbortedError when that reason is falsy, is the caller's cancel, and any other abort is ours.
+     */
+    using deadline = armDeadline(timeout, { clock: this.#clock });
+    const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, deadline.signal ]) : deadline.signal;
 
     // The auth headers (cookie + CSRF) are the base; per-call headers override them. A request with no body carries no content-type - that is the caller's concern.
     const headers: Record<string, string> = { ...this.#getAuthHeaders?.(), ...opts.headers };
@@ -624,9 +627,9 @@ export class Transport implements AsyncDisposable {
   // alone, so a failure of any other shape stays what it is even when the caller aborts after it; an abort that is not the caller's is our own deadline.
   #classifyTransportError(error: unknown, callerSignal: AbortSignal | undefined, elapsedMs: number): ProtectAbortedError | ProtectNetworkError | ProtectTimeoutError {
 
-    // The shapes an abort takes. Our deadline fires through AbortSignal.timeout(), whose DOMException is named "TimeoutError". An "AbortError" DOMException and
-    // undici's RequestAbortedError, which undici substitutes when the signal it was given aborts with a falsy reason, are tested as well, as a defensive fallback for
-    // an abort that is neither our TimeoutError nor the caller's own reason.
+    // The shapes an abort takes. Our deadline is the one armDeadline arms, which aborts with the platform's deadline reason, a DOMException named "TimeoutError". An
+    // "AbortError" DOMException and undici's RequestAbortedError, which undici substitutes when the signal it was given aborts with a falsy reason, are tested as well,
+    // as a defensive fallback for an abort that is neither our TimeoutError nor the caller's own reason.
     const isAbort = ((error instanceof DOMException) && ((error.name === "AbortError") || (error.name === "TimeoutError"))) ||
       (error instanceof errors.RequestAbortedError);
 

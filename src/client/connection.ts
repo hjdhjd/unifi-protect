@@ -552,7 +552,7 @@ export class ConnectionMonitor {
         try {
 
           // eslint-disable-next-line no-await-in-loop
-          await this.#clock.wait(delay, { signal: AbortSignal.any([ this.#controller.signal, wake.signal ]) });
+          await this.#clock.delay(delay, { signal: AbortSignal.any([ this.#controller.signal, wake.signal ]) });
         } catch {
 
           // The wait aborted. A monitor-lifetime abort means disposal, so we end recovery. Otherwise a reachability wake (a detected reboot) fired, so we fall

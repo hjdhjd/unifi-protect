@@ -21,7 +21,7 @@
  * `endSegment`). `resolveUrl` is only the generic "negotiate a ws endpoint" step; everything livestream-specific lives here.
  *
  * **The watchdog detects here; the consumer's policy responds.** The session clock-stamps the arrival of every frame and runs a silence watchdog on the injected
- * `Clock`; a tick that finds the channel silent beyond {@link PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT} emits `error({@link ProtectStallError})` and tears the socket down.
+ * `Clock`; a wake that finds the channel silent beyond {@link PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT} emits `error({@link ProtectStallError})` and tears the socket down.
  * The session does not reconnect: it is the pure, non-resilient escape hatch. Recovery is owned one layer up by the pool's `ManagedSession` (a direct consumer of a bare
  * session handles its own restart). `ProtectStallError` is shared verbatim with `EventStream`'s watchdog.
  *
@@ -807,14 +807,17 @@ export class LivestreamSession implements AsyncDisposable {
     this.#onClose(code, reason);
   }
 
-  // The silence watchdog, identical in shape to EventStream's. Each tick checks how long the channel has been quiet; once it crosses the threshold the channel is
-  // presumed dead-but-not-closed, so we surface a typed stall (the consumer's cue to restart) and tear the socket down. The loop ends when teardown aborts the
-  // controller, which the interval iterator reports as an abort - swallowed here as the normal shutdown path.
+  // The silence watchdog, identical in shape to EventStream's. Each pass waits one heartbeat window on the injected clock, then checks how long the channel has been
+  // quiet; once that crosses the threshold the channel is presumed dead-but-not-closed, so we surface a typed stall (the consumer's cue to restart) and tear the socket
+  // down. The loop ends when teardown aborts the controller, which rejects the pending delay with its abort error - swallowed here as the normal shutdown path.
   async #runWatchdog(): Promise<void> {
 
     try {
 
-      for await (const _tick of this.#clock.setInterval(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, { signal: this.#controller.signal })) {
+      for(;;) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await this.#clock.delay(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, { signal: this.#controller.signal });
 
         const silentForMs = this.#clock.now() - this.#lastSegmentAt;
 
@@ -833,7 +836,7 @@ export class LivestreamSession implements AsyncDisposable {
       }
     } catch {
 
-      // The interval iterator throws on abort when the session is torn down. That is the expected end of the loop, not an error.
+      // The delay rejects on abort when the session is torn down. That is the expected end of the loop, not an error.
     }
   }
 }

@@ -19,7 +19,7 @@
  *
  * **The watchdog detects here; `ConnectionMonitor` responds.** This is the same division as the throttle breaker: the subsystem that owns a resource detects its health
  * condition and emits a typed signal, and the one coordinator responds. `EventStream` stamps `lastMessageAt` on every frame and runs a silence watchdog on the injected
- * `Clock`; a tick that finds the channel silent past {@link PROTECT_EVENTS_WATCHDOG_TIMEOUT} concludes it is dead-but-not-closed (the lossy-firmware case the whole
+ * `Clock`; a wake that finds the channel silent past {@link PROTECT_EVENTS_WATCHDOG_TIMEOUT} concludes it is dead-but-not-closed (the lossy-firmware case the whole
  * design exists for), emits `error({@link ProtectStallError})` - a `RecoverableError`, so the error type itself is the "recover" signal - and tears the socket down.
  * `EventStream` does not reconnect; that is `ConnectionMonitor`'s scope. The gap is covered by the bootstrap-refresh failsafe, which exists precisely for it.
  *
@@ -517,15 +517,19 @@ export class EventStream implements AsyncDisposable {
     return { kind: event.kind };
   }
 
-  // The silence watchdog. Each tick checks how long the channel has been quiet; once it crosses the threshold the channel is presumed dead-but-not-closed, so we
-  // surface a typed stall (the ConnectionMonitor's cue to recover) and tear the socket down. The loop ends when teardown aborts the controller, which the interval
-  // iterator reports as an abort - the normal shutdown path, swallowed here. Detection latency is bounded in [threshold, 2*threshold) by the interval granularity,
-  // which is appropriate for a multi-minute failsafe and needs no variable-cadence timer that reschedules on every message.
+  // The silence watchdog. Each pass waits one threshold on the injected clock, then checks how long the channel has been quiet; once that crosses the threshold the
+  // channel is presumed dead-but-not-closed, so we surface a typed stall (the ConnectionMonitor's cue to recover) and tear the socket down. The loop ends when teardown
+  // aborts the controller, which rejects the pending delay with its abort error - the normal shutdown path, swallowed here. Detection latency is bounded in
+  // [threshold, 2*threshold) because the loop wakes once per threshold, which is appropriate for a multi-minute failsafe and needs no variable-cadence timer that
+  // reschedules on every message.
   async #runWatchdog(): Promise<void> {
 
     try {
 
-      for await (const _tick of this.#clock.setInterval(PROTECT_EVENTS_WATCHDOG_TIMEOUT, { signal: this.#controller.signal })) {
+      for(;;) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await this.#clock.delay(PROTECT_EVENTS_WATCHDOG_TIMEOUT, { signal: this.#controller.signal });
 
         const silentForMs = this.#clock.now() - this.#lastMessageAt;
 
@@ -540,7 +544,7 @@ export class EventStream implements AsyncDisposable {
       }
     } catch {
 
-      // The interval iterator throws on abort when the stream is torn down. That is the expected end of the loop, not an error.
+      // The delay rejects on abort when the stream is torn down. That is the expected end of the loop, not an error.
     }
   }
 }

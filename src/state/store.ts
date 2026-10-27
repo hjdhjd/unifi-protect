@@ -14,10 +14,10 @@
  * - {@link StateStore.observe} returns an `AsyncIterable` of a selector's output that yields only when the selected value *changes* by reference. Because the reducer
  *   preserves references through structural sharing and the selectors memoize on map identity, an `Object.is` comparison is a correct and nearly free change test.
  *
- * The store also owns the **bootstrap refresh failsafe**: on a fixed cadence (default {@link PROTECT_BOOTSTRAP_REFRESH_INTERVAL}) it fetches a fresh bootstrap through
- * the injected `refresh` hook and dispatches it. The reducer's `applyBootstrap` reconciliation makes a refresh that finds no drift produce no observer notifications at
- * all - the failsafe is invisible until something has actually changed. The hook (rather than a `Transport` reference) keeps the store at the data layer and testable
- * with a fake refresh and a fake `Clock`.
+ * The store also owns the **bootstrap refresh failsafe**: once per interval (default {@link PROTECT_BOOTSTRAP_REFRESH_INTERVAL}), timed from the end of the refresh
+ * before it, it fetches a fresh bootstrap through the injected `refresh` hook and dispatches it. The reducer's `applyBootstrap` reconciliation makes a refresh that
+ * finds no drift produce no observer notifications at all - the failsafe is invisible until something has actually changed. The hook (rather than a `Transport`
+ * reference) keeps the store at the data layer and testable with a refresh the suite supplies and a `Clock` it advances.
  *
  * Finally, the store publishes the **bootstrap-schema tripwire**: at its dispatch chokepoint every applied bootstrap is scanned by the pure
  * {@link findUnmodeledDeviceCollections} (Layer 1) for device-shaped collections the reducer does not model, and each newly seen one is published on
@@ -507,30 +507,41 @@ export class StateStore implements AsyncDisposable {
     this.#observers.clear();
   }
 
-  // The refresh failsafe. Ticks on the injected clock; each tick fetches a fresh bootstrap and dispatches it. A fetch failure is non-fatal - the failsafe simply
-  // retries on the next tick (health escalation is the ConnectionMonitor's job, not the store's), so a transient controller hiccup never tears the loop down. The
-  // loop ends only when disposal aborts the controller, which surfaces as the interval iterator throwing its abort error - the normal shutdown path, swallowed here.
+  // The refresh failsafe. Each pass waits one interval on the injected clock, then fetches a fresh bootstrap and dispatches it, so the interval runs from the end of
+  // the refresh before it and a slow refresh never brings the next one forward. A fetch failure is non-fatal - the failsafe simply retries on the next pass (health
+  // escalation is the ConnectionMonitor's job, not the store's), so a transient controller hiccup never tears the loop down. The loop ends only when disposal aborts
+  // the controller, which rejects the pending delay with its abort error - the normal shutdown path, swallowed here.
   async #runRefreshLoop(intervalMs: number): Promise<void> {
 
     try {
 
-      for await (const _tick of this.#clock.setInterval(intervalMs, { signal: this.#refreshController.signal })) {
+      for(;;) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await this.#clock.delay(intervalMs, { signal: this.#refreshController.signal });
 
         try {
 
-          // Sequential by design: one refresh per interval, each completing before the next tick is honored.
+          // Sequential by design: one refresh per interval, each completing before the next delay begins.
 
+          // eslint-disable-next-line no-await-in-loop
           const bootstrap = await this.#refresh();
 
           this.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
         } catch(error) {
 
-          this.#log.debug("Bootstrap refresh failed; retrying on the next interval.", error);
+          /* A refresh still in flight when the store is disposed settles afterwards, and its failure is the shutdown path rather than a refresh that went wrong.
+           * Saying it will be retried on the next interval would promise an interval the disposal has already ended, so the line is logged only while the loop lives.
+           */
+          if(!this.#refreshController.signal.aborted) {
+
+            this.#log.debug("Bootstrap refresh failed; retrying on the next interval.", error);
+          }
         }
       }
     } catch {
 
-      // The interval iterator throws on abort when the store is disposed. That is the expected end of the loop, not an error.
+      // The delay rejects on abort when the store is disposed. That is the expected end of the loop, not an error.
     }
   }
 }

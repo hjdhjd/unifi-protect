@@ -98,11 +98,11 @@ export const PROTECT_LIVESTREAM_STALL_DEFAULT_MS = 10000;
 export const PROTECT_LIVESTREAM_STALL_FLOOR_MS = 2000;
 
 /**
- * Media-stall watchdog poll interval, in milliseconds. The watchdog is an interval-poll (the proven LivestreamSession watchdog shape), so its detection latency is
- * [threshold, threshold + this] - the tick must therefore be no coarser than the tightest useful threshold (the floor) for crisp detection inside a consumer's prebuffer.
- * A 1 s tick keeps the worst-case overshoot at the floor (~2 s) modest while staying a coarse, near-zero-cost idle timer; a finer tick buys little and a coarser one
- * would blur detection past the floor. Reading the threshold live on every tick is what lets a tightened policy take effect within one tick - including a tighten that
- * lands during an active media silence, which a per-segment-rearmed one-shot would miss because no segment arrives to rearm it.
+ * Media-stall watchdog poll period, in milliseconds. The watchdog is a poll loop (the proven LivestreamSession watchdog shape) that waits this long between checks, so
+ * its detection latency is [threshold, threshold + this) - the period must therefore be no coarser than the tightest useful threshold (the floor) for crisp detection
+ * inside a consumer's prebuffer. A 1 s period keeps the worst-case overshoot at the floor (~2 s) modest while staying a coarse, near-zero-cost idle wait; a finer period
+ * buys little and a coarser one would blur detection past the floor. Reading the threshold live on every pass is what lets a tightened policy take effect within one
+ * period - including a tighten that lands during an active media silence, which a per-segment-rearmed one-shot would miss because no segment arrives to rearm it.
  */
 export const PROTECT_LIVESTREAM_STALL_POLL_MS = 1000;
 

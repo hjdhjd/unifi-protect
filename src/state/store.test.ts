@@ -3,15 +3,15 @@
  * store.test.ts: Unit tests for the observable StateStore - snapshot, the observe/dedup contract, the single dispatch chokepoint, the refresh failsafe (including its
  * invisible-on-no-drift property), the bootstrap-schema tripwire (the schema:unmodeledCollection diagnostics publish and its per-session dedup), the adoption
  * self-contradiction diagnostics (the ENTER/CLEAR episode tracking and the adoptionContradiction channel publish), and disposal. Driven through a fake refresh hook
- * with no network: the store's refresh cadence runs on a fake clock, and the suite yields with short real delays only to let observers register and settle.
+ * with no network: the store's refresh loop runs on a `TestClock`, and the suite yields with short real delays only to let observers register and settle.
  */
 import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
 import { StateStore, createStateStore } from "./store.ts";
-import { capturingLog, expectAt, fakeClock, settlement } from "../testing.helpers.ts";
+import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { capturingLog, expectAt, settlement } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeNvr, makeSensor } from "../fixtures.helpers.ts";
-import type { FakeClock } from "../testing.helpers.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -33,10 +33,10 @@ function collect<T>(iterable: AsyncIterable<T>): { done: Promise<void>; values: 
   return { done, values };
 }
 
-// A store whose refresh hook counts its calls and resolves an empty bootstrap, on a fake clock the caller ticks, for the rows that read whether the failsafe ran.
-function countingStore(refreshIntervalMs: number | false): { clock: FakeClock; refreshes: () => number; store: StateStore } {
+// A store whose refresh hook counts its calls and resolves an empty bootstrap, on a `TestClock` the caller advances, for the rows that read whether the failsafe ran.
+function countingStore(refreshIntervalMs: number | false): { clock: TestClock; refreshes: () => number; store: StateStore } {
 
-  const clock = fakeClock();
+  const clock = new TestClock();
   let refreshes = 0;
   const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => {
 
@@ -183,10 +183,10 @@ describe("StateStore", () => {
 
     test("is invisible to observers when the bootstrap has not drifted", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const camera = makeCamera({ id: "c1", name: "Front" });
       const bootstrap = makeBootstrap({ cameras: [camera] });
-      // The refresh returns the very same bootstrap each tick, so applyBootstrap reconciles to the existing references.
+      // The refresh returns the very same bootstrap on each pass, so applyBootstrap reconciles to the existing references.
       const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => Promise.resolve(bootstrap), refreshIntervalMs: 1000 });
 
       store.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
@@ -198,7 +198,8 @@ describe("StateStore", () => {
 
       const bootstrapIdBefore = store.snapshot().bootstrapId;
 
-      await clock.tick();
+      clock.advance(1000);
+      await settle();
 
       // The refresh ran (bootstrapId advanced) but the selected array reference did not change, so no observer was notified - the failsafe is silent on zero drift.
       await expectAt(() => store.snapshot().bootstrapId === (bootstrapIdBefore + 1));
@@ -211,7 +212,7 @@ describe("StateStore", () => {
 
     test("surfaces precisely the delta to observers when the bootstrap has drifted", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let name = "Front";
       const bootstrapFor = (): ReturnType<typeof makeBootstrap> => makeBootstrap({ cameras: [makeCamera({ id: "c1", name })] });
       const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => Promise.resolve(bootstrapFor()), refreshIntervalMs: 1000 });
@@ -223,15 +224,17 @@ describe("StateStore", () => {
 
       await delay(0);
 
-      // Drift the camera's name, then tick the failsafe: the reconciliation must replace exactly the c1 reference and wake the observer once.
+      // Drift the camera's name, then wake the failsafe: the reconciliation must replace exactly the c1 reference and wake the observer once.
       name = "Back";
-      await clock.tick();
+      clock.advance(1000);
+      await settle();
       await expectAt(() => values.length === 1);
 
       // A second refresh finds no further drift, and the observer's baseline is the drifted record it last yielded, so it stays silent: the delta arrives once.
       const bootstrapIdBefore = store.snapshot().bootstrapId;
 
-      await clock.tick();
+      clock.advance(1000);
+      await settle();
       await expectAt(() => store.snapshot().bootstrapId === (bootstrapIdBefore + 1));
       await delay(5);
       assert.deepEqual(values.map((value) => value?.name), ["Back"]);
@@ -242,7 +245,7 @@ describe("StateStore", () => {
 
     test("keeps a sub-record observer silent across a refresh that drifted an unrelated field, and wakes it when its own slice drifts", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let overrides: Record<string, unknown> = { id: "c1", lastMotion: 0 };
       const bootstrapFor = (): ReturnType<typeof makeBootstrap> => makeBootstrap({ cameras: [makeCamera(overrides)] });
       const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => Promise.resolve(bootstrapFor()), refreshIntervalMs: 1000 });
@@ -259,7 +262,8 @@ describe("StateStore", () => {
 
       const bootstrapIdBefore = store.snapshot().bootstrapId;
 
-      await clock.tick();
+      clock.advance(1000);
+      await settle();
       await expectAt(() => store.snapshot().bootstrapId === (bootstrapIdBefore + 1));
       await delay(5);
       assert.equal(store.snapshot().cameras.get("c1")?.lastMotion, 999, "the refresh applied the drifted scalar");
@@ -267,7 +271,8 @@ describe("StateStore", () => {
 
       // Drift featureFlags itself: the observer wakes exactly once with the new slice.
       overrides = { featureFlags: { hasMotionZones: false, smartDetectTypes: ["person"] }, id: "c1", lastMotion: 999 };
-      await clock.tick();
+      clock.advance(1000);
+      await settle();
       await expectAt(() => values.length === 1);
       await delay(5);
       assert.equal(values.length, 1, "a featureFlags drift wakes the observer once");
@@ -277,9 +282,9 @@ describe("StateStore", () => {
       await done;
     });
 
-    test("survives a refresh failure and recovers on the next tick", async () => {
+    test("survives a refresh failure and recovers on the next wake", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const log = capturingLog();
       let attempt = 0;
       const refresh = (): Promise<ReturnType<typeof makeBootstrap>> => {
@@ -295,13 +300,15 @@ describe("StateStore", () => {
       };
       const store = new StateStore({ clock, log, refresh, refreshIntervalMs: 1000 });
 
-      // First tick fails: the loop logs at debug and stays alive.
-      await clock.tick();
+      // The first wake fails: the loop logs at debug and stays alive.
+      clock.advance(1000);
+      await settle();
       await expectAt(() => log.entries.some((entry) => (entry.level === "debug") && entry.message.includes("Bootstrap refresh failed")));
       assert.equal(store.snapshot().cameras.size, 0);
 
-      // Second tick succeeds: the failsafe applies the bootstrap as if nothing had gone wrong.
-      await clock.tick();
+      // The second wake succeeds: the failsafe applies the bootstrap as if nothing had gone wrong.
+      clock.advance(1000);
+      await settle();
       await expectAt(() => store.snapshot().cameras.size === 1);
     });
 
@@ -309,8 +316,9 @@ describe("StateStore", () => {
 
       const { clock, refreshes, store } = countingStore(false);
 
-      // With the loop disabled there is no interval consumer, so a tick releases nothing and the refresh hook is never invoked.
-      await clock.tick();
+      // With the loop disabled nothing is parked on the clock, so an advance releases nothing and the refresh hook is never invoked.
+      clock.advance(1000);
+      await settle();
       await delay(5);
       assert.equal(refreshes(), 0);
 
@@ -319,22 +327,63 @@ describe("StateStore", () => {
 
     test("does not run when the interval is non-positive", async () => {
 
-      // The refresh hook's calls across one tick for a store built with the given interval, read after the store is disposed.
+      // The refresh hook's calls across one advance for a store built with the given interval, read after the store is disposed.
       const refreshesAt = async (refreshIntervalMs: number): Promise<number> => {
 
         const { clock, refreshes, store } = countingStore(refreshIntervalMs);
 
-        await clock.tick();
+        clock.advance(1000);
+        await settle();
         await delay(5);
         await store[Symbol.asyncDispose]();
 
         return refreshes();
       };
 
-      // A non-positive interval disables the failsafe as false does, and the fake clock's interval ignores its delay, so a loop started at a non-positive value would
-      // run on the tick.
+      // A non-positive interval disables the failsafe as false does. A loop started at a non-positive value would park a delay that is already due, which the advance
+      // would release, so the refresh hook would run.
       assert.equal(await refreshesAt(0), 0, "a zero interval must not start the failsafe");
       assert.equal(await refreshesAt(-1), 0, "a negative interval must not start the failsafe");
+    });
+
+    test("wakes at its period and not before, timing each interval from the end of the refresh before it", async () => {
+
+      const clock = new TestClock();
+      const refreshes: PromiseWithResolvers<ProtectNvrBootstrap>[] = [];
+      const store = new StateStore({ clock, refresh: (): Promise<ProtectNvrBootstrap> => {
+
+        const pending = Promise.withResolvers<ProtectNvrBootstrap>();
+
+        refreshes.push(pending);
+
+        return pending.promise;
+      }, refreshIntervalMs: 1000 });
+
+      // The loop parks one interval at construction, so nothing runs a millisecond short of it and the first refresh starts at it.
+      clock.advance(999);
+      await settle();
+      assert.equal(refreshes.length, 0, "no refresh runs before the first interval elapses");
+
+      clock.advance(1);
+      await settle();
+      assert.equal(refreshes.length, 1, "the first refresh starts one interval after construction");
+
+      // The refresh takes half an interval to answer. The next interval is timed from its answer, so a slow refresh never brings the next one forward.
+      clock.advance(500);
+      refreshes.at(-1)?.resolve(makeBootstrap());
+      await settle();
+      assert.equal(clock.nextDeadline, 2500, "the next wake comes due one interval after the refresh answered");
+
+      clock.advance(999);
+      await settle();
+      assert.equal(refreshes.length, 1, "no refresh runs before that interval elapses");
+
+      clock.advance(1);
+      await settle();
+      assert.equal(refreshes.length, 2, "the second refresh starts one interval after the first answered");
+
+      refreshes.at(-1)?.resolve(makeBootstrap());
+      await store[Symbol.asyncDispose]();
     });
   });
 
@@ -352,9 +401,36 @@ describe("StateStore", () => {
       await done;
       assert.equal(values.length, 0);
 
-      // The refresh loop parks its interval wait at construction and disposal's abort withdraws it, so a tick after disposal finds no consumer to release.
-      await clock.tick();
-      assert.equal(refreshes(), 0, "a tick after disposal must not run the refresh hook");
+      // The refresh loop parks its delay at construction and disposal's abort withdraws it, so an advance after disposal finds nothing to release.
+      clock.advance(1000);
+      await settle();
+      assert.equal(refreshes(), 0, "an advance after disposal must not run the refresh hook");
+    });
+
+    test("a refresh still in flight at disposal logs no retry when it fails afterwards", async () => {
+
+      const clock = new TestClock();
+      const log = capturingLog();
+      const pending = Promise.withResolvers<ProtectNvrBootstrap>();
+      let started = false;
+      const store = new StateStore({ clock, log, refresh: (): Promise<ProtectNvrBootstrap> => {
+
+        started = true;
+
+        return pending.promise;
+      }, refreshIntervalMs: 1000 });
+
+      clock.advance(1000);
+      await settle();
+      assert.equal(started, true, "the wake started a refresh that is still in flight");
+
+      // The refresh fails only once the store is gone, the way a fetch fails when the client is closed under it. A retry promised now would name an interval the
+      // disposal has already ended.
+      await store[Symbol.asyncDispose]();
+      pending.reject(new Error("The transport was disposed under the refresh."));
+      await settle();
+
+      assert.equal(log.entries.some((entry) => entry.message.includes("Bootstrap refresh failed")), false, "a refresh that fails after disposal logs no retry");
     });
 
     test("an observation begun after disposal completes immediately", async () => {

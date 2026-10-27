@@ -2,17 +2,17 @@
  *
  * events-stream.test.ts: Tests for EventStream - the connection handshake (open, pre-open close, and caller-signal abort before open), the single decode site,
  * the three-rail fan-out, schema-drift surfacing, decode-failure resilience, the silence watchdog, and teardown. Driven through an injected fake WebSocket and a
- * fake Clock, so the realtime stream is exercised deterministically without a live controller.
+ * `TestClock`, so the realtime stream is exercised deterministically without a live controller.
  */
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
 import { ProtectAbortedError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
-import { assertNoUnhandledRejections, capturingLog, expectAt, fakeClock, settlement, silentLog } from "../testing.helpers.ts";
+import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { EventStream } from "./events-stream.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
-import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
 import { PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
@@ -31,10 +31,10 @@ function encode(header: Partial<{ action: string; id: string; modelKey: string }
 
 // Construct an open stream over a fake socket, returning the stream, the socket, and the clock. The socket does not auto-open, so the stream opens only when this helper
 // emits the open. `webSocket` makes the fake for a row that needs one built its own way; that fake must not open itself, since this helper opens it.
-async function openStream(options: { clock?: FakeClock; log?: ProtectLogging;
-  webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: FakeClock; stream: EventStream; ws: FakeWebSocket }> {
+async function openStream(options: { clock?: TestClock; log?: ProtectLogging;
+  webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: TestClock; stream: EventStream; ws: FakeWebSocket }> {
 
-  const clock = options.clock ?? fakeClock();
+  const clock = options.clock ?? new TestClock();
   const log = options.log ?? silentLog();
   const ws = options.webSocket?.() ?? new FakeWebSocket({ autoOpen: false });
   const stream = new EventStream({ clock, host: HOST, lastUpdateId: "u0", log, webSocket: (): FakeWebSocket => ws });
@@ -72,7 +72,7 @@ describe("EventStream", () => {
     test("connect() resolves once the socket opens", async () => {
 
       const ws = new FakeWebSocket({ autoOpen: false });
-      const pending = EventStream.connect({ clock: fakeClock(), host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: (): FakeWebSocket => ws });
+      const pending = EventStream.connect({ clock: new TestClock(), host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: (): FakeWebSocket => ws });
       const settled = settlement(pending);
 
       // The socket has not opened, so connect() must still be pending after a macrotask, and it settles once the socket reports open.
@@ -106,7 +106,7 @@ describe("EventStream", () => {
       await assertNoUnhandledRejections(async () => {
 
         const ws = new FakeWebSocket({ autoOpen: false });
-        const stream = new EventStream({ clock: fakeClock(), host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: (): FakeWebSocket => ws });
+        const stream = new EventStream({ clock: new TestClock(), host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: (): FakeWebSocket => ws });
 
         ws.emitClose(1006, "handshake failed");
         await stream.close();
@@ -141,7 +141,7 @@ describe("EventStream", () => {
 
       // A real TLS peer rather than the injected fake, because only the default factory's socket dials the URL the stream composes.
       await using peer = await createLoopbackWebSocketPeer({ ipv6: true });
-      const stream = new EventStream({ clock: fakeClock(), host: peer.host, lastUpdateId: "u0", log: silentLog() });
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log: silentLog() });
 
       await stream.opened;
       await stream.close();
@@ -154,7 +154,7 @@ describe("EventStream", () => {
 
       // A real TLS peer rather than the injected fake: the certificate posture lives on the agent the default factory builds, which an injected socket never reaches.
       await using peer = await createLoopbackWebSocketPeer();
-      const stream = new EventStream({ clock: fakeClock(), host: peer.host, lastUpdateId: "u0", log: silentLog() });
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log: silentLog() });
 
       await stream.opened;
       await stream.close();
@@ -163,7 +163,7 @@ describe("EventStream", () => {
     test("the upgrade refuses a certificate that does not verify when strict verification is asked for", async () => {
 
       await using peer = await createLoopbackWebSocketPeer();
-      const stream = new EventStream({ clock: fakeClock(), host: peer.host, lastUpdateId: "u0", log: silentLog(), verifyTls: true });
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log: silentLog(), verifyTls: true });
 
       // The same peer and the same upgrade, one option apart. Asking for verification against a certificate that cannot provide it fails the connect, and a pre-open
       // failure reaches the caller on the handshake rejection exactly as every other one does.
@@ -481,14 +481,14 @@ describe("EventStream", () => {
 
     test("a channel silent beyond the threshold emits ProtectStallError and tears down", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { stream, ws } = await openStream({ clock });
       const errors = collect(stream, "error");
       const closed = collect(stream, "closed");
 
-      // No frames arrive; advance past the watchdog window and release one watchdog tick.
+      // No frames arrive; advance to the watchdog's deadline and let it wake.
       clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
-      await clock.tick();
+      await settle();
 
       assert.equal(errors.length, 1);
 
@@ -504,19 +504,53 @@ describe("EventStream", () => {
 
     test("the watchdog does not trip while frames keep arriving", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { stream, ws } = await openStream({ clock });
       const errors = collect(stream, "error");
 
-      // A frame arrives partway through the window; lastMessageAt advances, so the next tick finds the channel live.
+      // A frame arrives partway through the window; lastMessageAt advances, so the wake at the deadline finds the channel live.
       clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT - 1);
       ws.emitMessage(encode({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1" }));
       clock.advance(1);
-      await clock.tick();
+      await settle();
 
       assert.equal(errors.length, 0);
 
       await stream.close();
+    });
+
+    test("the watchdog wakes at its period and not before", async () => {
+
+      const clock = new TestClock();
+      const { stream, ws } = await openStream({ clock });
+      const errors = collect(stream, "error");
+
+      // The watchdog is the stream's only reader of the clock's timers, so the timeline's next deadline is its next wake: one threshold out from construction.
+      assert.equal(clock.nextDeadline, PROTECT_EVENTS_WATCHDOG_TIMEOUT, "the first wake comes due one threshold after the watchdog arms");
+
+      // A frame just short of the first wake keeps the channel live through it, and the loop parks for one more threshold from the moment it woke.
+      clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT - 1);
+      ws.emitMessage(encode({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1" }));
+      clock.advance(1);
+      await settle();
+
+      assert.equal(errors.length, 0, "the first wake found the channel live");
+      assert.equal(clock.nextDeadline, 2 * PROTECT_EVENTS_WATCHDOG_TIMEOUT, "the second wake comes due one threshold after the first");
+
+      // By the end of this advance the silence since the frame has reached the threshold, yet nothing reads it until the next wake, so detection lands inside the
+      // [threshold, 2 x threshold) window rather than at the threshold itself.
+      clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT - 1);
+      await settle();
+
+      assert.equal(errors.length, 0, "no wake comes between the deadlines");
+
+      clock.advance(1);
+      await settle();
+
+      const [stallError] = first(errors);
+
+      assert.ok(stallError instanceof ProtectStallError);
+      assert.equal(stallError.silentForMs, PROTECT_EVENTS_WATCHDOG_TIMEOUT + 1, "the second wake reads the silence since the frame");
     });
   });
 
@@ -621,7 +655,7 @@ describe("EventStream", () => {
 
     test("lastMessageAt reflects the clock at the most recent frame", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { stream, ws } = await openStream({ clock });
 
       clock.advance(1234);
@@ -634,7 +668,7 @@ describe("EventStream", () => {
 
     test("lastMessageAt advances on a frame the stream skips as unsupported", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { stream, ws } = await openStream({ clock });
 
       // Any frame from the controller proves the channel is alive, decodable or not, so the liveness stamp lands before the frame's type is read.

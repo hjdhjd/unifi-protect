@@ -6,14 +6,14 @@
  */
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectConfigurationError, ProtectNetworkError,
   ProtectProtocolError } from "../errors.ts";
+import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
-import { expectAt, fakeClock, silentLog } from "../testing.helpers.ts";
+import { expectAt, silentLog } from "../testing.helpers.ts";
 import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
 import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
-import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import type { HttpRequestStartPayload } from "../diagnostics.ts";
 import type { Interceptable } from "undici";
@@ -143,7 +143,7 @@ describe("ProtectClient.connect", () => {
     test("the refresh failsafe re-fetches the bootstrap on schedule", async () => {
 
       const { agent, pool } = mockController();
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       interceptLogin(pool);
       // The initial bootstrap has one camera; the next scheduled refresh returns two, exercising the client's transport-backed refresh hook end to end.
@@ -155,7 +155,8 @@ describe("ProtectClient.connect", () => {
 
       assert.equal(client.cameras.length, 1);
 
-      await clock.tick();
+      clock.advance(1000);
+      await settle();
       await expectAt(() => client.cameras.length === 2);
     });
   });
@@ -531,7 +532,7 @@ describe("ProtectClient.connect", () => {
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ nvr: makeNvr() }));
       pool.intercept({ method: "POST", path: "/api/system/reboot" }).reply(200, "{}");
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       let ws: FakeWebSocket | undefined;
 
@@ -545,8 +546,9 @@ describe("ProtectClient.connect", () => {
       ws?.emitError(new Error("socket dropped"));
       await delay(10);
 
-      assert.deepEqual(clock.pendingWaits(), [PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0]],
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0], "the known track's first delay"),
         "a self-initiated reboot must steer the ensuing fault onto the known-reboot backoff track");
+      assert.equal(clock.pending, 1, "and recovery parks on that one wait alone");
     });
 
     test("a non-2xx reboot response throws and does not arm the known-reboot track", async () => {
@@ -557,7 +559,7 @@ describe("ProtectClient.connect", () => {
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ nvr: makeNvr() }));
       pool.intercept({ method: "POST", path: "/api/system/reboot" }).reply(403, "forbidden");
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       let ws: FakeWebSocket | undefined;
 
@@ -571,7 +573,8 @@ describe("ProtectClient.connect", () => {
       ws?.emitError(new Error("socket dropped"));
       await delay(10);
 
-      assert.deepEqual(clock.pendingWaits(), [0], "a failed reboot must leave the next fault on the prompt unknown track");
+      assert.equal(clock.nextDeadline, clock.now(), "a failed reboot must leave the next fault on the prompt unknown track");
+      assert.equal(clock.pending, 1, "and recovery parks on that one wait alone");
     });
   });
 
@@ -602,9 +605,9 @@ describe("ProtectClient.connect", () => {
     }
 
     // Connect to the bare address, recording each WebSocket the client dials in `dialed`, in order.
-    async function connectBare(agent: MockAgent, options: { clock?: FakeClock; dialed?: Dialed[]; refreshIntervalMs?: number | false } = {}): Promise<ProtectClient> {
+    async function connectBare(agent: MockAgent, options: { clock?: TestClock; dialed?: Dialed[]; refreshIntervalMs?: number | false } = {}): Promise<ProtectClient> {
 
-      return ProtectClient.connect({ clock: options.clock ?? fakeClock(), dispatcher: agent, host: ADDRESS, log: silentLog(), password: "p",
+      return ProtectClient.connect({ clock: options.clock ?? new TestClock(), dispatcher: agent, host: ADDRESS, log: silentLog(), password: "p",
         refreshIntervalMs: options.refreshIntervalMs ?? false, username: "u", webSocket: (url: string): FakeWebSocket => {
 
           const socket = new FakeWebSocket();
@@ -688,7 +691,7 @@ describe("ProtectClient.connect", () => {
     test("re-fetches the bootstrap on the bracketed authority for the refresh, the liveness probe and recovery, which relaunches the events stream there", async () => {
 
       const { agent, pool } = mockBracketedController();
-      const clock = fakeClock();
+      const clock = new TestClock();
       const dialed: Dialed[] = [];
 
       interceptLogin(pool);
@@ -698,7 +701,8 @@ describe("ProtectClient.connect", () => {
 
       // The refresh failsafe's fetch.
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
-      await clock.tick();
+      clock.advance(1000);
+      await settle();
       await expectAt(() => agent.pendingInterceptors().length === 0);
 
       // The liveness probe's fetch.
@@ -706,10 +710,10 @@ describe("ProtectClient.connect", () => {
       await client.connection.verify();
 
       // The events socket drops, so recovery waits out its prompt first delay, then verifies with one fetch, re-bootstraps with another, and relaunches the events
-      // stream.
+      // stream. The prompt delay is due the moment it parks, so the timeline's next deadline reaching the present is the sign it has parked.
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap()).times(2);
       dialed[0]?.socket.emitError(new Error("socket dropped"));
-      await expectAt(() => clock.pendingWaits().length === 1);
+      await expectAt(() => clock.nextDeadline === clock.now());
       clock.advance(0);
       await expectAt(() => dialed.length === 2);
 

@@ -613,7 +613,7 @@ class ManagedSession implements SubscriptionHost {
   // MEDIA-keyed liveness clock the media-stall watchdog reads: it advances only when a decodable media segment is fanned, so a stream producing only non-media frames (a
   // mid-session re-init, the negotiated timestamp frames) reads stalled to the watchdog even while `#lastSegmentAt` stays fresh. The two are deliberately separate clocks
   // measuring two different liveness notions - any byte vs. a picture. `#watchdogController` is the media watchdog's lifecycle handle: non-null only while the watchdog
-  // is armed (between the first media of an install and the next reconnect / teardown), aborting it ends the interval loop.
+  // is armed (between the first media of an install and the next reconnect / teardown), aborting it ends the poll loop.
   #establishedSettled = false;
   #initSegmentCache: LivestreamInit | null = null;
   #lastError: ProtectError | null = null;
@@ -683,8 +683,8 @@ class ManagedSession implements SubscriptionHost {
     }
 
     // A tighter joiner mid-recovery re-decides the in-flight window now, instead of waiting out a backoff sized for the looser prior MIN. We carry the same recovering
-    // gate `reassess()` uses: a joiner while live needs no poke (the media watchdog reads the new MIN on its next tick, so a tightened detection deadline takes effect
-    // within one tick), and a joiner during the establishing init->media gap must not settle the urgency-independent establishing window (the gate spares it).
+    // gate `reassess()` uses: a joiner while live needs no poke (the media watchdog reads the new MIN on its next pass, so a tightened detection deadline takes effect
+    // within one poll period), and a joiner during the establishing init->media gap must not settle the urgency-independent establishing window (the gate spares it).
     if((this.#settleOutcome !== null) && (this.#phase === "recovering")) {
 
       this.#settle("reassess");
@@ -845,7 +845,7 @@ class ManagedSession implements SubscriptionHost {
   // This is the detection sibling of `#aggregateTolerance`, with one deliberately different default: a subscriber that declares NO urgency contributes the default
   // media-stall window (every live stream is media-watched by default - the fail-safe analog of the byte heartbeat), whereas the recovery-await aggregate reads an
   // undeclared subscriber as Infinity (patient). A subscriber declaring a tighter value pulls the MIN down; one declaring Infinity opts itself out entirely, so a stream
-  // where every subscriber opts out yields Infinity and the watchdog's per-tick `>= Infinity` comparison never fires (the byte backstop alone watches it). A finite MIN
+  // where every subscriber opts out yields Infinity and the watchdog's per-pass `>= Infinity` comparison never fires (the byte backstop alone watches it). A finite MIN
   // is clamped UP to the floor so a maximally-urgent consumer cannot set a threshold so tight that ordinary inter-segment jitter trips it. We read the RAW aggregate
   // here, never the value `defaultLivestreamRecoveryPolicy` derives from it after subtracting the await margin - detection answers "notice a stall this fast," a
   // different question from the recovery-await's "how long to wait per attempt," so the detection default must never leak into recovery and vice versa.
@@ -931,7 +931,7 @@ class ManagedSession implements SubscriptionHost {
 
     signal.addEventListener("abort", onAbort, { once: true });
     // The window's timer. On elapse it settles `elapsed`; its rejection (when the finally cancels it) is the expected path and swallowed.
-    void this.#clock.wait(timeoutMs, { signal: timerController.signal }).then(() => void this.#settle("elapsed"), () => undefined);
+    void this.#clock.delay(timeoutMs, { signal: timerController.signal }).then(() => void this.#settle("elapsed"), () => undefined);
 
     try {
 
@@ -1057,11 +1057,11 @@ class ManagedSession implements SubscriptionHost {
   // any-byte heartbeat watchdog (which stays its own transport-liveness backstop, untouched): the two are complementary layers, byte-silence vs. media-silence, and on a
   // real stall this one fires first - after which `#onSessionClosed`'s torndown / settle / state guards make the later session-watchdog close a no-op.
   //
-  // We arm even when the current threshold is Infinity (an all-opted-out stream): the loop is then a zero-cost idle interval whose per-tick comparison never fires, but
-  // it stays running so a subscriber that later joins or tightens (pulling the MIN finite) is caught on the next tick with no explicit re-arm - the same property that
+  // We arm even when the current threshold is Infinity (an all-opted-out stream): the loop is then a zero-cost idle poll whose per-pass comparison never fires, but it
+  // stays running so a subscriber that later joins or tightens (pulling the MIN finite) is caught on the next pass with no explicit re-arm - the same property that
   // lets a tighten DURING a stall be caught. The arm no-ops unless `#state` is already "live", which holds here because `#onRecovered` sets it just before the sole
   // caller invokes this method, so it never runs during establishing / recovering (no media has flowed). Abort-and-replace the controller so a stale loop from a
-  // prior arm can never coexist with the new one, then drive the interval on its signal.
+  // prior arm can never coexist with the new one, then run the loop on its signal.
   #armWatchdog(): void {
 
     if(this.#state !== "live") {
@@ -1072,12 +1072,12 @@ class ManagedSession implements SubscriptionHost {
     this.#watchdogController?.abort();
     this.#watchdogController = new AbortController();
 
-    // Swallow the abort the same way `#raceOutcome` swallows its timer's: a disarm aborts the controller, the interval iterator rejects with an AbortError that
+    // Swallow the abort the same way `#raceOutcome` swallows its timer's: a disarm aborts the controller, the pending delay rejects with an AbortError that
     // propagates out of `#runWatchdog`, and the `.then` rejection handler absorbs that expected rejection so it never becomes unhandled.
     void this.#runWatchdog(this.#watchdogController.signal).then(() => undefined, () => undefined);
   }
 
-  // Disarm the media-stall watchdog. Aborts the interval loop (its AbortError is absorbed where `#armWatchdog` starts it) and clears the handle. A no-op on repeat,
+  // Disarm the media-stall watchdog. Aborts the poll loop (its AbortError is absorbed where `#armWatchdog` starts it) and clears the handle. A no-op on repeat,
   // and when the watchdog was never armed (a stream torn down or reconnected before any media flowed), so both `#installSession` and `#teardown` can call it
   // unconditionally.
   #disarmWatchdog(): void {
@@ -1089,16 +1089,20 @@ class ManagedSession implements SubscriptionHost {
     }
   }
 
-  // The media-stall watchdog loop - an interval-poll mirroring the session's heartbeat watchdog shape, but keyed on `#lastMediaAt` (media flow) rather than
-  // `#lastSegmentAt` (any byte). Each tick re-reads the detection threshold LIVE, so a tightened or loosened consumer policy takes effect within one tick with no
-  // explicit re-arm - and a tighten that lands during an active media silence (no segment arriving to re-stamp the clock) is still caught, the blind spot a per-segment
-  // one-shot would have. On a tick where the media silence has reached the threshold the watchdog FIRES: it re-checks the same `#torndown` / `#settleOutcome` guard
-  // `#onSessionClosed` uses so it no-ops if a recovery is already in flight or the stream is torn down, then closes the current session into the EXISTING recovery path
-  // (the session's `closed` rail drives `#onSessionClosed` -> a recovering episode) - never a parallel recovery entry. The loop ENDS after firing (at most one fire per
-  // arm), so a second tick in the micro-gap before `#onSessionClosed` parks the recovery window cannot re-fire. The loop also ends when a disarm aborts the controller.
+  // The media-stall watchdog loop - a poll loop mirroring the session's heartbeat watchdog shape, waiting one poll period per pass, but keyed on `#lastMediaAt` (media
+  // flow) rather than `#lastSegmentAt` (any byte). Each pass re-reads the detection threshold LIVE, so a tightened or loosened consumer policy takes effect within one
+  // poll period with no explicit re-arm - and a tighten that lands during an active media silence (no segment arriving to re-stamp the clock) is still caught, the blind
+  // spot a per-segment one-shot would have. On a pass where the media silence has reached the threshold the watchdog FIRES: it re-checks the same `#torndown` /
+  // `#settleOutcome` guard `#onSessionClosed` uses so it no-ops if a recovery is already in flight or the stream is torn down, then closes the current session into the
+  // EXISTING recovery path (the session's `closed` rail drives `#onSessionClosed` -> a recovering episode) - never a parallel recovery entry. The loop ENDS after firing
+  // (at most one fire per arm), so a second pass in the micro-gap before `#onSessionClosed` parks the recovery window cannot re-fire. The loop also ends when a disarm
+  // aborts the controller, which rejects the pending delay - the rejection `#armWatchdog` absorbs.
   async #runWatchdog(signal: AbortSignal): Promise<void> {
 
-    for await (const _tick of this.#clock.setInterval(PROTECT_LIVESTREAM_STALL_POLL_MS, { signal })) {
+    for(;;) {
+
+      // eslint-disable-next-line no-await-in-loop
+      await this.#clock.delay(PROTECT_LIVESTREAM_STALL_POLL_MS, { signal });
 
       if(this.#torndown || (this.#settleOutcome !== null)) {
 
@@ -1270,8 +1274,8 @@ class ManagedSession implements SubscriptionHost {
     // Aborting the lifetime controller ends the recovery loop and closes the current session through the signal it was handed. The session's own close event still
     // reaches `#onSessionClosed`, which ignores it because the teardown flag is already set.
     this.#controller.abort();
-    // Disarm the media-stall watchdog so an interval tick already scheduled before teardown cannot fire on a dead session - aborting its controller ends the loop, and
-    // the loop's own `#torndown` guard makes a tick that slipped through a no-op as well.
+    // Disarm the media-stall watchdog so a watchdog pass already due before teardown cannot fire on a dead session - aborting its controller ends the loop, and the
+    // loop's own `#torndown` guard makes a pass that slipped through a no-op as well.
     this.#disarmWatchdog();
 
     for(const rail of this.#currentRails) {

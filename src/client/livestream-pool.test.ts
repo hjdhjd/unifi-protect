@@ -15,18 +15,17 @@ import type { LivestreamSpec, Segment } from "../transport/livestream-session.ts
 import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_STALL_DEFAULT_MS,
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "../errors.ts";
+import { TestClock, settle } from "homebridge-plugin-utils/testing";
 import { buildInitSegment, buildMediaSegment } from "../transport/livestream-session.helpers.ts";
-import { capturingLog, fakeClock, settlement, silentLog } from "../testing.helpers.ts";
+import { capturingLog, settlement, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { Camera } from "../devices/camera.ts";
 import type { DeviceContext } from "../devices/context.ts";
-import type { FakeClock } from "../testing.helpers.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
 import { createDeviceSelectors } from "../state/selectors.ts";
 import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
-import { settle } from "homebridge-plugin-utils/testing";
 
 const SPEC: LivestreamSpec = { cameraId: "cam1", source: { channel: 0, type: "channel" } };
 
@@ -53,11 +52,11 @@ function at<T>(items: T[], index: number): T {
 // A pool over fake sockets and a fixed resolver. Every socket the pool's sessions build is captured so tests can drive `open` / `message` / `error` deterministically. A
 // recovery policy may be injected; omitting it exercises the library default. A resolver may be injected in place of the fixed one, for a test that reads the
 // negotiation itself, and a logger in place of the silent one, for a test that reads what the pool logs.
-function makePool(options: { clock?: FakeClock; log?: LivestreamPoolOptions["log"]; recoveryPolicy?: RecoveryPolicy;
-  resolveUrl?: LivestreamPoolOptions["resolveUrl"]; } = {}): { clock: FakeClock; pool: LivestreamPool; sockets: FakeWebSocket[] } {
+function makePool(options: { clock?: TestClock; log?: LivestreamPoolOptions["log"]; recoveryPolicy?: RecoveryPolicy;
+  resolveUrl?: LivestreamPoolOptions["resolveUrl"]; } = {}): { clock: TestClock; pool: LivestreamPool; sockets: FakeWebSocket[] } {
 
   const sockets: FakeWebSocket[] = [];
-  const clock = options.clock ?? fakeClock();
+  const clock = options.clock ?? new TestClock();
   const pool = new LivestreamPool({
 
     clock,
@@ -135,20 +134,6 @@ async function establish(ws: FakeWebSocket, opts: { codec: string; data?: Buffer
 function pushMedia(ws: FakeWebSocket): void {
 
   ws.emitMessage(buildMediaSegment({ mdat: Buffer.from("m"), moof: Buffer.from("f") }));
-}
-
-// Pulse every active interval-poll loop `count` times. Once a stream is established, the active interval watchdogs are the session's any-byte heartbeat,
-// registered first at socket open, and the pool's media-stall watchdog, registered later at the first media. The fake clock's `tick()` releases ONE pending
-// iteration per call (FIFO), so a single tick wakes whichever loop registered earliest; pulsing a few times in a row wakes each of them in turn and lets it
-// re-register and re-evaluate. Tests that need the MEDIA watchdog (not the heartbeat) to evaluate `now() - lastMediaAt` against its threshold pulse twice so the
-// pool loop's body runs after the session loop's.
-async function pulse(clock: FakeClock, count = 2): Promise<void> {
-
-  for(let index = 0; index < count; index++) {
-
-    // eslint-disable-next-line no-await-in-loop
-    await clock.tick();
-  }
 }
 
 describe("LivestreamPool", () => {
@@ -399,7 +384,7 @@ describe("LivestreamPool", () => {
 
     test("a joiner under an already-aborted signal does not re-decide a parked recovery", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let recoveringCalls = 0;
       const policy: RecoveryPolicy = (context) => {
 
@@ -520,7 +505,7 @@ describe("LivestreamPool", () => {
 
     test("a pool-forced give-up still drains the queued init before the terminal, even with discardOnDispose set", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC, { discardOnDispose: true });
 
@@ -670,7 +655,7 @@ describe("LivestreamPool", () => {
        * with anything the policy or the clock did.
        */
       await using peer = await createLoopbackWebSocketPeer();
-      await using pool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+      await using pool = new LivestreamPool({ clock: new TestClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
         verifyTls: true });
 
       await using subscription = pool.subscribe(SPEC);
@@ -688,7 +673,7 @@ describe("LivestreamPool", () => {
 
       // The same peer, the same pool wiring, one option apart - the control that says the refusal above was the option's doing and not the peer's.
       await using peer = await createLoopbackWebSocketPeer();
-      await using pool = new LivestreamPool({ clock: fakeClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live" });
+      await using pool = new LivestreamPool({ clock: new TestClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live" });
 
       await using subscription = pool.subscribe(SPEC);
 
@@ -786,7 +771,7 @@ describe("LivestreamPool", () => {
 
     test("a multi-attempt initial establishment does not mark its first-ever media as a discontinuity", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       // A policy that always reconnects lets us drive a failed first establishment attempt deterministically by elapsing its window.
       const { pool, sockets } = makePool({ clock, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
@@ -819,9 +804,12 @@ describe("LivestreamPool", () => {
 
     test("a heartbeat stall recovers rather than failing the subscriber", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
-      const sub = pool.subscribe(SPEC);
+
+      // The subscriber opts out of media-stall detection, so the session heartbeat is the only detector and stays this row's subject. Left at the 10s default, the
+      // media watchdog would read the same silence on the same advance and close the session first.
+      const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
 
       await settle();
 
@@ -837,7 +825,7 @@ describe("LivestreamPool", () => {
       // The first session goes silent past its heartbeat window; its watchdog tears it down, and the pool begins recovery. The advance matches
       // PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, the silence threshold the watchdog fires at.
       clock.advance(10000);
-      await clock.tick();
+      await settle();
       await settle();
 
       assert.equal(sockets.length, 2);
@@ -1035,7 +1023,7 @@ describe("LivestreamPool", () => {
 
     test("bounded establishment: the policy gives up after its attempt budget, throwing the establishing terminal", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const policy: RecoveryPolicy = (context) => (context.attempts >= 2) ? { kind: "giveUp" } : { awaitMs: 1000, kind: "reconnect" };
       const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
       const sub = pool.subscribe(SPEC);
@@ -1062,7 +1050,7 @@ describe("LivestreamPool", () => {
 
     test("an init-then-no-media session is a failed attempt that gives up establishing at the deadline", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       // The library default policy: patient establishing curve (5s, 8s, 10s, holding) bounded by the 30s deadline.
       const { pool, sockets } = makePool({ clock });
@@ -1108,7 +1096,7 @@ describe("LivestreamPool", () => {
 
     test("a braindead connection that never produces media gives up at the establishing deadline", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       // A socket that opens but never sends an init OR media must still be bounded by the time-based establishing deadline, never waiting forever.
       const { pool, sockets } = makePool({ clock });
@@ -1142,7 +1130,7 @@ describe("LivestreamPool", () => {
 
     test("a give-up during recovery throws the recovering terminal with the attempt count", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       // Establish patiently, then let the recovering episode reconnect once and give up on its next consultation, so the terminal carries one failed attempt.
       const policy: RecoveryPolicy = (context) => {
@@ -1184,7 +1172,7 @@ describe("LivestreamPool", () => {
 
     test("a recovering-phase init-then-no-media session reconnects on its first media", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       // Establish patiently, then on the recovering episode reconnect with a bounded window so an init-then-no-media recovery attempt elapses and retries until media
       // flows.
@@ -1261,7 +1249,7 @@ describe("LivestreamPool", () => {
 
     test("cancellation during the init-to-media gap tears the stream down and resolves the establishment wait false", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const attempts: number[] = [];
 
       // Record the attempt count of each decision the policy is consulted for, so the row can read how many decisions the episode asked for.
@@ -1298,7 +1286,7 @@ describe("LivestreamPool", () => {
 
     test("reassess during the init-to-media gap does not reconnect while establishing", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let consults = 0;
 
       // The default-shaped establishing policy: a patient reconnect window. Count consults to prove the reassess did not re-consult and reinstall mid-establishment.
@@ -1341,7 +1329,7 @@ describe("LivestreamPool", () => {
 
     test("urgency is aggregated across subscribers by the minimum", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const contexts: RecoveryContext[] = [];
       const policy: RecoveryPolicy = (context) => {
 
@@ -1406,7 +1394,7 @@ describe("LivestreamPool", () => {
 
     test("reassess re-decides an in-flight recovery episode", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let recoveringCalls = 0;
       const policy: RecoveryPolicy = (context) => {
 
@@ -1445,7 +1433,7 @@ describe("LivestreamPool", () => {
 
     test("a disposed subscriber's reassess cannot re-decide a shared in-flight recovery episode", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let recoveringCalls = 0;
       const policy: RecoveryPolicy = (context) => {
 
@@ -1542,9 +1530,12 @@ describe("LivestreamPool", () => {
 
       using stallSubscription = subscribeToChannel(channels.livestreamStallDetected, (payload) => void stalls.push(payload));
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
-      const sub = pool.subscribe(SPEC);
+
+      // The subscriber opts out of media-stall detection, so the stall the channel reports is the session heartbeat's. Left at the 10s default, the media watchdog
+      // would read the same silence on the same advance and close the session before the heartbeat could report it.
+      const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
 
       await settle();
       await establish(at(sockets, 0), { codec: "avc1.640028" });
@@ -1555,7 +1546,7 @@ describe("LivestreamPool", () => {
       pushMedia(at(sockets, 0));
       await settle();
       clock.advance(10000);
-      await clock.tick();
+      await settle();
       await settle();
 
       assert.equal(stalls.length, 1);
@@ -1572,7 +1563,7 @@ describe("LivestreamPool", () => {
 
       using exhaustedSubscription = subscribeToChannel(channels.livestreamRecoveryExhausted, (payload) => void exhausted.push(payload));
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const policy: RecoveryPolicy = (context) => (context.attempts >= 2) ? { kind: "giveUp" } : { awaitMs: 1000, kind: "reconnect" };
       const { pool } = makePool({ clock, recoveryPolicy: policy });
       const sub = pool.subscribe(SPEC);
@@ -1852,7 +1843,7 @@ describe("LivestreamPool", () => {
 
     test("steady media under the threshold never trips; a media gap at the default 10s threshold fires one recovery", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC);
 
@@ -1867,11 +1858,12 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "media");
       assert.equal(sub.state, "live");
 
-      // Steady media keeps refreshing `#lastMediaAt`, so the watchdog never trips: advance a little under the threshold, push media to refresh, pulse, and stay live.
+      // Steady media keeps refreshing `#lastMediaAt`, so the watchdog never trips: advance a little under the threshold, push media to refresh, let the loops wake, and
+      // stay live.
       clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS - PROTECT_LIVESTREAM_STALL_POLL_MS);
       pushMedia(at(sockets, 0));
       await settle();
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "live");
       assert.equal(sockets.length, 1);
@@ -1882,7 +1874,49 @@ describe("LivestreamPool", () => {
       clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
       at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
       await settle();
-      await pulse(clock);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("the watchdog wakes at its period and not before", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "live");
+
+      // The watchdog arms at the first media, and its wakes are the earliest deadlines on the timeline: the session heartbeat comes due a full heartbeat window out.
+      assert.equal(clock.nextDeadline, PROTECT_LIVESTREAM_STALL_POLL_MS, "the first wake comes due one poll period after the watchdog arms");
+
+      // Media just short of the first wake leaves it reading a millisecond of silence, and the loop parks for one more period from the moment it woke.
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS - 1);
+      pushMedia(at(sockets, 0));
+      clock.advance(1);
+      await settle();
+
+      assert.equal(sub.state, "live");
+      assert.equal(clock.nextDeadline, 2 * PROTECT_LIVESTREAM_STALL_POLL_MS, "the second wake comes due one poll period after the first");
+
+      // The second wake reads a second of silence. The silence reaches the 2s threshold a millisecond short of the third wake, yet nothing reads it until that wake, so
+      // detection lands inside the [threshold, threshold + poll period) window rather than at the threshold itself.
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS);
+      await settle();
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS - 1);
+      await settle();
+
+      assert.equal(sub.state, "live", "no wake comes between the deadlines");
+      assert.equal(sockets.length, 1);
+
+      clock.advance(1);
+      await settle();
 
       assert.equal(sub.state, "recovering");
       assert.equal(sockets.length, 2);
@@ -1892,7 +1926,7 @@ describe("LivestreamPool", () => {
 
     test("a tighter declared urgency detects the stall at that value, well before the 10s heartbeat", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
 
       // A 2s urgency is the consumer-declared detection deadline; it is below the 10s session heartbeat, so the media watchdog must catch the stall first.
@@ -1909,7 +1943,7 @@ describe("LivestreamPool", () => {
 
       // Go silent for exactly the declared 2s. The heartbeat (10s, keyed on any byte) is nowhere near tripping, so only the media watchdog can fire here.
       clock.advance(2000);
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "recovering");
       assert.equal(sockets.length, 2);
@@ -1919,7 +1953,7 @@ describe("LivestreamPool", () => {
 
     test("a pathologically tiny declared urgency is clamped up to the floor", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
 
       // A near-zero urgency would, unclamped, trip on ordinary inter-segment jitter. The floor clamp keeps the effective threshold at PROTECT_LIVESTREAM_STALL_FLOOR_MS.
@@ -1933,16 +1967,24 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "init");
       assert.equal((await nextSegment(iterator)).type, "media");
 
-      // Just under the floor: the watchdog must NOT fire even though the declared urgency (1 ms) was crossed long ago - the clamp governs.
+      /* The watchdog reads the silence only when it wakes, once per poll period from the first media, so each advance below ends on that grid. Media 1 ms into a period
+       * is read at the wake that ends the next advance as 1 ms under the floor: the watchdog must NOT fire even though the declared urgency (1 ms) was crossed long ago -
+       * the clamp governs.
+       */
+      clock.advance(1);
+      pushMedia(at(sockets, 0));
+      await settle();
       clock.advance(PROTECT_LIVESTREAM_STALL_FLOOR_MS - 1);
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "live");
       assert.equal(sockets.length, 1);
 
-      // Cross the floor: now it fires.
-      clock.advance(1);
-      await pulse(clock);
+      // Media on the grid is read at the wake that ends the next advance as exactly the floor: now it fires.
+      pushMedia(at(sockets, 0));
+      await settle();
+      clock.advance(PROTECT_LIVESTREAM_STALL_FLOOR_MS);
+      await settle();
 
       assert.equal(sub.state, "recovering");
       assert.equal(sockets.length, 2);
@@ -1952,10 +1994,10 @@ describe("LivestreamPool", () => {
 
     test("a subscriber declaring Infinity opts out; a stream where every subscriber opts out is never media-watched", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
 
-      // Every subscriber opts out of media-stall detection: the MIN is Infinity, so the per-tick `>= Infinity` comparison never fires and only the byte backstop watches.
+      // Every subscriber opts out of media-stall detection: the MIN is Infinity, so the per-pass `>= Infinity` comparison never fires and only the byte backstop watches.
       const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
 
       await settle();
@@ -1977,7 +2019,7 @@ describe("LivestreamPool", () => {
         // eslint-disable-next-line no-await-in-loop
         await settle();
         // eslint-disable-next-line no-await-in-loop
-        await pulse(clock);
+        await settle();
       }
 
       assert.equal(sub.state, "live");
@@ -1988,7 +2030,7 @@ describe("LivestreamPool", () => {
 
     test("the MIN across subscribers governs: a live-view opt-out and a 2s HKSV share a session detected at 2s", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
 
       // A live-view subscriber opts out (Infinity); an HKSV subscriber declares 2s on the same shared session. The MIN (2s) governs the shared media watchdog.
@@ -2003,7 +2045,7 @@ describe("LivestreamPool", () => {
 
       // The shared stream goes silent for the HKSV deadline; the MIN pulls detection to 2s even though one subscriber opted out.
       clock.advance(2000);
-      await pulse(clock);
+      await settle();
 
       assert.equal(optOut.state, "recovering");
       assert.equal(hksv.state, "recovering");
@@ -2013,13 +2055,13 @@ describe("LivestreamPool", () => {
       await hksv[Symbol.asyncDispose]();
     });
 
-    test("the threshold is re-read live each tick: a tighten mid-live is honored on the next tick", async () => {
+    test("the threshold is re-read live on each wake: a tighten mid-live is honored on the next wake", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let toleranceMs = PROTECT_LIVESTREAM_STALL_DEFAULT_MS;
       const { pool, sockets } = makePool({ clock });
 
-      // The urgency closure is pulled fresh each tick, so mutating it mid-live re-tightens detection with no explicit re-arm.
+      // The urgency closure is pulled fresh on each wake, so mutating it mid-live re-tightens detection with no explicit re-arm.
       const sub = pool.subscribe(SPEC, { urgency: () => toleranceMs });
 
       await settle();
@@ -2034,15 +2076,15 @@ describe("LivestreamPool", () => {
       clock.advance(3000);
       pushMedia(at(sockets, 0));
       await settle();
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "live");
 
       toleranceMs = 2000;
 
-      // A 2s silence now trips because the tick re-reads the tightened threshold - no re-subscribe, no re-arm.
+      // A 2s silence now trips because the wake re-reads the tightened threshold - no re-subscribe, no re-arm.
       clock.advance(2000);
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "recovering");
       assert.equal(sockets.length, 2);
@@ -2052,7 +2094,7 @@ describe("LivestreamPool", () => {
 
     test("the watchdog is keyed on media, not any segment: non-media frames do not refresh its clock", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
 
@@ -2064,15 +2106,21 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "init");
       assert.equal((await nextSegment(iterator)).type, "media");
 
-      // Drive a non-media frame mid-silence. A mid-session re-init reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock), and it is fanned out as an
-      // init rather than as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the last picture.
-      clock.advance(1500);
+      /* Drive a non-media frame mid-silence. A mid-session re-init reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock), and it is fanned out as an
+       * init rather than as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the last picture. The
+       * watchdog wakes once per poll period from the first media, so the advances step along that grid: the first wake reads a second of silence, and the re-init
+       * lands between wakes.
+       */
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS);
+      await settle();
+      clock.advance(500);
       at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
       await settle();
 
-      // Cross the 2s media threshold relative to the LAST MEDIA (not the re-init). The watchdog fires because the non-media frame did not reset its media clock.
+      // The next wake, at 2s, crosses the media threshold relative to the LAST MEDIA (not the re-init). The watchdog fires because the non-media frame did not reset its
+      // media clock.
       clock.advance(500);
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "recovering");
       assert.equal(sockets.length, 2);
@@ -2082,7 +2130,7 @@ describe("LivestreamPool", () => {
 
     test("the watchdog is armed only at first media, never during establishing", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       // A long reconnect window keeps the recovery loop's own timer from elapsing while we test that NO media watchdog is armed during establishing - so any close or
       // reconnect here could only come from a (non-existent) media watchdog, not the establishing window's natural elapse.
@@ -2093,13 +2141,13 @@ describe("LivestreamPool", () => {
       await settle();
 
       // Drive the init ONLY (no media). The episode is still establishing, no media has flowed, so the watchdog is NOT armed. Advancing well past the 2s media threshold
-      // (but under the 100000 establishing window) and pulsing must not fire a media watchdog - there is none to arm during establishing.
+      // (but under the 100000 establishing window) must not fire a media watchdog - there is none to arm during establishing.
       await establishInit(at(sockets, 0), { codec: "avc1.640028" });
 
       assert.equal(sub.state, "connecting");
 
       clock.advance(5000);
-      await pulse(clock, 4);
+      await settle();
 
       // Still connecting on the same single socket, which nothing asked to close: no media watchdog fired (it never armed), and the heartbeat is keyed on the init we
       // just sent so it did not trip.
@@ -2115,7 +2163,7 @@ describe("LivestreamPool", () => {
 
       // From here the armed watchdog detects a stall at 2s.
       clock.advance(2000);
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "recovering");
 
@@ -2124,7 +2172,7 @@ describe("LivestreamPool", () => {
 
     test("the watchdog disarms on reconnect and re-arms on the reconnect's first media", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const { pool, sockets } = makePool({ clock });
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
 
@@ -2142,10 +2190,10 @@ describe("LivestreamPool", () => {
 
       assert.equal(sub.state, "recovering");
 
-      // Past the 2s detection threshold but inside the 3s recovery window this urgency yields, pulsing leaves the reconnect's socket open: no watchdog survived the
-      // reconnect to close it.
+      // Past the 2s detection threshold but inside the 3s recovery window this urgency yields, the advance leaves the reconnect's socket open: no watchdog survived
+      // the reconnect to close it.
       clock.advance(2500);
-      await pulse(clock, 4);
+      await settle();
 
       assert.equal(sockets.length, 2);
       assert.equal(at(sockets, 1).closeRequested, false);
@@ -2156,7 +2204,7 @@ describe("LivestreamPool", () => {
       assert.equal(sub.state, "live");
 
       clock.advance(2000);
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "recovering");
       assert.equal(sockets.length, 3);
@@ -2166,7 +2214,7 @@ describe("LivestreamPool", () => {
 
     test("a multi-attempt establishment disarms before any arm as a safe no-op", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
 
       // A policy that always reconnects lets a failed first establishment attempt reinstall - exercising `#installSession`'s disarm before any media ever armed it.
       const { pool, sockets } = makePool({ clock, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
@@ -2186,16 +2234,16 @@ describe("LivestreamPool", () => {
       assert.equal(sub.state, "live");
 
       clock.advance(2000);
-      await pulse(clock);
+      await settle();
 
       assert.equal(sub.state, "recovering");
 
       await sub[Symbol.asyncDispose]();
     });
 
-    test("an interval tick already scheduled after teardown does not fire on the dead session", async () => {
+    test("a watchdog pass already due at teardown does not fire on the dead session", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const log = capturingLog();
       const { pool, sockets } = makePool({ clock, log });
       const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
@@ -2205,17 +2253,21 @@ describe("LivestreamPool", () => {
 
       assert.equal(sub.state, "live");
 
-      // Advance past the threshold so a tick WOULD fire, then dispose the pool, which tears the stream down and aborts the watchdog controller. Pool disposal closes the
-      // subscription without detaching it, so its 2s urgency still sets a finite threshold a straggler tick could act on.
+      // Advance past the threshold so a wake WOULD fire, then dispose the pool, which tears the stream down and aborts the watchdog controller. Pool disposal closes the
+      // subscription without detaching it, so its 2s urgency still sets a finite threshold a straggler pass could act on.
       clock.advance(5000);
       await pool[Symbol.asyncDispose]();
 
       assert.equal(sub.state, "closed");
 
-      // The torn-down session must not act on a tick: the abort already ended the loop, and the `#torndown` guard would no-op a straggler, so with the teardown's own
-      // lines cleared, the pulses log nothing.
+      // The pass the advance released runs inside the disposal, so whether it acted on the dead session is read before the teardown's own lines are cleared: a pass
+      // that slipped past the guard would have logged the silence it found.
+      assert.equal(log.entries.some((entry) => entry.message.includes("media went silent")), false, "the pass due at teardown must not act on the dead session");
+
+      // The torn-down session must not act on a wake: the abort already ended the loop, and the `#torndown` guard would no-op a straggler, so with the teardown's own
+      // lines cleared, the yield logs nothing.
       log.reset();
-      await pulse(clock, 4);
+      await settle();
 
       assert.deepEqual(log.entries, []);
 
@@ -2224,7 +2276,7 @@ describe("LivestreamPool", () => {
 
     test("recovery-await is unchanged: an undeclared-urgency stream still reports Infinity tolerance, the 10s detection default does not leak", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       const contexts: RecoveryContext[] = [];
       const policy: RecoveryPolicy = (context) => {
 
@@ -2256,7 +2308,7 @@ describe("LivestreamPool", () => {
 
     test("a tighter joiner re-decides a parked recovery window", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let recoveringCalls = 0;
       const policy: RecoveryPolicy = (context) => {
 
@@ -2297,7 +2349,7 @@ describe("LivestreamPool", () => {
 
     test("a join or reassess during the establishing init-to-media gap does not tear down the connecting session", async () => {
 
-      const clock = fakeClock();
+      const clock = new TestClock();
       let consults = 0;
       const policy: RecoveryPolicy = (context) => {
 
