@@ -9,11 +9,13 @@ import type { LivestreamInit } from "./protocol/init-segment.ts";
  * question a caller universally needs answered - should I retry, or should I propagate?
  *
  * - {@link RecoverableError} means the operation could plausibly succeed if retried or deferred (a throttle window, a timeout, a transient network blip, a caller
- *   abort, a livestream stall). The caller decides the retry policy; the library does not retry user operations on the caller's behalf.
+ *   abort, a livestream stall). The caller decides the retry policy, and the owned HTTP pool's transparent retries of a transient answer or connection fault are the
+ *   layer beneath that policy rather than a part of it.
  * - {@link FatalError} means retrying the same call will fail the same way (bad credentials, insufficient privileges, a 4xx/5xx the controller will keep returning,
- *   a protocol violation, a structural bootstrap failure), except that a {@link ProtectRequestError} carrying a status the transport retries is one the transport has
- *   already retried unless the answer carried a `Retry-After` hint, and one carrying a 429 or any such hint is the controller asking to be asked later, the hint among
- *   the error's headers, so a caller on a reconnect schedule retries such a request again later. The caller should surface or propagate it.
+ *   a protocol violation, a structural bootstrap failure), except that a {@link ProtectRequestError} carrying a status in the transport's retried set or a 429 is
+ *   the controller's readiness answer or its rate limit rather than a verdict on the request: a status in the retried set is the answer a controller gives while
+ *   restarting, starting a service or shedding load, and a 429 is the controller asking to be asked later, its `Retry-After` among the error's headers when it sent
+ *   one, so a caller on a reconnect schedule retries such a request again later. The caller should surface or propagate it.
  *
  * Consumers branch on the abstract base for policy (`if(err instanceof RecoverableError) { defer(); }`) and on the concrete class for specific handling
  * (`if(err instanceof ProtectThrottledError) { waitFor(err.cooldownMs); }`). This is the Node idiom - a class hierarchy with `instanceof` - chosen deliberately over
@@ -37,8 +39,9 @@ export abstract class ProtectError extends Error {
 }
 
 /**
- * Abstract base for failures the caller may retry or defer. The library never retries the caller's operation itself - it classifies the failure as recoverable and
- * returns control so the caller can apply its own backoff, escalation, or alternative-path policy.
+ * Abstract base for failures the caller may retry or defer. The library classifies the failure as recoverable and returns control so the caller can apply its own
+ * backoff, escalation, or alternative-path policy, and the owned HTTP pool's transparent retries of a transient answer or connection fault are the layer beneath
+ * that policy rather than a part of it.
  *
  * @category Errors
  */
@@ -46,6 +49,8 @@ export abstract class RecoverableError extends ProtectError {}
 
 /**
  * Abstract base for failures the caller should propagate. Retrying the identical call will reproduce the identical failure, so the correct response is to surface it.
+ * The exception is a {@link ProtectRequestError} carrying a status in the transport's retried set or a 429, which is the controller's readiness answer or its rate
+ * limit rather than a verdict on the call, and which a later retry can clear.
  *
  * @category Errors
  */
@@ -303,11 +308,11 @@ export function assertNever(value: never): never {
 }
 
 /**
- * A connect option the library cannot act on, refused by `connect()` before any request is sent: a controller address no URL can carry, such as an IPv6 literal with
- * a zone (`fe80::1%en0`), a value carrying a userinfo before its last `@`, which a host never does, or one carrying a path, a query or a fragment. An empty marker
- * before the `@` (`@nvr.local`, `:@nvr.local`) names no account and folds away rather than being refused. Each refusal that names the address quotes it as
- * configured, masked by {@link maskAddressCredentials}, so a userinfo written into the address is never printed. Fatal because the same configuration is refused
- * the same way on every attempt, so the caller corrects it rather than retrying.
+ * A connect option the library cannot act on, refused by `connect()` before any request is sent: a host that is missing or not a string, or a controller address no
+ * URL can carry, such as an IPv6 literal with a zone (`fe80::1%en0`), a value carrying a userinfo before its last `@`, which a host never does, or one carrying a
+ * path, a query or a fragment. An empty marker before the `@` (`@nvr.local`, `:@nvr.local`) names no account and folds away rather than being refused. Each refusal
+ * that names the address quotes it with its userinfo masked by {@link maskAddressCredentials}, so a userinfo written into the address is never
+ * printed. Fatal because the same configuration is refused the same way on every attempt, so the caller corrects it rather than retrying.
  *
  * @category Errors
  */
@@ -324,8 +329,8 @@ export class ProtectConfigurationError extends FatalError {
  * a non-2xx status, `"parse"` when the body cannot be decoded - so the caller and the diagnostics surface can report the precise point of failure rather than a
  * generic "connect failed." A login or reachability failure is not wrapped here: a transport-level failure reaching the endpoint propagates as its own typed error
  * (`ProtectNetworkError`, `ProtectTimeoutError`, `ProtectThrottledError`, `ProtectAbortedError`), and a login failure as `ProtectAuthError` when the controller
- * rejected the sign-in or as `ProtectRequestError` when it answered with a status that is no verdict on the credentials (a readiness answer the transport already
- * retried, or returned at once because it carried a `Retry-After` hint, a rate limit, a 3xx, or a 5xx outside the retried set).
+ * rejected the sign-in or as `ProtectRequestError` when it answered with a status that is no verdict on the credentials (a readiness answer in the transport's
+ * retried set, a rate limit, a 3xx, or a 5xx outside the retried set).
  *
  * @category Errors
  */

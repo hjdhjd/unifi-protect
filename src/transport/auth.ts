@@ -146,8 +146,7 @@ export class AuthSession {
    *
    * @throws {@link ProtectAuthError} if the handshake does not yield a cookie and CSRF token.
    * @throws {@link ProtectRequestError} if the controller root answers with a readiness status or a rate limit, before any login is sent, or the login is answered
-   *   with a status that is no verdict on the credentials, such as a readiness answer the transport already retried, or returned at once because it carried a
-   *   Retry-After hint, which a reconnecting caller retries again later.
+   *   with a status that is no verdict on the credentials, such as a readiness answer or a rate limit, which a reconnecting caller retries again later.
    */
   async login(credentials: ProtectCredentials, opts: { signal?: AbortSignal } = {}): Promise<void> {
 
@@ -288,12 +287,11 @@ export class AuthSession {
    * relying on the transport's getAuthHeaders hook being wired back to this same session. The fetched token is the handshake's own until the login succeeds: the
    * session writes only the token the login's answer carries.
    *
-   * A false return is a rejected sign-in, which login() reports as bad credentials and which a reconnecting consumer counts against its budget, so only an answer that
-   * judges the credentials earns it: a 4xx that is neither a readiness answer nor a rate limit. A readiness answer, which the transport already retried unless it
-   * carried a Retry-After hint, a rate limit, a 3xx, or any other 5xx says nothing about the credentials, so each throws the error the transport classifies it as,
-   * and a controller answering mid-reboot or shedding sign-ins is never reported as a wrong password. The controller root's answer is read by the same rule ahead of
-   * the login: a readiness answer or a rate limit there throws before any password is sent, because a controller not ready to serve its root is not ready to judge a
-   * sign-in.
+   * A false return reads as a rejected sign-in, which login() reports as bad credentials and which a reconnecting consumer counts against its budget, so among the
+   * login's non-2xx answers only one that judges the credentials earns it: a 4xx that is neither a readiness answer nor a rate limit. A readiness answer, a rate
+   * limit, a 3xx, or any other 5xx says nothing about the credentials, so each throws the error the transport classifies it as, and a controller answering mid-reboot
+   * or shedding sign-ins is never reported as a wrong password. The controller root's answer is read by the same rule ahead of the login: a readiness answer or a rate
+   * limit there throws before any password is sent, because a controller not ready to serve its root is not ready to judge a sign-in.
    *
    * Every request the handshake sends carries the marks the caller hands it: its signal, and the probe's mark for a relogin a recovery probe triggered, which lets
    * that relogin through an open breaker as the probe was let through. The login carries the mark of its own because the root's answer need not close the breaker:

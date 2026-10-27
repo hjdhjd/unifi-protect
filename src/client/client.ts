@@ -303,8 +303,8 @@ export class ProtectClient implements AsyncDisposable {
     try {
 
       // Stage 1: authenticate. A credential failure throws the fatal `ProtectAuthError`; a readiness answer or a rate limit at the controller root, read before the
-      // login, or a login answered with a status that is no verdict on the credentials (a readiness answer the transport already retried, or returned at once because
-      // it carried a Retry-After hint, among them) the fatal `ProtectRequestError`; and an unreachable controller the recoverable `ProtectNetworkError` - each already
+      // login, or a login answered with a status that is no verdict on the credentials (a readiness answer or a rate limit among them) the fatal
+      // `ProtectRequestError`; and an unreachable controller the recoverable `ProtectNetworkError` - each already
       // typed, propagated as-is rather than wrapped, so the caller sees the precise cause.
       await auth.login({ host: authority, password: opts.password, username: opts.username }, (opts.signal !== undefined) ? { signal: opts.signal } : {});
 
