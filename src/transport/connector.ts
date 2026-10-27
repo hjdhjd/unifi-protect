@@ -14,6 +14,16 @@ import type { Socket } from "node:net";
  */
 type DialingConnector = (options: buildConnector.Options, callback: buildConnector.Callback) => Socket;
 
+/* Whether an error an established socket raised is the socket's own: a system error carrying a numeric `errno`, the platform's report of a network fault such as a
+ * peer's reset, or a TLS-layer error, whose `code` opens `ERR_SSL_` and which carries no errno. Anything else an established socket raises is an error something
+ * destroyed it with: undici's own, which it raises for a bare FIN and a clean close as well as for its timeouts and teardowns, its parser's, or a caller's. A filter
+ * on undici's class alone would keep the parser's error and the caller's, so the test names what to keep rather than what to drop.
+ */
+function isSocketOwnError(error: Error): boolean {
+
+  return (("errno" in error) && (typeof error.errno === "number")) || (("code" in error) && (typeof error.code === "string") && error.code.startsWith("ERR_SSL_"));
+}
+
 /**
  * Construction options for {@link createOwnedConnector}.
  *
@@ -33,6 +43,16 @@ export interface OwnedConnectorOptions {
  * A connector that holds every socket it vends, and the operation that lets go of them.
  *
  * - `connect` is the connector to hand undici - a `Pool`'s or an `Agent`'s `connect` option.
+ * - `lastConnectionFailure` is the first network or TLS error any established socket raised since the connector's most recent successful connect: `undefined`
+ *   before any connect, and `undefined` again after each one that succeeds. It records only an error the socket itself raised: a system error carrying a numeric
+ *   `errno`, such as a peer's reset, or a TLS-layer error whose `code` opens `ERR_SSL_`, such as a corrupt record after the handshake. An error the transport
+ *   destroys the socket with is left out, as is one a caller destroys it with that carries neither mark, and undici destroys an HTTP socket with an error of its
+ *   own when the peer ends it with a bare FIN or a `Connection: close`, so a bare FIN, a clean close and `release()` record nothing. The first such error stands,
+ *   because the errors a socket raises after it are its consequences, and it is held as the socket raised it, so its `errno` and its `cause` chain are intact. One
+ *   slot serves every socket the connector holds, so on a pool a second socket's error is dropped while the first is held, and any successful connect clears the
+ *   slot. Its readers are the sockets: an open WebSocket the peer resets delivers the same empty `TypeError` as one the peer hangs up on without a close frame,
+ *   while the socket underneath raised `ECONNRESET` before the WebSocket reported anything, so a socket that wants to name what went wrong reads `lastDialFailure`,
+ *   then this, ahead of the event.
  * - `lastDialFailure` is the error the most recent dial vended: `undefined` before any dial, and `undefined` again after one that succeeded, so it describes the
  *   most recent dial and nothing older. Its readers are the sockets, whose WebSocket implementation discards the dial's error before the socket's own error event
  *   is built - which leaves this the one place the failure is still readable.
@@ -44,6 +64,7 @@ export interface OwnedConnectorOptions {
 export interface OwnedConnector {
 
   readonly connect: buildConnector.connector;
+  readonly lastConnectionFailure: Error | undefined;
   readonly lastDialFailure: Error | undefined;
   release(): void;
 }
@@ -112,6 +133,7 @@ export function createOwnedConnector(options: OwnedConnectorOptions): OwnedConne
   const established = new Set<Socket>();
   const dial = buildConnector({ allowH2: options.allowH2, keepAlive: true, rejectUnauthorized: options.verifyTls }) as unknown as DialingConnector;
 
+  let lastConnectionFailure: Error | undefined;
   let lastDialFailure: Error | undefined;
 
   return {
@@ -134,16 +156,30 @@ export function createOwnedConnector(options: OwnedConnectorOptions): OwnedConne
          */
         lastDialFailure = error ?? undefined;
 
+        /* A successful connect clears the connection record, and from here the socket's own errors set it. The listener goes on in this callback, ahead of every
+         * listener undici adds once the callback hands it the socket, so the record is in place before a request rejects or a WebSocket event fires. It records on
+         * `error` rather than reading the socket's error at `close`, because a TLS error after the handshake leaves the socket open, so no `close` follows it.
+         */
         if(error === null) {
 
+          lastConnectionFailure = undefined;
           established.add(vendedSocket);
           vendedSocket.once("close", () => established.delete(vendedSocket));
+          vendedSocket.on("error", (socketError: Error) => {
+
+            lastConnectionFailure ??= isSocketOwnError(socketError) ? socketError : undefined;
+          });
         }
 
         callback(...vended);
       });
 
       dialing.add(socket);
+    },
+
+    get lastConnectionFailure(): Error | undefined {
+
+      return lastConnectionFailure;
     },
 
     get lastDialFailure(): Error | undefined {

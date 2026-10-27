@@ -8,8 +8,7 @@
 import * as errorModule from "./errors.ts";
 import { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectCodecChangeError,
   ProtectConfigurationError, ProtectError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError,
-  ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, causeChain, isExpectedWsDisconnect,
-  resolveErrnoCause } from "./errors.ts";
+  ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, causeChain, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import { DOORBELL_INIT } from "./protocol/init-segment.fixtures.ts";
 import assert from "node:assert/strict";
@@ -253,6 +252,46 @@ describe("causeChain", () => {
   });
 });
 
+describe("isSignInRefusal", () => {
+
+  test("recognizes the transport's classification of a refused identity and of a refused privilege", () => {
+
+    assert.equal(isSignInRefusal(new ProtectAuthError("auth", { statusCode: 401 })), true, "a refused identity is a refused sign-in");
+    assert.equal(isSignInRefusal(new ProtectAuthorizationError("authz", { statusCode: 403 })), true, "and so is a refused privilege");
+  });
+
+  test("reads a bootstrap error by the cause it carries", () => {
+
+    // A refused bootstrap read arrives wrapped at the fetch stage, so this is the shape a refused recovery re-bootstrap arrives in.
+    const identity = new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.",
+      { cause: new ProtectAuthError("auth", { statusCode: 401 }), stage: "fetch" });
+    const privilege = new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.",
+      { cause: new ProtectAuthorizationError("authz", { statusCode: 403 }), stage: "fetch" });
+    const unparsed = new ProtectBootstrapError("Unable to parse the UniFi Protect controller bootstrap.", { cause: new Error("unexpected token"), stage: "parse" });
+
+    assert.equal(isSignInRefusal(identity), true, "a wrapped identity refusal is read through its wrapper");
+    assert.equal(isSignInRefusal(privilege), true, "and so is a wrapped privilege refusal");
+    assert.equal(isSignInRefusal(unparsed), false, "while a bootstrap error whose cause is no refusal is not one");
+  });
+
+  test("opens a bootstrap error alone, and only the one handed in", () => {
+
+    const refusal = new ProtectAuthError("auth", { statusCode: 401 });
+    const nested = new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.",
+      { cause: new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.", { cause: refusal, stage: "fetch" }), stage: "fetch" });
+
+    assert.equal(isSignInRefusal(new ProtectNetworkError("net", { cause: refusal })), false, "a wrapper of any other class is read as itself");
+    assert.equal(isSignInRefusal(nested), false, "and a refusal below a second bootstrap error is past the one wrapper opened");
+  });
+
+  test("does not recognize a value that is not one of the refusal classes", () => {
+
+    assert.equal(isSignInRefusal(new ProtectRequestError("server", { statusCode: 500 })), false, "a status that is no verdict on the credentials is no refusal");
+    assert.equal(isSignInRefusal(new Error("refused")), false, "a plain error is not a refusal whatever its message says");
+    assert.equal(isSignInRefusal(null), false);
+  });
+});
+
 describe("resolveErrnoCause", () => {
 
   test("resolves a Node ErrnoException wrapped on the cause chain (undici shape)", () => {
@@ -281,25 +320,6 @@ describe("resolveErrnoCause", () => {
     assert.equal(resolveErrnoCause("a string"), undefined);
     assert.equal(resolveErrnoCause(undefined), undefined);
     assert.equal(resolveErrnoCause(new Error("plain")), undefined);
-  });
-});
-
-describe("isExpectedWsDisconnect", () => {
-
-  test("treats a TypeError as an expected disconnect", () => {
-
-    assert.equal(isExpectedWsDisconnect(new TypeError("socket closed mid-frame")), true);
-  });
-
-  test("treats an ETIMEDOUT errno as an expected disconnect", () => {
-
-    assert.equal(isExpectedWsDisconnect(Object.assign(new Error("x"), { code: "ETIMEDOUT" })), true);
-  });
-
-  test("does not suppress an ordinary error", () => {
-
-    assert.equal(isExpectedWsDisconnect(new Error("a real failure")), false);
-    assert.equal(isExpectedWsDisconnect("a string"), false);
   });
 });
 

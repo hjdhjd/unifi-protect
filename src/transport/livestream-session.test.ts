@@ -4,21 +4,32 @@
  * and teardown. Driven through an injected fake WebSocket, a fake resolver, and a `TestClock`, so the session is exercised deterministically without a live controller.
  */
 import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
+import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
 import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
 import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
-import { assertNoUnhandledRejections, silentLog } from "../testing.helpers.ts";
+import { assertNoUnhandledRejections, capturingLog, silentLog } from "../testing.helpers.ts";
 import { buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { describe, test } from "node:test";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
 import { PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT } from "../settings.ts";
 import type { ProtectError } from "../errors.ts";
+import type { ProtectLogging } from "../logging.ts";
 import assert from "node:assert/strict";
+import { constants } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import tls from "node:tls";
+
+// The sentence the session logs a fault of its open socket under, and the lines a log holds carrying it, at whatever level each was logged.
+const REPORTED = "The UniFi Protect livestream API reported an error.";
+
+function reportedLines(log: CapturingLogger): CapturedLogEntry[] {
+
+  return log.entries.filter((entry) => entry.message === REPORTED);
+}
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
@@ -27,7 +38,7 @@ const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
 // negotiation, so we synchronize on the factory being invoked rather than emitting `open` synchronously the way the events-stream harness can. `webSocket` makes the
 // fake for a row that needs one built its own way; that fake must not open itself, since this helper opens it. The URL the session handed its socket factory is
 // returned beside the socket.
-async function openSession(options: { clock?: TestClock; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+async function openSession(options: { clock?: TestClock; log?: ProtectLogging; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   spec?: Partial<LivestreamSpec>; webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: TestClock; session: LivestreamSession; url: string; ws: FakeWebSocket }> {
 
   const clock = options.clock ?? new TestClock();
@@ -35,7 +46,7 @@ async function openSession(options: { clock?: TestClock; resolveUrl?: (params: U
   const session = new LivestreamSession({
 
     clock,
-    log: silentLog(),
+    log: options.log ?? silentLog(),
     resolveUrl: options.resolveUrl ?? fixedUrl,
     spec: { cameraId: "cam1", ...options.spec },
     webSocket: (url: string): FakeWebSocket => {
@@ -438,10 +449,11 @@ describe("LivestreamSession", () => {
 
   describe("watchdog", () => {
 
-    test("a silent channel beyond the heartbeat window emits a ProtectStallError and closes", async () => {
+    test("a silent channel beyond the heartbeat window emits a ProtectStallError, logs one warning and closes", async () => {
 
       const clock = new TestClock();
-      const { session, ws } = await openSession({ clock });
+      const log = capturingLog();
+      const { session, ws } = await openSession({ clock, log });
       const errors = collectErrors(session);
       let closeInfo: { cause?: ProtectError; code: number; reason: string } | undefined;
 
@@ -458,6 +470,11 @@ describe("LivestreamSession", () => {
 
       // The stall the error rail carried is the same object the closure records as its cause.
       assert.ok(Object.is(closeInfo?.cause, errors[0]));
+
+      // The pool's recovery heals a stall, so its one line is a warning, and the teardown detached the socket's error listener, so no socket line joins it.
+      assert.deepEqual(log.entries.filter((entry) => entry.message.includes("went silent beyond the heartbeat window")).map(({ level }) => level), ["warn"],
+        "the stall logs one warning");
+      assert.deepEqual(reportedLines(log), [], "and no socket line beside it");
     });
 
     test("the watchdog does not trip while frames are flowing", async () => {
@@ -733,6 +750,99 @@ describe("LivestreamSession", () => {
       assert.ok(error instanceof ProtectTimeoutError);
       assert.equal(error.message, "The UniFi Protect livestream API connection timed out.");
       assert.equal(error.elapsedMs, elapsedMs, "the elapsed time is the injected clock's own measure from the start of the attempt");
+    });
+
+    /* The ways an open socket's connection ends, each over the owned connector, because undici's WebSocket reports every one of them as the same empty `TypeError`
+     * and only the connector's record of the established connection tells them apart. The session opens into `handshaking` here, since the peer sends no init.
+     */
+    test("a peer's reset of an open session logs one warning naming ECONNRESET and puts that reset on the rail", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const log = capturingLog();
+      const session = new LivestreamSession({ log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      const failing = session.once("error");
+
+      (await peer.connection(0)).reset();
+
+      const [failure] = await failing;
+      const [line] = reportedLines(log);
+
+      assert.ok(failure instanceof ProtectNetworkError, "a reset is a reachability failure");
+      assert.equal(failure.code, "ECONNRESET", "carrying the reset its own socket raised rather than the event's empty error");
+      assert.deepEqual(reportedLines(log).map(({ level }) => level), ["warn"], "a reset heals itself, so its one line is a warning");
+      assert.ok(Object.is((present(line, "the socket's line").args[0] as { error: unknown }).error, failure.cause), "and the line names the fault the rail carries");
+    });
+
+    test("a peer's hang-up on an open session without a close frame logs no line", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const log = capturingLog();
+      const session = new LivestreamSession({ log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      const failing = session.once("error");
+
+      (await peer.connection(0)).end();
+
+      const [failure] = await failing;
+
+      // A hang-up is how an open connection ordinarily ends: the socket raised nothing of its own, so the event's empty error is the whole account.
+      assert.ok(failure instanceof ProtectNetworkError);
+      assert.equal(failure.code, undefined, "a hang-up carries no code");
+      assert.deepEqual(reportedLines(log), [], "and logs no line, while the pool still hears it on the rail");
+    });
+
+    test("an ETIMEDOUT the open session's socket raises logs one warning", async (t) => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+
+      const dials: TLSSocket[] = [];
+      const dial = tls.connect;
+      const log = capturingLog();
+
+      // The platform's dial is wrapped for this test alone, as the events stream's own row wraps it, so the platform's own timeout can be raised on the vended socket.
+      t.mock.method(tls, "connect", (options: ConnectionOptions): TLSSocket => {
+
+        const socket = dial(options);
+
+        dials.push(socket);
+
+        return socket;
+      });
+
+      const session = new LivestreamSession({ log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      const failing = session.once("error");
+
+      present(dials[0], "the socket the owned connector vended").destroy(Object.assign(new Error("read ETIMEDOUT"),
+        { code: "ETIMEDOUT", errno: -constants.errno.ETIMEDOUT, syscall: "read" }));
+
+      const [failure] = await failing;
+
+      assert.ok(failure instanceof ProtectNetworkError, "a peer that stopped answering is out of reach");
+      assert.equal(failure.code, "ETIMEDOUT");
+      assert.deepEqual(reportedLines(log).map(({ level }) => level), ["warn"], "an unreachable peer heals itself, so its one line is a warning");
+    });
+
+    test("a peer that resets the upgrade before the session opens puts ECONNRESET on the rail with no line", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer({ resetUpgrade: true });
+      const log = capturingLog();
+      const session = new LivestreamSession({ log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const [failure] = await session.once("error");
+
+      // The dial succeeded, so the connector holds no dial failure, and the reset of the established connection is the record the one cause reads.
+      assert.ok(failure instanceof ProtectNetworkError);
+      assert.equal(failure.message, "The UniFi Protect livestream API connection failed.");
+      assert.equal(failure.code, "ECONNRESET", "the rail failure carries the reset the socket raised during the upgrade");
+      assert.ok(Object.is(session.closeCause, failure), "and so does the closure's cause");
+      assert.deepEqual(reportedLines(log), [], "a socket that never opened logs no line");
     });
   });
 

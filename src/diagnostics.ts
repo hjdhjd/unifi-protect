@@ -275,8 +275,8 @@ export interface EventsPacketPayload {
 }
 
 /**
- * Payload published on {@link channels.eventsReconnecting}. `reason` is the message of the fault that dropped the events channel, or a generic description when no
- * fault was recorded.
+ * Payload published on {@link channels.eventsReconnecting}. `reason` is the fault that dropped the events channel, rendered with its cause chain as
+ * `formatErrorChain` renders it, or a generic description when no fault was recorded.
  *
  * @category Diagnostics
  */

@@ -2,23 +2,40 @@
  *
  * tls-peer.helpers.ts: Loopback peers the transport suites drive real sockets against - an HTTPS responder for the request path, a hand-rolled WebSocket upgrader
  * for the socket paths, an HTTPS peer that takes requests and answers none, a TLS peer that offers HTTP/2 ahead of HTTP/1.1 and answers nothing, a silent peer that
- * holds a dial in its handshake, and a peer that resets every connection it accepts - with the real-time bounds a settlement and a release are read against.
+ * holds a dial in its handshake, a peer that resets every connection it accepts, a plain peer whose answers a test scripts at the socket level, and a TLS peer
+ * behind a proxy whose client-facing connections a test writes raw bytes to - with the client-side captures the connector suites read a connection through, and
+ * the real-time bounds a settlement and a release are read against.
  */
+import type { AddressInfo, Server, Socket } from "node:net";
+import type { Dispatcher, buildConnector } from "undici";
 import type { Http2ServerRequest, ServerHttp2Session } from "node:http2";
-import type { Server, Socket } from "node:net";
+import { connect as connectTcp, createServer as createTcpServer } from "node:net";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
 import type { IncomingMessage } from "node:http";
 import type { TLSSocket } from "node:tls";
 import { createHash } from "node:crypto";
 import { createServer as createHttpsServer } from "node:https";
 import { createSecureServer } from "node:http2";
-import { createServer as createTcpServer } from "node:net";
 import { createServer as createTlsServer } from "node:tls";
 import { setTimeout as delay } from "node:timers/promises";
+import { request } from "undici";
 
 // The fixed value RFC 6455 defines for the handshake digest, and the blank line that ends an HTTP header block.
 const WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const HEADER_TERMINATOR = "\r\n\r\n";
+
+/**
+ * The answers a test hands the scripted peer to write: one that keeps its connection open for the next request, and one that asks the client to close it. The TLS
+ * peer behind the proxy writes the first to every request it reads.
+ */
+export const KEEP_ALIVE_RESPONSE = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: keep-alive\r\n\r\nok";
+export const CLOSING_RESPONSE = "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok";
+
+/**
+ * A TLS record no session can decrypt: an application-data header announcing sixteen bytes, then sixteen zero bytes. Written to the client past the peer's TLS layer
+ * once the handshake is over, through the proxied peer's `write`, it makes the client's own TLS layer raise the error.
+ */
+export const CORRUPT_TLS_RECORD = Buffer.concat([ Buffer.from([ 0x17, 0x03, 0x03, 0x00, 0x10 ]), Buffer.alloc(16) ]);
 
 /* The real-time bound, in milliseconds, within which a cancelled or expired request settles and within which a reset or a teardown releases a connection, before a
  * test calls it a failure. It sits more than an order of magnitude above what either costs and an order of magnitude below undici's own ten-second connect timer -
@@ -70,12 +87,16 @@ export async function pendingThroughRedialWait(...promises: Promise<unknown>[]):
 }
 
 /**
- * One connection the peer accepted, as a test observes it. `closed` is armed at accept rather than on demand, because a client that refuses the certificate severs
- * within milliseconds and a listener attached after the fact would miss the very event it exists to observe.
+ * One connection the peer accepted, as a test observes it and acts on it. `closed` is armed at accept rather than on demand, because a client that refuses the
+ * certificate severs within milliseconds and a listener attached after the fact would miss the very event it exists to observe. `end` sends the client a bare FIN and
+ * `reset` a TCP RST, each on the accepted TCP socket beneath any TLS above it and each a way a peer drops a connection: a hang-up the client's socket raises no
+ * error for, and a reset it raises `ECONNRESET` for.
  */
 export interface LoopbackConnection {
 
   readonly closed: Promise<void>;
+  end(): void;
+  reset(): void;
 }
 
 /**
@@ -93,6 +114,16 @@ export interface LoopbackPeer extends AsyncDisposable {
   readonly host: string;
   close(): Promise<void>;
   connection(index: number): Promise<LoopbackConnection>;
+}
+
+/**
+ * A listening loopback peer that is a TLS peer behind a TCP proxy. Beside every {@link LoopbackPeer} member, whose connections are the proxy's client-facing ones,
+ * `write` sends raw bytes to the client on each of those connections, past the TLS peer's own layer, which is how a test hands the client's TLS layer a record no
+ * session can decrypt.
+ */
+export interface LoopbackTlsProxyPeer extends LoopbackPeer {
+
+  write(bytes: Buffer): void;
 }
 
 /**
@@ -167,6 +198,17 @@ export interface LoopbackHttpsPeerOptions extends LoopbackPeerOptions {
 export interface LoopbackHungHttpsPeerOptions extends LoopbackPeerOptions {
 
   offerH2?: boolean;
+}
+
+/**
+ * Options for {@link createLoopbackWebSocketPeer}, beside every {@link LoopbackPeerOptions} member.
+ *
+ * - `resetUpgrade` makes the peer reset the connection once the upgrade request has arrived, rather than answer it, which is how a peer drops a connection after the
+ *   TLS handshake and before the WebSocket opens. It defaults to `false`.
+ */
+export interface LoopbackWebSocketPeerOptions extends LoopbackPeerOptions {
+
+  resetUpgrade?: boolean;
 }
 
 // The answer a peer gives when a test scripts none: a 200 and a small JSON body, all a test asking whether a request completes needs.
@@ -347,6 +389,107 @@ export async function createLoopbackResettingPeer({ ipv6 = false }: LoopbackPeer
 }
 
 /**
+ * Build a loopback peer, over plain TCP, that reads each HTTP request's head and hands its connection to `onRequest`, which answers it, resets it or leaves it be.
+ *
+ * Writing the answer at the socket level is what lets a test choose what a response asks of the connection, to stay open for the next request or to close, and act
+ * on the connection at a moment of its own choosing through the accepted connection's `end` and `reset`, which an HTTP server's own keep-alive handling would decide
+ * for it. A client reaches it as an `http:` origin.
+ *
+ * @param onRequest - What the peer does with a connection once a request's head has arrived on it.
+ * @param options   - The peer's options; see {@link LoopbackPeerOptions}.
+ *
+ * @returns The listening peer.
+ */
+export async function createLoopbackScriptedPeer(onRequest: (socket: Socket) => void, { ipv6 = false }: LoopbackPeerOptions = {}): Promise<LoopbackPeer> {
+
+  return startPeer(createTcpServer((socket) => {
+
+    let head = "";
+
+    socket.on("data", (chunk: Buffer) => {
+
+      head += chunk.toString("latin1");
+
+      if(head.includes(HEADER_TERMINATOR)) {
+
+        head = "";
+        onRequest(socket);
+      }
+    });
+  }), { ipv6 });
+}
+
+/**
+ * Build a loopback TLS peer that answers a keep-alive `200` to whatever it is sent, presenting the throwaway self-signed identity, reached through a TCP proxy that
+ * pipes each client connection to it.
+ *
+ * The proxy is what puts the client's own TLS layer within a test's reach: the peer's connections are the proxy's client-facing ones, so `write` and each accepted
+ * connection's `reset` act on the client's socket without passing the peer's TLS layer, which would otherwise encrypt the bytes and answer for the reset. Every leg
+ * swallows its errors, because the client's alert over a corrupt record and a reset leg reach the peer as errors, and what a test reads is the client's side.
+ *
+ * @param options - The peer's options; see {@link LoopbackPeerOptions}.
+ *
+ * @returns The listening peer. Dispose it to end every leg and stop listening.
+ */
+export async function createLoopbackTlsProxyPeer({ ipv6 = false }: LoopbackPeerOptions = {}): Promise<LoopbackTlsProxyPeer> {
+
+  const upstream = createTlsServer(identity, (socket) => {
+
+    socket.on("error", () => undefined);
+    socket.on("data", () => socket.write(KEEP_ALIVE_RESPONSE));
+  });
+
+  const peer = await startPeer(upstream, { ipv6 });
+  const upstreamPort = (upstream.address() as AddressInfo).port;
+  const clients = new Set<Socket>();
+  const legs = new Set<Socket>();
+
+  const proxy = await startPeer(createTcpServer((client) => {
+
+    const leg = connectTcp(upstreamPort, ipv6 ? "::1" : "127.0.0.1");
+
+    clients.add(client);
+    legs.add(leg);
+    client.once("close", () => clients.delete(client));
+    leg.once("close", () => legs.delete(leg));
+    leg.on("error", () => undefined);
+    client.pipe(leg);
+    leg.pipe(client);
+  }), { ipv6 });
+
+  // A leg to the peer outlives the client connection it served unless it is ended here, so the legs go first, then the proxy, then the peer.
+  const close = async (): Promise<void> => {
+
+    for(const leg of legs) {
+
+      leg.destroy();
+    }
+
+    await proxy.close();
+    await peer.close();
+  };
+
+  return {
+
+    get accepted(): number {
+
+      return proxy.accepted;
+    },
+    close,
+    connection: async (index: number): Promise<LoopbackConnection> => proxy.connection(index),
+    host: proxy.host,
+    write: (bytes: Buffer): void => {
+
+      for(const client of clients) {
+
+        client.write(bytes);
+      }
+    },
+    [Symbol.asyncDispose]: close
+  };
+}
+
+/**
  * Build a loopback TLS peer that speaks just enough of the WebSocket protocol for a session to connect to it: it completes the RFC 6455 upgrade by hand and then holds
  * the connection, sending no frames of its own.
  *
@@ -355,14 +498,32 @@ export async function createLoopbackResettingPeer({ ipv6 = false }: LoopbackPeer
  * handshake completes at all - which the client's `open` event answers on its own - and whether a teardown ends the connection, which a peer that never answers the
  * close frame leaves to the client alone. The frame protocol above the socket is the injected-fake suites' subject, not this peer's.
  *
- * @param options - The peer's options; see {@link LoopbackPeerOptions}.
+ * A peer built with `resetUpgrade` answers no upgrade: it resets each connection once the request has arrived, so the client's TLS handshake completes and its
+ * WebSocket never opens, the one stage at which a dropped connection is neither a failed dial nor the loss of an open socket.
+ *
+ * @param options - The peer's options; see {@link LoopbackWebSocketPeerOptions}.
  *
  * @returns The listening peer.
  */
-export async function createLoopbackWebSocketPeer({ ipv6 = false }: LoopbackPeerOptions = {}): Promise<LoopbackTlsPeer> {
+export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade = false }: LoopbackWebSocketPeerOptions = {}): Promise<LoopbackTlsPeer> {
 
   // The peer offers only http/1.1 over ALPN because the WebSocket upgrade it answers by hand is an HTTP/1.1 exchange.
   const server = createTlsServer({ ALPNProtocols: ["http/1.1"], ...identity });
+
+  // The TCP socket beneath each TLS connection, by the client's port, which is how a peer that resets the upgrade reaches past its own TLS layer: a reset is a TCP
+  // act, and the TLS socket above it has no way to send one.
+  const accepted = new Map<number | undefined, Socket>();
+
+  if(resetUpgrade) {
+
+    server.on("connection", (socket: Socket) => {
+
+      const port = socket.remotePort;
+
+      accepted.set(port, socket);
+      socket.once("close", () => accepted.delete(port));
+    });
+  }
 
   server.on("secureConnection", (socket) => {
 
@@ -389,6 +550,13 @@ export async function createLoopbackWebSocketPeer({ ipv6 = false }: LoopbackPeer
         return;
       }
 
+      if(resetUpgrade) {
+
+        accepted.get(socket.remotePort)?.resetAndDestroy();
+
+        return;
+      }
+
       const key = (/^sec-websocket-key: *(\S+)/im).exec(buffered.subarray(0, boundary).toString("latin1"))?.[1] ?? "";
 
       upgraded = true;
@@ -397,6 +565,47 @@ export async function createLoopbackWebSocketPeer({ ipv6 = false }: LoopbackPeer
   });
 
   return startPeer(server, { ipv6 });
+}
+
+/**
+ * A connector that dials through `connector` and keeps each socket a successful dial vends, so a test can read or act on the established socket itself. It wraps
+ * the callback rather than the connector, so the connector's own listeners are on the socket before the test's copy of it is kept.
+ *
+ * @param connector - The connector to dial through, the library's own or homebridge-plugin-utils'.
+ * @param vended    - Where each vended socket is kept, in dial order.
+ *
+ * @returns The connector to hand an `Agent`.
+ */
+export function keepingVended(connector: { readonly connect: buildConnector.connector }, vended: Socket[]): buildConnector.connector {
+
+  return (options, callback): void => connector.connect(options, (...args) => {
+
+    const [ error, socket ] = args;
+
+    if(error === null) {
+
+      vended.push(socket);
+    }
+
+    callback(...args);
+  });
+}
+
+/**
+ * Issue one request through `dispatcher` and drain its body, so the connection returns to the pool rather than staying checked out.
+ *
+ * @param dispatcher - The dispatcher to send through.
+ * @param origin     - The origin to send to.
+ *
+ * @returns The status the peer answered with.
+ */
+export async function fetchStatus(dispatcher: Dispatcher, origin: string): Promise<number> {
+
+  const response = await request(origin + "/", { dispatcher });
+
+  await response.body.text();
+
+  return response.statusCode;
 }
 
 // The handshake's proof that the peer speaks the protocol: the client's key concatenated with the RFC's fixed value, hashed and encoded. A client that does not see its
@@ -492,7 +701,18 @@ async function startPeer(server: Server, { ipv6 }: Required<LoopbackPeerOptions>
     // A client severing its end is what these tests arrange, so the reset it raises here is expected rather than a fault.
     socket.on("error", () => undefined);
 
-    connections.record({ closed: closed.promise.then(() => undefined) });
+    connections.record({
+
+      closed: closed.promise.then(() => undefined),
+      end: (): void => {
+
+        socket.end();
+      },
+      reset: (): void => {
+
+        socket.resetAndDestroy();
+      }
+    });
   });
 
   server.listen(0, ipv6 ? "::1" : "127.0.0.1", () => listening.resolve(undefined));

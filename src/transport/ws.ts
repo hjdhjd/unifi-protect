@@ -1,10 +1,13 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * ws.ts: The minimal WebSocket surface every WebSocket-owning transport shares, the message-to-Buffer normalizer every receive-direction transport decodes through,
- * and the one rule every socket classifies its failures by.
+ * and the one rule every socket classifies and logs its failures by.
  */
 import { ProtectCertificateError, ProtectNetworkError, ProtectTimeoutError, assertNever } from "../errors.ts";
+import type { ProtectLogging } from "../logging.ts";
+import type { TransportFailure } from "./failure.ts";
 import { classifyTransportError } from "./failure.ts";
+import { connectionFaultLevel } from "./connection-fault.ts";
 
 /**
  * The minimal *receive-direction* WebSocket surface the library's read-only transports (the events stream and each livestream session) consume - deliberately a small
@@ -120,31 +123,19 @@ export function toBuffer(data: unknown): Buffer | null {
   return null;
 }
 
-/**
- * Classify a socket's failure into the typed error the socket reports, by the rule the request path reads: the transport failure classifier answers the kind, a
- * certificate refusal reports as {@link ProtectCertificateError} naming the address dialed, a connection attempt that timed out as {@link ProtectTimeoutError},
- * and every other failure as the socket's own {@link ProtectNetworkError}. Every socket goes through this one function, so a failure reads as the same class
- * whichever socket met it, and only the sentences differ.
+/* Build the typed error a socket reports from its classified failure, by the rule the request path reads: a certificate refusal reports as
+ * ProtectCertificateError naming the address dialed, a connection attempt that timed out as ProtectTimeoutError, and every other failure as the socket's own
+ * ProtectNetworkError. Every socket goes through this one function, so a failure reads as the same class whichever socket met it, and only the sentences differ.
  *
- * The cause is what the socket read: its connector's record of the dial when the dial failed, because undici's WebSocket reports a content-free `TypeError` for
- * every failed opening handshake, and the socket's own error event otherwise. A network error lifts its public `code` from that cause as `ProtectNetworkError`
- * always has.
- *
- * @param cause            - The raw failure the socket read.
- * @param options          - What the socket reports the failure with.
- * @param options.elapsed  - Milliseconds since the socket's connection attempt began, read on its clock, which a timeout carries.
- * @param options.failed   - The socket's sentence for a failure that is neither a certificate refusal nor a timeout.
- * @param options.host     - The address the socket dialed, its URL's host and port, which a certificate refusal names.
- * @param options.timedOut - The socket's sentence for a connection attempt that timed out.
- *
- * @returns The typed error the socket reports.
- *
- * @category Transport
+ * The cause the classification carries is what the socket read: its connector's record of the dial when the dial failed, because undici's WebSocket reports a
+ * content-free `TypeError` for every failed opening handshake, then its connector's record of the first network or TLS error its established socket raised, because
+ * an open WebSocket reports the same content-free `TypeError` for a peer's reset as for a hang-up, and the socket's own error event otherwise. A network error lifts
+ * its public `code` from that cause as `ProtectNetworkError` always has.
  */
-export function classifySocketFailure(cause: unknown, { elapsed, failed, host, timedOut }: { elapsed: number; failed: string; host: string; timedOut: string }):
+function classifySocketFailure(failure: TransportFailure, { elapsed, failed, host, timedOut }: { elapsed: number; failed: string; host: string; timedOut: string }):
   ProtectNetworkError | ProtectTimeoutError {
 
-  const failure = classifyTransportError(cause);
+  const { cause } = failure;
 
   switch(failure.kind) {
 
@@ -164,6 +155,7 @@ export function classifySocketFailure(cause: unknown, { elapsed, failed, host, t
     case "reset":
     case "retries-exhausted":
     case "transport":
+    case "unreachable":
 
       return new ProtectNetworkError(failed, { cause });
 
@@ -172,4 +164,58 @@ export function classifySocketFailure(cause: unknown, { elapsed, failed, host, t
       // Exhaustiveness guard. A new kind joining the union without a case above stops `failure` being `never` here, and this fails to compile.
       return assertNever(failure);
   }
+}
+
+/**
+ * Report a socket's failure: classify its cause once, log the socket's line when the socket had opened, and return the typed error the socket reports, so the line
+ * and the typed error name the same fault and no socket carries a level rule of its own.
+ *
+ * The line belongs to a socket whose `open` event has fired, because a failure before then reaches its caller through the socket's handshake answer, and a line as
+ * well would log one failure twice. It logs at the level the family's connection-fault table answers for an open connection: a peer's reset or a network that
+ * stopped answering is a warning, a certificate verdict is an error, and a hang-up with no close frame or a timeout is how an open connection ordinarily ends, so
+ * it logs nothing. The cause itself is the line's structured context, and the typed error is never levelled or muted.
+ *
+ * @param cause            - The raw failure the socket read: its connector's record of the dial, then its connector's record of the established connection, then
+ *                           the error event's own error.
+ * @param options          - What the socket reports the failure with.
+ * @param options.elapsed  - Milliseconds since the socket's connection attempt began, read on its clock, which a timeout carries.
+ * @param options.failed   - The socket's sentence for a failure that is neither a certificate refusal nor a timeout.
+ * @param options.host     - The address the socket dialed, its URL's host and port, which a certificate refusal names.
+ * @param options.log      - The socket's logger.
+ * @param options.open     - Whether the socket's `open` event had fired, which is what lets the line log at all.
+ * @param options.reported - The socket's sentence for the line.
+ * @param options.timedOut - The socket's sentence for a connection attempt that timed out.
+ *
+ * @returns The typed error the socket reports.
+ *
+ * @category Transport
+ */
+export function reportSocketFailure(cause: unknown, { elapsed, failed, host, log, open, reported, timedOut }: { elapsed: number; failed: string; host: string;
+  log: ProtectLogging; open: boolean; reported: string; timedOut: string; }): ProtectNetworkError | ProtectTimeoutError {
+
+  const failure = classifyTransportError(cause);
+
+  if(open) {
+
+    switch(connectionFaultLevel(failure, { open })) {
+
+      case "error":
+
+        log.error(reported, { error: cause });
+
+        break;
+
+      case "warning":
+
+        log.warn(reported, { error: cause });
+
+        break;
+
+      case "quiet":
+
+        break;
+    }
+  }
+
+  return classifySocketFailure(failure, { elapsed, failed, host, timedOut });
 }

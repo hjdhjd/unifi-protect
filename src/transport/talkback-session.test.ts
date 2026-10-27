@@ -4,12 +4,13 @@
  * failure, backpressure ceiling, ffmpeg-style Readable, and which exits wait on the source's cleanup), the FSM, teardown, and the diagnostics channels. Driven
  * through an injected fake WebSocket and a fake resolver, so the write-only channel is exercised deterministically without a live controller.
  */
+import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
 import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectRequestError, ProtectTimeoutError } from "../errors.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
-import { assertNoUnhandledRejections, silentLog } from "../testing.helpers.ts";
+import { assertNoUnhandledRejections, capturingLog, expectAt, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { FakeWritableWebSocket } from "./talkback-session.helpers.ts";
@@ -17,7 +18,22 @@ import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
 import { Readable } from "node:stream";
 import { TalkbackSession } from "./talkback-session.ts";
 import assert from "node:assert/strict";
+import { constants } from "node:os";
 import tls from "node:tls";
+
+// The sentence the session logs a fault of its live socket under, and the lines a log holds carrying it, at whatever level each was logged.
+const REPORTED = "The UniFi Protect talkback API reported an error.";
+
+function reportedLines(log: CapturingLogger): CapturedLogEntry[] {
+
+  return log.entries.filter((entry) => entry.message === REPORTED);
+}
+
+// One chunk of audio, for a send whose only purpose is to read the failure a closed session stored.
+async function *oneChunk(): AsyncGenerator<Uint8Array> {
+
+  yield Buffer.from("a");
+}
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
@@ -528,6 +544,96 @@ describe("TalkbackSession", () => {
 
         return true;
       });
+    });
+
+    /* The ways a live socket's connection ends, each over the owned connector, because undici's WebSocket reports every one of them as the same empty `TypeError`
+     * and only the connector's record of the established connection tells them apart. The stored failure is read through a send made once the session closed.
+     */
+    test("a peer's reset of a live session logs one warning naming ECONNRESET and stores that reset", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const log = capturingLog();
+      const session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      (await peer.connection(0)).reset();
+
+      await expectAt(() => session.state === "closed", { message: "expected the reset to close the session" });
+
+      const [line] = reportedLines(log);
+
+      await assert.rejects(session.send(oneChunk()), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError, "a reset is a reachability failure");
+        assert.equal(error.code, "ECONNRESET", "the stored failure carries the reset its own socket raised rather than the event's empty error");
+        assert.ok(Object.is((present(line, "the socket's line").args[0] as { error: unknown }).error, error.cause), "and the line names the fault it stored");
+
+        return true;
+      });
+
+      assert.deepEqual(reportedLines(log).map(({ level }) => level), ["warn"], "a reset heals itself, so its one line is a warning");
+    });
+
+    test("a peer's hang-up on a live session without a close frame logs no line", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const log = capturingLog();
+      const session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      (await peer.connection(0)).end();
+
+      await expectAt(() => session.state === "closed", { message: "expected the hang-up to close the session" });
+
+      // A hang-up is how an open connection ordinarily ends: the socket raised nothing of its own, so the event's empty error is the whole account.
+      await assert.rejects(session.send(oneChunk()), { code: undefined, constructor: ProtectNetworkError });
+      assert.deepEqual(reportedLines(log), [], "a hang-up logs no line");
+    });
+
+    test("an ETIMEDOUT the live session's socket raises logs one warning", async (t) => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+
+      const dials: TLSSocket[] = [];
+      const dial = tls.connect;
+      const log = capturingLog();
+
+      // The platform's dial is wrapped for this test alone, as the events stream's own row wraps it, so the platform's own timeout can be raised on the vended socket.
+      t.mock.method(tls, "connect", (options: ConnectionOptions): TLSSocket => {
+
+        const socket = dial(options);
+
+        dials.push(socket);
+
+        return socket;
+      });
+
+      const session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      present(dials[0], "the socket the owned connector vended").destroy(Object.assign(new Error("read ETIMEDOUT"),
+        { code: "ETIMEDOUT", errno: -constants.errno.ETIMEDOUT, syscall: "read" }));
+
+      await expectAt(() => session.state === "closed", { message: "expected the timeout to close the session" });
+      await assert.rejects(session.send(oneChunk()), { code: "ETIMEDOUT", constructor: ProtectNetworkError });
+
+      assert.deepEqual(reportedLines(log).map(({ level }) => level), ["warn"], "an unreachable peer heals itself, so its one line is a warning");
+    });
+
+    test("a peer that resets the upgrade before the session opens rejects connect carrying ECONNRESET, with no line", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer({ resetUpgrade: true });
+      const log = capturingLog();
+
+      // The dial succeeded, so the connector holds no dial failure, and the reset of the established connection is the record the one cause reads.
+      await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" }),
+        (error: unknown) => {
+
+          assert.ok(error instanceof ProtectNetworkError);
+          assert.equal(error.message, "The UniFi Protect talkback API connection failed.");
+          assert.equal(error.code, "ECONNRESET", "the rejection carries the reset the socket raised during the upgrade");
+
+          return true;
+        });
+
+      assert.deepEqual(reportedLines(log), [], "a socket that never opened logs no line");
     });
   });
 

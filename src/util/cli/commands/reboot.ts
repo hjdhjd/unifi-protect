@@ -5,8 +5,8 @@
 import { COMMON_OPTIONS, CliError } from "../shared.ts";
 import type { CommandContext, CommandHandler, CommandSpec } from "../shared.ts";
 import { DEVICE_CATEGORIES, devicesInCategory, findDeviceIfAny, isDeviceCategory } from "../lookup.ts";
+import { ProtectAbortedError, formatErrorChain } from "../../../index.ts";
 import type { DeviceCategory } from "../lookup.ts";
-import { ProtectAbortedError } from "../../../index.ts";
 import type { ProtectClient } from "../../../index.ts";
 import { parseArgs } from "node:util";
 
@@ -85,7 +85,7 @@ async function rebootCategory(ctx: CommandContext, client: ProtectClient, catego
 
       failures += 1;
 
-      ctx.output.line("  " + device.name + " (" + device.id + ") - failed: " + ((error instanceof Error) ? error.message : String(error)));
+      ctx.output.line("  " + device.name + " (" + device.id + ") - failed: " + formatErrorChain(error));
     }
   }
 

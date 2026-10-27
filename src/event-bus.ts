@@ -3,6 +3,7 @@
  * event-bus.ts: A typed, three-rail event facade composing node:events.EventEmitter.
  */
 import { EventEmitter, once as nextEmission, on as subscribeIterator } from "node:events";
+import type { ProtectLogging } from "./logging.ts";
 
 /**
  * Options accepted by the event-bus `stream` rail. Carries the abort signal that terminates the iteration; further keys are reserved for a future backpressure policy.
@@ -34,11 +35,16 @@ const EVENT_NAME_PREFIX = "ufp:event:";
  *    host class. Consumers see only the three rails.
  * 3. It aligns subscriptions with the library's `await using` resource-lifetime discipline: a subscription is a resource, and a `Disposable` subscription completes
  *    that alignment.
- * 4. It preserves Node's battle-tested emit machinery - listener-during-emit reentrancy, sync-throw handling, listener self-removal - which has years of
- *    production bug-fixing behind it, without inheriting the surface bloat.
+ * 4. It preserves Node's battle-tested emit machinery - listener-during-emit reentrancy, listener self-removal - which has years of production bug-fixing behind it,
+ *    without inheriting the surface bloat.
  *
  * The same internal emitter drives all three rails, so a single {@link emit} notifies every active {@link on} callback, resolves every pending {@link once} promise,
  * and pushes to every open {@link stream} iterator. That is the single-source-of-truth guarantee: there is exactly one fan-out path per event.
+ *
+ * A listener's throw never leaves {@link emit}. Every host emits from inside its own control flow - a frame being decoded, a recovery loop deciding its next step - so
+ * a consumer's handler that threw out of `emit` would end that work at whatever point the emit sat. The wrapper {@link on} registers runs the handler inside a `try`
+ * and logs a throw at error level through the logger the bus was built with, the host's own, and the listeners after it still run. The {@link once} and
+ * {@link stream} rails need no such guard, because their consumers run on a later microtask, outside the emit.
  *
  * `EventMap` keys are the event names; each value is the tuple of arguments that event carries (e.g., `{ throttleEntered: []; packet: [event: TypedEvent] }`).
  *
@@ -53,8 +59,15 @@ export class EventBus<EventMap extends Record<keyof EventMap, readonly unknown[]
 
   // The composed emitter. Private so the inherited EventEmitter surface never escapes; the only way in or out is through the facade's subscription rails plus emit.
   readonly #emitter = new EventEmitter();
+  readonly #log: ProtectLogging;
 
-  constructor() {
+  /**
+   * @param log - The host subsystem's logger, which records a listener's throw. Required rather than defaulted, so a throw is recorded wherever the host records
+   *              everything else.
+   */
+  constructor(log: ProtectLogging) {
+
+    this.#log = log;
 
     // EventEmitter warns once a single event accumulates more than ten listeners, a heuristic meant to catch leaks. Our facade legitimately fans one event out to
     // many subscribers (every observer, every pending once, every open stream registers an underlying listener), and leak prevention is handled structurally by the
@@ -69,15 +82,30 @@ export class EventBus<EventMap extends Record<keyof EventMap, readonly unknown[]
    * call `sub[Symbol.dispose]()` explicitly. Disposing twice is safe - the second `off` is a no-op.
    *
    * @param event   - The event name to listen for.
-   * @param handler - Invoked with the event's argument tuple on every emission until the returned handle is disposed.
+   * @param handler - Invoked with the event's argument tuple on every emission until the returned handle is disposed. A throw from it is logged at error level and
+   *                  reaches neither the emitter nor the listeners after it.
    *
    * @returns A `Disposable` that removes this listener when disposed.
    */
   on<K extends keyof EventMap & string>(event: K, handler: (...args: EventMap[K]) => void): Disposable {
 
-    // We register a forwarding wrapper rather than the handler itself so the `args` boundary cast lives in one place and `off` has a stable reference to remove. The
-    // emitter is untyped, so the cast from `unknown[]` to the event's argument tuple is the single unavoidable boundary cast - everything above it is fully typed.
-    const listener = (...args: unknown[]): void => handler(...(args as unknown as EventMap[K]));
+    /* We register a forwarding wrapper rather than the handler itself so the `args` boundary cast lives in one place and `off` has a stable reference to remove. The
+     * emitter is untyped, so the cast from `unknown[]` to the event's argument tuple is the single unavoidable boundary cast - everything above it is fully typed.
+     *
+     * The wrapper is also the one place a callback listener runs, so it is where a throw is contained: logged once per throw, after which the wrapper returns
+     * normally and Node moves on to the next listener. A logger that itself throws is the one thing that still escapes, which is why a logger is expected to return.
+     */
+    const listener = (...args: unknown[]): void => {
+
+      try {
+
+        handler(...(args as unknown as EventMap[K]));
+      } catch(error) {
+
+        this.#log.error("An event listener threw; the remaining listeners still run.", { error, event });
+      }
+    };
+
     const name = EVENT_NAME_PREFIX + event;
 
     this.#emitter.on(name, listener);

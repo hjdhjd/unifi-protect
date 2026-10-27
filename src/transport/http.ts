@@ -305,7 +305,7 @@ export class ProtectResponse {
  */
 export class Transport implements AsyncDisposable {
 
-  readonly #bus = new EventBus<TransportEvents>();
+  readonly #bus: EventBus<TransportEvents>;
   readonly #clock: Clock;
   readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #host: string;
@@ -330,6 +330,7 @@ export class Transport implements AsyncDisposable {
     this.#getAuthHeaders = options.getAuthHeaders;
     this.#host = options.host;
     this.#log = options.log ?? noopLog;
+    this.#bus = new EventBus<TransportEvents>(this.#log);
     this.#onUnauthorized = options.onUnauthorized;
 
     // The origin and the certificate posture are settled before the pool is built, because #buildPool reads them. reset() rebuilds the pool from these same fields,
@@ -655,11 +656,12 @@ export class Transport implements AsyncDisposable {
       return;
     }
 
+    // The trip logs at warning, because the breaker heals itself: its cooldown elapses and the next probe closes it once the controller answers.
     if(this.#consecutiveFailures >= PROTECT_API_ERROR_LIMIT) {
 
       this.#throttledSince = this.#clock.now();
 
-      this.#log.error("Throttling requests to the UniFi Protect controller after repeated failures.",
+      this.#log.warn("Throttling requests to the UniFi Protect controller after repeated failures.",
         { consecutiveFailures: this.#consecutiveFailures, cooldownMs: COOLDOWN_MS, errorLimit: PROTECT_API_ERROR_LIMIT });
 
       this.#bus.emit("throttleEntered");
@@ -748,6 +750,7 @@ export class Transport implements AsyncDisposable {
       case "refused":
       case "reset":
       case "transport":
+      case "unreachable":
 
         return new ProtectNetworkError("A network error occurred communicating with the UniFi Protect controller.", { cause: error });
 

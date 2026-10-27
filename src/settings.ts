@@ -55,11 +55,27 @@ export const PROTECT_RECOVERY_BACKOFF_KNOWN_MS = [ 300000, 120000 ];
 export const PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS = [ 0, 5000, 15000, 30000 ];
 
 /**
- * Connection-recovery steady-state floor, in milliseconds. Both backoff tracks walk out to this interval and then probe at it indefinitely until the controller returns
- * or the monitor is disposed. This is the single "recover without slamming a down controller" guarantee: no matter how an episode began, sustained re-probing settles to
- * this cadence. It sits well below the bootstrap-refresh and throttle windows so recovery is prompt, yet coarse enough not to hammer a rebooting controller.
+ * Connection-recovery steady-state floor, in milliseconds. Each network backoff track walks out to this interval and then probes at it indefinitely until the
+ * controller returns or the monitor is disposed. This is the single "recover without slamming a down controller" guarantee: no matter how an unreachable episode
+ * began, sustained re-probing settles to this cadence, while a refused sign-in settles onto the slower floor of its own schedule. It sits well below the
+ * bootstrap-refresh and throttle windows so recovery is prompt, yet coarse enough not to hammer a rebooting controller.
  */
 export const PROTECT_RECOVERY_STEADY_INTERVAL_MS = 60000;
+
+/**
+ * The published refused-sign-in schedule, in milliseconds: the delays before each successive attempt to recover a connection the controller refused on identity or
+ * privilege grounds, followed by the steady interval recovery settles onto and polls at for as long as the refusal lasts. A refusal is a fact about the credentials
+ * rather than the network - the controller answered, and asking it again moments later cannot change its answer - so probing at the network tracks' pace buys
+ * nothing. It would also cost something they never risk: UniFi OS locks an account after repeated failed sign-ins, so a wrong password retried at that pace could
+ * lock the owner out of the controller's own interface, and this cadence stays under that threshold. It is not slower still, because a credential or permission
+ * corrected on the controller is picked up within one interval of the correction. A consumer's own connect retry waits by this same schedule, which is why it is
+ * published rather than held inside the recovery loop.
+ */
+export const PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS = {
+
+  backoff: [ 30000, 60000, 120000, 240000 ],
+  steady: 300000
+} as const;
 
 /**
  * Known-reboot anticipation window, in milliseconds. When client.reboot() succeeds, it arms the ConnectionMonitor to treat the next fault as a known reboot (the long

@@ -5,7 +5,7 @@
 import type { Camera, ProtectClient } from "../../../index.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import { DEVICE_CATEGORIES, devicesInCategory } from "../lookup.ts";
-import { channels, subscribeToChannel } from "../../../index.ts";
+import { channels, formatErrorChain, subscribeToChannel } from "../../../index.ts";
 import { COMMON_OPTIONS } from "../shared.ts";
 import type { Output } from "../output/format.ts";
 import { formatTracks } from "../output/format.ts";
@@ -166,7 +166,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
       results.push({ name, ...(await run()) });
     } catch(error) {
 
-      results.push({ detail: (error instanceof Error) ? error.message : String(error), name, status: "fail" });
+      results.push({ detail: formatErrorChain(error), name, status: "fail" });
     }
   };
 
@@ -202,7 +202,7 @@ const doctorHandler: CommandHandler = async (ctx) => {
       results.push({ detail: "connected to " + (client.controllerName ?? "the controller"), name: "Connect and authenticate", status: "pass" });
     } catch(error) {
 
-      results.push({ detail: (error instanceof Error) ? error.message : String(error), name: "Connect and authenticate", status: "fail" });
+      results.push({ detail: formatErrorChain(error), name: "Connect and authenticate", status: "fail" });
 
       const ok = (values.json === true) ? false : renderReport(ctx.output, results);
 

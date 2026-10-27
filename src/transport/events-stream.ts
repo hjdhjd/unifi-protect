@@ -21,17 +21,18 @@
  * condition and emits a typed signal, and the one coordinator responds. `EventStream` stamps `lastMessageAt` on every frame and runs a silence watchdog on the injected
  * `Clock`; a wake that finds the channel silent past {@link PROTECT_EVENTS_WATCHDOG_TIMEOUT} concludes it is dead-but-not-closed (the lossy-firmware case the whole
  * design exists for), emits `error({@link ProtectStallError})` - a `RecoverableError`, so the error type itself is the "recover" signal - and tears the socket down.
+ * A stall before the socket opens rejects {@link EventStream.opened} with that error instead, since there is no open stream yet for anyone to recover.
  * `EventStream` does not reconnect; that is `ConnectionMonitor`'s scope. The gap is covered by the bootstrap-refresh failsafe, which exists precisely for it.
  *
  * @module EventStream
  */
 import { Agent, WebSocket } from "undici";
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, isExpectedWsDisconnect } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
 import type { ProtectWebSocket, ProtectWebSocketErrorEvent } from "./ws.ts";
 import { classifyPacket, isKnownModelKey } from "../protocol/events.ts";
-import { classifySocketFailure, toBuffer } from "./ws.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
+import { reportSocketFailure, toBuffer } from "./ws.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { OwnedDispatcher } from "./connector.ts";
@@ -82,9 +83,9 @@ export interface EventStreamOptions {
  *   started, otherwise 1000 for a teardown we chose (an explicit close or a caller abort) and 1006 for one forced by a failure (a socket error or a watchdog stall).
  * - `error` carries a typed {@link ProtectError} - a decode failure, a socket error, a {@link ProtectStallError} from the silence watchdog, or a {@link
  *   ProtectNetworkError} when the peer closes a live socket unsolicited (a controller reboot drops the socket this way: a `close` event with no preceding socket
- *   `error`). Every termination of an open stream we did not initiate reaches this rail, as does a watchdog stall; a self-initiated close stays informational on
- *   `closed`, and a socket error, a peer close or a caller-signal abort before open surfaces on the {@link EventStream.opened} handshake rejection alone rather
- *   than here. The error *type* is what the `ConnectionMonitor` acts on.
+ *   `error`). Every termination of an open stream we did not initiate reaches this rail, as does a watchdog stall of an open stream; a self-initiated close stays
+ *   informational on `closed`, and a socket error, a watchdog stall, a peer close or a caller-signal abort before open surfaces on the {@link EventStream.opened}
+ *   handshake rejection alone rather than here. The error *type* is what the `ConnectionMonitor` acts on.
  *
  * @category Transport
  */
@@ -107,7 +108,7 @@ export class EventStream implements AsyncDisposable {
 
   // The address this stream dials, read from the URL the socket opens, which is what a certificate refusal reports the peer as.
   readonly #address: string;
-  readonly #bus = new EventBus<EventStreamEvents>();
+  readonly #bus: EventBus<EventStreamEvents>;
   readonly #clock: Clock;
   // When the connection attempt began, on the injected clock, which is what a connection attempt that times out measures its elapsed time from. It is a stamp of its
   // own rather than the watchdog's liveness stamp, which every frame moves.
@@ -139,8 +140,8 @@ export class EventStream implements AsyncDisposable {
   // route only the latter onto the error rail.
   #closeInitiated = false;
   // Set ONLY by the caller-abort teardown path, a narrowing of the broader #closeInitiated, so #onClose settles a still-pending open handshake as the typed
-  // ProtectAbortedError for a caller abort. A socket error before open has already settled the handshake with its own classified failure by then, and every other
-  // pre-open teardown (a peer close, the watchdog, an explicit close()) keeps the generic ProtectNetworkError.
+  // ProtectAbortedError for a caller abort. A socket error or a watchdog stall before open has already settled the handshake with its own typed failure by then, and
+  // every other pre-open teardown (a peer close, an explicit close()) keeps the generic ProtectNetworkError.
   #callerAborted = false;
   #lastMessageAt: number;
   // True once the socket has opened. Gates the unsolicited-close error so a pre-open connect failure flows through the opened-handshake rejection alone, not a recovery.
@@ -151,6 +152,7 @@ export class EventStream implements AsyncDisposable {
 
     this.#clock = options.clock ?? wallClock;
     this.#log = options.log ?? noopLog;
+    this.#bus = new EventBus<EventStreamEvents>(this.#log);
     this.#lastMessageAt = this.#clock.now();
 
     const url = "wss://" + options.host + "/proxy/protect/ws/updates?" + new URLSearchParams({ lastUpdateId: options.lastUpdateId }).toString();
@@ -158,10 +160,11 @@ export class EventStream implements AsyncDisposable {
     this.#address = URL.parse(url)?.host ?? url;
 
     /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its
-     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. `allowH2` reaches the connector and the
-     * agent alike, because the connector's copy decides the ALPN offer and the agent's how it handles the connection, and a WebSocket upgrade can use HTTP/2 in
-     * neither. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface we model, so it assigns directly - no cast, the interface is honest by
-     * construction. Building the socket is where the connection attempt begins, whichever branch builds it, so the attempt's start is stamped immediately ahead of it.
+     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. HTTP/2 is off and pipelining disabled
+     * because a WebSocket upgrade can use neither. `allowH2` reaches the connector and the agent alike, because the connector's copy decides the ALPN offer and the
+     * agent's how it handles the connection. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface we model, so it assigns directly - no cast,
+     * the interface is honest by construction. Building the socket is where the connection attempt begins, whichever branch builds it, so the attempt's start is
+     * stamped immediately ahead of it.
      */
     this.#connectStartedAt = this.#clock.now();
 
@@ -173,7 +176,7 @@ export class EventStream implements AsyncDisposable {
 
       const allowH2 = false;
       const connector = createOwnedConnector({ allowH2, verifyTls: options.verifyTls ?? false });
-      const agent = new Agent({ allowH2, connect: connector.connect });
+      const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
 
       this.#owned = { connector, dispatcher: agent };
       this.#ws = new WebSocket(url, { dispatcher: agent, headers: options.getAuthHeaders?.() ?? {} });
@@ -245,8 +248,9 @@ export class EventStream implements AsyncDisposable {
    * @returns A connected {@link EventStream}.
    *
    * @throws The failure that ended the connect: a socket error's classified failure ({@link ProtectNetworkError}, {@link ProtectCertificateError} when the
-   *   controller's certificate is refused, or {@link ProtectTimeoutError} when the connection attempt timed out), a generic {@link ProtectNetworkError} if the
-   *   socket closes before it opens, or {@link ProtectAbortedError} if the caller's signal aborts the connect.
+   *   controller's certificate is refused, or {@link ProtectTimeoutError} when the connection attempt timed out), a {@link ProtectStallError} if the silence
+   *   watchdog ends a connect that never opened, a generic {@link ProtectNetworkError} if the socket closes before it opens, or {@link ProtectAbortedError} if the
+   *   caller's signal aborts the connect.
    */
   static async connect(options: EventStreamOptions): Promise<EventStream> {
 
@@ -260,9 +264,10 @@ export class EventStream implements AsyncDisposable {
   /**
    * The open handshake. Resolves when the WebSocket opens, and rejects with whatever ended the connect: a socket error's classified failure, which carries the
    * dial's own error as its cause (a {@link ProtectCertificateError} naming the address dialed, a {@link ProtectTimeoutError} when the connection attempt timed
-   * out, or a {@link ProtectNetworkError}), a generic {@link ProtectNetworkError} if the socket closes before opening, or a {@link ProtectAbortedError} if the
-   * caller's signal aborts first. A failure before open reaches its caller here alone, never on the `error` rail, so a connect its caller is already failing starts
-   * no recovery. The composition root awaits this *after* attaching its bridge subscription, so no frame is lost between open and subscription.
+   * out, or a {@link ProtectNetworkError}), a {@link ProtectStallError} if the silence watchdog fires first, a generic {@link ProtectNetworkError} if the socket
+   * closes before opening, or a {@link ProtectAbortedError} if the caller's signal aborts first. A failure before open reaches its caller here alone, never on the
+   * `error` rail, so a connect its caller is already failing starts no recovery. The composition root awaits this *after* attaching its bridge subscription, so no
+   * frame is lost between open and subscription.
    */
   get opened(): Promise<void> {
 
@@ -428,28 +433,26 @@ export class EventStream implements AsyncDisposable {
     this.#bus.emit("packet", event);
   }
 
-  /* The socket reported an error. The cause is taken from the connector ahead of the event, because a WebSocket upgrade that fails reports a content-free `TypeError`
-   * on this event while the connector that vended the socket still holds the dial's own error - so reading the event alone would throw away every errno the platform
-   * gave, the certificate verdict among them. An injected socket has no connector of ours, and there its event error is the whole account.
+  /* The socket reported an error. The cause is read once, from the connector ahead of the event: a WebSocket upgrade that fails reports a content-free `TypeError`
+   * on this event while the connector that vended the socket still holds the dial's own error, and an established connection the peer resets reports the same
+   * `TypeError` while the connector holds the reset the socket raised - so reading the event alone would throw away every errno the platform gave, the certificate
+   * verdict among them. An injected socket has no connector of ours, and there its event error is the whole account. That one cause is the typed failure's cause
+   * as well as the line's subject, so the line and the failure always name the same fault.
    *
-   * Where the classified failure goes depends on whether the socket had opened. An open stream logs the cause at error level unless it is an expected disconnect, and
-   * puts the failure on the error rail ahead of the teardown, so the ConnectionMonitor recovers. A stream that never opened settles its handshake with the failure
-   * and puts nothing on the rail: its caller reports it from the rejection, so a line here as well would log one failure twice, and a rail fault would start a
-   * recovery for a connect that caller is already failing. The request to close then sends teardown through the single close path.
+   * Where the classified failure goes depends on whether the socket had opened. An open stream logs the line at the level the connection-fault table answers and
+   * puts the failure on the error rail ahead of the teardown, so the ConnectionMonitor recovers. A stream that never opened settles its handshake with the failure,
+   * logs nothing and puts nothing on the rail: its caller reports it from the rejection, so a line here as well would log one failure twice, and a rail fault would
+   * start a recovery for a connect that caller is already failing. The request to close then sends teardown through the single close path.
    */
   #onError(event: ProtectWebSocketErrorEvent): void {
 
-    const cause = this.#owned?.connector.lastDialFailure ?? event.error;
-    const failure = classifySocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt,
-      failed: "The UniFi Protect realtime events API connection failed.", host: this.#address,
-      timedOut: "The UniFi Protect realtime events API connection timed out." });
+    const connector = this.#owned?.connector;
+    const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
+    const failure = reportSocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt,
+      failed: "The UniFi Protect realtime events API connection failed.", host: this.#address, log: this.#log, open: this.#live,
+      reported: "The UniFi Protect realtime events API reported an error.", timedOut: "The UniFi Protect realtime events API connection timed out." });
 
     if(this.#live) {
-
-      if(!isExpectedWsDisconnect(cause)) {
-
-        this.#log.error("The UniFi Protect realtime events API reported an error.", cause ?? event.message);
-      }
 
       this.#bus.emit("error", failure);
     } else {
@@ -473,9 +476,9 @@ export class EventStream implements AsyncDisposable {
     this.#closed = true;
     this.#controller.abort();
 
-    // Settle a still-pending open handshake as a failure. A socket error before open has already settled it with its own classified failure, so this settles nothing
-    // after one. A caller-signal abort surfaces as the typed ProtectAbortedError (its own event, its own type); every other pre-open teardown - an unsolicited peer
-    // close, a watchdog stall, an explicit close() - stays the generic pre-open network error.
+    // Settle a still-pending open handshake as a failure. A socket error or a watchdog stall before open has already settled it with its own typed failure, so this
+    // settles nothing after either. A caller-signal abort surfaces as the typed ProtectAbortedError (its own event, its own type); every other pre-open teardown - an
+    // unsolicited peer close, an explicit close() - stays the generic pre-open network error.
     this.#settleOpen(this.#callerAborted ? new ProtectAbortedError("The UniFi Protect realtime events API connection was aborted by the caller's signal.") :
       new ProtectNetworkError("The UniFi Protect realtime events API closed before it finished connecting.", { cause: reason }));
 
@@ -503,7 +506,8 @@ export class EventStream implements AsyncDisposable {
   }
 
   // The caller's own signal fired. Mark this teardown as a caller abort BEFORE it runs, so #onClose settles a still-pending open handshake as the typed
-  // ProtectAbortedError; only this path sets the mark, so a socket close, an error, the watchdog, or an explicit close() keep the generic pre-open network error.
+  // ProtectAbortedError; only this path sets the mark, so a socket close or an explicit close() keeps the generic pre-open network error, while a socket error and a
+  // watchdog stall settle the handshake with their own typed failure before teardown reaches it.
   #abortByCaller(): void {
 
     this.#callerAborted = true;
@@ -574,11 +578,16 @@ export class EventStream implements AsyncDisposable {
     return { kind: event.kind };
   }
 
-  // The silence watchdog. Each pass waits one threshold on the injected clock, then checks how long the channel has been quiet; once that crosses the threshold the
-  // channel is presumed dead-but-not-closed, so we surface a typed stall (the ConnectionMonitor's cue to recover) and tear the socket down. The loop ends when teardown
-  // aborts the controller, which rejects the pending delay with its abort error - the normal shutdown path, swallowed here. Detection latency is bounded in
-  // [threshold, 2*threshold) because the loop wakes once per threshold, which is appropriate for a multi-minute failsafe and needs no variable-cadence timer that
-  // reschedules on every message.
+  /* The silence watchdog. Each pass waits one threshold on the injected clock, then checks how long the channel has been quiet; once that crosses the threshold the
+   * channel is presumed dead-but-not-closed, so we surface a typed stall and tear the socket down. An open stream logs the stall at warning, since recovery heals it,
+   * and puts it on the error rail, the ConnectionMonitor's cue to recover; a stream that never opened settles its handshake with it instead, logging nothing and
+   * putting nothing on the rail, as a socket error before open does, because its caller is already failing that connect and reports the stall from the rejection.
+   * The teardown that follows detaches the socket's error listener, so a stall never logs beside a socket error for the same failure.
+   *
+   * The loop ends when teardown aborts the controller, which rejects the pending delay with its abort error, the normal shutdown path swallowed here. Detection
+   * latency is bounded in [threshold, 2*threshold) because the loop wakes once per threshold, which is appropriate for a multi-minute failsafe and needs no
+   * variable-cadence timer that reschedules on every message.
+   */
   async #runWatchdog(): Promise<void> {
 
     try {
@@ -592,8 +601,17 @@ export class EventStream implements AsyncDisposable {
 
         if(silentForMs >= PROTECT_EVENTS_WATCHDOG_TIMEOUT) {
 
-          this.#log.error("The UniFi Protect realtime events API went silent beyond the watchdog window; tearing down the stalled connection.", { silentForMs });
-          this.#bus.emit("error", new ProtectStallError("The UniFi Protect realtime events API produced no data within the watchdog window.", { silentForMs }));
+          const stall = new ProtectStallError("The UniFi Protect realtime events API produced no data within the watchdog window.", { silentForMs });
+
+          if(this.#live) {
+
+            this.#log.warn("The UniFi Protect realtime events API went silent beyond the watchdog window; tearing down the stalled connection.", { silentForMs });
+            this.#bus.emit("error", stall);
+          } else {
+
+            this.#settleOpen(stall);
+          }
+
           this.#shutdown(1006, "the events stream stalled past the watchdog window");
 
           return;

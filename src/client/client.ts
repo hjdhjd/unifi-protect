@@ -194,7 +194,7 @@ async function fetchBootstrap(transport: Transport, host: string, opts: { probe?
 export class ProtectClient implements AsyncDisposable {
 
   readonly #auth: AuthSession;
-  readonly #bus = new EventBus<ProtectClientEvents>();
+  readonly #bus: EventBus<ProtectClientEvents>;
   readonly #connection: ConnectionMonitor;
   readonly #host: string;
   readonly #livestreamPool: LivestreamPool;
@@ -205,6 +205,7 @@ export class ProtectClient implements AsyncDisposable {
   private constructor(parts: ProtectClientParts) {
 
     this.#auth = parts.auth;
+    this.#bus = new EventBus<ProtectClientEvents>(parts.log);
     this.#host = parts.host;
     this.#livestreamPool = parts.livestreamPool;
     this.#store = parts.store;

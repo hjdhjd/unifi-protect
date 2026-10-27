@@ -423,32 +423,6 @@ export class ProtectUnsupportedError extends FatalError {
   }
 }
 
-/**
- * Predicate for the error-line suppression rule shared by every WebSocket subsystem in the library - the realtime events WS, the livestream WS, and the talkback WS.
- *
- * A socket's error line fires only once its `open` event has fired, since a failure before then reaches its caller through the socket's handshake answer. The line
- * reads the raw cause the socket classifies - its connector's record of the dial when the dial failed, and the socket's own event error otherwise - and never the
- * typed error the socket builds from it. Each subsystem classifies the following shapes of that cause as expected disconnects rather than user-actionable errors:
- *
- * 1. A `TypeError` - the content-free error undici's WebSocket dispatches whenever a socket closes without a close frame, which is how the loss of an open socket
- *    reads, since a dial that succeeded leaves its connector no failure to record.
- * 2. An `ETIMEDOUT` errno on the cause chain - the slow-controller path. The events and livestream subsystems each run their own silence watchdog (the events WS
- *    against `PROTECT_EVENTS_WATCHDOG_TIMEOUT`, a livestream session against its heartbeat timeout) that reports prolonged silence separately; this predicate instead
- *    classifies the socket-level errno, so the two are complementary and logging this disconnect-during-reboot symptom at the error level would be duplicate noise.
- *
- * Centralizing the predicate means a future addition (`EPIPE`, `ECONNRESET`, etc.) lands in one place and every WebSocket subsystem picks it up identically.
- *
- * @param error - The raw cause to classify. Typed `unknown` because a WebSocket `ErrorEvent.error` is untyped at the contract level.
- *
- * @returns `true` if the error matches an expected-disconnect shape and the call site should suppress its log; `false` to log normally.
- *
- * @category Utilities
- */
-export function isExpectedWsDisconnect(error: unknown): boolean {
-
-  return (error instanceof TypeError) || (resolveErrnoCause(error)?.code === "ETIMEDOUT");
-}
-
 /* How far below the value that was caught any reader of a `cause` chain descends. Real chains are short - a client wraps a transport failure, the transport wraps
  * a socket failure - and the bound is what makes the descent terminate at all: a chain that refers back to itself simply exhausts it, so no cycle bookkeeping has
  * to exist. Counted in descents, so the value handed in is depth zero and this many links below it are still read.
@@ -459,9 +433,9 @@ const CAUSE_CHAIN_DEPTH = 8;
  * Yield a thrown value and then each link beneath it down its `cause` chain, ending at a link that carries no further cause or at the depth bound.
  *
  * A wrapped failure presents what a reader needs below what it caught, so every reader asking such a question descends the same chain, and the descent lives here
- * once: the transport failure classifier takes the codes and the cancellation markers from it. The library takes no runtime dependency on homebridge-plugin-utils,
- * so the descent its `causeChain` states is implemented here as well, and the differential tests that hold each reader to homebridge-plugin-utils' own are what keep
- * the two descents one rule.
+ * once: {@link formatErrorChain} takes the sentences from each link, and the transport failure classifier takes the codes and the cancellation markers. The library
+ * takes no runtime dependency on homebridge-plugin-utils, so the descent its `causeChain` states is implemented here as well, and the differential tests that hold
+ * each reader to homebridge-plugin-utils' own are what keep the two descents one rule.
  *
  * Every link is yielded verbatim, including a final one that is not an object, and what a link means is left to the reader. It is not published from the library's
  * public surface, because its readers are the library's own.
@@ -492,6 +466,87 @@ export function *causeChain(error: unknown): Generator<unknown, void, undefined>
 }
 
 /**
+ * Render an arbitrary thrown value as clean text, carrying every further diagnosis its `cause` chain holds. An `Error` surfaces its `message`; anything else is
+ * coerced through `String(...)`.
+ *
+ * A wrapped failure presents its diagnosis below the sentence that was caught: a {@link ProtectBootstrapError} wraps the transport's classified failure, and a
+ * socket's {@link ProtectNetworkError} wraps the platform's own error, so a reader that takes the top message alone drops exactly the part an operator needs. This
+ * follows the `cause` chain down and appends each further message after a colon. The following rules decide what it appends:
+ *
+ * 1. Only an `Error` link contributes text. A cause that is a plain object is structured context for code to read - a code, a status, a response body - so
+ *    rendering it would print `[object Object]` at best and a secret at worst. Such a link contributes nothing and the descent continues below it, which is what
+ *    lets an error sitting under one still be rendered.
+ * 2. A link whose words the text so far already carries contributes nothing. A wrapper that builds its own message around its cause therefore names that cause
+ *    once rather than twice, and a rendering nested inside another stays stable.
+ * 3. One terminal period is removed from every message taken, the top one included, so the text carries none of its own and the sentence that embeds it supplies
+ *    the period.
+ * 4. The descent is bounded, which is also what ends a chain that refers back to itself: such a chain repeats messages the text already holds, so rule 2 appends
+ *    nothing and the bound stops the walk.
+ *
+ * The library takes no runtime dependency on homebridge-plugin-utils, so the rule its `formatErrorMessage` states is implemented here as well. A differential test
+ * feeds a table of error shapes through both and asserts equal output, which is what keeps the two of them one rule. Every place the library renders an error for
+ * a person reads this, so a consumer reading a connection transition's reason sees the words the lost line logged.
+ *
+ * @param error - The thrown value. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns The rendered text, carrying each further diagnosis the cause chain held and no terminal period of its own.
+ *
+ * @category Utilities
+ */
+export function formatErrorChain(error: unknown): string {
+
+  let rendered = ((error instanceof Error) ? error.message : String(error)).replace(/\.$/, "");
+
+  /* Each link below the one that was caught may hold the diagnosis the wrapper's own sentence lacks. An empty message is contained in every string, so it falls
+   * out of the containment rule with no case of its own.
+   */
+  for(const link of causeChain(error).drop(1)) {
+
+    if(!(link instanceof Error)) {
+
+      continue;
+    }
+
+    const text = link.message.replace(/\.$/, "");
+
+    // The containment check reads everything rendered so far rather than the top message alone, so a link whose words an earlier link already appended is not
+    // repeated either.
+    if(!rendered.includes(text)) {
+
+      rendered += ": " + text;
+    }
+  }
+
+  return rendered;
+}
+
+/**
+ * Whether a failure is the controller refusing the sign-in, on either ground: the identity itself, which the transport classifies as a {@link ProtectAuthError},
+ * or a privilege the identity lacks, which it classifies as a {@link ProtectAuthorizationError}. A refusal is a fact about the credentials rather than the network -
+ * the controller answered - so a caller retrying a connection waits for it on a slower schedule than for a controller it cannot reach, and the library's own
+ * recovery does exactly that.
+ *
+ * What is read is the error handed in, or the `cause` of a {@link ProtectBootstrapError} handed in, and no further. A refused bootstrap read arrives wrapped in that
+ * error at the fetch stage, so this opens that one wrapper. Every other error is read as itself, so a network fault carrying a refusal somewhere below it is the
+ * network fault it is, and a bootstrap error wrapping another bootstrap error answers false.
+ *
+ * The answer is a plain `boolean` rather than a type guard, because in the wrapped case the value handed in is the wrapper and the refusal is its `cause`, so
+ * narrowing the value handed in would claim something untrue of it.
+ *
+ * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns `true` when the failure, or the cause a bootstrap error carries, is a refused identity or a refused privilege; `false` for anything else.
+ *
+ * @category Utilities
+ */
+export function isSignInRefusal(error: unknown): boolean {
+
+  const refusal = (error instanceof ProtectBootstrapError) ? error.cause : error;
+
+  return (refusal instanceof ProtectAuthError) || (refusal instanceof ProtectAuthorizationError);
+}
+
+/**
  * Safely resolve an unknown error to a Node `ErrnoException` shape.
  *
  * The following error shapes are recognized:
@@ -505,8 +560,8 @@ export function *causeChain(error: unknown): Generator<unknown, void, undefined>
  * would be working from a false type.
  *
  * Anything outside these shapes (locally thrown TypeErrors with no cause, custom errors without `code`, non-Error throws) returns `undefined`. Internal callers
- * such as `ProtectNetworkError`'s constructor and `isExpectedWsDisconnect` treat that as no matching code and continue past it via optional chaining, rather than
- * treating the absence as an error condition in its own right.
+ * such as `ProtectNetworkError`'s constructor and `ProtectCertificateError`'s sentence treat that as no matching code and continue past it via optional chaining,
+ * rather than treating the absence as an error condition in its own right.
  *
  * @param error - The error value to inspect. Typed `unknown` because catch bindings and event handlers receive untyped values.
  *

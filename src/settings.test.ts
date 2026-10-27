@@ -9,7 +9,7 @@ import * as settings from "./settings.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_CAPTURE_DEFAULT_DURATION,
   PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, PROTECT_CLI_DURATION_MAX_MS, PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT,
   PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
-  PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
+  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -79,6 +79,14 @@ describe("settings", () => {
     assert.deepEqual(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, [ 0, 5000, 15000, 30000 ], "the unknown track must probe at once then walk out to the floor");
   });
 
+  // The refusal schedule is the slower ladder a refused sign-in walks - 30 seconds, then doubling to 4 minutes, then every 5 minutes - and a consumer's own connect
+  // retry reads the same value, so its shape is asserted whole.
+  test("PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS walks 30, 60, 120 and 240 seconds, then every 300 seconds", () => {
+
+    assert.deepEqual(PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, { backoff: [ 30000, 60000, 120000, 240000 ], steady: 300000 },
+      "a refused sign-in must walk the documented ladder out to its five-minute floor");
+  });
+
   test("PROTECT_REBOOT_ANTICIPATION_WINDOW_MS is 60000 ms", () => {
 
     assert.equal(PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, 60000, "the reboot anticipation window must be the documented 60 seconds");
@@ -98,7 +106,7 @@ describe("settings", () => {
 
     assert.equal(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0], 0, "the unknown track must probe at once on the fault");
 
-    for(const delay of [ ...PROTECT_RECOVERY_BACKOFF_KNOWN_MS, ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS ]) {
+    for(const delay of [ ...PROTECT_RECOVERY_BACKOFF_KNOWN_MS, ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff ]) {
 
       assert.ok((delay >= 0) && Number.isInteger(delay), "every staged backoff delay must be a non-negative integer, got " + String(delay));
     }
@@ -114,20 +122,41 @@ describe("settings", () => {
 
   // Sanity: every scalar the module exports must be a finite positive integer. A negative, fractional or NaN value would indicate a typo and would corrupt the timing
   // logic in subtle ways the per-value tests might miss. The row reads the module's own namespace, so a scalar without a per-value test is checked all the same, and an
-  // export that is neither a number nor an array fails here rather than being passed over. An array export is read only as an array.
+  // export that is neither a number nor an array fails here rather than being passed over. An array export is read only as an array, and a plain-object export, a
+  // schedule, is read one level down by the same rule, so its steady interval meets the scalar rule and its ladder the array rule.
   test("every exported scalar constant is a finite positive integer", () => {
+
+    const assertScalar = (name: string, value: unknown): void => {
+
+      if(Array.isArray(value)) {
+
+        return;
+      }
+
+      if(typeof value !== "number") {
+
+        assert.fail(name + " must be a number or an array, got " + typeof value);
+      }
+
+      assert.ok(Number.isInteger(value), name + " must be an integer, got " + String(value));
+      assert.ok(value > 0, name + " must be positive, got " + String(value));
+      assert.ok(Number.isFinite(value), name + " must be finite, got " + String(value));
+    };
 
     for(const [ name, value ] of Object.entries(settings)) {
 
-      if(Array.isArray(value)) {
+      // A member that is itself an object fails the scalar rule, so the descent stops at one level.
+      if((typeof value === "object") && !Array.isArray(value)) {
+
+        for(const [ key, member ] of Object.entries(value)) {
+
+          assertScalar(name + "." + key, member);
+        }
 
         continue;
       }
 
-      assert.equal(typeof value, "number", name + " must be a number or an array, got " + typeof value);
-      assert.ok(Number.isInteger(value), name + " must be an integer, got " + String(value));
-      assert.ok(value > 0, name + " must be positive, got " + String(value));
-      assert.ok(Number.isFinite(value), name + " must be finite, got " + String(value));
+      assertScalar(name, value);
     }
   });
 

@@ -835,7 +835,7 @@ describe("Transport", () => {
       await assert.rejects(transport.send(url(host, "/f")), { constructor: ProtectThrottledError, cooldownMs: 1000 });
     });
 
-    test("logs the trip at error level and the recovery at info level", async () => {
+    test("logs the trip at warning level and the recovery at info level", async () => {
 
       const log = capturingLog();
       const { clock, host, pool, transport } = makeMockTransport({ log });
@@ -845,7 +845,9 @@ describe("Transport", () => {
 
       await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT);
 
-      assert.ok(log.entries.some((entry) => (entry.level === "error") && entry.message.includes("Throttling")), "the trip should log at error level");
+      // The breaker heals itself once its cooldown elapses and a probe gets through, so its one trip line is a warning.
+      assert.deepEqual(log.entries.filter((entry) => entry.message.includes("Throttling")).map(({ level }) => level), ["warn"],
+        "the trip should log once, at warning level");
 
       clock.advance(COOLDOWN_MS);
       await transport.send(url(host, "/f"));

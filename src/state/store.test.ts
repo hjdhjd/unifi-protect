@@ -179,6 +179,89 @@ describe("StateStore", () => {
     });
   });
 
+  describe("observer isolation", () => {
+
+    // A selector that answers its baseline and then throws on every later state, so a row reaches the throw only through a dispatch.
+    function throwingAfterBaseline(failure: Error): (state: { bootstrapId: number }) => number {
+
+      let baselineTaken = false;
+
+      return (state): number => {
+
+        if(baselineTaken) {
+
+          throw failure;
+        }
+
+        baselineTaken = true;
+
+        return state.bootstrapId;
+      };
+    }
+
+    test("a selector that throws is logged at error level and the observers after it still wake", async () => {
+
+      const log = capturingLog();
+      const store = plainStore({ log });
+      const failure = new Error("the consumer's selector failed");
+      const ac = new AbortController();
+
+      store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1", name: "Front" })] }), kind: "bootstrapLoaded" });
+
+      // The throwing observer registers first, so the one after it wakes only if the throw is contained rather than unwinding the dispatch that reached it.
+      const thrower = collect(store.observe(throwingAfterBaseline(failure), { signal: ac.signal }));
+
+      await delay(0);
+
+      const later = collect(store.observe(store.selectors.camera.byId("c1"), { signal: ac.signal }));
+
+      await delay(0);
+
+      assert.doesNotThrow(() => store.dispatch({ id: "c1", kind: "devicePatched", modelKey: "camera", patch: { name: "Back" } }),
+        "a selector's throw never leaves dispatch");
+      await expectAt(() => later.values.length === 1, { message: "expected the observer after the thrower to wake" });
+
+      assert.equal(later.values[0]?.name, "Back");
+      assert.equal(thrower.values.length, 0, "the throwing observer yields nothing for the state it threw on");
+
+      const errors = log.entries.filter((entry) => entry.level === "error");
+
+      assert.equal(errors.length, 1, "the throw is logged once");
+      assert.deepEqual(errors[0]?.args, [{ error: failure }], "carrying the throw as structured context");
+
+      ac.abort();
+      await Promise.all([ thrower.done, later.done ]);
+    });
+
+    test("a bootstrap dispatched past a throwing selector commits, so a re-bootstrap built on dispatch resolves", async () => {
+
+      const store = plainStore();
+      const ac = new AbortController();
+
+      store.dispatch({ data: makeBootstrap(), kind: "bootstrapLoaded" });
+
+      const thrower = collect(store.observe(throwingAfterBaseline(new Error("the consumer's selector failed")), { signal: ac.signal }));
+
+      await delay(0);
+
+      // The shape of the recovery re-bootstrap: fetch, dispatch the bootstrap, and answer from the committed state. A dispatch the selector's throw escaped would
+      // reject it, failing every recovery attempt while the controller answers.
+      const reBootstrap = async (): Promise<number> => {
+
+        await delay(0);
+        store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }), kind: "bootstrapLoaded" });
+
+        return store.snapshot().bootstrapId;
+      };
+
+      assert.equal(await reBootstrap(), 2, "the re-bootstrap resolves on the state it committed");
+      assert.equal(store.snapshot().cameras.size, 1);
+
+      ac.abort();
+      await thrower.done;
+    });
+  });
+
   describe("refresh failsafe", () => {
 
     test("is invisible to observers when the bootstrap has not drifted", async () => {

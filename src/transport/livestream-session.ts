@@ -29,9 +29,9 @@
  */
 import { Agent, WebSocket } from "undici";
 import { PROTECT_LIVESTREAM_CHUNK_SIZE, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_SEGMENT_LENGTH } from "../settings.ts";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectStallError, assertNever, isExpectedWsDisconnect } from "../errors.ts";
-import { classifySocketFailure, toBuffer } from "./ws.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectStallError, assertNever } from "../errors.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
+import { reportSocketFailure, toBuffer } from "./ws.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { LivestreamInit } from "../protocol/init-segment.ts";
@@ -300,7 +300,7 @@ interface SegmentAccumulator {
  */
 export class LivestreamSession implements AsyncDisposable {
 
-  readonly #bus = new EventBus<LivestreamSessionEvents>();
+  readonly #bus: EventBus<LivestreamSessionEvents>;
   readonly #clock: Clock;
   // One AbortController governs every WebSocket listener and the watchdog loop. A single abort() detaches them all at once - the teardown primitive EventStream uses.
   readonly #controller = new AbortController();
@@ -345,6 +345,7 @@ export class LivestreamSession implements AsyncDisposable {
 
     this.#clock = options.clock ?? wallClock;
     this.#log = options.log ?? noopLog;
+    this.#bus = new EventBus<LivestreamSessionEvents>(this.#log);
     this.#resolveUrl = options.resolveUrl;
     this.#spec = resolveLivestreamSpec(options.spec);
     this.#verifyTls = options.verifyTls ?? false;
@@ -494,11 +495,11 @@ export class LivestreamSession implements AsyncDisposable {
     }
 
     /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its
-     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. `allowH2` reaches the connector and the
-     * agent alike, because a WebSocket upgrade can use HTTP/2 in neither. The negotiated URL already carries its own authorization token, so - unlike EventStream - no
-     * auth headers are stamped on the upgrade. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it assigns directly. Building the
-     * socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of it. The address is parsed without a throw,
-     * because an injected factory may be handed a URL undici would refuse, and this runs detached.
+     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. HTTP/2 is off and pipelining disabled
+     * because a WebSocket upgrade can use neither, and `allowH2` reaches the connector and the agent alike. The negotiated URL already carries its own authorization
+     * token, so - unlike EventStream - no auth headers are stamped on the upgrade. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it
+     * assigns directly. Building the socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of it. The
+     * address is parsed without a throw, because an injected factory may be handed a URL undici would refuse, and this runs detached.
      */
     this.#address = URL.parse(url)?.host ?? url;
     this.#connectStartedAt = this.#clock.now();
@@ -510,7 +511,7 @@ export class LivestreamSession implements AsyncDisposable {
 
       const allowH2 = false;
       const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
-      const agent = new Agent({ allowH2, connect: connector.connect });
+      const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
 
       this.#owned = { connector, dispatcher: agent };
       this.#ws = new WebSocket(url, { dispatcher: agent });
@@ -766,23 +767,21 @@ export class LivestreamSession implements AsyncDisposable {
     return total;
   }
 
-  /* The socket reported an error. The cause is taken from the connector ahead of the event, as EventStream takes it: a failed upgrade reports a content-free
-   * `TypeError` on this event while the connector still holds the dial's own error. The error line belongs to a socket whose `open` event has fired, in
-   * `handshaking` as in `live`, and suppresses the expected-disconnect noise (the same predicate EventStream uses); a failure before then reaches the pool on the rail
-   * and in the closure's cause. Either way the classified failure goes out on the error rail, and the request to close sends teardown through the single close path.
+  /* The socket reported an error. The cause is read once, from the connector ahead of the event, as EventStream reads it: a failed upgrade reports a content-free
+   * `TypeError` on this event while the connector still holds the dial's own error, and a reset of the established connection reports the same `TypeError` while
+   * the connector holds the reset the socket raised. That one cause is the typed failure's cause and the line's subject. The line belongs to a socket whose `open`
+   * event has fired, in `handshaking` as in `live`, at the level the connection-fault table answers; a failure before then reaches the pool on the rail and in the
+   * closure's cause alone. Either way the classified failure goes out on the error rail, and the request to close sends teardown through the single close path.
    */
   #onError(event: { error?: unknown; message?: string }): void {
 
-    const cause = this.#owned?.connector.lastDialFailure ?? event.error;
-
-    if(((this.#state === "handshaking") || (this.#state === "live")) && !isExpectedWsDisconnect(cause)) {
-
-      this.#log.error("The UniFi Protect livestream API reported an error.", cause ?? event.message);
-    }
+    const connector = this.#owned?.connector;
+    const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
 
     // Construct the socket failure once: the same object goes out on the error rail and is carried to `#shutdown` as the closure's cause.
-    const failure = classifySocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt, failed: "The UniFi Protect livestream API connection failed.",
-      host: this.#address, timedOut: "The UniFi Protect livestream API connection timed out." });
+    const failure = reportSocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt, failed: "The UniFi Protect livestream API connection failed.",
+      host: this.#address, log: this.#log, open: (this.#state === "handshaking") || (this.#state === "live"),
+      reported: "The UniFi Protect livestream API reported an error.", timedOut: "The UniFi Protect livestream API connection timed out." });
 
     this.#bus.emit("error", failure);
     this.#shutdown(1006, "the livestream connection errored", failure);
@@ -840,8 +839,9 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   // The silence watchdog, identical in shape to EventStream's. Each pass waits one heartbeat window on the injected clock, then checks how long the channel has been
-  // quiet; once that crosses the threshold the channel is presumed dead-but-not-closed, so we surface a typed stall (the consumer's cue to restart) and tear the socket
-  // down. The loop ends when teardown aborts the controller, which rejects the pending delay with its abort error - swallowed here as the normal shutdown path.
+  // quiet; once that crosses the threshold the channel is presumed dead-but-not-closed, so we log the stall at warning, since the pool's recovery heals it, surface a
+  // typed stall (the consumer's cue to restart) and tear the socket down. The watchdog starts at `open`, so a stall always ends an open socket. The loop ends when
+  // teardown aborts the controller, which rejects the pending delay with its abort error - swallowed here as the normal shutdown path.
   async #runWatchdog(): Promise<void> {
 
     try {
@@ -855,7 +855,7 @@ export class LivestreamSession implements AsyncDisposable {
 
         if(silentForMs >= PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT) {
 
-          this.#log.error("The UniFi Protect livestream API went silent beyond the heartbeat window; tearing down the stalled session.", { silentForMs });
+          this.#log.warn("The UniFi Protect livestream API went silent beyond the heartbeat window; tearing down the stalled session.", { silentForMs });
 
           // Construct the stall once: the same object goes out on the error rail and is carried to `#shutdown` as the closure's cause.
           const stall = new ProtectStallError("The UniFi Protect livestream API produced no data within the heartbeat window.", { silentForMs });

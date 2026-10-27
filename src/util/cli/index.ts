@@ -5,7 +5,7 @@
  */
 import { CliError, commandList, readVersion, wireAbortSignal } from "./shared.ts";
 import { Output, alignedList } from "./output/format.ts";
-import { ProtectAbortedError, ProtectError } from "../../index.ts";
+import { ProtectAbortedError, ProtectError, formatErrorChain } from "../../index.ts";
 import type { CommandSpec } from "./shared.ts";
 import { camera } from "./commands/camera.ts";
 import { capture } from "./commands/capture.ts";
@@ -75,8 +75,9 @@ function usage(): string {
 }
 
 // Render a thrown value to stderr and set the process exit code. Each case below is deliberate: a CliError or a typed ProtectError is an expected outcome and gets a calm
-// one-line message; a caller abort (Ctrl-C during connect) exits 130 silently per convention; an argument-parse error is a usage error (exit 2); anything else is an
-// unexpected bug and gets its stack so it can be diagnosed.
+// one-line message carrying its whole cause chain, so the diagnosis a wrapped failure holds below its own sentence reaches the operator, and the chain carries no
+// period of its own, so the line ends on exactly one; a caller abort (Ctrl-C during connect) exits 130 silently per convention; an argument-parse error is a usage
+// error (exit 2); anything else is an unexpected bug and gets its stack so it can be diagnosed.
 function renderError(error: unknown): void {
 
   if(error instanceof ProtectAbortedError) {
@@ -88,7 +89,7 @@ function renderError(error: unknown): void {
 
   if(error instanceof CliError) {
 
-    process.stderr.write("ufp: " + error.message + "\n");
+    process.stderr.write("ufp: " + formatErrorChain(error) + ".\n");
     process.exitCode = error.exitCode;
 
     return;
@@ -96,7 +97,7 @@ function renderError(error: unknown): void {
 
   if(error instanceof ProtectError) {
 
-    process.stderr.write("ufp: " + error.message + "\n");
+    process.stderr.write("ufp: " + formatErrorChain(error) + ".\n");
     process.exitCode = 1;
 
     return;

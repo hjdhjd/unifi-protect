@@ -5,7 +5,7 @@
  * of failure shapes through each and asserts the same kind and code come back, so a change to either classification reddens it here.
  */
 import { describe, test } from "node:test";
-import type { TransportFailure } from "./failure.ts";
+import { EVERY_KIND } from "./failure.helpers.ts";
 import assert from "node:assert/strict";
 import { classifyTransportError } from "./failure.ts";
 import { classifyTransportError as classifyWithPluginUtils } from "homebridge-plugin-utils";
@@ -18,12 +18,6 @@ interface ClassificationCase {
   signal?: AbortSignal;
   value: unknown;
 }
-
-/* Every kind the union names, keyed so the compiler holds the list to the union: a kind added to it without a key here fails to compile, and so does a key naming
- * a kind that does not exist. The coverage row below reads the table's reach against it.
- */
-const EVERY_KIND: Record<TransportFailure["kind"], true> = { aborted: true, certificate: true, "connect-timeout": true, destroyed: true, dns: true, refused: true,
-  reset: true, "retries-exhausted": true, timeout: true, transport: true };
 
 /* Every shape this library's transports can hand the classifier, every code the code map names, a row at each boundary of the precedence, and the rules of the
  * descent the readings are taken from. Built by a function rather than held as a module constant so each run gets its own values...the self-referential row mutates
@@ -86,6 +80,9 @@ function classificationTable(): ClassificationCase[] {
     { name: "a refused connection one hop down, as undici's fetch wraps it", value: new TypeError("fetch failed",
       { cause: errnoError("connect ECONNREFUSED", "ECONNREFUSED") }) },
     { name: "a host that is down", value: errnoError("connect EHOSTDOWN", "EHOSTDOWN") },
+    { name: "a host no route reaches", value: errnoError("connect EHOSTUNREACH", "EHOSTUNREACH") },
+    { name: "a network no route reaches", value: errnoError("connect ENETUNREACH", "ENETUNREACH") },
+    { name: "a network that is down", value: errnoError("connect ENETDOWN", "ENETDOWN") },
     { name: "a reset connection", value: errnoError("read ECONNRESET", "ECONNRESET") },
     { name: "a host name that does not resolve", value: errnoError("getaddrinfo ENOTFOUND", "ENOTFOUND") },
     { name: "a resolver's temporary failure", value: errnoError("getaddrinfo EAI_AGAIN", "EAI_AGAIN") },

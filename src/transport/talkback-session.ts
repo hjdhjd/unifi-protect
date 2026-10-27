@@ -33,7 +33,7 @@
  * @module TalkbackSession
  */
 import { Agent, WebSocket } from "undici";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, isExpectedWsDisconnect } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError } from "../errors.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import type { Clock } from "../clock.ts";
@@ -42,8 +42,8 @@ import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWritableWebSocket } from "./ws.ts";
 import { channels } from "../diagnostics.ts";
-import { classifySocketFailure } from "./ws.ts";
 import { noopLog } from "../logging.ts";
+import { reportSocketFailure } from "./ws.ts";
 import { wallClock } from "../clock.ts";
 
 /**
@@ -394,10 +394,11 @@ export class TalkbackSession implements AsyncDisposable {
     }
 
     /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its
-     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. `allowH2` reaches the connector and the
-     * agent alike, because a WebSocket upgrade can use HTTP/2 in neither. undici's WebSocket structurally satisfies the minimal ProtectWritableWebSocket surface, so it
-     * assigns directly - no cast. Building the socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of
-     * it, the address parsed without a throw because an injected factory may be handed a URL undici would refuse, and this runs detached.
+     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. HTTP/2 is off and pipelining disabled
+     * because a WebSocket upgrade can use neither, and `allowH2` reaches the connector and the agent alike. undici's WebSocket structurally satisfies the minimal
+     * ProtectWritableWebSocket surface, so it assigns directly - no cast. Building the socket is where the connection attempt begins, so the address and the attempt's
+     * start are read immediately ahead of it, the address parsed without a throw because an injected factory may be handed a URL undici would refuse, and this runs
+     * detached.
      */
     this.#address = URL.parse(url)?.host ?? url;
     this.#connectStartedAt = this.#clock.now();
@@ -409,7 +410,7 @@ export class TalkbackSession implements AsyncDisposable {
 
       const allowH2 = false;
       const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
-      const agent = new Agent({ allowH2, connect: connector.connect });
+      const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
 
       this.#owned = { connector, dispatcher: agent };
       this.#ws = new WebSocket(url, { dispatcher: agent });
@@ -439,22 +440,21 @@ export class TalkbackSession implements AsyncDisposable {
     }
   }
 
-  /* The socket reported an error. The cause is taken from the connector ahead of the event, as the sibling sessions take it: a failed upgrade reports a content-free
-   * `TypeError` on this event while the connector still holds the dial's own error. The error line belongs to a live session and suppresses the expected-disconnect
-   * noise (the same predicate the sibling sessions use); a failure before open reaches its caller as the connect() rejection alone. The classified failure is stored
-   * so the connect handshake, an in-flight send or a later one rejects with it, and the request to close sends teardown through the single close path.
+  /* The socket reported an error. The cause is read once, from the connector ahead of the event, as the sibling sessions read it: a failed upgrade reports a
+   * content-free `TypeError` on this event while the connector still holds the dial's own error, and a reset of the established connection reports the same
+   * `TypeError` while the connector holds the reset the socket raised. That one cause is the typed failure's cause and the line's subject. The line belongs to a
+   * live session, at the level the connection-fault table answers; a failure before open reaches its caller as the connect() rejection alone. The classified failure
+   * is stored so the connect handshake, an in-flight send or a later one rejects with it, and the request to close sends teardown through the single close path.
    */
   #onError(event: { error?: unknown; message?: string }): void {
 
-    const cause = this.#owned?.connector.lastDialFailure ?? event.error;
+    const connector = this.#owned?.connector;
+    const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
+    const failure = reportSocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt, failed: "The UniFi Protect talkback API connection failed.",
+      host: this.#address, log: this.#log, open: this.#live, reported: "The UniFi Protect talkback API reported an error.",
+      timedOut: "The UniFi Protect talkback API connection timed out." });
 
-    if(this.#live && !isExpectedWsDisconnect(cause)) {
-
-      this.#log.error("The UniFi Protect talkback API reported an error.", cause ?? event.message);
-    }
-
-    this.#failure ??= classifySocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt, failed: "The UniFi Protect talkback API connection failed.",
-      host: this.#address, timedOut: "The UniFi Protect talkback API connection timed out." });
+    this.#failure ??= failure;
     this.#shutdown(1006, "the talkback connection errored");
   }
 

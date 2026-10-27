@@ -25,6 +25,10 @@ export { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorization
   ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError } from "./errors.ts";
 export type { ProtectBootstrapStage } from "./errors.ts";
 
+// The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator, and the reading a
+// consumer's own connect retry branches on to tell a refused sign-in from an unreachable controller, through the bootstrap wrapper it opens.
+export { formatErrorChain, isSignInRefusal } from "./errors.ts";
+
 // Logging - the consumer-injectable logger interface and the silent default a consumer may pass to suppress output.
 export { noopLog } from "./logging.ts";
 export type { ProtectLogging } from "./logging.ts";
@@ -120,7 +124,8 @@ export { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOU
   PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_DEFAULT_TOLERANCE_MS,
   PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS,
   PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
-  PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
+  PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS,
+  PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 
 // Domain types - the Protect wire/configuration shapes. Every export here is intentionally public; consumers type their controller interactions against these.
 export type { DeepPartial, Nullable, ProtectAirQualityMetric, ProtectAirQualityMetricInterface, ProtectAirQualityThresholdSettings,

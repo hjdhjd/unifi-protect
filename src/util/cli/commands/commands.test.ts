@@ -3,7 +3,8 @@
  * commands.test.ts: Per-command unit tests driving each CLI command through the injected openClient hook - parse, render, dispatch, and error paths.
  */
 import type { LivestreamDescription, LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment, TypedEvent } from "../../../index.ts";
-import { ProtectAbortedError, ProtectAuthError, ProtectProtocolError, ProtectUnsupportedError, channels } from "../../../index.ts";
+import { ProtectAbortedError, ProtectAuthError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectUnsupportedError,
+  channels } from "../../../index.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../../protocol/packet.helpers.ts";
 import { describe, test } from "node:test";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
@@ -26,6 +27,7 @@ import { diagnostics } from "./diagnostics.ts";
 import { doctor } from "./doctor.ts";
 import { info } from "./info.ts";
 import path from "node:path";
+import { present } from "homebridge-plugin-utils/testing";
 import { reboot } from "./reboot.ts";
 import { relay } from "./relay.ts";
 import { relayToggle } from "./relay-toggle.ts";
@@ -1225,15 +1227,31 @@ describe("reboot", () => {
     assert.match(stdout(), /Rebooting camera "cameras"/);
   });
 
-  test("a category reboot continues past a failure and exits non-zero", async () => {
+  test("a category reboot continues past a failure, reports its whole cause chain, and exits non-zero", async () => {
 
     const { calls, client } = makeFakeClient({ cameras: [ { id: "c1", name: "A" }, { id: "c2", name: "B", rebootFails: true }, { id: "c3", name: "C" } ] });
-    const { ctx } = makeCommandContext({ args: ["cameras"], client });
+    const { ctx, stdout } = makeCommandContext({ args: ["cameras"], client });
+    const failing = present(client.camera("c2"), "the camera whose reboot fails");
+    const fakeReboot = failing.reboot.bind(failing);
+
+    // The fake fails this camera's reboot with a plain error of its own; wrapping it as the request path wraps a controller's answer gives the failure a cause chain.
+    Object.assign(failing, { reboot: async (opts?: { signal?: AbortSignal }): Promise<void> => {
+
+      try {
+
+        await fakeReboot(opts);
+      } catch(cause) {
+
+        throw new ProtectRequestError("The UniFi Protect controller rejected the reboot request.", { cause, statusCode: 500 });
+      }
+    } });
 
     // The whole run still throws (non-zero exit), but the healthy devices were rebooted - the failure did not abort the loop.
     await assert.rejects(reboot.run(ctx), { constructor: CliError, exitCode: 1 });
 
     assert.deepEqual(calls.reboots, [ "c1", "c3" ], "the failing camera is absent; the other two rebooted despite it");
+    assert.ok(stdout().includes("B (c2) - failed: The UniFi Protect controller rejected the reboot request: simulated reboot failure"),
+      "the failure names the cause below the library's sentence");
   });
 
   test("a token matching neither a device nor a category is a usage error", async () => {
@@ -1704,12 +1722,13 @@ describe("doctor", () => {
     }
   });
 
-  test("a connect failure fails fast, runs no later checks, and exits one", async () => {
+  test("a connect failure fails fast with its whole cause chain, runs no later checks, and exits one", async () => {
 
     const { client } = makeFakeClient();
     const { ctx, stdout } = makeCommandContext({ args: [], client });
 
-    ctx.openClient = (): Promise<ProtectClient> => Promise.reject(new ProtectAuthError("not authenticated", { statusCode: 401 }));
+    ctx.openClient = (): Promise<ProtectClient> => Promise.reject(new ProtectNetworkError("The UniFi Protect controller could not be reached.",
+      { cause: new Error("connect ECONNREFUSED 10.0.0.1:443") }));
 
     const savedExit = process.exitCode;
 
@@ -1721,6 +1740,8 @@ describe("doctor", () => {
 
       assert.match(out, /FAIL/);
       assert.match(out, /Connect and authenticate/);
+      assert.ok(out.includes("The UniFi Protect controller could not be reached: connect ECONNREFUSED 10.0.0.1:443"),
+        "the failed check names the platform's own words below the library's sentence");
       assert.doesNotMatch(out, /State and bootstrap/, "the early return skips every later check");
       assert.doesNotMatch(out, /Livestream pool/);
       assert.equal(process.exitCode, 1);

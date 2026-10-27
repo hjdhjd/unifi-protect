@@ -4,6 +4,7 @@
  * the three-rail fan-out, schema-drift surfacing, decode-failure resilience, the silence watchdog, and teardown. Driven through an injected fake WebSocket and a
  * `TestClock`, so the realtime stream is exercised deterministically without a live controller.
  */
+import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, createLoopbackAlpnPeer, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
@@ -20,10 +21,22 @@ import { PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
+import { constants } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import tls from "node:tls";
 
 const HOST = "10.0.0.1";
+
+// The sentence the stream logs a fault of its open socket under, and the lines a log holds carrying it, at whatever level each was logged.
+const REPORTED = "The UniFi Protect realtime events API reported an error.";
+
+function reportedLines(log: CapturingLogger): CapturedLogEntry[] {
+
+  return log.entries.filter((entry) => entry.message === REPORTED);
+}
+
+// A phrase the stall line carries, which the stream logs an open socket's silence under.
+const WENT_SILENT = "went silent beyond the watchdog window";
 
 // Encode a realtime packet from an action header and a JSON data payload - the same byte layout decodePacket reads, so the stream decodes exactly what we synthesize.
 function encode(header: Partial<{ action: string; id: string; modelKey: string }>, payload: object): Buffer {
@@ -252,6 +265,33 @@ describe("EventStream", () => {
       assert.equal(raw.length, 0);
       assert.equal(errors.length, 1);
       assert.ok(first(errors)[0] instanceof ProtectProtocolError);
+
+      await stream.close();
+    });
+
+    test("a throwing rawPacket listener is logged and the frame still decodes onto the packet rail, with nothing on the error rail", async () => {
+
+      const log = capturingLog();
+      const { stream, ws } = await openStream({ log });
+      const errors = collect(stream, "error");
+      const packets = collect(stream, "packet");
+      const failure = new Error("the consumer's raw handler failed");
+
+      // The raw rail fires inside the decode step, so a throw that escaped it would read as a frame that could not be decoded and start a recovery.
+      using thrower = stream.on("rawPacket", () => {
+
+        throw failure;
+      });
+
+      ws.emitMessage(encode({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1" }));
+
+      assert.equal(packets.length, 1, "the frame still reached the packet rail");
+      assert.equal(errors.length, 0, "the listener's throw is not read as a decode failure");
+
+      const lines = log.entries.filter((entry) => entry.level === "error");
+
+      assert.equal(lines.length, 1, "the throw is logged once, through the stream's own logger");
+      assert.deepEqual(lines[0]?.args, [{ error: failure, event: "rawPacket" }]);
 
       await stream.close();
     });
@@ -524,10 +564,11 @@ describe("EventStream", () => {
 
   describe("silence watchdog", () => {
 
-    test("a channel silent beyond the threshold emits ProtectStallError and tears down", async () => {
+    test("a channel silent beyond the threshold emits ProtectStallError, logs one warning and tears down", async () => {
 
       const clock = new TestClock();
-      const { stream, ws } = await openStream({ clock });
+      const log = capturingLog();
+      const { stream, ws } = await openStream({ clock, log });
       const errors = collect(stream, "error");
       const closed = collect(stream, "closed");
 
@@ -545,6 +586,44 @@ describe("EventStream", () => {
       assert.equal(closed.length, 1);
       assert.equal(first(closed)[0].code, 1006);
       assert.equal(ws.closeRequested, true);
+
+      // Recovery heals a stall, so its one line is a warning, and the teardown detached the socket's error listener, so no socket line joins it.
+      assert.deepEqual(log.entries.filter((entry) => entry.message.includes(WENT_SILENT)).map(({ level }) => level), ["warn"], "the stall logs one warning");
+      assert.deepEqual(reportedLines(log), [], "and no socket line beside it");
+    });
+
+    test("a watchdog that fires before the socket opens rejects opened with its stall, logs nothing and leaves the rail empty", async () => {
+
+      const clock = new TestClock();
+      const log = capturingLog();
+      const ws = new FakeWebSocket({ autoOpen: false });
+      const stream = new EventStream({ clock, host: HOST, lastUpdateId: "u0", log, webSocket: (): FakeWebSocket => ws });
+      const errors = collect(stream, "error");
+      const closed = collect(stream, "closed");
+
+      // The socket never opens, so the watchdog's first wake finds the stream silent since construction.
+      clock.advance(PROTECT_EVENTS_WATCHDOG_TIMEOUT);
+      await settle();
+
+      /* A stream that never opened has a caller waiting out its connect and no recovery acting on it, so the stall is that caller's rejection and nothing else: the
+       * typed stall itself rather than the generic pre-open close, and nothing on the rail, where it would start a recovery for a connect its caller is already
+       * failing.
+       */
+      await assert.rejects(stream.opened, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectStallError);
+        assert.equal(error.silentForMs, PROTECT_EVENTS_WATCHDOG_TIMEOUT);
+
+        return true;
+      });
+
+      assert.equal(errors.length, 0, "a stall before the open stays off the error rail");
+      assert.equal(first(closed)[0].code, 1006, "the stall still forces the close");
+      assert.equal(ws.closeRequested, true);
+
+      // The caller reports the stall from the rejection, so a line here as well would log one failure twice.
+      assert.deepEqual(log.entries.filter((entry) => entry.message.includes(WENT_SILENT) || (entry.level !== "debug")), [],
+        "a stall before the open logs nothing beside its rejection");
     });
 
     test("the watchdog does not trip while frames keep arriving", async () => {
@@ -864,6 +943,117 @@ describe("EventStream", () => {
 
       assert.equal(errors.length, 0, "a failure before the open stays off the error rail");
       assert.equal(log.entries.some((entry) => entry.level === "error"), false, "a failure before the open leaves no error-level line from the stream itself");
+
+      await stream.close();
+    });
+
+    /* The ways an open socket's connection ends, each over the owned connector, because undici's WebSocket reports every one of them as the same empty `TypeError`
+     * and only the connector's record of the established connection tells them apart. A fake socket has no connector, so none of these is reachable over one.
+     */
+    test("a peer's reset of an open stream logs one warning naming ECONNRESET and puts that reset on the rail", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const log = capturingLog();
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log });
+      const errors = collect(stream, "error");
+
+      await stream.opened;
+
+      (await peer.connection(0)).reset();
+
+      await expectAt(() => errors.length === 1, { message: "expected the reset to reach the error rail" });
+
+      const [failure] = first(errors);
+      const [line] = reportedLines(log);
+
+      assert.ok(failure instanceof ProtectNetworkError, "a reset is a reachability failure");
+      assert.equal(failure.code, "ECONNRESET", "carrying the reset its own socket raised rather than the event's empty error");
+      assert.deepEqual(reportedLines(log).map(({ level }) => level), ["warn"], "a reset heals itself, so its one line is a warning");
+      assert.ok(Object.is((present(line, "the socket's line").args[0] as { error: unknown }).error, failure.cause), "and the line names the fault the rail carries");
+
+      await stream.close();
+    });
+
+    test("a peer's hang-up on an open stream without a close frame logs no line", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const log = capturingLog();
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log });
+      const errors = collect(stream, "error");
+
+      await stream.opened;
+
+      (await peer.connection(0)).end();
+
+      await expectAt(() => errors.length === 1, { message: "expected the hang-up to reach the error rail" });
+
+      const [failure] = first(errors);
+
+      // A hang-up is how an open connection ordinarily ends: the socket raised nothing of its own, so the event's empty error is the whole account.
+      assert.ok(failure instanceof ProtectNetworkError);
+      assert.equal(failure.code, undefined, "a hang-up carries no code");
+      assert.deepEqual(reportedLines(log), [], "and logs no line, while recovery still hears it on the rail");
+
+      await stream.close();
+    });
+
+    test("an ETIMEDOUT the open stream's socket raises logs one warning", async (t) => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+
+      const dials: TLSSocket[] = [];
+      const dial = tls.connect;
+      const log = capturingLog();
+
+      // The platform's dial is wrapped for this test alone, which hands the row the socket the owned connector vended, so the platform's own timeout can be raised on it.
+      t.mock.method(tls, "connect", (options: ConnectionOptions): TLSSocket => {
+
+        const socket = dial(options);
+
+        dials.push(socket);
+
+        return socket;
+      });
+
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log });
+      const errors = collect(stream, "error");
+
+      await stream.opened;
+
+      // The error the platform raises when its own timer gives up on a peer that stopped answering, a numeric errno beside its code.
+      present(dials[0], "the socket the owned connector vended").destroy(Object.assign(new Error("read ETIMEDOUT"),
+        { code: "ETIMEDOUT", errno: -constants.errno.ETIMEDOUT, syscall: "read" }));
+
+      await expectAt(() => errors.length === 1, { message: "expected the timeout to reach the error rail" });
+
+      const [failure] = first(errors);
+
+      assert.ok(failure instanceof ProtectNetworkError, "a peer that stopped answering is out of reach");
+      assert.equal(failure.code, "ETIMEDOUT");
+      assert.deepEqual(reportedLines(log).map(({ level }) => level), ["warn"], "an unreachable peer heals itself, so its one line is a warning");
+
+      await stream.close();
+    });
+
+    test("a peer that resets the upgrade before the stream opens rejects opened carrying ECONNRESET, with no line and nothing on the rail", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer({ resetUpgrade: true });
+      const log = capturingLog();
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log });
+      const errors = collect(stream, "error");
+
+      // The dial succeeded, so the connector holds no dial failure, and the reset of the established connection is the record the one cause reads.
+      await assert.rejects(stream.opened, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.equal(error.message, "The UniFi Protect realtime events API connection failed.");
+        assert.equal(error.code, "ECONNRESET", "the rejection carries the reset the socket raised during the upgrade");
+
+        return true;
+      });
+
+      assert.equal(errors.length, 0, "a failure before the open stays off the error rail");
+      assert.deepEqual(reportedLines(log), [], "and logs no line, its caller reporting it from the rejection");
 
       await stream.close();
     });

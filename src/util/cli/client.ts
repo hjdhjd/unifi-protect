@@ -42,9 +42,9 @@ function renderParameters(parameters: unknown[]): string {
 
 /**
  * Build the CLI's {@link ProtectLogging} adapter. Every library log line is routed to stderr - never stdout - so a command's payload (a JPEG, an fMP4 stream, NDJSON) is
- * never interleaved with diagnostics. Warnings and errors always print (a throttle, a stall, a reboot is something the operator wants told); the lower-volume `info`
- * lifecycle lines and `debug` detail print only with `--debug`, so a plain command emits just its own output on stdout and nothing on stderr unless something went wrong.
- * Each line is tagged with its level so a human reading stderr can tell a warning from an error at a glance.
+ * never interleaved with diagnostics. Warnings and errors always print (a throttle, a stall, a lost connection is something the operator wants told); the
+ * lower-volume `info` lifecycle lines and `debug` detail print only with `--debug`, so a plain command emits just its own output on stdout and nothing on stderr
+ * unless something went wrong. Each line is tagged with its level so a human reading stderr can tell a warning from an error at a glance.
  *
  * @param opts - Whether debug is enabled, and the stream to write to (defaults to stderr).
  *

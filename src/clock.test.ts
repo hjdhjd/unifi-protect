@@ -295,6 +295,18 @@ describe("wallClock", () => {
     assert.ok((Date.now() - before) >= 4, "the deadline should fire no sooner than its duration (allowing for timer granularity)");
   });
 
+  test("a deadline armed for an infinite span on the wall clock never aborts across a real wait", async () => {
+
+    const controller = new AbortController();
+
+    using deadline = armDeadline(Infinity);
+
+    // The platform's own arm would fire an infinite span after a millisecond, so a real wait well past that is what tells a span that never elapses from one that did.
+    await wallClock.delay(20, { signal: controller.signal });
+
+    assert.equal(deadline.signal.aborted, false, "a request armed with an infinite deadline is never timed out by it");
+  });
+
   test("a deadline pending on the wall clock leaves the process free to exit, and its disposal leaves its signal live", () => {
 
     const sample = activeTimers();

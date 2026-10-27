@@ -101,13 +101,17 @@ describe("classifyTransportError", () => {
   test("reads the platform's errno codes, bare or wrapped the way undici wraps them", () => {
 
     assert.deepEqual(reading(errnoError("connect ECONNREFUSED", "ECONNREFUSED")), { code: "ECONNREFUSED", kind: "refused" });
-    assert.deepEqual(reading(errnoError("connect EHOSTDOWN", "EHOSTDOWN")), { code: "EHOSTDOWN", kind: "refused" });
+    assert.deepEqual(reading(errnoError("connect EHOSTDOWN", "EHOSTDOWN")), { code: "EHOSTDOWN", kind: "unreachable" },
+      "a host that is down did not decline the attempt, so it is out of reach rather than refusing");
+    assert.deepEqual(reading(errnoError("connect EHOSTUNREACH", "EHOSTUNREACH")), { code: "EHOSTUNREACH", kind: "unreachable" });
+    assert.deepEqual(reading(errnoError("connect ENETUNREACH", "ENETUNREACH")), { code: "ENETUNREACH", kind: "unreachable" });
+    assert.deepEqual(reading(errnoError("connect ENETDOWN", "ENETDOWN")), { code: "ENETDOWN", kind: "unreachable" });
     assert.deepEqual(reading(errnoError("read ECONNRESET", "ECONNRESET")), { code: "ECONNRESET", kind: "reset" });
     assert.deepEqual(reading(errnoError("getaddrinfo ENOTFOUND", "ENOTFOUND")), { code: "ENOTFOUND", kind: "dns" });
     assert.deepEqual(reading(errnoError("getaddrinfo EAI_AGAIN", "EAI_AGAIN")), { code: "EAI_AGAIN", kind: "dns" });
     assert.deepEqual(reading(errnoError("write EPIPE", "EPIPE")), { code: "EPIPE", kind: "transport" });
-    assert.deepEqual(reading(errnoError("read ETIMEDOUT", "ETIMEDOUT")), { code: "ETIMEDOUT", kind: "transport" },
-      "a bare socket timeout is not one of undici's deadlines, so it carries its code as a transport failure");
+    assert.deepEqual(reading(errnoError("read ETIMEDOUT", "ETIMEDOUT")), { code: "ETIMEDOUT", kind: "unreachable" },
+      "a bare socket timeout is the platform's own timer giving up on a peer that stopped answering, not one of undici's deadlines");
     assert.deepEqual(reading(new TypeError("fetch failed", { cause: errnoError("connect ECONNREFUSED", "ECONNREFUSED") })), { code: "ECONNREFUSED",
       kind: "refused" }, "the errno one hop down, which is where undici's fetch puts it");
   });

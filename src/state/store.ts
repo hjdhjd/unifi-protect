@@ -320,9 +320,20 @@ export class StateStore implements AsyncDisposable {
 
     this.#state = next;
 
+    /* Each observer runs a consumer's selector, and dispatch runs inside the library's own work - a realtime frame being fanned out, a recovery re-bootstrap - so a
+     * selector that throws is contained here: logged once per throw, after which the remaining observers still wake. Left to propagate, it would fail every
+     * recovery attempt's re-bootstrap and keep the connection lost while the controller answers. The state is already committed above, so a throw never leaves the
+     * store half advanced. A throw while observe() seeds its baseline is not caught here: that runs in the consumer's own iteration and stays the consumer's to see.
+     */
     for(const observer of this.#observers) {
 
-      observer.evaluate(next);
+      try {
+
+        observer.evaluate(next);
+      } catch(error) {
+
+        this.#log.error("A state observer's selector threw; the remaining observers still wake.", { error });
+      }
     }
   }
 
