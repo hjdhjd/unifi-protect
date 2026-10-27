@@ -1,18 +1,26 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * clock.test.ts: Unit tests for the production wall clock and the deadline armed on it. The interface itself is the contract that lets every other module take time
- * as an injected dependency; here we verify the production implementation reads real time, that its delay resolves once its duration elapses and rejects cleanly
- * when its signal aborts, that its callback timer runs once after its duration, never once disposed, and holds the process open only when asked to, that a delay or
- * a timer past the platform timer's ceiling is carried in full rather than fired at once, that an infinite span arms nothing and never elapses, and that a deadline
- * armed on it aborts with the platform's own timeout reason and leaves the process free to exit while it is pending.
+ * clock.test.ts: Unit tests for the production wall clock, the elapsed time measured on it and the deadline armed on it. The interface itself is the contract that
+ * lets every other module take time as an injected dependency; here we verify the production implementation reads real time, that its monotonic reading is the
+ * platform's own in whole microseconds, never decreasing and rising across a real wait while the wall clock is stepped back, that the elapsed time measured on it
+ * is a whole number of milliseconds that a backward step of the time of day leaves as the time that passed, that its delay resolves once its duration elapses and
+ * rejects cleanly when its signal aborts, that its callback timer runs once after its duration, never once disposed, and holds the process open only when asked
+ * to, that a delay or a timer past the platform timer's ceiling is carried in full rather than fired at once, that an infinite span arms nothing and never
+ * elapses, and that a deadline armed on it aborts with the platform's own timeout reason and leaves the process free to exit while it is pending.
  */
-import { TIMER_DELAY_MAX_MS, armDeadline, wallClock } from "./clock.ts";
+import { TIMER_DELAY_MAX_MS, armDeadline, millisecondsSince, wallClock } from "./clock.ts";
+import { TestClock, settle } from "homebridge-plugin-utils/testing";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
-import { settle } from "homebridge-plugin-utils/testing";
 import { settlement } from "./testing.helpers.ts";
 import timersPromises from "node:timers/promises";
+
+// How many successive monotonic reads a row compares, enough that a reading which ran backward even rarely would show.
+const MONOTONIC_READS = 10000;
+
+// The wall-clock time a row seeds mocked `Date` with before stepping it back to half of it.
+const MOCKED_WALL_CLOCK_MS = 1000000;
 
 // The platform's active timers, read as a count. The runner holds timers of its own, so every reading is a delta against a synchronous sample, and nothing awaits
 // between an arm and the read that follows it, so no other timer can enter or leave the list in between.
@@ -29,6 +37,93 @@ describe("wallClock", () => {
     const observed = wallClock.now();
 
     assert.ok((observed >= before) && (observed <= Date.now()), "now() should fall within the surrounding Date.now() readings");
+  });
+
+  test("monotonic() reads the platform's monotonic clock, between bracketing reads taken in its own truncated microseconds", () => {
+
+    // The bracket reads the clock the way the member is documented to, truncated to whole microseconds and then put in milliseconds, so a read landing on the same
+    // microsecond as a bound compares equal to it rather than falling outside a finer one.
+    const bracket = (): number => Number(process.hrtime.bigint() / 1000n) / 1000;
+    const before = bracket();
+    const observed = wallClock.monotonic();
+    const after = bracket();
+
+    assert.ok((observed >= before) && (observed <= after), "wallClock.monotonic() must fall within the surrounding reads: " + [ before, observed, after ].join(" "));
+    assert.equal(Math.round(observed * 1000) / 1000, observed, "the reading must be a whole count of microseconds, in milliseconds");
+  });
+
+  test("monotonic() never decreases across successive reads", () => {
+
+    let decreases = 0;
+    let previous = wallClock.monotonic();
+
+    for(let read = 0; read < MONOTONIC_READS; read++) {
+
+      const current = wallClock.monotonic();
+
+      if(current < previous) {
+
+        decreases++;
+      }
+
+      previous = current;
+    }
+
+    assert.equal(decreases, 0, "no reading may fall below the one before it");
+  });
+
+  test("monotonic() rises across a real wait while mock timers step the wall clock back", async (t) => {
+
+    // Only `Date` is mocked, so the wait below runs on the real timers while the wall clock is set back underneath it.
+    t.mock.timers.enable({ apis: ["Date"], now: MOCKED_WALL_CLOCK_MS });
+
+    const before = wallClock.monotonic();
+
+    t.mock.timers.setTime(MOCKED_WALL_CLOCK_MS / 2);
+
+    await timersPromises.setTimeout(5);
+
+    assert.ok(Date.now() < MOCKED_WALL_CLOCK_MS, "the wall clock must have been stepped back");
+    assert.ok(wallClock.monotonic() > before, "the monotonic reading must rise across the real wait whatever the wall clock did");
+  });
+
+  test("millisecondsSince on the wall clock across a real wait answers a whole number of milliseconds", async () => {
+
+    const startedAt = wallClock.monotonic();
+
+    await timersPromises.setTimeout(5);
+
+    const elapsed = millisecondsSince(startedAt);
+
+    // The reading carries microseconds, so a raw difference of two readings is almost never whole; the rounding is what keeps a published figure an integer.
+    assert.ok(Number.isInteger(elapsed), "the elapsed time must be a whole number of milliseconds: " + String(elapsed));
+    assert.ok(elapsed >= 4, "and it measures the real wait (allowing for timer granularity): " + String(elapsed));
+  });
+
+  test("millisecondsSince on a TestClock answers the forward time that passed across a backward step of the time of day", () => {
+
+    const clock = new TestClock();
+    const startedAt = clock.monotonic();
+
+    clock.advance(400);
+    clock.advance(-5000);
+    clock.advance(100);
+
+    assert.equal(clock.now(), -4500, "the time of day was stepped back past where the measure began");
+    assert.equal(millisecondsSince(startedAt, { clock }), 500, "the elapsed time is the sum of the forward steps, untouched by the backward one");
+  });
+
+  test("millisecondsSince rounds a fractional reading to the nearest whole millisecond", () => {
+
+    const clock = new TestClock();
+    const startedAt = clock.monotonic();
+
+    // A fraction on each side of one half: rounding down the first and up the second is the nearest whole millisecond, which flooring, ceiling or truncating misses.
+    clock.advance(0.4);
+    assert.equal(millisecondsSince(startedAt, { clock }), 0, "a fraction short of one half rounds down");
+
+    clock.advance(0.2);
+    assert.equal(millisecondsSince(startedAt, { clock }), 1, "a fraction past one half rounds up");
   });
 
   test("delay resolves once its duration elapses", async () => {

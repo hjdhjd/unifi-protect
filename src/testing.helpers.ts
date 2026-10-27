@@ -5,7 +5,8 @@
  * These helpers exist as code rather than data because they encapsulate behavior the test runtime needs (no-op logging, log capture, temporary directory lifecycle,
  * unhandled-rejection detection, eventual-consistency assertions, promise-settlement probes). They live in src/ so they are co-located with the production code they
  * support, and they are excluded from the build emit by the helpers exclude pattern in tsconfig.build.json. Virtual time is homebridge-plugin-utils' `TestClock`, which
- * a suite injects wherever the code under test takes a `Clock`.
+ * a suite injects wherever the code under test takes a `Clock`, and `TIME_OF_DAY_STEP_MS` is the step the rows share when they set that clock's time of day back to
+ * show that an elapsed figure measures the time that passed rather than the time of day, and their step needs no sizing to a window.
  *
  * Adding new cross-cutting helpers here is preferable to per-test reinvention. If a helper is specific to a single source module, place it next to that module as a
  * sibling helpers file instead.
@@ -17,6 +18,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import { mock } from "node:test";
 import path from "node:path";
 import { tmpdir } from "node:os";
+
+// How far a row sets the time of day back, as an NTP correction can, to show that an elapsed figure measures the time that passed rather than the time of day.
+export const TIME_OF_DAY_STEP_MS = 60000;
 
 // Captured log entry. We store the full argument list so tests can assert on the message and the structured-context object that the production code passed alongside
 // it. This shape mirrors how the library logs in practice ("text", { contextObject }).

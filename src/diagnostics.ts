@@ -421,9 +421,9 @@ export interface LivestreamSessionOpenedPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamStallDetected}. `lastSegmentAt` is when the pool last saw a segment of any kind, read from the injected `Clock`, so it
- * is epoch milliseconds only under the production clock. `silentForMs` is how long, in milliseconds, the session's heartbeat watchdog found the channel silent when it
- * declared the stall.
+ * Payload published on {@link channels.livestreamStallDetected}. `lastSegmentAt` is when the pool last saw a segment of any kind, the injected `Clock`'s `now()` read
+ * as that segment arrived, so it is epoch milliseconds only under the production clock. `silentForMs` is how long, in milliseconds, the session's heartbeat watchdog
+ * found the channel silent when it declared the stall.
  *
  * @category Diagnostics
  */

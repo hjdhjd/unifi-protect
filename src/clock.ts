@@ -5,20 +5,24 @@
 import timersPromises from "node:timers/promises";
 
 /**
- * Source of time for any code that needs to know "what time is it now?", "wake me up after a delay," or "call me back once the time is up." Every timer and timestamp
- * in the library reads time through this interface, never through `Date.now()`, `node:timers/promises`, or the global `setTimeout` directly. Tests substitute a
- * controllable clock to drive time deterministically without real-time waits or module-level mocking. Outside it by design are undici's own timers - its connect
- * timer, the retry interceptor's backoff, and the pool's client lifetime - which are the dependency's, armed on the platform's timers inside undici where no injected
- * clock reaches, and the `ufp` CLI, a consumer of the library that reads ambient time as any consumer does.
+ * Source of time for any code that needs to know "what time is it now?", "how much time has passed?", "wake me up after a delay," or "call me back once the time is
+ * up." Every timer and timestamp in the library reads time through this interface, never through `Date.now()`, `process.hrtime`, `node:timers/promises`, or the
+ * global `setTimeout` directly. Tests substitute a controllable clock to drive time deterministically without real-time waits or module-level mocking. Outside it by
+ * design are undici's own timers - its connect timer, the retry interceptor's backoff, and the pool's client lifetime - which are the dependency's, armed on the
+ * platform's timers inside undici where no injected clock reaches, and the `ufp` CLI, a consumer of the library that reads ambient time as any consumer does.
  *
- * The interface is shaped by what consumers actually need - a clock, a one-shot delay, and a one-shot callback timer (`now` / `delay` / `schedule`), no more. Adding
- * methods speculatively (setImmediate, a repeating timer, etc.) would be YAGNI; adding them when a consumer first needs one is principled, and each member here
- * answers a consumer. `now` serves the throttle breaker's cooldown, the elapsed time a request reports, the silence each watchdog measures, and the reboot
- * anticipation window, readings a suite steps rather than waits for. `delay` serves the connection-recovery backoff curve and the livestream pool's establishing and
- * recovery windows, each a one-shot wait of varying duration. `schedule` serves the transport's request deadline, which `armDeadline` arms on it, so a suite fires
- * the deadline rather than waiting it out and a request releases its timer the moment it settles. A repeating consumer - the events and livestream heartbeat
- * watchdogs, the livestream pool's media-stall watchdog, the store's refresh failsafe - is itself a loop that awaits one `delay` per pass, so that single primitive
- * covers a varying sequence and a fixed period alike.
+ * The interface is shaped by what consumers actually need - a clock, a monotonic reading, a one-shot delay, and a one-shot callback timer (`now` / `monotonic` /
+ * `delay` / `schedule`), no more. Adding methods speculatively (setImmediate, a repeating timer, etc.) would be YAGNI; adding them when a consumer first needs one
+ * is principled, and each member here answers a consumer. `monotonic` serves every elapsed time the library measures - the throttle breaker's cooldown, a request's
+ * duration and the elapsed time a failed one reports, a connection attempt's elapsed time, the silence each watchdog measures, a livestream recovery episode's
+ * length and downtime, the time since the last segment a recovery reports, and the reboot anticipation window - each a whole-millisecond difference taken
+ * through `millisecondsSince`, because a wall-clock step would move a measure taken on `now`, and these are readings a suite steps rather than waits for. `now` is
+ * the time of day, read only for a timestamp that leaves the library, recorded when its event happens: the livestream stall diagnostic's and a subscriber's stats'
+ * `lastSegmentAt`. `delay` serves the connection-recovery backoff curve and the livestream pool's establishing and recovery windows, each a one-shot wait of
+ * varying duration. `schedule` serves the transport's request deadline, which `armDeadline` arms on it, so a suite fires the deadline rather than waiting it out
+ * and a request releases its timer the moment it settles. A repeating consumer - the events and livestream heartbeat watchdogs, the livestream pool's media-stall
+ * watchdog, the store's refresh failsafe - is itself a loop that awaits one `delay` per pass, so that single primitive covers a varying sequence and a fixed
+ * period alike.
  *
  * The production clock is more than the primitives it wraps only where the platform timer's range runs out, and it answers there as homebridge-plugin-utils' clock
  * does. A finite span past the ceiling is carried in full rather than fired at once, and an infinite span never elapses: nothing is armed for it, so an infinite
@@ -51,6 +55,17 @@ export interface Clock {
    * @returns A promise that resolves after the delay, or rejects with `AbortError` on abort.
    */
   delay(ms: number, init: { signal: AbortSignal }): Promise<void>;
+
+  /**
+   * Returns a reading of the platform's monotonic clock: an integer count of microseconds on `process.hrtime`'s timeline, from its origin, divided by 1000, so the
+   * reading is in milliseconds and `Math.round(reading * 1000)` recovers the count exactly. A wall-clock change never moves it, so a later reading less an earlier
+   * one is the time that passed between them however the time of day was set meanwhile. Whether it advances across a system suspend depends on the platform's
+   * monotonic clock. Its origin is the platform's rather than the process's, so an uptime is a consumer's own difference from a reading it took when it started.
+   * The production {@link wallClock} implements this as `process.hrtime.bigint()` truncated to whole microseconds.
+   *
+   * @returns The monotonic reading, in milliseconds to the microsecond.
+   */
+  monotonic(): number;
 
   /**
    * Returns the current wall-clock time in milliseconds since the Unix epoch. The semantic matches `Date.now()`.
@@ -194,10 +209,11 @@ function delayUntilAbort({ signal }: { signal?: AbortSignal } = {}): Promise<voi
 }
 
 /**
- * The production clock. Reads wall-clock time via `Date.now()`, delays via `node:timers/promises`, and arms callback timers on the global `setTimeout`. This shim
- * is the single bridge between the `Clock` interface and Node's runtime; consumers always go through `Clock`, never directly to the Node primitives, so an
- * unmocked call site behaves exactly like a direct `Date.now()`, `node:timers/promises`, or `setTimeout` call would - except past the platform timer's ceiling,
- * where the platform would fire at once and this clock fires when asked, and at an infinite span, which the platform would fire at once and this clock never fires.
+ * The production clock. Reads wall-clock time via `Date.now()`, the monotonic clock via `process.hrtime.bigint()` truncated to whole microseconds and read in
+ * milliseconds, delays via `node:timers/promises`, and arms callback timers on the global `setTimeout`. This shim is the single bridge between the `Clock`
+ * interface and Node's runtime; consumers always go through `Clock`, never directly to the Node primitives, so an unmocked call site behaves exactly like a direct
+ * `Date.now()`, `process.hrtime.bigint()`, `node:timers/promises`, or `setTimeout` call would - except past the platform timer's ceiling, where the platform would
+ * fire at once and this clock fires when asked, and at an infinite span, which the platform would fire at once and this clock never fires.
  *
  * Consumer tests (the `ConnectionMonitor`, `LivestreamPool`, `StateStore`, and the like) construct homebridge-plugin-utils' `TestClock` instead of importing this;
  * this module's own test exercises `wallClock` directly to confirm it reads real time and drives real timers. Production code receives this as the default in every
@@ -220,6 +236,12 @@ export const wallClock: Clock = {
 
     return pastCeiling(ms) ? delayPastCeiling(ms, init) : timersPromises.setTimeout(ms, undefined, init);
   },
+
+  /* The reading is truncated to whole microseconds before it becomes a `number`, because nanoseconds since the platform's origin, which is near boot on common
+   * hosts, outgrow the integers a `number` holds exactly after about a hundred days. A count of microseconds stays exact, and its reading in milliseconds rounds
+   * back to it, for years past any realistic uptime, so a consumer recovering the microseconds with `Math.round` gets back the very count this read.
+   */
+  monotonic: (): number => Number(process.hrtime.bigint() / 1000n) / 1000,
 
   now: (): number => Date.now(),
 
@@ -283,4 +305,22 @@ export function armDeadline(ms: number, { clock = wallClock }: { clock?: Clock }
   const timer = clock.schedule((): void => controller.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError")), ms, { unref: true });
 
   return { [Symbol.dispose]: (): void => timer[Symbol.dispose](), signal: controller.signal };
+}
+
+/**
+ * Answers the whole milliseconds a clock's monotonic reading has moved since an earlier reading of it, which is the one way the library measures an elapsed time.
+ *
+ * The difference is taken on `monotonic()` rather than `now()`, so a change to the time of day between the two readings - an NTP correction, often a large one on a
+ * host with no real-time clock - never moves it. It is rounded to the nearest whole millisecond because the reading carries microseconds, and a raw difference of two
+ * readings prints with floating-point noise wherever the figure is published or logged, so every elapsed figure stays an integer.
+ *
+ * @param since         - An earlier `monotonic()` reading of the same clock.
+ * @param options       - Optional elapsed-time options.
+ * @param options.clock - The clock `since` was read from. Defaults to `wallClock`.
+ *
+ * @returns The milliseconds that have passed since `since`, rounded to a whole number.
+ */
+export function millisecondsSince(since: number, { clock = wallClock }: { clock?: Clock } = {}): number {
+
+  return Math.round(clock.monotonic() - since);
 }

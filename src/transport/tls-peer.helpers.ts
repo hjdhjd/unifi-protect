@@ -3,14 +3,15 @@
  * tls-peer.helpers.ts: Loopback peers the transport suites drive real sockets against - an HTTPS responder for the request path, a hand-rolled WebSocket upgrader
  * for the socket paths, an HTTPS peer that takes requests and answers none, a TLS peer that offers HTTP/2 ahead of HTTP/1.1 and answers nothing, a silent peer that
  * holds a dial in its handshake, a peer that resets every connection it accepts, a plain peer whose answers a test scripts at the socket level, and a TLS peer
- * behind a proxy whose client-facing connections a test writes raw bytes to - with the client-side captures the connector suites read a connection through, and
- * the real-time bounds a settlement and a release are read against.
+ * behind a proxy whose client-facing connections a test writes raw bytes to - with the client-side captures the connector suites read a connection through and the
+ * socket suites read an announced connection through, and the real-time bounds a settlement and a release are read against.
  */
 import type { AddressInfo, Server, Socket } from "node:net";
 import type { Dispatcher, buildConnector } from "undici";
 import type { Http2ServerRequest, ServerHttp2Session } from "node:http2";
 import { connect as connectTcp, createServer as createTcpServer } from "node:net";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import type { IncomingMessage } from "node:http";
 import type { TLSSocket } from "node:tls";
 import { createHash } from "node:crypto";
@@ -23,6 +24,9 @@ import { request } from "undici";
 // The fixed value RFC 6455 defines for the handshake digest, and the blank line that ends an HTTP header block.
 const WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const HEADER_TERMINATOR = "\r\n\r\n";
+
+// The diagnostics channel undici announces each connection a client establishes on, carrying the connection's socket.
+const CLIENT_CONNECTED_CHANNEL = "undici:client:connected";
 
 /**
  * The answers a test hands the scripted peer to write: one that keeps its connection open for the next request, and one that asks the client to close it. The TLS
@@ -589,6 +593,31 @@ export function keepingVended(connector: { readonly connect: buildConnector.conn
 
     callback(...args);
   });
+}
+
+/**
+ * The sockets undici's clients establish while a capture is held, in connection order. A socket a library object holds privately is read here, at the moment a row
+ * asks about it - inside a listener, say, where it is destroyed already or not yet - rather than at the peer, which learns of a severance only on a later
+ * turn. Dispose the capture, ordinarily through `using`, to stop it.
+ */
+export interface AnnouncedSockets extends Disposable {
+
+  readonly sockets: readonly Socket[];
+}
+
+/**
+ * Capture every socket an undici client establishes from undici's own announcement of each connection, until the capture is disposed.
+ *
+ * @returns The capture, its sockets filling in as each connection is announced.
+ */
+export function announcedSockets(): AnnouncedSockets {
+
+  const sockets: Socket[] = [];
+  const onConnected = (message: unknown): void => void sockets.push((message as { socket: Socket }).socket);
+
+  subscribe(CLIENT_CONNECTED_CHANNEL, onConnected);
+
+  return { [Symbol.dispose]: (): void => void unsubscribe(CLIENT_CONNECTED_CHANNEL, onConnected), sockets };
 }
 
 /**

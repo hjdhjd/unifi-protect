@@ -78,7 +78,8 @@ import { wallClock } from "../clock.ts";
  *   defaultLivestreamRecoveryPolicy}.
  * - `refreshIntervalMs` sets the {@link StateStore}'s bootstrap-refresh failsafe cadence; it defaults to the store's interval, and passing `false` disables the
  *   failsafe entirely so the consumer relies solely on the realtime event stream.
- * - `signal` cancels the initial login and bootstrap fetch; it is bound only to connect, never to a later recovery relaunch.
+ * - `signal` cancels the connect alone: the initial login, the bootstrap fetch and the first events stream's connection attempt, which it binds only until the
+ *   stream opens, so an abort once the connect has completed leaves the client running, and no later recovery relaunch carries it.
  * - `verifyTls` requires the controller to present a certificate that verifies, on the request path and every WebSocket alike. It defaults to `false`, because a
  *   controller presents a self-signed certificate that no verification chain accepts - turn it on where a trusted certificate has been installed on the controller and
  *   a connection to an impostor should fail rather than proceed. An injected `dispatcher` or `webSocket` factory brings its own TLS settings, so the option reaches

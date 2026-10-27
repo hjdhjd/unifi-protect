@@ -6,19 +6,21 @@
  */
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
-import { DIAL_SETTLE_BOUND_MS, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
+import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
 import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectRequestError, ProtectTimeoutError } from "../errors.ts";
+import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
-import { assertNoUnhandledRejections, capturingLog, expectAt, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { FakeWritableWebSocket } from "./talkback-session.helpers.ts";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
+import type { ProtectLogging } from "../logging.ts";
 import { Readable } from "node:stream";
 import { TalkbackSession } from "./talkback-session.ts";
 import assert from "node:assert/strict";
 import { constants } from "node:os";
+import { getEventListeners } from "node:events";
 import tls from "node:tls";
 
 // The sentence the session logs a fault of its live socket under, and the lines a log holds carrying it, at whatever level each was logged.
@@ -40,7 +42,7 @@ const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
 
 // Connect a session over a fake socket that auto-opens, returning the live session, the fake socket the test drives, and the URL the session handed its socket
 // factory. The factory assigns `url` and `ws` synchronously before returning, so each is set by the time the auto-open microtask fires and `connect()` resolves.
-async function openSession(options: { cameraId?: string; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+async function openSession(options: { cameraId?: string; log?: ProtectLogging; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   signal?: AbortSignal; } = {}): Promise<{ session: TalkbackSession; url: string; ws: FakeWritableWebSocket }> {
 
   let url!: string;
@@ -48,7 +50,7 @@ async function openSession(options: { cameraId?: string; resolveUrl?: (params: U
   const session = await TalkbackSession.connect({
 
     cameraId: options.cameraId ?? "cam1",
-    log: silentLog(),
+    log: options.log ?? silentLog(),
     resolveUrl: options.resolveUrl ?? fixedUrl,
     webSocket: (socketUrl: string): FakeWritableWebSocket => {
 
@@ -230,6 +232,102 @@ describe("TalkbackSession", () => {
 
       await assert.rejects(connecting, { constructor: ProtectNetworkError, message: /closed before it finished connecting/ });
     });
+
+    test("a peer close before the open rejects connect naming its frame, with no string cause", async () => {
+
+      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const connecting = TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveUrl: fixedUrl, webSocket: () => {
+
+        const ws = new FakeWritableWebSocket({ autoOpen: false });
+
+        resolve(ws);
+
+        return ws;
+      } });
+
+      (await promise).emitClose(1006, "dropped");
+
+      // The chain renderer skips a cause that is not an Error, so the frame travels in the message, the one place every rendered failure shows it.
+      await assert.rejects(connecting, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.equal(error.message, "The UniFi Protect talkback API closed before it finished connecting (close code 1006: dropped).");
+        assert.equal(error.cause, undefined);
+
+        return true;
+      });
+    });
+
+    test("a backward step of the time of day during a connection attempt leaves the elapsed time its timeout reports the time that passed", async () => {
+
+      const clock = new TestClock();
+      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const connecting = TalkbackSession.connect({
+
+        cameraId: "cam1",
+        clock,
+        log: silentLog(),
+        resolveUrl: fixedUrl,
+        webSocket: () => {
+
+          const ws = new FakeWritableWebSocket({ autoOpen: false });
+
+          resolve(ws);
+
+          return ws;
+        }
+      });
+
+      const ws = await promise;
+
+      /* The attempt begins as the socket is built. The time of day is set back while it is under way, and it runs on for two and a half seconds before it times out.
+       * An injected socket's own error is the whole account of its failure, so the undici connect timeout this row hands it classifies exactly as a real one does.
+       */
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(2500);
+      ws.emitError(errnoError("Connect Timeout Error", "UND_ERR_CONNECT_TIMEOUT"));
+
+      await assert.rejects(connecting, { constructor: ProtectTimeoutError, elapsedMs: 2500 });
+    });
+
+    test("a logger that throws on the connected line leaves connect resolved and the opened diagnostic published", async () => {
+
+      const payloads: TalkbackSessionOpenedPayload[] = [];
+
+      using openedSubscription = subscribeToChannel(channels.talkbackSessionOpened, (payload) => void payloads.push(payload));
+
+      const log: ProtectLogging = { ...silentLog(), debug: (message: string): void => {
+
+        if(message === "Connected to the UniFi Protect talkback API.") {
+
+          throw new Error("the logger refused the connected line");
+        }
+      } };
+      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const connecting = TalkbackSession.connect({ cameraId: "cam-open", log, resolveUrl: fixedUrl, webSocket: () => {
+
+        const ws = new FakeWritableWebSocket({ autoOpen: false });
+
+        resolve(ws);
+
+        return ws;
+      } });
+      const settled = settlement(connecting);
+      const ws = await promise;
+
+      // The fake hands a listener's throw back to the caller, so the logger's throw from inside the open surfaces here, after the open's work.
+      assert.throws(() => ws.emitOpen(), /the logger refused the connected line/);
+      await settle();
+
+      assert.ok(settled(), "the handshake settled though the line threw");
+
+      const session = await connecting;
+
+      assert.equal(session.state, "live");
+      assert.deepEqual(payloads, [{ cameraId: "cam-open" }], "and the opened diagnostic was published once");
+
+      await session.close();
+    });
   });
 
   describe("send", () => {
@@ -324,6 +422,22 @@ describe("TalkbackSession", () => {
 
       // The peer's close of a live socket stores its failure, so a later send reports why the session ended rather than a bare not-connected error.
       await assert.rejects(session.send(source()), { constructor: ProtectNetworkError, message: /closed unexpectedly/ });
+    });
+
+    test("a send after a peer close of a live session rejects with a failure naming the frame, with no string cause", async () => {
+
+      const { session, ws } = await openSession();
+
+      ws.emitClose(4000, "bye");
+
+      await assert.rejects(session.send(oneChunk()), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.equal(error.message, "The UniFi Protect talkback API connection closed unexpectedly (close code 4000: bye).");
+        assert.equal(error.cause, undefined);
+
+        return true;
+      });
     });
 
     test("a source whose return() rejects never replaces the typed fault", { timeout: 2000 }, async () => {
@@ -465,6 +579,54 @@ describe("TalkbackSession", () => {
       await connection.closed;
 
       assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "the session's close releases the connection rather than waiting on the peer");
+    });
+
+    test("close() has released the connection it owns by the time the closed diagnostic is published", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const destroyedAtClosed: { cameraId: string; destroyed: boolean }[] = [];
+
+      /* The session holds its socket privately, so the row takes it from undici's own announcement, as the sibling sessions' rows do. The session carries no event
+       * bus, so its announcement of the close is the closed diagnostic, and the row reads the socket from inside that rather than at the peer, which learns of a
+       * severance only on a later turn. The camera is this row's own, so a closure from any other session reads as a mismatch.
+       */
+      using announced = announcedSockets();
+      using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed,
+        ({ cameraId }) => void destroyedAtClosed.push({ cameraId, destroyed: announced.sockets.every((socket) => socket.destroyed) }));
+
+      const session = await TalkbackSession.connect({ cameraId: "cam-close-order", log: silentLog(),
+        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      await session.close();
+
+      assert.equal(announced.sockets.length, 1, "the one socket the session dialed was announced");
+      assert.deepEqual(destroyedAtClosed, [{ cameraId: "cam-close-order", destroyed: true }], "the connection is released before the closed diagnostic is published");
+    });
+
+    test("a caller abort of a live session logs its close line only once the connection is released", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      using announced = announcedSockets();
+
+      const controller = new AbortController();
+      const releasedAtLine: boolean[] = [];
+
+      // The session has no rail, so the close line is the first report a caller's cancel makes, and the logger reads the socket from inside the teardown.
+      const log: ProtectLogging = { ...silentLog(), debug: (message: string): void => {
+
+        if(message === "The UniFi Protect talkback API connection closed.") {
+
+          releasedAtLine.push(announced.sockets.every((socket) => socket.destroyed));
+        }
+      } };
+      const session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback",
+        signal: controller.signal });
+
+      controller.abort();
+
+      assert.equal(announced.sockets.length, 1, "the one socket the session dialed was announced");
+      assert.deepEqual(releasedAtLine, [true], "the close line is logged with the connection already released");
+      assert.equal(session.state, "closed");
     });
 
     test("a caller abort during the TLS dial releases the socket at once and records the caller's cancel as the closure", async () => {
@@ -755,9 +917,9 @@ describe("TalkbackSession", () => {
       assert.equal(session.state, "live");
 
       // Start a drain that parks on its second pull, then abort the session-level signal (the one passed to connect, distinct from a per-send signal). The constructor's
-      // abort listener records the typed caller abort and runs #shutdown, which closes the socket and rejects the in-flight send with ProtectAbortedError - the
-      // documented "once live, if it aborts, the session tears down and an in-flight send rejects" contract, the live-session counterpart to the
-      // already-aborted-before-connect teardown above.
+      // abort listener runs #shutdown with the caller's cancel as its reason, whose teardown closes the socket, stores the typed caller abort and rejects the in-flight
+      // send with ProtectAbortedError - the documented "once live, if it aborts, the session tears down and an in-flight send rejects" contract, the live-session
+      // counterpart to the already-aborted-before-connect teardown above.
       const sending = session.send(parkedGenerator(Buffer.from("a")));
 
       await settle();
@@ -783,6 +945,50 @@ describe("TalkbackSession", () => {
       // and #onClose releases everything regardless, so the session still reaches the closed state and the close was attempted.
       await assert.doesNotReject(session.close());
       assert.equal(ws.closeRequested, true);
+      assert.equal(session.state, "closed");
+    });
+
+    test("a close() re-entered from the closed diagnostic runs no second teardown and resolves", async () => {
+
+      const { session } = await openSession({ cameraId: "cam-reentered" });
+      const reentered: Promise<void>[] = [];
+      let published = 0;
+
+      // The camera is this row's own, so a closure from any other session never reaches the re-entering close().
+      using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed, ({ cameraId }) => {
+
+        if(cameraId === "cam-reentered") {
+
+          published++;
+          reentered.push(session.close());
+        }
+      });
+
+      await session.close();
+      await Promise.all(reentered);
+
+      assert.equal(reentered.length, 1, "the diagnostic's subscriber ran once and its close() resolved");
+      assert.equal(published, 1, "and the teardown it re-entered published the closure once");
+    });
+
+    test("a logger that throws on a live socket's fault line still fails the send in flight with the stored reset", { timeout: 2000 }, async () => {
+
+      const log: ProtectLogging = { ...silentLog(), warn: (message: string): void => {
+
+        if(message === REPORTED) {
+
+          throw new Error("the logger refused the fault's line");
+        }
+      } };
+      const { session, ws } = await openSession({ log });
+      const sending = session.send(parkedGenerator(Buffer.from("a")));
+
+      await settle();
+
+      // The fake hands a listener's throw back to the caller, so the logger's throw from inside the teardown surfaces here, after the send in flight was failed.
+      assert.throws(() => ws.emitError(errnoError("read ECONNRESET", "ECONNRESET")), /the logger refused the fault's line/);
+
+      await assert.rejects(sending, { code: "ECONNRESET", constructor: ProtectNetworkError });
       assert.equal(session.state, "closed");
     });
   });
@@ -815,5 +1021,116 @@ describe("TalkbackSession", () => {
       // The reason is the teardown cause the session's own close records.
       assert.deepEqual(payloads, [{ cameraId: "cam-9", reason: "the talkback session was closed by the client" }]);
     });
+  });
+
+  /* Every listener the session registers, on its socket and on the caller's signal, comes off in its teardown by the identity it was registered under, as the
+   * sibling sessions' do. The fake removes a listener on that request and on no other, so a teardown that forgot one leaves it for the count to read. A session's
+   * one self-chosen teardown before its open is the caller's cancel, since connect() hands no session back until the socket opens.
+   */
+  describe("listener detach", () => {
+
+    // Which camera a row's session names and where it logs, and the connect a row is handed back still pending.
+    interface ConnectingOptions {
+
+      cameraId?: string;
+      log?: ProtectLogging;
+    }
+
+    interface PendingConnect {
+
+      connected: Promise<TalkbackSession>;
+    }
+
+    // Connect over the given fake on the given caller signal, resolving once the socket is built and its listeners attached, with the connect handed back pending.
+    async function connecting(ws: FakeWritableWebSocket, signal: AbortSignal, { cameraId = "cam1", log = silentLog() }: ConnectingOptions = {}): Promise<PendingConnect> {
+
+      const built = Promise.withResolvers<undefined>();
+      const connected = TalkbackSession.connect({ cameraId, log, resolveUrl: fixedUrl, signal, webSocket: (): FakeWritableWebSocket => {
+
+        built.resolve(undefined);
+
+        return ws;
+      } });
+
+      void connected.catch(() => undefined);
+      await built.promise;
+
+      return { connected };
+    }
+
+    test("a pre-open caller abort over a socket that fails from inside close() closes 1000 and publishes the caller's reason", async () => {
+
+      const controller = new AbortController();
+      const log = capturingLog();
+      const payloads: TalkbackSessionClosedPayload[] = [];
+
+      using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed, (payload) => void payloads.push(payload));
+
+      const ws = new FakeWritableWebSocket({ autoOpen: false, failsOnClose: true });
+      const { connected } = await connecting(ws, controller.signal, { cameraId: "cam-fails-on-close", log });
+      const reason = "the talkback session was aborted by the caller's signal";
+
+      controller.abort();
+
+      // The socket's error and its close 1006 fire inside close() and reach no listener, so the one teardown that runs is the caller's cancel.
+      await assert.rejects(connected, ProtectAbortedError);
+      assert.deepEqual(payloads.filter((payload) => payload.cameraId === "cam-fails-on-close"), [{ cameraId: "cam-fails-on-close", reason }]);
+      assert.deepEqual(log.entries.filter((entry) => entry.message === "The UniFi Protect talkback API connection closed.").map(({ args }) => args[0]),
+        [{ camera: "cam-fails-on-close", code: 1000, reason }]);
+    });
+
+    // What a row hands the teardown path it runs on a live session.
+    interface Stage {
+
+      controller: AbortController;
+      session: TalkbackSession;
+      ws: FakeWritableWebSocket;
+    }
+
+    const liveTeardowns: { name: string; run: (stage: Stage) => Promise<void> | void }[] = [
+
+      { name: "close()", run: async ({ session }): Promise<void> => session.close() },
+      { name: "a peer close", run: ({ ws }): void => ws.emitClose(1001, "going away") },
+      { name: "a socket error", run: ({ ws }): void => ws.emitError(new Error("socket boom")) },
+      { name: "a caller abort", run: ({ controller }): void => controller.abort() }
+    ];
+
+    for(const { name, run } of liveTeardowns) {
+
+      test("after " + name + " of a live session the socket holds no listener and the caller's signal no binding", async () => {
+
+        const controller = new AbortController();
+        const { session, ws } = await openSession({ signal: controller.signal });
+
+        await run({ controller, session, ws });
+
+        assert.equal(session.state, "closed");
+        assert.equal(ws.listenerCount(), 0, "every socket listener the session registered is removed");
+        assert.equal(getEventListeners(controller.signal, "abort").length, 0, "and so is the binding to the caller's signal");
+      });
+    }
+
+    const pendingTeardowns: { name: string; run: (stage: Omit<Stage, "session">) => void }[] = [
+
+      { name: "a peer close", run: ({ ws }): void => ws.emitClose(1006, "dropped") },
+      { name: "a socket error", run: ({ ws }): void => ws.emitError(new Error("socket boom")) },
+      { name: "a caller abort", run: ({ controller }): void => controller.abort() }
+    ];
+
+    for(const { name, run } of pendingTeardowns) {
+
+      test("after " + name + " before the open the socket holds no listener and the caller's signal no binding", async () => {
+
+        const controller = new AbortController();
+        const ws = new FakeWritableWebSocket({ autoOpen: false });
+        const { connected } = await connecting(ws, controller.signal);
+
+        run({ controller, ws });
+
+        await assert.rejects(connected);
+        assert.equal(ws.listenerCount(), 0, "every socket listener the session registered is removed");
+        assert.equal(getEventListeners(controller.signal, "abort").length, 0, "and so is the binding to the caller's signal");
+      });
+    }
   });
 });

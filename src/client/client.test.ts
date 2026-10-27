@@ -55,12 +55,13 @@ function connect(agent: MockAgent): Promise<ProtectClient> {
     webSocket: () => new FakeWebSocket() });
 }
 
-// Connect while capturing the fake events WebSocket the factory builds, so a test can drive realtime frames into the live client.
-async function connectCapturing(agent: MockAgent): Promise<{ client: ProtectClient; ws: FakeWebSocket }> {
+// Connect while capturing the fake events WebSocket the factory builds, so a test can drive realtime frames into the live client. A row that reads what the connect
+// signal governs hands its signal in.
+async function connectCapturing(agent: MockAgent, options: { signal?: AbortSignal } = {}): Promise<{ client: ProtectClient; ws: FakeWebSocket }> {
 
   let ws: FakeWebSocket | undefined;
   const client = await ProtectClient.connect({ dispatcher: agent, host: HOST, log: silentLog(), password: "p", refreshIntervalMs: false, username: "u",
-    webSocket: () => (ws = new FakeWebSocket()) });
+    webSocket: () => (ws = new FakeWebSocket()), ...((options.signal !== undefined) && { signal: options.signal }) });
 
   assert.ok(ws !== undefined, "the events WebSocket factory must have been invoked during connect");
 
@@ -355,6 +356,32 @@ describe("ProtectClient.connect", () => {
       assert.equal(firehose[0]?.kind, "devicePatched");
 
       await client[Symbol.asyncDispose]();
+    });
+
+    test("a connect signal aborted after the connect resolves leaves the events socket open, its frames reaching the state, and the connection healthy", async () => {
+
+      const { agent, pool } = mockController();
+      const controller = new AbortController();
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ cameras: [makeCamera({ id: "c1", name: "Front" })] }));
+
+      const captured = await connectCapturing(agent, { signal: controller.signal });
+
+      await using client = captured.client;
+      const { ws } = captured;
+
+      /* The signal cancels the connect and nothing after it. The monitor hears only the stream's error rail, which a caller's cancel never reaches, so a stream that
+       * obeyed the signal past its open would end the realtime channel with no recovery to bring it back, while the connection still read healthy.
+       */
+      controller.abort();
+      await settle();
+
+      ws.emitMessage(encode({ action: "update", id: "c1", modelKey: "camera" }, { name: "Renamed" }));
+
+      assert.equal(ws.closeRequested, false, "the events socket is not asked to close");
+      assert.equal(client.camera("c1")?.name, "Renamed", "the realtime channel still carries frames into the state");
+      assert.equal(client.connection.state, "healthy");
     });
 
     test("client.events() yields the firehose and ends cleanly on abort", async () => {

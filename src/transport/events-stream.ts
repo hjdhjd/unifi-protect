@@ -20,19 +20,21 @@
  * **The watchdog detects here; `ConnectionMonitor` responds.** This is the same division as the throttle breaker: the subsystem that owns a resource detects its health
  * condition and emits a typed signal, and the one coordinator responds. `EventStream` stamps `lastMessageAt` on every frame and runs a silence watchdog on the injected
  * `Clock`; a wake that finds the channel silent past {@link PROTECT_EVENTS_WATCHDOG_TIMEOUT} concludes it is dead-but-not-closed (the lossy-firmware case the whole
- * design exists for), emits `error({@link ProtectStallError})` - a `RecoverableError`, so the error type itself is the "recover" signal - and tears the socket down.
- * A stall before the socket opens rejects {@link EventStream.opened} with that error instead, since there is no open stream yet for anyone to recover.
+ * design exists for), tears the socket down and emits `error({@link ProtectStallError})` - a `RecoverableError`, so the error type itself is the "recover" signal -
+ * once the connection is released. A stall before the socket opens rejects {@link EventStream.opened} with that error instead, since there is no open stream yet
+ * for anyone to recover.
  * `EventStream` does not reconnect; that is `ConnectionMonitor`'s scope. The gap is covered by the bootstrap-refresh failsafe, which exists precisely for it.
  *
  * @module EventStream
  */
 import { Agent, WebSocket } from "undici";
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
-import type { ProtectWebSocket, ProtectWebSocketErrorEvent } from "./ws.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, assertNever } from "../errors.ts";
+import type { ProtectWebSocket, ProtectWebSocketCloseEvent, ProtectWebSocketErrorEvent, ProtectWebSocketMessageEvent, SocketFaultLine, SocketTeardown } from "./ws.ts";
 import { classifyPacket, isKnownModelKey } from "../protocol/events.ts";
+import { closeFrameText, socketFault, teardownCode, toBuffer } from "./ws.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
-import { reportSocketFailure, toBuffer } from "./ws.ts";
+import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { OwnedDispatcher } from "./connector.ts";
@@ -44,7 +46,6 @@ import type { TypedEvent } from "../protocol/events.ts";
 import { channels } from "../diagnostics.ts";
 import { decodePacket } from "../protocol/packet.ts";
 import { noopLog } from "../logging.ts";
-import { wallClock } from "../clock.ts";
 
 /**
  * Construction options for {@link EventStream}.
@@ -53,8 +54,9 @@ import { wallClock } from "../clock.ts";
  *   handed to the controller so it replays any events that fired between the bootstrap snapshot and the WebSocket coming online.
  * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses).
  * - `webSocket` is the injected I/O dependency; omit it to use the default undici-backed factory, inject it in tests.
- * - `signal` cancels the connection attempt and, once open, the stream - if it aborts before the socket opens, {@link EventStream.opened} rejects with
- *   `ProtectAbortedError`; at any point the stream tears down.
+ * - `signal` cancels the connection attempt alone. If it aborts before the socket opens, {@link EventStream.opened} rejects with `ProtectAbortedError` and the
+ *   stream tears down; the stream stops listening to it once the socket opens, so an abort from then on leaves the live stream running until
+ *   {@link EventStream.close} or a fault ends it.
  * - `verifyTls` opts the owned connection into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
  *   `webSocket` factory builds no agent here, so the option is inert alongside one.
  *
@@ -102,6 +104,9 @@ export interface EventStreamEvents {
  * subscription *before* awaiting {@link EventStream.opened} - a socket delivers no `message` before `open`, so a pre-`open` subscription loses nothing, no buffering
  * required. {@link EventStream.connect} is atomic sugar (construct, await open, return) for direct consumers that subscribe via {@link EventStream.packets}.
  *
+ * A caller's signal cancels the connection attempt alone and never the live stream: the stream listens to it until the socket opens and then lets it go, so what
+ * ends an open stream is its own {@link EventStream.close} or a fault, and the layer that owns connection policy recovers from the fault.
+ *
  * @category Transport
  */
 export class EventStream implements AsyncDisposable {
@@ -110,11 +115,12 @@ export class EventStream implements AsyncDisposable {
   readonly #address: string;
   readonly #bus: EventBus<EventStreamEvents>;
   readonly #clock: Clock;
-  // When the connection attempt began, on the injected clock, which is what a connection attempt that times out measures its elapsed time from. It is a stamp of its
-  // own rather than the watchdog's liveness stamp, which every frame moves.
+  // When the connection attempt began, as the injected clock's monotonic reading, which is what a connection attempt that times out measures its elapsed time from.
+  // It is a stamp of its own rather than the watchdog's liveness stamp, which every frame moves.
   readonly #connectStartedAt: number;
-  // One AbortController governs every WebSocket listener and the watchdog loop. A single abort() detaches them all at once - the same teardown primitive the livestream
-  // session uses.
+  // One AbortController governs the watchdog loop, so a single abort() ends it, as the livestream session's ends its own. The socket's listeners and the binding to the
+  // caller's signal are not among what it governs: the stream holds them and removes them itself, the binding at the open or in a teardown that comes first, and the
+  // socket's listeners in its teardown.
   readonly #controller = new AbortController();
   readonly #log: ProtectLogging;
   /* What we own when we built the default WebSocket, and null when a factory was injected - its owner manages the transport underneath it, and we never destroy what
@@ -125,35 +131,50 @@ export class EventStream implements AsyncDisposable {
   readonly #owned: OwnedDispatcher | null;
   readonly #ws: ProtectWebSocket;
 
-  // The open handshake, settled exactly once: resolved on the WebSocket `open` event, rejected if the socket closes (or the caller's signal aborts) before opening.
+  /* The socket's handlers and the handler bound to the caller's signal, built once and held on the instance so the stream removes each by the identity it was
+   * registered under: the caller's at the open, or in a teardown that comes first, and the socket's in the teardown. The `signal` registration option is
+   * deliberately not what detaches them: on every Node before the fix for nodejs/node#63954 (all of 22, 24 before 24.22, 25, and 26 before 26.9) the runtime keeps
+   * only the last signal-bound removal per target alive, so a garbage collection landing before the abort leaves the others attached, and a teardown that must
+   * detach before it asks the socket to close cannot rest on that. A reference the stream owns cannot be collected out from under it, which makes the detach a
+   * property of the stream rather than of the collector.
+   */
+  readonly #callerSignal: AbortSignal | undefined;
+  readonly #onCallerAbort = (): void => this.#abortByCaller();
+  readonly #socketListeners = {
+
+    close: (event: ProtectWebSocketCloseEvent): void => this.#onClose({ code: event.code, kind: "peer", reason: event.reason }),
+    error: (event: ProtectWebSocketErrorEvent): void => this.#onError(event),
+    message: (event: ProtectWebSocketMessageEvent): void => this.#onMessage(event.data),
+    open: (): void => this.#onOpen()
+  };
+
+  /* The open handshake, settled exactly once: resolved on the WebSocket `open` event, rejected if the socket closes (or the caller's signal aborts) before opening.
+   * Settling once is a property of the lifecycle rather than a check of its own: the `open` listener fires once and every teardown removes it before it reports,
+   * #onOpen marks the stream live before it resolves, and the teardown runs once and rejects only a stream that never opened.
+   */
   readonly #opened: Promise<void>;
-  readonly #settleOpen: (error?: ProtectError) => void;
+  readonly #rejectOpen: (error: ProtectError) => void;
+  readonly #resolveOpen: (value: undefined) => void;
 
   // The model-key/action pairs whose schema-drift signal we have already published this session, so sustained drift does not spam the diagnostics channel.
   readonly #seenUnknown = new Set<string>();
 
-  // The single teardown gate and the connection-release promise close()/dispose await. lastMessageAt is the watchdog's only liveness source - clock-stamped on every
-  // frame, seeded to construction time so a fresh stream is not instantly considered stale.
-  #closePromise: Promise<void> | null = null;
-  #closed = false;
-  // Set by every self-initiated teardown (close(), caller abort, watchdog stall, socket error), so #onClose can tell a deliberate close from a peer-initiated one and
-  // route only the latter onto the error rail.
-  #closeInitiated = false;
-  // Set ONLY by the caller-abort teardown path, a narrowing of the broader #closeInitiated, so #onClose settles a still-pending open handshake as the typed
-  // ProtectAbortedError for a caller abort. A socket error or a watchdog stall before open has already settled the handshake with its own typed failure by then, and
-  // every other pre-open teardown (a peer close, an explicit close()) keeps the generic ProtectNetworkError.
-  #callerAborted = false;
+  // The release of the connection the stream owns, which the single teardown starts and close()/dispose await, null until the teardown runs, so it is also the gate
+  // that runs the teardown once. lastMessageAt is the watchdog's only liveness source - the clock's monotonic reading at every frame, seeded at construction so a
+  // fresh stream is not instantly considered stale.
+  #released: Promise<void> | null = null;
   #lastMessageAt: number;
-  // True once the socket has opened. Gates the unsolicited-close error so a pre-open connect failure flows through the opened-handshake rejection alone, not a recovery.
+  // True once the socket has opened, which decides what a teardown owes: the open handshake's rejection for a stream that never opened, and the error rail for one
+  // that did, so a pre-open connect failure reaches its caller alone rather than starting a recovery.
   #live = false;
-  #openSettled = false;
 
   constructor(options: EventStreamOptions) {
 
+    this.#callerSignal = options.signal;
     this.#clock = options.clock ?? wallClock;
     this.#log = options.log ?? noopLog;
     this.#bus = new EventBus<EventStreamEvents>(this.#log);
-    this.#lastMessageAt = this.#clock.now();
+    this.#lastMessageAt = this.#clock.monotonic();
 
     const url = "wss://" + options.host + "/proxy/protect/ws/updates?" + new URLSearchParams({ lastUpdateId: options.lastUpdateId }).toString();
 
@@ -166,7 +187,7 @@ export class EventStream implements AsyncDisposable {
      * the interface is honest by construction. Building the socket is where the connection attempt begins, whichever branch builds it, so the attempt's start is
      * stamped immediately ahead of it.
      */
-    this.#connectStartedAt = this.#clock.now();
+    this.#connectStartedAt = this.#clock.monotonic();
 
     if(options.webSocket !== undefined) {
 
@@ -187,42 +208,23 @@ export class EventStream implements AsyncDisposable {
     const { promise, resolve, reject } = Promise.withResolvers<undefined>();
 
     this.#opened = promise;
+    this.#rejectOpen = reject;
+    this.#resolveOpen = resolve;
 
     // Attaching a no-op rejection handler marks the handshake promise as handled, so a consumer that only subscribes via `on("packet")` and never awaits `opened` does
     // not trigger an unhandled-rejection warning when the socket fails to open. Real awaiters (the composition root, `connect()`) still receive the rejection - both
     // handlers run.
     void this.#opened.catch(() => undefined);
 
-    this.#settleOpen = (error?: ProtectError): void => {
+    // The socket's handlers register with no `signal` option, since the teardown removes each itself. The close and error handlers are `once` - a socket reports each
+    // terminal condition a single time - while message stays live for the connection's lifetime.
+    this.#ws.addEventListener("open", this.#socketListeners.open, { once: true });
+    this.#ws.addEventListener("message", this.#socketListeners.message);
+    this.#ws.addEventListener("close", this.#socketListeners.close, { once: true });
+    this.#ws.addEventListener("error", this.#socketListeners.error, { once: true });
 
-      if(this.#openSettled) {
-
-        return;
-      }
-
-      this.#openSettled = true;
-
-      if(error !== undefined) {
-
-        reject(error);
-
-        return;
-      }
-
-      resolve(undefined);
-    };
-
-    // All listeners bind to the controller's signal, so one abort() detaches them together. The close and error handlers are `once` - a socket reports each terminal
-    // condition a single time - while message stays live for the connection's lifetime.
-    const signal = this.#controller.signal;
-
-    this.#ws.addEventListener("open", () => this.#onOpen(), { once: true, signal });
-    this.#ws.addEventListener("message", (event) => this.#onMessage(event.data), { signal });
-    this.#ws.addEventListener("close", (event) => this.#onClose(event.code, event.reason), { once: true, signal });
-    this.#ws.addEventListener("error", (event) => this.#onError(event), { once: true, signal });
-
-    // The caller's signal cancels the connection attempt and, once open, the stream itself. Bound to our own signal too, so it detaches with everything else once we
-    // tear down.
+    // The caller's signal cancels the connection attempt alone: the open removes this binding, so an abort once the stream is live changes nothing, and a teardown
+    // before the open removes it as it removes the socket's handlers.
     if(options.signal !== undefined) {
 
       if(options.signal.aborted) {
@@ -230,7 +232,7 @@ export class EventStream implements AsyncDisposable {
         this.#abortByCaller();
       } else {
 
-        options.signal.addEventListener("abort", () => this.#abortByCaller(), { once: true, signal });
+        options.signal.addEventListener("abort", this.#onCallerAbort, { once: true });
       }
     }
 
@@ -275,7 +277,8 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * The `clock.now()` timestamp of the most recent frame received (seeded to construction time). The watchdog's only liveness source; also readable for diagnostics.
+   * The clock's `monotonic()` reading at the most recent frame received (seeded at construction). The watchdog's only liveness source; also readable for
+   * diagnostics, where it is a point on the monotonic timeline rather than a time of day, so it means something only against another `monotonic()` reading.
    */
   get lastMessageAt(): number {
 
@@ -357,13 +360,9 @@ export class EventStream implements AsyncDisposable {
    */
   async close(): Promise<void> {
 
-    // WebSocket close code 1000 (RFC 6455 normal closure) marks a close this instance itself decided on - an explicit close() call or a caller-signal abort - while code
-    // 1006 (abnormal closure) marks a close forced by conditions outside our control - a socket error or a watchdog-detected stall. Every #shutdown call site in this
-    // file chooses between the two along exactly that line, so #onClose and any downstream consumer inspecting the code can tell a deliberate teardown from one that
-    // signals a connection problem.
-    this.#shutdown(1000, "the events stream was closed by the client");
+    this.#shutdown({ kind: "close", reason: "the events stream was closed by the client" });
 
-    await (this.#closePromise ?? Promise.resolve());
+    await this.#released;
   }
 
   /**
@@ -374,12 +373,18 @@ export class EventStream implements AsyncDisposable {
     await this.close();
   }
 
-  // The WebSocket opened. Record the lifecycle event and settle the open handshake.
+  /* The WebSocket opened. Settle the open handshake, then record the lifecycle event, so a logger that throws on the debug line leaves the handshake settled.
+   *
+   * The open is also where the caller's signal stops governing the stream, because it cancels the connection attempt and nothing after it. Its binding comes off
+   * here, by the identity it was registered under, so an abort once the stream is live changes nothing, and what ends the stream from then on is its own close()
+   * or a fault the ConnectionMonitor recovers from.
+   */
   #onOpen(): void {
 
+    this.#callerSignal?.removeEventListener("abort", this.#onCallerAbort);
     this.#live = true;
+    this.#resolveOpen(undefined);
     this.#log.debug("Connected to the UniFi Protect realtime events API.");
-    this.#settleOpen();
   }
 
   // A frame arrived. Stamp liveness first (any byte from the controller proves the channel is alive, decodable or not), then decode and classify at the one site that
@@ -388,7 +393,7 @@ export class EventStream implements AsyncDisposable {
   // modeled-but-not-lifted packet (a non-self-describing event, an unhandled action), which we leave at debug.
   #onMessage(data: unknown): void {
 
-    this.#lastMessageAt = this.#clock.now();
+    this.#lastMessageAt = this.#clock.monotonic();
 
     const buffer = toBuffer(data);
 
@@ -439,56 +444,65 @@ export class EventStream implements AsyncDisposable {
    * verdict among them. An injected socket has no connector of ours, and there its event error is the whole account. That one cause is the typed failure's cause
    * as well as the line's subject, so the line and the failure always name the same fault.
    *
-   * Where the classified failure goes depends on whether the socket had opened. An open stream logs the line at the level the connection-fault table answers and
-   * puts the failure on the error rail ahead of the teardown, so the ConnectionMonitor recovers. A stream that never opened settles its handshake with the failure,
-   * logs nothing and puts nothing on the rail: its caller reports it from the rejection, so a line here as well would log one failure twice, and a rail fault would
-   * start a recovery for a connect that caller is already failing. The request to close then sends teardown through the single close path.
+   * The one cause, classified once, is the fault the teardown runs for, carrying the typed error and the line an open stream logs at the level the connection-fault
+   * table answers. Where the failure goes depends on whether the socket had opened, and the teardown decides it after the release: an open stream's fault goes on
+   * the error rail, so the ConnectionMonitor recovers, and then logs its line; a stream that never opened settles its handshake with the failure, logs nothing and
+   * puts nothing on the rail, because its caller reports it from the rejection, so a line here as well would log one failure twice, and a rail fault would start a
+   * recovery for a connect that caller is already failing.
    */
   #onError(event: ProtectWebSocketErrorEvent): void {
 
     const connector = this.#owned?.connector;
     const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
-    const failure = reportSocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt,
-      failed: "The UniFi Protect realtime events API connection failed.", host: this.#address, log: this.#log, open: this.#live,
-      reported: "The UniFi Protect realtime events API reported an error.", timedOut: "The UniFi Protect realtime events API connection timed out." });
 
-    if(this.#live) {
-
-      this.#bus.emit("error", failure);
-    } else {
-
-      this.#settleOpen(failure);
-    }
-
-    this.#shutdown(1006, "the events stream connection errored");
+    this.#shutdown(socketFault({ cause, elapsed: millisecondsSince(this.#connectStartedAt, { clock: this.#clock }),
+      failed: "The UniFi Protect realtime events API connection failed.", host: this.#address, open: this.#live, reason: "the events stream connection errored",
+      reported: "The UniFi Protect realtime events API reported an error.", timedOut: "The UniFi Protect realtime events API connection timed out." }));
   }
 
-  // The single teardown. Guarded so it runs once whether triggered by the socket's close event, an error, the watchdog, or an explicit close. Aborts the controller
-  // (detaching every listener and ending the watchdog), settles a still-pending open handshake as a failure, announces the close, and releases the connection the
-  // stream owns.
-  #onClose(code: number, reason: string): void {
+  /* The single teardown, run once whether the socket's close event, an error, the watchdog, the caller's signal or an explicit close starts it, with the reason it
+   * ran. The removal of the listeners and the abort stay here as well as in #shutdown because the peer's own close listener reaches this teardown without passing
+   * through it, and repeating them does nothing.
+   *
+   * The release starts directly after the abort, ahead of every report, so everything the teardown then settles or announces finds the connection already severed:
+   * releaseOwned severs it in one synchronous stack, before it returns, so a listener that reopens on the close never overlaps the connection this teardown lets go,
+   * and nothing that throws past this point, a logger included, can leave it held. releaseOwned destroys the agent and then releases the connector, in the order and
+   * for the reasons it states. The connector's release is what severs a socket the agent does not hold: one a completed upgrade handed to the WebSocket machinery,
+   * which a peer that never answers the close frame would otherwise hold open, and one still in its handshake.
+   *
+   * The reports then run in one order: the handshake's rejection for a stream that never opened or the rail fault for one that did, the line a fault carries, the
+   * close line, `closed` and the closed diagnostic.
+   */
+  #onClose(teardown: SocketTeardown): void {
 
-    if(this.#closed) {
+    if(this.#released !== null) {
 
       return;
     }
 
-    this.#closed = true;
+    const code = teardownCode(teardown);
+    const { reason } = teardown;
+
+    this.#detachListeners();
     this.#controller.abort();
+    this.#released = (this.#owned === null) ? Promise.resolve() : releaseOwned(this.#owned);
 
-    // Settle a still-pending open handshake as a failure. A socket error or a watchdog stall before open has already settled it with its own typed failure, so this
-    // settles nothing after either. A caller-signal abort surfaces as the typed ProtectAbortedError (its own event, its own type); every other pre-open teardown - an
-    // unsolicited peer close, an explicit close() - stays the generic pre-open network error.
-    this.#settleOpen(this.#callerAborted ? new ProtectAbortedError("The UniFi Protect realtime events API connection was aborted by the caller's signal.") :
-      new ProtectNetworkError("The UniFi Protect realtime events API closed before it finished connecting.", { cause: reason }));
+    if(this.#live) {
 
-    // An unsolicited close - the peer dropped a live socket without our asking - is termination we did not initiate, the same category as a socket error, and a
-    // controller reboot arrives exactly this way (a `close` event with no preceding socket `error`). Route it onto the error rail so the ConnectionMonitor recovers; a
-    // self-initiated close, or one that follows an already-emitted error (socket error / watchdog stall, both of which set #closeInitiated via #shutdown), stays
-    // informational. The #live gate keeps a pre-open connect failure on the opened-handshake rejection rather than starting a doomed recovery.
-    if(!this.#closeInitiated && this.#live) {
+      const fault = this.#railFault(teardown);
 
-      this.#bus.emit("error", new ProtectNetworkError("The UniFi Protect realtime events API connection closed unexpectedly.", { cause: reason }));
+      if(fault !== null) {
+
+        this.#bus.emit("error", fault);
+      }
+    } else {
+
+      this.#rejectOpen(this.#preOpenFailure(teardown));
+    }
+
+    if((teardown.kind === "fault") && (teardown.line !== null)) {
+
+      this.#log[teardown.line.level](teardown.line.message, teardown.line.context);
     }
 
     this.#log.debug("The UniFi Protect realtime events API connection closed.", { code, reason });
@@ -498,34 +512,89 @@ export class EventStream implements AsyncDisposable {
 
       channels.eventsClosed.publish({ code, reason } satisfies EventsClosedPayload);
     }
-
-    // releaseOwned destroys the agent and then releases the connector, in the order and for the reasons it states. The connector's release is what severs a socket
-    // the agent does not hold: one a completed upgrade handed to the WebSocket machinery, which a peer that never answers the close frame would otherwise hold open,
-    // and one still in its handshake.
-    this.#closePromise = (this.#owned === null) ? Promise.resolve() : releaseOwned(this.#owned);
   }
 
-  // The caller's own signal fired. Mark this teardown as a caller abort BEFORE it runs, so #onClose settles a still-pending open handshake as the typed
-  // ProtectAbortedError; only this path sets the mark, so a socket close or an explicit close() keeps the generic pre-open network error, while a socket error and a
-  // watchdog stall settle the handshake with their own typed failure before teardown reaches it.
+  /* What a handshake that never completed rejects with. A fault is handed over as itself, so the rejection's type says exactly what went wrong; the caller's own
+   * signal gets the typed abort, a cancellation rather than a failure; an explicit close settles as the generic pre-open failure; and a peer's close does too,
+   * naming the frame it arrived on.
+   */
+  #preOpenFailure(teardown: SocketTeardown): ProtectError {
+
+    switch(teardown.kind) {
+
+      case "callerSignal":
+
+        return new ProtectAbortedError("The UniFi Protect realtime events API connection was aborted by the caller's signal.");
+
+      case "close":
+
+        return new ProtectNetworkError("The UniFi Protect realtime events API closed before it finished connecting.", { cause: teardown.reason });
+
+      case "fault":
+
+        return teardown.error;
+
+      case "peer":
+
+        return new ProtectNetworkError("The UniFi Protect realtime events API closed before it finished connecting (" + closeFrameText(teardown.code, teardown.reason) +
+          ").");
+
+      default:
+
+        // Exhaustiveness guard. A new reason joining the union without a case above stops `teardown` being `never` here, and this fails to compile.
+        return assertNever(teardown);
+    }
+  }
+
+  /* What an open stream's teardown puts on the error rail, or nothing at all for a teardown that was asked for: an explicit close is a clean lifecycle end and stays
+   * informational on `closed`, and the caller's cancel never reaches an open stream, its binding having come off at the open. A fault goes out as itself, so a
+   * consumer branches on the type the detector chose. The peer dropping a live socket without our asking is termination we did not initiate, the same category as a
+   * socket error, and a controller reboot arrives exactly this way (a `close` event with no preceding socket `error`), so it goes out as a network failure naming
+   * the frame it arrived on, and the ConnectionMonitor recovers.
+   */
+  #railFault(teardown: SocketTeardown): ProtectError | null {
+
+    switch(teardown.kind) {
+
+      case "callerSignal":
+      case "close":
+
+        return null;
+
+      case "fault":
+
+        return teardown.error;
+
+      case "peer":
+
+        return new ProtectNetworkError("The UniFi Protect realtime events API connection closed unexpectedly (" + closeFrameText(teardown.code, teardown.reason) + ").");
+
+      default:
+
+        // Exhaustiveness guard. A new reason joining the union without a case above stops `teardown` being `never` here, and this fails to compile.
+        return assertNever(teardown);
+    }
+  }
+
+  // The caller's own signal fired. Naming the caller's signal as the teardown's reason is what settles a still-pending open handshake as the typed
+  // ProtectAbortedError rather than as a failure the stream detected.
   #abortByCaller(): void {
 
-    this.#callerAborted = true;
-    this.#shutdown(1000, "connection aborted by the caller's signal");
+    this.#shutdown({ kind: "callerSignal", reason: "connection aborted by the caller's signal" });
   }
 
   // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - releasing the owned connection (in #onClose) is what
-  // guarantees the underlying connection is released even if the close frame never completes.
-  #shutdown(code: number, reason: string): void {
+  // guarantees the underlying connection is released even if the close frame never completes. A call after the teardown has run still asks the socket to close,
+  // which does nothing on a socket already closing or closed.
+  #shutdown(teardown: SocketTeardown): void {
 
-    // Mark this as a self-initiated teardown so #onClose does not misclassify the resulting close event as an unsolicited (recoverable) one.
-    this.#closeInitiated = true;
-
-    /* The socket's listeners come off before it is asked to close: closing a socket that is still connecting makes undici fail the connection and fire `error` and
-     * `close` synchronously, before close() returns, and a listener still attached would carry that into the teardown as a fault, putting a network error on the rail
-     * and a forced close on `closed` for a teardown this stream itself asked for. The abort is what detaches them, and it ends the watchdog and the caller-signal
-     * binding with them.
+    /* The socket's listeners come off before it is asked to close, and the stream takes them off itself rather than leaving that to an abort: closing a socket that
+     * is still connecting makes undici fail the connection and fire `error` and `close` synchronously, before close() returns, and a listener still attached would
+     * carry that into the teardown as a fault or as a peer's close, reporting a failure for a teardown this stream itself asked for. It is also what the peer
+     * reason's truth rests on: the socket's own close listener comes off here, ahead of ws.close(), so the only close that can still reach the teardown naming the
+     * peer is one this stream did not ask for. The abort that follows ends the watchdog.
      */
+    this.#detachListeners();
     this.#controller.abort();
 
     try {
@@ -536,7 +605,19 @@ export class EventStream implements AsyncDisposable {
       // A socket that never opened (or a fake that rejects a premature close) must not block teardown; #onClose below releases everything regardless.
     }
 
-    this.#onClose(code, reason);
+    this.#onClose(teardown);
+  }
+
+  /* Take the socket's listeners and the caller-signal binding off, each handed back by the identity it was registered under. Removing one that a `once` dispatch
+   * or the open has already taken off is quiet, so the teardown asks for every listener it registered whatever the socket and the signal have already reported.
+   */
+  #detachListeners(): void {
+
+    this.#ws.removeEventListener("close", this.#socketListeners.close);
+    this.#ws.removeEventListener("error", this.#socketListeners.error);
+    this.#ws.removeEventListener("message", this.#socketListeners.message);
+    this.#ws.removeEventListener("open", this.#socketListeners.open);
+    this.#callerSignal?.removeEventListener("abort", this.#onCallerAbort);
   }
 
   // Record an unclassified frame. Genuine schema drift - a model key outside the recognized wire vocabulary - is published once per (modelKey, action) so a consumer
@@ -579,14 +660,16 @@ export class EventStream implements AsyncDisposable {
   }
 
   /* The silence watchdog. Each pass waits one threshold on the injected clock, then checks how long the channel has been quiet; once that crosses the threshold the
-   * channel is presumed dead-but-not-closed, so we surface a typed stall and tear the socket down. An open stream logs the stall at warning, since recovery heals it,
-   * and puts it on the error rail, the ConnectionMonitor's cue to recover; a stream that never opened settles its handshake with it instead, logging nothing and
-   * putting nothing on the rail, as a socket error before open does, because its caller is already failing that connect and reports the stall from the rejection.
-   * The teardown that follows detaches the socket's error listener, so a stall never logs beside a socket error for the same failure.
+   * channel is presumed dead-but-not-closed, so the typed stall travels into the teardown as its fault, which reports it once the connection is released. An open
+   * stream's stall carries a warning line, since recovery heals it, and goes on the error rail, the ConnectionMonitor's cue to recover; a stream that never opened
+   * settles its handshake with it instead, logging nothing and putting nothing on the rail, as a socket error before open does, because its caller is already
+   * failing that connect and reports the stall from the rejection. The teardown detaches the socket's error listener before it reports, so a stall never logs
+   * beside a socket error for the same failure.
    *
-   * The loop ends when teardown aborts the controller, which rejects the pending delay with its abort error, the normal shutdown path swallowed here. Detection
-   * latency is bounded in [threshold, 2*threshold) because the loop wakes once per threshold, which is appropriate for a multi-minute failsafe and needs no
-   * variable-cadence timer that reschedules on every message.
+   * The loop ends when teardown aborts the controller, which rejects the pending delay with its abort error, the normal shutdown path swallowed here, as is a throw
+   * from a logger refusing the stall's line, which reaches the loop only after the teardown has released the connection. Detection latency is bounded in
+   * [threshold, 2*threshold) because the loop wakes once per threshold, which is appropriate for a multi-minute failsafe and needs no variable-cadence timer that
+   * reschedules on every message.
    */
   async #runWatchdog(): Promise<void> {
 
@@ -597,22 +680,15 @@ export class EventStream implements AsyncDisposable {
         // eslint-disable-next-line no-await-in-loop
         await this.#clock.delay(PROTECT_EVENTS_WATCHDOG_TIMEOUT, { signal: this.#controller.signal });
 
-        const silentForMs = this.#clock.now() - this.#lastMessageAt;
+        const silentForMs = millisecondsSince(this.#lastMessageAt, { clock: this.#clock });
 
         if(silentForMs >= PROTECT_EVENTS_WATCHDOG_TIMEOUT) {
 
           const stall = new ProtectStallError("The UniFi Protect realtime events API produced no data within the watchdog window.", { silentForMs });
+          const line: SocketFaultLine | null = this.#live ? { context: { silentForMs }, level: "warn",
+            message: "The UniFi Protect realtime events API went silent beyond the watchdog window; tearing down the stalled connection." } : null;
 
-          if(this.#live) {
-
-            this.#log.warn("The UniFi Protect realtime events API went silent beyond the watchdog window; tearing down the stalled connection.", { silentForMs });
-            this.#bus.emit("error", stall);
-          } else {
-
-            this.#settleOpen(stall);
-          }
-
-          this.#shutdown(1006, "the events stream stalled past the watchdog window");
+          this.#shutdown({ error: stall, kind: "fault", line, reason: "the events stream stalled past the watchdog window" });
 
           return;
         }

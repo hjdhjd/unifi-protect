@@ -19,9 +19,9 @@ import { MockAgent, Pool, errors } from "undici";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError,
   ProtectThrottledError, ProtectTimeoutError } from "../errors.ts";
+import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
 import { Transport, responseOk } from "./http.ts";
-import { capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
@@ -735,6 +735,31 @@ describe("Transport", () => {
       await assert.rejects(transport.send(url(host, "/f")), { constructor: ProtectThrottledError, cooldownMs: COOLDOWN_MS - 1000 });
     });
 
+    test("a backward step of the time of day inside the cooldown leaves the remaining cooldown, and the breaker resumes once the cooldown has passed", async () => {
+
+      const { clock, host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
+      pool.intercept({ method: "GET", path: "/f" }).reply(200, { recovered: true });
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT);
+
+      // A second into the cooldown the time of day is set back. The cooldown measures the time that passed, so the refusal reports what remains of it, as it would
+      // have without the step.
+      clock.advance(1000);
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+
+      await assert.rejects(transport.send(url(host, "/f")), { constructor: ProtectThrottledError, cooldownMs: COOLDOWN_MS - 1000 });
+
+      // Once the rest of the cooldown has passed the half-open probe goes through, though the time of day still reads short of the trip plus the cooldown.
+      clock.advance(COOLDOWN_MS - 1000);
+
+      const response = await transport.send(url(host, "/f"));
+
+      assert.equal(response.statusCode, 200, "the probe is dispatched once the cooldown has passed");
+      assert.equal(transport.isThrottled, false, "and its success closes the breaker");
+    });
+
     test("a successful half-open probe after cooldown closes the breaker and emits throttleExited", async () => {
 
       let exited = 0;
@@ -1079,6 +1104,40 @@ describe("Transport", () => {
       assert.equal(ends[0]?.host, host, "the failure-path end payload still carries the configured controller host");
       assert.equal(ends[0].statusCode, undefined, "a transport-level failure carries no status code");
       assert.ok((ends[0].error ?? "").length > 0, "a transport-level failure carries an error message");
+    });
+
+    test("a backward step of the time of day during a request leaves its duration and its elapsed time the time that passed", async () => {
+
+      const ends: HttpRequestEndPayload[] = [];
+
+      using endSubscription = subscribeToChannel(channels.httpRequestEnd, (payload) => void ends.push(payload));
+
+      const { clock, host, pool, transport } = makeMockTransport();
+
+      // The reply is built while the request is in flight, so the clock moves there: the time of day is set back, and then the reply takes thirty milliseconds.
+      pool.intercept({ method: "GET", path: "/d" }).reply(200, () => {
+
+        clock.advance(-TIME_OF_DAY_STEP_MS);
+        clock.advance(30);
+
+        return {};
+      });
+
+      await transport.send(url(host, "/d"));
+
+      /* A held reply runs to the deadline instead. The time of day is set back while it waits, and the deadline is armed on the same timeline, so reaching it takes
+       * the step as well as the deadline's own span - all of it time that passed, which is what the failure reports.
+       */
+      pool.intercept({ method: "GET", path: "/slow" }).reply(200, {}).delay(2000);
+
+      const pending = transport.send(url(host, "/slow"), { timeout: 50 });
+
+      await settle();
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(TIME_OF_DAY_STEP_MS + 50);
+
+      await assert.rejects(pending, { constructor: ProtectTimeoutError, elapsedMs: TIME_OF_DAY_STEP_MS + 50 });
+      assert.deepEqual(ends.map(({ durationMs }) => durationMs), [ 30, TIME_OF_DAY_STEP_MS + 50 ], "each published duration is the time that passed, never negative");
     });
 
     test("stamps a bare IPv6 controller address verbatim while its requests go to the bracketed origin", async () => {

@@ -6,12 +6,12 @@
 import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
-import { DIAL_SETTLE_BOUND_MS, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
+import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
 import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
 import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
+import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, silentLog } from "../testing.helpers.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
-import { assertNoUnhandledRejections, capturingLog, silentLog } from "../testing.helpers.ts";
 import { buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { describe, test } from "node:test";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
@@ -21,6 +21,7 @@ import type { ProtectLogging } from "../logging.ts";
 import assert from "node:assert/strict";
 import { constants } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
+import { getEventListeners } from "node:events";
 import tls from "node:tls";
 
 // The sentence the session logs a fault of its open socket under, and the lines a log holds carrying it, at whatever level each was logged.
@@ -462,6 +463,9 @@ describe("LivestreamSession", () => {
       clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
       await settle();
 
+      // The platform raises a socket error here, after the teardown is over. A listener left attached would put it on the rail beside the stall.
+      ws.emitError(errnoError("read ECONNRESET", "ECONNRESET"));
+
       assert.equal(errors.length, 1);
       assert.ok(errors[0] instanceof ProtectStallError);
       assert.equal((errors[0]).silentForMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
@@ -526,6 +530,77 @@ describe("LivestreamSession", () => {
       assert.equal(errors[0].silentForMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + 1, "the second wake reads the silence since the frame");
       assert.equal(session.state, "closed");
     });
+
+    test("a backward step of the time of day leaves the silence the watchdog reports the time that passed", async () => {
+
+      const clock = new TestClock();
+      const { session } = await openSession({ clock });
+      const errors = collectErrors(session);
+
+      // No frame arrives. The time of day is set back, and the watchdog's wake is armed on the same timeline, so reaching it takes the step as well as the window,
+      // all of it silence.
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + TIME_OF_DAY_STEP_MS);
+      await settle();
+
+      assert.equal(errors.length, 1);
+      assert.ok(errors[0] instanceof ProtectStallError);
+      assert.equal(errors[0].silentForMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + TIME_OF_DAY_STEP_MS, "the silence is the time that passed, never shrunk by the step");
+    });
+
+    test("a backward step of the time of day past the rest of the window trips the watchdog at its next wake", async () => {
+
+      const clock = new TestClock();
+      const { session, ws } = await openSession({ clock });
+      const errors = collectErrors(session);
+
+      /* A frame lands halfway through the window, and the time of day is then set back a whole window. Reaching the wake takes the rest of the window and the step,
+       * all of it silence since the frame and together past the threshold, though the time of day at the wake reads only half a window on from the frame.
+       */
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT / 2);
+      ws.emitMessage(buildInitSegment({ data: Buffer.from("I") }));
+      clock.advance(-PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
+      clock.advance((PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT / 2) + PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
+      await settle();
+
+      assert.equal(errors.length, 1, "the wake trips on the silence that passed");
+      assert.ok(errors[0] instanceof ProtectStallError);
+      assert.equal(errors[0].silentForMs, (PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT / 2) + PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
+    });
+
+    test("a logger that throws on the connected line leaves the watchdog running", async () => {
+
+      const clock = new TestClock();
+      const log: ProtectLogging = { ...silentLog(), debug: (message: string): void => {
+
+        if(message === "Connected to the UniFi Protect livestream API.") {
+
+          throw new Error("the logger refused the connected line");
+        }
+      } };
+      const { promise, resolve } = Promise.withResolvers<FakeWebSocket>();
+      const session = new LivestreamSession({ clock, log, resolveUrl: fixedUrl, spec: { cameraId: "cam1" }, webSocket: (): FakeWebSocket => {
+
+        const ws = new FakeWebSocket({ autoOpen: false });
+
+        resolve(ws);
+
+        return ws;
+      } });
+      const errors = collectErrors(session);
+      const ws = await promise;
+
+      // The fake hands a listener's throw back to the caller, so the logger's throw from inside the open surfaces here, after the open's work.
+      assert.throws(() => ws.emitOpen(), /the logger refused the connected line/);
+
+      // No frame arrives, so the watchdog the open started finds the channel silent at its first wake.
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
+      await settle();
+
+      assert.equal(errors.length, 1, "the watchdog detected the stall");
+      assert.ok(errors[0] instanceof ProtectStallError);
+      assert.equal(session.state, "closed");
+    });
   });
 
   describe("failure paths", () => {
@@ -586,6 +661,17 @@ describe("LivestreamSession", () => {
       assert.ok(Object.is(info.cause, thrown));
     });
 
+    test("a failed negotiation closes 1006 with the negotiation's reason", async () => {
+
+      const session = new LivestreamSession({ clock: new TestClock(), log: silentLog(), resolveUrl: async (): Promise<never> => { throw new Error("connect refused"); },
+        spec: { cameraId: "cam1" }, webSocket: (): FakeWebSocket => new FakeWebSocket({ autoOpen: false }) });
+      const [info] = await session.once("closed");
+
+      // A failure forced the close, so it carries the abnormal-closure code, which the teardown derives from the fault it ran for.
+      assert.equal(info.code, 1006);
+      assert.equal(info.reason, "the livestream endpoint negotiation failed");
+    });
+
     test("a socket error surfaces a ProtectNetworkError and closes", async () => {
 
       const { session, ws } = await openSession();
@@ -602,6 +688,50 @@ describe("LivestreamSession", () => {
 
       // The ProtectNetworkError the error rail carried is the same object the closure records as its cause.
       assert.ok(Object.is(closeInfo?.cause, errors[0]));
+    });
+
+    test("an error-rail listener reads the session closed, with the fault it hears already recorded as the close cause", async () => {
+
+      const { session, ws } = await openSession();
+      const heard: { closeCause: ProtectError | null; error: ProtectError; state: LivestreamState }[] = [];
+
+      // The teardown writes the state and the close cause before it reports, so a listener reading the session from inside the emit finds it closed.
+      session.on("error", (error) => void heard.push({ closeCause: session.closeCause, error, state: session.state }));
+      ws.emitError(new Error("socket boom"));
+
+      const reading = present(heard[0], "the rail's one emission");
+
+      assert.equal(heard.length, 1);
+      assert.equal(reading.state, "closed");
+      assert.ok(Object.is(reading.closeCause, reading.error), "the fault on the rail is already the close cause");
+    });
+
+    test("a backward step of the time of day during a connection attempt leaves the elapsed time its timeout reports the time that passed", async () => {
+
+      const clock = new TestClock();
+      const built = Promise.withResolvers<FakeWebSocket>();
+      const session = new LivestreamSession({ clock, log: silentLog(), resolveUrl: fixedUrl, spec: { cameraId: "cam1" }, webSocket: (): FakeWebSocket => {
+
+        const ws = new FakeWebSocket({ autoOpen: false });
+
+        built.resolve(ws);
+
+        return ws;
+      } });
+      const ws = await built.promise;
+      const failing = session.once("error");
+
+      /* The attempt begins as the socket is built. The time of day is set back while it is under way, and it runs on for two and a half seconds before it times out.
+       * An injected socket's own error is the whole account of its failure, so the undici connect timeout this row hands it classifies exactly as a real one does.
+       */
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(2500);
+      ws.emitError(errnoError("Connect Timeout Error", "UND_ERR_CONNECT_TIMEOUT"));
+
+      const [error] = await failing;
+
+      assert.ok(error instanceof ProtectTimeoutError);
+      assert.equal(error.elapsedMs, 2500, "the elapsed time is the time that passed since the attempt began, untouched by the step");
     });
   });
 
@@ -674,6 +804,82 @@ describe("LivestreamSession", () => {
       await connection.closed;
 
       assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "the session's close releases the connection rather than waiting on the peer");
+    });
+
+    test("close() has released the connection it owns by the time a closed listener runs", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+
+      // The session holds its socket privately, so the row takes it from undici's own announcement, as the events stream's row does, and reads it from inside
+      // `closed` rather than at the peer, which learns of a severance only on a later turn.
+      using announced = announcedSockets();
+
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      const destroyedAtClosed: boolean[] = [];
+
+      session.on("closed", () => void destroyedAtClosed.push(announced.sockets.every((socket) => socket.destroyed)));
+
+      await session.close();
+
+      assert.equal(announced.sockets.length, 1, "the one socket the session dialed was announced");
+      assert.deepEqual(destroyedAtClosed, [true], "the connection is released before closed is delivered");
+    });
+
+    test("a stall reaches the error rail only once the connection is released", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      using announced = announcedSockets();
+
+      const clock = new TestClock();
+      const session = new LivestreamSession({ clock, log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+        spec: { cameraId: "cam1" } });
+      const releasedAtRail: boolean[] = [];
+
+      // The rail listener is the stall's first report, and it reads the socket from inside the teardown, where the release has already run or has not.
+      session.on("error", () => void releasedAtRail.push(announced.sockets.every((socket) => socket.destroyed)));
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
+      await settle();
+
+      assert.equal(announced.sockets.length, 1, "the one socket the session dialed was announced");
+      assert.deepEqual(releasedAtRail, [true], "the stall reaches the rail with the connection already released");
+    });
+
+    test("a logger that throws on a stall's warning leaves the connection released, with the stall on the rail and as the close cause", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      using announced = announcedSockets();
+
+      let threw = false;
+      const clock = new TestClock();
+      const log: ProtectLogging = { ...silentLog(), warn: (message: string): void => {
+
+        if(message.includes("went silent beyond the heartbeat window")) {
+
+          threw = true;
+
+          throw new Error("the logger refused the stall's line");
+        }
+      } };
+      const session = new LivestreamSession({ clock, log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const errors = collectErrors(session);
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      // The watchdog's wake reaches the stall's line only inside the teardown, after the release, the close cause and the rail fault.
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
+      await settle();
+
+      assert.equal(threw, true, "the logger threw on the stall's line");
+      assert.deepEqual(announced.sockets.map((socket) => socket.destroyed), [true], "the connection is released though the line threw");
+      assert.equal(errors.length, 1, "and the rail heard the stall ahead of the line");
+      assert.ok(errors[0] instanceof ProtectStallError);
+      assert.ok(Object.is(session.closeCause, errors[0]), "as did the close cause");
     });
 
     test("a caller abort during the TLS dial releases the socket at once and keeps the error rail empty", async () => {
@@ -1108,6 +1314,64 @@ describe("LivestreamSession", () => {
       assert.ok(session.closeCause instanceof ProtectAbortedError);
     });
 
+    test("a close() a rail listener forces from inside a socket error keeps the fault's code, reason and cause", async () => {
+
+      const { session, ws } = await openSession();
+      const errors = collectErrors(session);
+      const closed: { cause?: ProtectError; code: number; reason: string }[] = [];
+
+      // The listener runs inside the teardown the fault started, so the close it asks for finds that teardown already under way and leaves its reason standing.
+      session.on("error", () => void session.close());
+      session.on("closed", (info) => void closed.push(info));
+      ws.emitError(new Error("socket boom"));
+
+      assert.equal(closed.length, 1, "the closure is announced once");
+
+      const info = present(closed[0], "the announced closure");
+
+      assert.equal(info.code, 1006);
+      assert.equal(info.reason, "the livestream connection errored");
+      assert.ok(Object.is(info.cause, errors[0]), "the fault the rail carried is the closure's cause");
+    });
+
+    test("a close() re-entered from a closed listener runs no second teardown and resolves", async () => {
+
+      const { session } = await openSession();
+      const reentered: Promise<void>[] = [];
+      let closedEvents = 0;
+
+      session.on("closed", () => {
+
+        closedEvents++;
+        reentered.push(session.close());
+      });
+
+      await session.close();
+      await Promise.all(reentered);
+
+      assert.equal(reentered.length, 1, "the closed listener ran once and its close() resolved");
+      assert.equal(closedEvents, 1, "and the teardown it re-entered announced the close once");
+    });
+
+    test("a logger that throws on an open socket's fault line throws only after the rail and the close cause heard the fault", async () => {
+
+      const log: ProtectLogging = { ...silentLog(), warn: (message: string): void => {
+
+        if(message === REPORTED) {
+
+          throw new Error("the logger refused the fault's line");
+        }
+      } };
+      const { session, ws } = await openSession({ log });
+      const errors = collectErrors(session);
+
+      // The fake hands a listener's throw back to the caller, so the logger's throw from inside the teardown surfaces here, after every report ahead of the line.
+      assert.throws(() => ws.emitError(errnoError("read ECONNRESET", "ECONNRESET")), /the logger refused the fault's line/);
+      assert.equal(errors.length, 1, "the rail heard the fault ahead of the line");
+      assert.ok(Object.is(session.closeCause, errors[0]), "as did the close cause");
+      assert.equal(session.state, "closed");
+    });
+
     test("emitting two media segments in one message decodes both", async () => {
 
       const { session, ws } = await openSession();
@@ -1120,5 +1384,117 @@ describe("LivestreamSession", () => {
       // Each begin-segment frame starts a fresh accumulator, so each segment carries its own boxes and none of the one before it.
       assert.deepEqual(segments.map((segment) => segment.data.toString()), [ "aA", "bB" ]);
     });
+  });
+
+  /* Every listener the session registers, on its socket and on the caller's signal, comes off in its teardown by the identity it was registered under, as the
+   * events stream's do. The fake removes a listener on that request and on no other, so a teardown that forgot one leaves it for the count to read.
+   */
+  describe("listener detach", () => {
+
+    // How a row has its session built: on which clock, whether its socket opens, and on which caller signal.
+    interface BuiltSessionOptions {
+
+      clock?: TestClock;
+      open?: boolean;
+      signal?: AbortSignal;
+    }
+
+    // Build a session over the given fake and wait for the socket to be built, so its listeners are attached, opening it when asked.
+    async function builtSession(ws: FakeWebSocket, { clock = new TestClock(), open = false, signal }: BuiltSessionOptions = {}): Promise<LivestreamSession> {
+
+      const built = Promise.withResolvers<undefined>();
+      const session = new LivestreamSession({ clock, log: silentLog(), resolveUrl: fixedUrl, ...((signal !== undefined) && { signal }), spec: { cameraId: "cam1" },
+        webSocket: (): FakeWebSocket => {
+
+          built.resolve(undefined);
+
+          return ws;
+        } });
+
+      await built.promise;
+
+      if(open) {
+
+        ws.emitOpen();
+      }
+
+      return session;
+    }
+
+    test("a pre-open close() over a socket that fails from inside close() closes 1000 with the session's own reason, leaving the rail empty", async () => {
+
+      const ws = new FakeWebSocket({ autoOpen: false, failsOnClose: true });
+      const session = await builtSession(ws);
+      const errors = collectErrors(session);
+      const closed: { cause?: ProtectError; code: number; reason: string }[] = [];
+
+      session.on("closed", (info) => void closed.push(info));
+
+      await session.close();
+
+      // The socket's error and its close 1006 fire inside close() and reach no listener, so the one teardown that runs is the one the session asked for.
+      assert.deepEqual(closed, [{ code: 1000, reason: "the livestream was closed by the client" }]);
+      assert.deepEqual(errors, [], "a teardown the session chose puts nothing on the rail");
+    });
+
+    test("sessions sharing one caller signal each remove only their own binding, so an abort after the first closes reaches the other alone", async () => {
+
+      const controller = new AbortController();
+      const first = await builtSession(new FakeWebSocket({ autoOpen: false }), { signal: controller.signal });
+      const second = await builtSession(new FakeWebSocket({ autoOpen: false }), { signal: controller.signal });
+
+      await first.close();
+
+      assert.equal(getEventListeners(controller.signal, "abort").length, 1, "the second session's binding is the one left");
+
+      controller.abort();
+
+      assert.ok(second.closeCause instanceof ProtectAbortedError, "the abort tears the second session down");
+      assert.equal(first.closeCause, null, "and reaches nothing of the session already closed");
+    });
+
+    // What a row hands the teardown path it runs.
+    interface Stage {
+
+      clock: TestClock;
+      controller: AbortController;
+      session: LivestreamSession;
+      ws: FakeWebSocket;
+    }
+
+    // Each way a teardown starts, run on a session whose socket opened and on one still connecting. The watchdog arms at the open, so a stall ends an open socket
+    // alone. The caller's signal stays live through every path but its own abort.
+    const teardowns: { name: string; opens: readonly boolean[]; run: (stage: Stage) => Promise<void> | void }[] = [
+
+      { name: "close()", opens: [ true, false ], run: async ({ session }): Promise<void> => session.close() },
+      { name: "a peer close", opens: [ true, false ], run: ({ ws }): void => ws.emitClose(1001, "going away") },
+      { name: "a socket error", opens: [ true, false ], run: ({ ws }): void => ws.emitError(new Error("socket boom")) },
+      { name: "a watchdog stall", opens: [true], run: async ({ clock }): Promise<void> => {
+
+        clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT);
+        await settle();
+      } },
+      { name: "a caller abort", opens: [ true, false ], run: ({ controller }): void => controller.abort() }
+    ];
+
+    for(const { name, opens, run } of teardowns) {
+
+      for(const open of opens) {
+
+        test("after " + name + (open ? " of an open session" : " before the open") + " the socket holds no listener and the caller's signal no binding", async () => {
+
+          const clock = new TestClock();
+          const controller = new AbortController();
+          const ws = new FakeWebSocket({ autoOpen: false });
+          const session = await builtSession(ws, { clock, open, signal: controller.signal });
+
+          await run({ clock, controller, session, ws });
+
+          assert.equal(session.state, "closed");
+          assert.equal(ws.listenerCount(), 0, "every socket listener the session registered is removed");
+          assert.equal(getEventListeners(controller.signal, "abort").length, 0, "and so is the binding to the caller's signal");
+        });
+      }
+    }
   });
 });

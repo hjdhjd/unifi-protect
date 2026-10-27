@@ -10,9 +10,9 @@ import { PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
   PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectError,
   ProtectNetworkError } from "../errors.ts";
+import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, silentLog } from "../testing.helpers.ts";
 import { TestClock, advanceThroughSchedule, errnoError, present } from "homebridge-plugin-utils/testing";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
-import { capturingLog, expectAt, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeNvr } from "../fixtures.helpers.ts";
@@ -1017,6 +1017,30 @@ describe("ConnectionMonitor", () => {
 
       assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0], "the unknown track's first delay"),
         "an expired anticipation falls back to the prompt track");
+      assert.equal(clock.pending, 1, "and recovery parks on that one wait alone");
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a backward step of the time of day leaves the anticipation lapsing once its window has passed", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      // Arm, then set the time of day back before the window passes. The window measures the time that passed, so it lapses on time, though the time of day still
+      // reads inside it.
+      monitor.expectReboot();
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(PROTECT_REBOOT_ANTICIPATION_WINDOW_MS);
+
+      control.setVerifyError(new ProtectNetworkError("after the window"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0], "the unknown track's first delay"),
+        "a fault once the window has passed takes the prompt track");
       assert.equal(clock.pending, 1, "and recovery parks on that one wait alone");
 
       await monitor[Symbol.asyncDispose]();

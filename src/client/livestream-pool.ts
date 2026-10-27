@@ -35,6 +35,7 @@ import { PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_AWAIT_MAX_MS, PR
   PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS, PROTECT_LIVESTREAM_STALL_DEFAULT_MS,
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
 import { ProtectCodecChangeError, ProtectLivestreamUnavailableError, ProtectStallError } from "../errors.ts";
+import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import type { LivestreamInit } from "../protocol/init-segment.ts";
 import type { ProtectError } from "../errors.ts";
@@ -44,7 +45,6 @@ import { channels } from "../diagnostics.ts";
 import { isDeepStrictEqual } from "node:util";
 import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
-import { wallClock } from "../clock.ts";
 
 /**
  * The coarse, stable lifecycle of a pooled stream as a subscriber observes it. `connecting` is bounded establishment (no MEDIA segment has ever flowed); `live` is a
@@ -609,23 +609,27 @@ class ManagedSession implements SubscriptionHost {
   // The shared lifecycle state, the cached init (compared on reconnect for the codec gate), the last terminal error (only ever a codec change or give-up; recoverable
   // session errors are absorbed by recovery and never stored), liveness for the recovery diagnostics, and the single teardown / establishment-latch guards.
   //
-  // `#lastSegmentAt` is the ANY-segment liveness clock (stamped on every segment, inits included) the recovery diagnostics report. `#lastMediaAt` is the dedicated
-  // MEDIA-keyed liveness clock the media-stall watchdog reads: it advances only when a decodable media segment is fanned, so a stream producing only non-media frames (a
-  // mid-session re-init, the negotiated timestamp frames) reads stalled to the watchdog even while `#lastSegmentAt` stays fresh. The two are deliberately separate clocks
-  // measuring two different liveness notions - any byte vs. a picture. `#watchdogController` is the media watchdog's lifecycle handle: non-null only while the watchdog
-  // is armed (between the first media of an install and the next reconnect / teardown), aborting it ends the poll loop.
+  // `#lastSegmentAt` and `#lastSegmentMonotonicAt` are the ANY-segment liveness clock (stamped on every segment, inits included) the recovery diagnostics report,
+  // always stamped together: `#lastSegmentAt` is the clock's `now()`, the time of day the stall diagnostic publishes, recorded when the segment arrives, and
+  // `#lastSegmentMonotonicAt` is its `monotonic()` reading, which the time since the last segment is measured from, so a change to the time of day never moves
+  // that figure. `#lastMediaAt` is the dedicated MEDIA-keyed liveness clock the media-stall watchdog reads, a `monotonic()` reading: it advances only
+  // when a decodable media segment is fanned, so a stream producing only non-media frames (a mid-session re-init, the negotiated timestamp frames) reads stalled to
+  // the watchdog even while the any-segment stamps stay fresh. The any-segment and media stamps are deliberately separate, measuring two different liveness notions -
+  // any byte vs. a picture. `#watchdogController` is the media watchdog's lifecycle handle: non-null only while the watchdog is armed (between the first media of an
+  // install and the next reconnect / teardown), aborting it ends the poll loop.
   #establishedSettled = false;
   #initSegmentCache: LivestreamInit | null = null;
   #lastError: ProtectError | null = null;
   #lastMediaAt = 0;
   #lastSegmentAt = 0;
+  #lastSegmentMonotonicAt = 0;
   #state: LivestreamSubscriptionState = "connecting";
   #torndown = false;
   #watchdogController: AbortController | null = null;
 
-  // The current recovery episode's bookkeeping: which regime, how many attempts have failed, when it began, the lockstep per-install latches (see the
-  // SessionInstallState type - the codec-gate point, the media-keyed recovery point, and the post-reconnect discontinuity marker, reset as a unit per install), and the
-  // resolver of the window the loop is currently awaiting (the single point the rails and reassess() settle).
+  // The current recovery episode's bookkeeping: which regime, how many attempts have failed, when it began as the clock's monotonic reading, the lockstep
+  // per-install latches (see the SessionInstallState type - the codec-gate point, the media-keyed recovery point, and the post-reconnect discontinuity marker, reset
+  // as a unit per install), and the resolver of the window the loop is currently awaiting (the single point the rails and reassess() settle).
   #attempts = 0;
   #episodeStartedAt = 0;
   #install: SessionInstallState = { awaitingFirstMedia: false, awaitingFirstSegment: false, pendingDiscontinuity: false };
@@ -643,6 +647,7 @@ class ManagedSession implements SubscriptionHost {
     this.#policy = opts.policy;
     this.#resolved = opts.resolved;
     this.#lastSegmentAt = this.#clock.now();
+    this.#lastSegmentMonotonicAt = this.#clock.monotonic();
 
     if(channels.livestreamSessionOpened.hasSubscribers) {
 
@@ -747,13 +752,13 @@ class ManagedSession implements SubscriptionHost {
 
     this.#phase = phase;
     this.#state = (phase === "establishing") ? "connecting" : "recovering";
-    this.#episodeStartedAt = this.#clock.now();
+    this.#episodeStartedAt = this.#clock.monotonic();
     this.#attempts = 0;
 
     if((phase === "recovering") && channels.livestreamRecoveryStarted.hasSubscribers) {
 
-      const payload = { attempts: 0, cameraId: this.#resolved.cameraId, key: this.#key, sinceLastSegmentMs: this.#clock.now() - this.#lastSegmentAt } satisfies
-        LivestreamRecoveryStartedPayload;
+      const payload = { attempts: 0, cameraId: this.#resolved.cameraId, key: this.#key,
+        sinceLastSegmentMs: millisecondsSince(this.#lastSegmentMonotonicAt, { clock: this.#clock }) } satisfies LivestreamRecoveryStartedPayload;
 
       channels.livestreamRecoveryStarted.publish(payload);
     }
@@ -820,8 +825,8 @@ class ManagedSession implements SubscriptionHost {
   // The live recovery context the policy reads. Only library-observable fields; consumer-private state lives in the policy's own closure.
   #context(): RecoveryContext {
 
-    return { attempts: this.#attempts, cameraId: this.#resolved.cameraId, elapsedMs: this.#clock.now() - this.#episodeStartedAt, phase: this.#phase,
-      toleranceMs: this.#aggregateTolerance() };
+    return { attempts: this.#attempts, cameraId: this.#resolved.cameraId, elapsedMs: millisecondsSince(this.#episodeStartedAt, { clock: this.#clock }),
+      phase: this.#phase, toleranceMs: this.#aggregateTolerance() };
   }
 
   // Aggregate delay tolerance across the stream's subscribers by the MINIMUM (the most-urgent governs). A subscriber that reported no urgency contributes nothing, so the
@@ -969,6 +974,7 @@ class ManagedSession implements SubscriptionHost {
   #onSegment(segment: Segment): void {
 
     this.#lastSegmentAt = this.#clock.now();
+    this.#lastSegmentMonotonicAt = this.#clock.monotonic();
 
     // The codec-gate point: the install's first segment. This runs the codec gate and caches/delivers/suppresses the init, but does NOT settle the episode - liveness
     // waits for media. A defensive media-first install settles immediately through the same recovery-media helper (see `#handleFirstSegment`).
@@ -1049,7 +1055,7 @@ class ManagedSession implements SubscriptionHost {
 
     this.#install.awaitingFirstMedia = false;
     this.#onRecovered();
-    this.#lastMediaAt = this.#clock.now();
+    this.#lastMediaAt = this.#clock.monotonic();
     this.#armWatchdog();
     this.#fanOut(segment);
   }
@@ -1110,7 +1116,7 @@ class ManagedSession implements SubscriptionHost {
         return;
       }
 
-      const silentForMs = this.#clock.now() - this.#lastMediaAt;
+      const silentForMs = millisecondsSince(this.#lastMediaAt, { clock: this.#clock });
 
       if(silentForMs >= this.#detectionThresholdMs()) {
 
@@ -1142,7 +1148,7 @@ class ManagedSession implements SubscriptionHost {
 
     if(channels.livestreamRecoveryRecovered.hasSubscribers) {
 
-      const payload = { cameraId: this.#resolved.cameraId, downtimeMs: this.#clock.now() - this.#episodeStartedAt, key: this.#key } satisfies
+      const payload = { cameraId: this.#resolved.cameraId, downtimeMs: millisecondsSince(this.#episodeStartedAt, { clock: this.#clock }), key: this.#key } satisfies
         LivestreamRecoveryRecoveredPayload;
 
       channels.livestreamRecoveryRecovered.publish(payload);
@@ -1230,7 +1236,7 @@ class ManagedSession implements SubscriptionHost {
     // non-media frames read stalled even while its any-byte heartbeat stays fresh.
     if(segment.type === "media") {
 
-      this.#lastMediaAt = this.#clock.now();
+      this.#lastMediaAt = this.#clock.monotonic();
     }
 
     // The first media segment after a reconnect carries the discontinuity marker, exactly once. The post-reconnect session restarted its timeline, so a consumer that

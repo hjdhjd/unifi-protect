@@ -1,14 +1,14 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * clock-parity.test.ts: Differential tests holding this library's clock to homebridge-plugin-utils' clock. The library takes no runtime dependency on
- * homebridge-plugin-utils, so `armDeadline` and the production clock's handling of the platform timer's range are implemented in both places; this suite is what
- * keeps them one behavior. It runs a table of scenarios - the behaviors homebridge-plugin-utils' own suite asserts of its deadline - through each over a fresh
- * `TestClock`, and asserts the same observations come back: the clock's ledger, the deadline's signal, and the class, message, and name of the reason it aborts
- * with. It runs a second table through `wallClock` and homebridge-plugin-utils' `systemClock` under node:test's mock timers - spans below the ceiling, at it and
- * past it, a chain disposed or aborted mid-hop, and an infinite span - and asserts each fires and settles at the moment asked for, and at the same moment on both.
- * A change to either side reddens it here, and a divergence is a divergence from homebridge-plugin-utils' shape, resolved by reading its clock, never by loosening
- * the assertion. Beside the scenarios, the compiler holds homebridge-plugin-utils' `TestClock` and `systemClock` to this library's `Clock`, so a consumer may inject
- * either.
+ * homebridge-plugin-utils, so `armDeadline`, the production clock's handling of the platform timer's range and its monotonic reading are implemented in both
+ * places; this suite is what keeps them one behavior. It runs a table of scenarios - the behaviors homebridge-plugin-utils' own suite asserts of its deadline -
+ * through each over a fresh `TestClock`, and asserts the same observations come back: the clock's ledger, the deadline's signal, and the class, message, and name of
+ * the reason it aborts with. It runs a second table through `wallClock` and homebridge-plugin-utils' `systemClock` under node:test's mock timers - spans below the
+ * ceiling, at it and past it, a chain disposed or aborted mid-hop, and an infinite span - and asserts each fires and settles at the moment asked for, and at the
+ * same moment on both. A change to either side reddens it here, and a divergence is a divergence from homebridge-plugin-utils' shape, resolved by reading its
+ * clock, never by loosening the assertion. Beside the scenarios, one row holds `wallClock`'s monotonic reading between bracketing reads of `systemClock`'s, in the
+ * same whole microseconds, and the compiler holds homebridge-plugin-utils' `TestClock` and `systemClock` to this library's `Clock`, so a consumer may inject either.
  */
 import type { Assert, Extends } from "homebridge-plugin-utils/testing";
 import type { Clock, Deadline } from "./clock.ts";
@@ -31,6 +31,7 @@ const _testClockIsAClock: Clock = new TestClock();
 const _systemClockIsAClock: Clock = systemClock;
 
 type _DelayConforms = Assert<Extends<TestClock["delay"] | (typeof systemClock)["delay"], AsFunction<Clock["delay"]>>>;
+type _MonotonicConforms = Assert<Extends<TestClock["monotonic"] | (typeof systemClock)["monotonic"], AsFunction<Clock["monotonic"]>>>;
 type _NowConforms = Assert<Extends<TestClock["now"] | (typeof systemClock)["now"], AsFunction<Clock["now"]>>>;
 type _ScheduleConforms = Assert<Extends<TestClock["schedule"] | (typeof systemClock)["schedule"], AsFunction<Clock["schedule"]>>>;
 
@@ -308,4 +309,19 @@ describe("the production clock's timers, parity with homebridge-plugin-utils' sy
       assert.deepEqual(local, shared, "and homebridge-plugin-utils' clock answers it at the same moments");
     });
   }
+});
+
+describe("the production clock's monotonic reading, parity with homebridge-plugin-utils' systemClock", () => {
+
+  test("the monotonic reading falls between bracketing reads of homebridge-plugin-utils' systemClock, in the same whole microseconds", () => {
+
+    // Each clock reads the one platform timeline, so a local reading taken between two of homebridge-plugin-utils' falls between them, and each truncates to whole
+    // microseconds, so a reading landing on a bound's microsecond compares equal to it rather than falling outside a finer one.
+    const before = systemClock.monotonic();
+    const observed = wallClock.monotonic();
+    const after = systemClock.monotonic();
+
+    assert.ok((observed >= before) && (observed <= after), "wallClock must read within the bracketing systemClock reads: " + [ before, observed, after ].join(" "));
+    assert.equal(Math.round(observed * 1000) / 1000, observed, "the reading must be a whole count of microseconds, in milliseconds, as systemClock's is");
+  });
 });

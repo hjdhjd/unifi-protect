@@ -7,7 +7,7 @@ import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOU
 import { Pool, errors, interceptors, request } from "undici";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError,
   ProtectThrottledError, ProtectTimeoutError, assertNever } from "../errors.ts";
-import { armDeadline, wallClock } from "../clock.ts";
+import { armDeadline, millisecondsSince, wallClock } from "../clock.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import type { Clock } from "../clock.ts";
 import type { Dispatcher } from "undici";
@@ -314,7 +314,8 @@ export class Transport implements AsyncDisposable {
   readonly #origin: string;
   readonly #verifyTls: boolean;
 
-  /* The breaker's only mutable state: the consecutive-failure count and the timestamp the cooldown last (re-)armed. `null` means the breaker is closed.
+  /* The breaker's only mutable state: the consecutive-failure count and the clock's monotonic reading when the cooldown last (re-)armed, so the cooldown measures
+   * the time that passed however the time of day was set meanwhile. `null` means the breaker is closed.
    *
    * The pool is the dispatcher every request goes to and the connector built beside it, travelling as one value so the two can never disagree about which pool a
    * dial belongs to, and reassigned whole because reset() rebuilds both together. An injected dispatcher is carried with a connector of `null`: its lifecycle
@@ -377,7 +378,7 @@ export class Transport implements AsyncDisposable {
     // re-arms the cooldown, a cancel books nothing) is what keeps re-probe and breaker on one cadence.
     if((opts.probe !== true) && (this.#throttledSince !== null)) {
 
-      const remaining = COOLDOWN_MS - (this.#clock.now() - this.#throttledSince);
+      const remaining = COOLDOWN_MS - millisecondsSince(this.#throttledSince, { clock: this.#clock });
 
       if(remaining > 0) {
 
@@ -557,7 +558,9 @@ export class Transport implements AsyncDisposable {
       channels.httpRequestStart.publish({ host: this.#host, method, requestId, url } satisfies HttpRequestStartPayload);
     }
 
-    const startedAt = this.#clock.now();
+    // The exchange's elapsed time is measured from the clock's monotonic reading, so the duration it publishes and the elapsed time a failure reports are the time
+    // that passed however the time of day was set meanwhile.
+    const startedAt = this.#clock.monotonic();
 
     try {
 
@@ -601,19 +604,21 @@ export class Transport implements AsyncDisposable {
       if(channels.httpRequestEnd.hasSubscribers) {
 
         requestId ??= randomUUID();
-        this.#publishEnd({ durationMs: this.#clock.now() - startedAt, method, requestId, statusCode: result.statusCode, url });
+        this.#publishEnd({ durationMs: millisecondsSince(startedAt, { clock: this.#clock }), method, requestId, statusCode: result.statusCode, url });
       }
 
       return result;
     } catch(error) {
 
-      const classified = this.#classifyTransportError(error, { callerSignal: opts.signal, deadline: deadline.signal, elapsedMs: this.#clock.now() - startedAt });
+      // The elapsed time is read once, so the error a failure carries and the duration its end diagnostic publishes are the same figure.
+      const elapsedMs = millisecondsSince(startedAt, { clock: this.#clock });
+      const classified = this.#classifyTransportError(error, { callerSignal: opts.signal, deadline: deadline.signal, elapsedMs });
 
       if(channels.httpRequestEnd.hasSubscribers) {
 
         requestId ??= randomUUID();
-        this.#publishEnd({ ...(callerCancelled(classified, opts.signal) && { cancelled: true }), durationMs: this.#clock.now() - startedAt,
-          error: classified.message, method, requestId, url });
+        this.#publishEnd({ ...(callerCancelled(classified, opts.signal) && { cancelled: true }), durationMs: elapsedMs, error: classified.message, method,
+          requestId, url });
       }
 
       throw classified;
@@ -651,7 +656,7 @@ export class Transport implements AsyncDisposable {
     // `throttleExited`, so we do not emit `throttleEntered` again - the consumer's view is that we have been throttled the whole time).
     if(this.#throttledSince !== null) {
 
-      this.#throttledSince = this.#clock.now();
+      this.#throttledSince = this.#clock.monotonic();
 
       return;
     }
@@ -659,7 +664,7 @@ export class Transport implements AsyncDisposable {
     // The trip logs at warning, because the breaker heals itself: its cooldown elapses and the next probe closes it once the controller answers.
     if(this.#consecutiveFailures >= PROTECT_API_ERROR_LIMIT) {
 
-      this.#throttledSince = this.#clock.now();
+      this.#throttledSince = this.#clock.monotonic();
 
       this.#log.warn("Throttling requests to the UniFi Protect controller after repeated failures.",
         { consecutiveFailures: this.#consecutiveFailures, cooldownMs: COOLDOWN_MS, errorLimit: PROTECT_API_ERROR_LIMIT });

@@ -32,6 +32,7 @@ import type { ConnectionRebootDetectedPayload, EventsReconnectingPayload } from 
 import { PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
   PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
 import { ProtectError, ProtectNetworkError, formatErrorChain, isSignInRefusal } from "../errors.ts";
+import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { EventStream } from "../transport/events-stream.ts";
@@ -45,7 +46,6 @@ import { classifyTransportError } from "../transport/failure.ts";
 import { connectionFaultLevel } from "../transport/connection-fault.ts";
 import { noopLog } from "../logging.ts";
 import { selectControllerUpSince } from "../state/selectors.ts";
-import { wallClock } from "../clock.ts";
 
 // The recovery sub-state the monitor maintains internally. `state` exposes this widened with the derived `throttled` value (see ConnectionState), so the throttle verdict
 // never has to be mirrored into a stored field - it is read live from the transport.
@@ -330,13 +330,14 @@ export class ConnectionMonitor {
   // #announcedLoss is the class the episode's loss was last announced as, null until an episode reaches `lost`, so a loss is announced again only when its class
   // changes and controllerRecovered fires only after a genuine loss. #reportedState caches the last emitted derived state purely to dedup stateChanged.
   // #recovering guards against re-entrant recovery. #recoveryWake holds the abort handle for the in-flight backoff wait, or is null when recovery is not currently
-  // parked on a wait. #lastUpSince tracks the controller's last-seen boot time for reboot detection. #rebootAnticipatedUntil is the self-expiring deadline (clock
-  // time) armed by expectReboot(); a fault before it enters the known-reboot backoff track, a fault after it the unknown one.
+  // parked on a wait. #lastUpSince tracks the controller's last-seen boot time for reboot detection. #rebootAnticipatedAt is the clock's monotonic reading when
+  // expectReboot() armed the self-expiring anticipation, null when none is armed; a fault inside the window that follows it enters the known-reboot backoff track, a
+  // fault after it the unknown one.
   #announcedLoss: LossClass | null = null;
   #lastFault: ProtectError | null = null;
   #lastUpSince: number | null;
   #phase: RecoveryPhase = "healthy";
-  #rebootAnticipatedUntil: number | null = null;
+  #rebootAnticipatedAt: number | null = null;
   #recovering = false;
   #recoveryWake: AbortController | null = null;
   #reportedState: ConnectionState;
@@ -492,7 +493,7 @@ export class ConnectionMonitor {
    */
   expectReboot(): void {
 
-    this.#rebootAnticipatedUntil = this.#clock.now() + PROTECT_REBOOT_ANTICIPATION_WINDOW_MS;
+    this.#rebootAnticipatedAt = this.#clock.monotonic();
   }
 
   /**
@@ -714,9 +715,10 @@ export class ConnectionMonitor {
   // recovers it within an interval of the controller's return, and the window self-expires - an acceptable, rare degradation, not a correctness gap.)
   #consumeRecoveryTrack(): RecoveryTrack {
 
-    const anticipated = (this.#rebootAnticipatedUntil !== null) && (this.#clock.now() < this.#rebootAnticipatedUntil);
+    const anticipated = (this.#rebootAnticipatedAt !== null) &&
+      (millisecondsSince(this.#rebootAnticipatedAt, { clock: this.#clock }) < PROTECT_REBOOT_ANTICIPATION_WINDOW_MS);
 
-    this.#rebootAnticipatedUntil = null;
+    this.#rebootAnticipatedAt = null;
 
     return anticipated ? "known" : "unknown";
   }

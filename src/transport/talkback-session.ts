@@ -33,24 +33,25 @@
  * @module TalkbackSession
  */
 import { Agent, WebSocket } from "undici";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, assertNever } from "../errors.ts";
+import type { ProtectWebSocketCloseEvent, ProtectWebSocketErrorEvent, ProtectWritableWebSocket, SocketTeardown } from "./ws.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
+import { closeFrameText, socketFault, teardownCode } from "./ws.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
+import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import type { OwnedDispatcher } from "./connector.ts";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
-import type { ProtectWritableWebSocket } from "./ws.ts";
 import { channels } from "../diagnostics.ts";
 import { noopLog } from "../logging.ts";
-import { reportSocketFailure } from "./ws.ts";
-import { wallClock } from "../clock.ts";
 
 /**
  * The deterministic lifecycle of a talkback session. The transitions are: construction begins connecting (`connecting`); WebSocket `open` advances to `live` (and the
  * static `connect()`'s promise resolves); every teardown path - an error, the caller's abort, an explicit `close()`, or a peer-initiated close - moves to `closed`
- * synchronously, and the owned connection is released asynchronously behind `close()`'s promise. `closing` is a momentary arm set inside the teardown call just before
- * `closed`, so a reader of `state` never observes it. There is no `handshaking` arm - talkback has no init segment.
+ * synchronously, the release of the owned connection starting in that same step, ahead of anything the teardown reports, and `close()`'s promise settling once the
+ * release completes. `closing` is a momentary arm set inside the teardown call just before `closed`, so a reader of `state` never observes it. There is no
+ * `handshaking` arm - talkback has no init segment.
  *
  * @category Transport
  */
@@ -95,8 +96,8 @@ export class TalkbackSession implements AsyncDisposable {
 
   readonly #cameraId: string;
   readonly #clock: Clock;
-  // One AbortController governs every WebSocket listener and the caller's abort. A single abort() detaches them all at once - the same teardown primitive the sibling
-  // sessions use.
+  // One AbortController marks the session torn down, which the connect reads across its negotiation await. The socket's listeners and the binding to the caller's
+  // signal are not among what it governs: the session holds them and removes them itself in its teardown, as the sibling sessions remove theirs.
   readonly #controller = new AbortController();
   // A promise that only ever rejects, when the socket faults (error or unsolicited close) or the session is torn down. An in-flight send() races it so a socket death
   // interrupts even a parked source pull; outside a send it carries a no-op rejection handler so a fault with no send in flight raises no unhandled-rejection warning.
@@ -106,31 +107,47 @@ export class TalkbackSession implements AsyncDisposable {
   readonly #verifyTls: boolean;
   readonly #webSocketFactory: ((url: string) => ProtectWritableWebSocket) | undefined;
 
-  // The open handshake, settled exactly once: resolved on the WebSocket `open` event, rejected if the socket closes (or negotiation fails, or the caller's signal aborts)
-  // before opening.
+  // The socket's handlers and the handler bound to the caller's signal, built once and held so the teardown removes each by the identity it was registered under, as
+  // EventStream holds its own: on every Node before the fix for nodejs/node#63954 (all of 22, 24 before 24.22, 25, and 26 before 26.9) the `signal` registration
+  // option can leave a listener attached after its abort.
+  readonly #callerSignal: AbortSignal | undefined;
+  readonly #onCallerAbort = (): void => this.#abortByCaller();
+  readonly #socketListeners = {
+
+    close: (event: ProtectWebSocketCloseEvent): void => this.#onClose({ code: event.code, kind: "peer", reason: event.reason }),
+    error: (event: ProtectWebSocketErrorEvent): void => this.#onError(event),
+    open: (): void => this.#onOpen()
+  };
+
+  /* The open handshake, settled exactly once: resolved on the WebSocket `open` event, rejected if the socket closes (or negotiation fails, or the caller's signal
+   * aborts) before opening. Settling once is a property of the lifecycle rather than a check of its own, as it is for EventStream: the `open` listener fires once, a
+   * teardown removes it before it reports and leaves the connect registering none, #onOpen marks the session live before it resolves, and the teardown runs once
+   * and rejects only a session that never opened.
+   */
   readonly #opened: Promise<void>;
-  readonly #settleOpen: (error?: ProtectError) => void;
+  readonly #rejectOpen: (error: ProtectError) => void;
+  readonly #resolveOpen: (value: undefined) => void;
 
   // The agent and the connector we own only when we built the default WebSocket, travelling as one value; null when a factory was injected. Mirrors EventStream /
   // LivestreamSession: we never destroy what we did not create. The socket itself is built only after the URL is negotiated, so it is null through the connecting
-  // phase, and so are the address it dials and the stamp of when its connection attempt began, which a certificate refusal and a timeout read.
+  // phase, and so are the address it dials and the stamp of when its connection attempt began, the clock's monotonic reading, which a certificate refusal and a
+  // timeout read.
   #owned: OwnedDispatcher | null = null;
   #ws: ProtectWritableWebSocket | null = null;
   #address = "";
   #connectStartedAt = 0;
 
-  // The single teardown gate and the connection-release promise close()/dispose await; the typed failure an in-flight or subsequent send rejects with (set by a socket
-  // error or unsolicited close); and the flags that distinguish a self-initiated close from a peer one and gate the open handshake.
-  #closePromise: Promise<void> | null = null;
-  #closeInitiated = false;
-  #closed = false;
+  // The release of the connection the session owns, which the single teardown starts and close()/dispose await, null until the teardown runs, so it is also the gate
+  // that runs the teardown once; the typed failure an in-flight or subsequent send rejects with, which the teardown stores once from the reason it ran for; and
+  // whether the socket has opened, which decides whether a teardown still owes the open handshake its rejection.
+  #released: Promise<void> | null = null;
   #failure: ProtectError | null = null;
   #live = false;
-  #openSettled = false;
   #state: TalkbackState = "connecting";
 
   private constructor(options: TalkbackSessionOptions) {
 
+    this.#callerSignal = options.signal;
     this.#cameraId = options.cameraId;
     this.#clock = options.clock ?? wallClock;
     this.#log = options.log ?? noopLog;
@@ -141,29 +158,12 @@ export class TalkbackSession implements AsyncDisposable {
     const opened = Promise.withResolvers<undefined>();
 
     this.#opened = opened.promise;
+    this.#rejectOpen = opened.reject;
+    this.#resolveOpen = opened.resolve;
 
     // A consumer that opens the channel but never awaits `connect()`'s result (it awaits `send` instead) must not trigger an unhandled-rejection warning if the open
     // fails; the real awaiter (connect()) still receives the rejection - both handlers run.
     void this.#opened.catch(() => undefined);
-
-    this.#settleOpen = (error?: ProtectError): void => {
-
-      if(this.#openSettled) {
-
-        return;
-      }
-
-      this.#openSettled = true;
-
-      if(error !== undefined) {
-
-        opened.reject(error);
-
-        return;
-      }
-
-      opened.resolve(undefined);
-    };
 
     // The fault promise: a Promise<never> that the teardown path rejects to interrupt an in-flight send. The standing no-op handler keeps a fault with no send in flight
     // from surfacing as an unhandled rejection; a real send attaches its own handler by racing it.
@@ -172,7 +172,7 @@ export class TalkbackSession implements AsyncDisposable {
     void fault.promise.catch(() => undefined);
     this.#fault = { promise: fault.promise, reject: fault.reject };
 
-    // The caller's signal cancels the connect attempt and, once live, the session. Bound to our own signal too, so it detaches with everything else on teardown. An
+    // The caller's signal cancels the connect attempt and, once live, the session, and the teardown removes this binding as it removes the socket's handlers. An
     // already-aborted signal tears down immediately - the connect below sees the abort and bails before opening a socket.
     if(options.signal !== undefined) {
 
@@ -181,7 +181,7 @@ export class TalkbackSession implements AsyncDisposable {
         this.#abortByCaller();
       } else {
 
-        options.signal.addEventListener("abort", () => this.#abortByCaller(), { once: true, signal: this.#controller.signal });
+        options.signal.addEventListener("abort", this.#onCallerAbort, { once: true });
       }
     }
 
@@ -340,9 +340,9 @@ export class TalkbackSession implements AsyncDisposable {
    */
   async close(): Promise<void> {
 
-    this.#shutdown(1000, "the talkback session was closed by the client");
+    this.#shutdown({ kind: "close", reason: "the talkback session was closed by the client" });
 
-    await (this.#closePromise ?? Promise.resolve());
+    await this.#released;
   }
 
   /**
@@ -353,14 +353,14 @@ export class TalkbackSession implements AsyncDisposable {
     await this.close();
   }
 
-  // Negotiate the URL and open the socket. This is the connecting phase: a negotiation (4xx/5xx) or network failure settles the open handshake as a rejection and tears
-  // down, and a caller-signal abort does too but as the typed ProtectAbortedError (recorded in #failure before teardown). Either way connect() throws for the whole
-  // connect attempt, with no half-open session. The negotiated URL carries its own authorization token, so - like the livestream - no auth headers are stamped on the
-  // upgrade.
+  // Negotiate the URL and open the socket. This is the connecting phase: a negotiation (4xx/5xx) or network failure tears down as a fault, whose teardown settles the
+  // open handshake as a rejection, and a caller-signal abort does too but as the typed ProtectAbortedError the teardown stores as the session's failure. Either way
+  // connect() throws for the whole connect attempt, with no half-open session. The negotiated URL carries its own authorization token, so - like the livestream - no
+  // auth headers are stamped on the upgrade.
   async #connect(signal?: AbortSignal): Promise<void> {
 
     // An already-aborted caller signal tears us down in the constructor before this runs; bail without touching state so we never negotiate or build a socket.
-    if(this.#closed) {
+    if(this.#released !== null) {
 
       return;
     }
@@ -373,15 +373,13 @@ export class TalkbackSession implements AsyncDisposable {
     } catch(error) {
 
       // A teardown that already fired (caller abort during negotiation) has settled everything; do not also settle. We read the controller's abort state rather than
-      // `#closed` because it is a live getter the type system cannot narrow to a constant across the await, and it is set in lockstep with `#closed` on teardown.
+      // `#released` because it is a live getter the type system cannot narrow to a constant across the await, and it is set in lockstep with `#released` on teardown.
       if(!this.#controller.signal.aborted) {
 
         const failure = (error instanceof ProtectError) ? error :
           new ProtectNetworkError("The UniFi Protect talkback WebSocket endpoint could not be negotiated.", { cause: error });
 
-        this.#failure = failure;
-        this.#settleOpen(failure);
-        this.#shutdown(1006, "the talkback endpoint negotiation failed");
+        this.#shutdown({ error: failure, kind: "fault", line: null, reason: "the talkback endpoint negotiation failed" });
       }
 
       return;
@@ -401,7 +399,7 @@ export class TalkbackSession implements AsyncDisposable {
      * detached.
      */
     this.#address = URL.parse(url)?.host ?? url;
-    this.#connectStartedAt = this.#clock.now();
+    this.#connectStartedAt = this.#clock.monotonic();
 
     if(this.#webSocketFactory !== undefined) {
 
@@ -416,73 +414,92 @@ export class TalkbackSession implements AsyncDisposable {
       this.#ws = new WebSocket(url, { dispatcher: agent });
     }
 
-    // All listeners bind to the controller's signal, so one abort() detaches them together. open / close / error are `once` - a socket reports each terminal condition a
-    // single time. There is deliberately no `message` listener and no `binaryType`: the channel is write-only - the controller emits nothing inbound on it - so the
-    // session never reads frames.
-    const wsSignal = this.#controller.signal;
-
-    this.#ws.addEventListener("open", () => this.#onOpen(), { once: true, signal: wsSignal });
-    this.#ws.addEventListener("close", (event) => this.#onClose(event.code, event.reason), { once: true, signal: wsSignal });
-    this.#ws.addEventListener("error", (event) => this.#onError(event), { once: true, signal: wsSignal });
+    // The socket's handlers register with no `signal` option, since the teardown removes each itself. open / close / error are `once` - a socket reports each terminal
+    // condition a single time. There is deliberately no `message` listener and no `binaryType`: the channel is write-only - the controller emits nothing inbound on
+    // it - so the session never reads frames.
+    this.#ws.addEventListener("open", this.#socketListeners.open, { once: true });
+    this.#ws.addEventListener("close", this.#socketListeners.close, { once: true });
+    this.#ws.addEventListener("error", this.#socketListeners.error, { once: true });
   }
 
-  // The WebSocket opened. Advance to live, settle the open handshake, and publish the opened diagnostic. send() now flows.
+  // The WebSocket opened. Advance to live, settle the open handshake, and publish the opened diagnostic, all ahead of the debug line, so a logger that throws on the
+  // line leaves the handshake settled and the diagnostic published. send() now flows.
   #onOpen(): void {
 
     this.#live = true;
     this.#state = "live";
-    this.#log.debug("Connected to the UniFi Protect talkback API.", { camera: this.#cameraId });
-    this.#settleOpen();
+    this.#resolveOpen(undefined);
 
     if(channels.talkbackSessionOpened.hasSubscribers) {
 
       channels.talkbackSessionOpened.publish({ cameraId: this.#cameraId } satisfies TalkbackSessionOpenedPayload);
     }
+
+    this.#log.debug("Connected to the UniFi Protect talkback API.", { camera: this.#cameraId });
   }
 
   /* The socket reported an error. The cause is read once, from the connector ahead of the event, as the sibling sessions read it: a failed upgrade reports a
    * content-free `TypeError` on this event while the connector still holds the dial's own error, and a reset of the established connection reports the same
    * `TypeError` while the connector holds the reset the socket raised. That one cause is the typed failure's cause and the line's subject. The line belongs to a
    * live session, at the level the connection-fault table answers; a failure before open reaches its caller as the connect() rejection alone. The classified failure
-   * is stored so the connect handshake, an in-flight send or a later one rejects with it, and the request to close sends teardown through the single close path.
+   * is the fault the teardown runs for, which stores it once the connection is released, so the connect handshake, an in-flight send or a later one rejects with it,
+   * and only then logs its line.
    */
   #onError(event: { error?: unknown; message?: string }): void {
 
     const connector = this.#owned?.connector;
     const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
-    const failure = reportSocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt, failed: "The UniFi Protect talkback API connection failed.",
-      host: this.#address, log: this.#log, open: this.#live, reported: "The UniFi Protect talkback API reported an error.",
-      timedOut: "The UniFi Protect talkback API connection timed out." });
 
-    this.#failure ??= failure;
-    this.#shutdown(1006, "the talkback connection errored");
+    this.#shutdown(socketFault({ cause, elapsed: millisecondsSince(this.#connectStartedAt, { clock: this.#clock }),
+      failed: "The UniFi Protect talkback API connection failed.", host: this.#address, open: this.#live, reason: "the talkback connection errored",
+      reported: "The UniFi Protect talkback API reported an error.", timedOut: "The UniFi Protect talkback API connection timed out." }));
   }
 
-  // The single teardown. Guarded so it runs once whether triggered by the socket's close event, an error, the caller's abort, or an explicit close. An unsolicited close
-  // - the peer dropped a live socket without our asking - is a failure we did not initiate, so it stores a network failure if none is set yet. Aborts the controller
-  // (detaching every listener), settles a still-pending open handshake as a failure, rejects the fault promise (interrupting any in-flight send), publishes the closed
-  // diagnostic, and releases the connection the session owns.
-  #onClose(code: number, reason: string): void {
+  /* The single teardown, run once whether the socket's close event, an error, the caller's abort or an explicit close starts it, with the reason it ran. The removal
+   * of the listeners and the abort stay here as well as in #shutdown because the peer's own close listener reaches this teardown without passing through it.
+   *
+   * The release starts directly after the abort, as the sibling sessions start it, ahead of every report, so everything the teardown then settles or announces, the
+   * closed diagnostic among it, finds the connection already severed: releaseOwned severs it in one synchronous stack, before it returns, so a subscriber that reopens
+   * on the close never overlaps the connection this teardown lets go, and nothing that throws past this point, a logger included, can leave it held. releaseOwned
+   * destroys the agent and then releases the connector, in the order and for the reasons it states; the connector's release is what severs a socket a completed
+   * upgrade handed to the WebSocket machinery, or one still in its handshake.
+   *
+   * The reports then run in one order: the open handshake of a session that never opened settled as a failure, the session's failure stored, the fault promise
+   * rejected (interrupting any in-flight send), the line a fault carries, the close line and the closed diagnostic.
+   */
+  #onClose(teardown: SocketTeardown): void {
 
-    if(this.#closed) {
+    if(this.#released !== null) {
 
       return;
     }
 
-    this.#closed = true;
+    const code = teardownCode(teardown);
+    const { reason } = teardown;
+
     this.#state = "closed";
+    this.#detachListeners();
     this.#controller.abort();
+    this.#released = (this.#owned === null) ? Promise.resolve() : releaseOwned(this.#owned);
 
-    if(!this.#closeInitiated && this.#live) {
+    const failure = this.#failureOf(teardown);
 
-      this.#failure ??= new ProtectNetworkError("The UniFi Protect talkback API connection closed unexpectedly.", { cause: reason });
+    // The open resolved the handshake of a session that opened, so only one that never did has a handshake left to settle.
+    if(!this.#live) {
+
+      this.#rejectOpen(failure ?? this.#unopenedFailure(teardown));
     }
 
-    this.#settleOpen(this.#failure ?? new ProtectNetworkError("The UniFi Protect talkback API closed before it finished connecting.", { cause: reason }));
+    this.#failure = failure;
 
-    // Reject the fault promise so any in-flight send unparks and rejects. A stored failure (socket error / unsolicited close) is the meaningful cause; a clean
-    // self-initiated close still rejects an in-flight send, because the channel it was writing to is gone.
-    this.#fault.reject(this.#failure ?? new ProtectNetworkError("The UniFi Protect talkback session was closed.", { cause: reason }));
+    // Reject the fault promise so any in-flight send unparks and rejects. A stored failure is the meaningful cause; a clean self-initiated close still rejects an
+    // in-flight send, because the channel it was writing to is gone.
+    this.#fault.reject(failure ?? new ProtectNetworkError("The UniFi Protect talkback session was closed.", { cause: reason }));
+
+    if((teardown.kind === "fault") && (teardown.line !== null)) {
+
+      this.#log[teardown.line.level](teardown.line.message, teardown.line.context);
+    }
 
     this.#log.debug("The UniFi Protect talkback API connection closed.", { camera: this.#cameraId, code, reason });
 
@@ -490,39 +507,75 @@ export class TalkbackSession implements AsyncDisposable {
 
       channels.talkbackSessionClosed.publish({ cameraId: this.#cameraId, reason } satisfies TalkbackSessionClosedPayload);
     }
-
-    // releaseOwned destroys the agent and then releases the connector, in the order and for the reasons it states; the connector's release is what severs a socket
-    // a completed upgrade handed to the WebSocket machinery, or one still in its handshake.
-    this.#closePromise = (this.#owned === null) ? Promise.resolve() : releaseOwned(this.#owned);
   }
 
-  // The caller's own signal fired. Record it as a typed aborted failure BEFORE teardown, so both places #onClose surfaces the stored #failure - the connect handshake's
-  // rejection and an in-flight send's fault rejection - report the caller's abort as ProtectAbortedError rather than the generic network error a socket death produces.
-  // One event, one type, wherever it is observed.
+  /* The failure the session stores, which the connect handshake and every send then reject with: the typed abort for the caller's cancel, so wherever it surfaces it
+   * reports a cancellation rather than the network error a socket death produces, the fault's own error, and for the peer dropping a live socket without our asking
+   * a network failure naming the frame it arrived on. An explicit close stores none, nor does a peer's close of a session that never opened, whose handshake answer
+   * is the whole of its report.
+   */
+  #failureOf(teardown: SocketTeardown): ProtectError | null {
+
+    switch(teardown.kind) {
+
+      case "callerSignal":
+
+        return new ProtectAbortedError("The UniFi Protect talkback session was aborted by the caller's signal.");
+
+      case "close":
+
+        return null;
+
+      case "fault":
+
+        return teardown.error;
+
+      case "peer":
+
+        return this.#live ? new ProtectNetworkError("The UniFi Protect talkback API connection closed unexpectedly (" + closeFrameText(teardown.code, teardown.reason) +
+          ").") : null;
+
+      default:
+
+        // Exhaustiveness guard. A new reason joining the union without a case above stops `teardown` being `never` here, and this fails to compile.
+        return assertNever(teardown);
+    }
+  }
+
+  // What a still-pending handshake rejects with when the teardown stored no failure: the generic pre-open failure, naming the frame it arrived on when the close was
+  // the peer's.
+  #unopenedFailure(teardown: SocketTeardown): ProtectError {
+
+    if(teardown.kind === "peer") {
+
+      return new ProtectNetworkError("The UniFi Protect talkback API closed before it finished connecting (" + closeFrameText(teardown.code, teardown.reason) + ").");
+    }
+
+    return new ProtectNetworkError("The UniFi Protect talkback API closed before it finished connecting.", { cause: teardown.reason });
+  }
+
+  // The caller's own signal fired. Naming the caller's signal as the teardown's reason is what has the teardown store the typed ProtectAbortedError as the session's
+  // failure. One event, one type, wherever it is observed.
   #abortByCaller(): void {
 
-    this.#failure ??= new ProtectAbortedError("The UniFi Protect talkback session was aborted by the caller's signal.");
-    this.#shutdown(1000, "the talkback session was aborted by the caller's signal");
+    this.#shutdown({ kind: "callerSignal", reason: "the talkback session was aborted by the caller's signal" });
   }
 
-  // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - releasing the owned connection (in #onClose) is what
-  // guarantees it is let go even if the close frame never completes. A teardown before the socket was built (a negotiation abort) has nothing to release: the owned
-  // agent and connector are created together with the socket, so none exists yet. `code` classifies the teardown for the debug log using the RFC 6455 status codes and
-  // is never sent as a close frame: 1000 marks a teardown this session chose (an explicit close(), an aborted signal), and 1006 marks one forced on it (a negotiation
-  // failure, a socket error).
-  #shutdown(code: number, reason: string): void {
+  // Request a graceful WebSocket close, then run teardown with the reason it was asked for. Calling close() on the socket is best-effort - releasing the owned
+  // connection (in #onClose) is what guarantees it is let go even if the close frame never completes. A teardown before the socket was built (a negotiation abort) has
+  // nothing to release: the owned agent and connector are created together with the socket, so none exists yet. A call after the teardown has run still asks any
+  // socket the session built to close, which does nothing on a socket already closing or closed.
+  #shutdown(teardown: SocketTeardown): void {
 
-    // Mark this as a self-initiated teardown so #onClose does not misclassify the resulting close event as an unsolicited (failure) one.
-    this.#closeInitiated = true;
-
-    if(!this.#closed) {
+    if(this.#released === null) {
 
       this.#state = "closing";
     }
 
-    // The socket's listeners come off before it is asked to close, as the sibling sessions take them off: closing a socket that is still connecting makes undici fire
-    // `error` and `close` synchronously inside close(), which an attached listener would report as a socket failure for a teardown this session asked for. The abort
-    // is what detaches them, and the caller-signal binding with them.
+    // The socket's listeners come off before it is asked to close, the session taking them off itself as the sibling sessions do: closing a socket that is still
+    // connecting makes undici fire `error` and `close` synchronously inside close(), which an attached listener would report as a socket failure or a peer's close for
+    // a teardown this session asked for.
+    this.#detachListeners();
     this.#controller.abort();
 
     try {
@@ -533,6 +586,16 @@ export class TalkbackSession implements AsyncDisposable {
       // A socket that never opened (or a fake that rejects a premature close) must not block teardown; #onClose below releases everything regardless.
     }
 
-    this.#onClose(code, reason);
+    this.#onClose(teardown);
+  }
+
+  // Take the socket's listeners and the caller-signal binding off by the identity each was registered under. A teardown before negotiation built the socket has none
+  // of the socket's to remove, and removing one a `once` dispatch already took off is quiet.
+  #detachListeners(): void {
+
+    this.#ws?.removeEventListener("close", this.#socketListeners.close);
+    this.#ws?.removeEventListener("error", this.#socketListeners.error);
+    this.#ws?.removeEventListener("open", this.#socketListeners.open);
+    this.#callerSignal?.removeEventListener("abort", this.#onCallerAbort);
   }
 }

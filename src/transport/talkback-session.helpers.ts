@@ -9,7 +9,6 @@ import type { ProtectWritableWebSocket } from "./ws.ts";
 interface ListenerOptions {
 
   once?: boolean;
-  signal?: AbortSignal;
 }
 
 // A registered listener and whether it should fire only once. Stored type-erased; the public addEventListener overloads keep the call sites fully typed.
@@ -25,18 +24,22 @@ interface ListenerEntry {
  * - `autoOpen` (default `true`) schedules an `open` event on the next microtask, so a consumer that simply `await`s the session's open handshake connects without the
  *   test having to drive `emitOpen()` by hand. Tests that scrutinize the handshake itself pass `false` and open explicitly.
  * - `closeFault` (default `false`) makes `close()` throw after it records the request, so a test can prove the session's teardown survives a faulting socket close.
+ * - `failsOnClose` (default `false`) makes `close()` on a socket that has not opened fire `error` and then `close` with code 1006 from inside the call, as the
+ *   receive-direction fake's option does and for the same reason: undici fails a socket still connecting from underneath a close request and reports it synchronously.
  */
 export interface FakeWritableWebSocketOptions {
 
   autoOpen?: boolean;
   closeFault?: boolean;
+  failsOnClose?: boolean;
 }
 
 /**
  * A deterministic in-memory WebSocket that satisfies the {@link ProtectWritableWebSocket} surface {@link TalkbackSession} consumes. It carries only the write-direction
  * surface - `send`, `bufferedAmount`, and the `open` / `close` / `error` listeners - with no `message` listener and no `binaryType`, exactly as that interface declares.
  * Tests inject it via the `webSocket` factory and drive the connection with the `emit*` methods; `sent` records every frame written and `bufferedAmount` is mutable
- * so a test can drive the backpressure safety bound.
+ * so a test can drive the backpressure safety bound. It honors `once` and detaches on `removeEventListener` by identity, and nothing else removes a listener, so a
+ * teardown that forgets a removal leaves a listener {@link FakeWritableWebSocket.listenerCount} reads.
  */
 export class FakeWritableWebSocket implements ProtectWritableWebSocket {
 
@@ -50,11 +53,16 @@ export class FakeWritableWebSocket implements ProtectWritableWebSocket {
   readonly sent: Uint8Array[] = [];
 
   readonly #closeFault: boolean;
+  readonly #failsOnClose: boolean;
   readonly #listeners = new Map<string, Set<ListenerEntry>>();
+
+  // Where the socket is in its lifecycle as the `emit*` methods have driven it, which is what tells `failsOnClose` whether a close lands on a socket still connecting.
+  #readyState: "closed" | "connecting" | "open" = "connecting";
 
   constructor(options: FakeWritableWebSocketOptions = {}) {
 
     this.#closeFault = options.closeFault ?? false;
+    this.#failsOnClose = options.failsOnClose ?? false;
 
     // Open on the next microtask by default, after the TalkbackSession's connect has synchronously attached its listeners.
     if(options.autoOpen ?? true) {
@@ -72,22 +80,67 @@ export class FakeWritableWebSocket implements ProtectWritableWebSocket {
     const entry: ListenerEntry = { listener: listener as (event: unknown) => void, once: options.once ?? false };
 
     set.add(entry);
-
-    // The signal detaches the listener on abort - the mechanism the TalkbackSession's one AbortController uses to tear every listener down together.
-    options.signal?.addEventListener("abort", () => set.delete(entry), { once: true });
   }
 
   /**
    * Request the socket close. Records the request; teardown in TalkbackSession flows through its own close path rather than waiting on a close event here. When
-   * constructed with `closeFault`, it throws after recording the request.
+   * constructed with `failsOnClose`, a socket that has not opened fires `error` and then `close` 1006 from inside this call, undici's empty error and reason on each.
+   * When constructed with `closeFault`, it throws after recording the request.
    */
   close(): void {
 
     this.closeRequested = true;
 
+    // The socket is closed before it reports, as undici closes it, so a close() re-entered from a listener here asks nothing of it a second time.
+    if(this.#failsOnClose && (this.#readyState === "connecting")) {
+
+      this.#readyState = "closed";
+      this.emitError(new TypeError(""));
+      this.emitClose(1006, "");
+    }
+
     if(this.#closeFault) {
 
       throw new Error("the underlying socket close() faulted");
+    }
+  }
+
+  /** The number of listeners still registered, across every event type, for a test that reads whether a teardown removed everything it added. */
+  listenerCount(): number {
+
+    let count = 0;
+
+    for(const set of this.#listeners.values()) {
+
+      count += set.size;
+    }
+
+    return count;
+  }
+
+  removeEventListener(type: "open", listener: () => void): void;
+  removeEventListener(type: "close", listener: (event: { code: number; reason: string }) => void): void;
+  removeEventListener(type: "error", listener: (event: { error?: unknown; message?: string }) => void): void;
+  /** Detach a listener by the identity of the function that was registered, which is the only handle the caller is given and the only one it hands back. */
+  removeEventListener(type: string, listener: (event: never) => void): void {
+
+    const set = this.#listeners.get(type);
+
+    if(set === undefined) {
+
+      return;
+    }
+
+    const registered = listener as (event: unknown) => void;
+
+    for(const entry of set) {
+
+      if(entry.listener === registered) {
+
+        set.delete(entry);
+
+        return;
+      }
     }
   }
 
@@ -100,12 +153,18 @@ export class FakeWritableWebSocket implements ProtectWritableWebSocket {
   /** Fire the `open` event. */
   emitOpen(): void {
 
+    if(this.#readyState === "connecting") {
+
+      this.#readyState = "open";
+    }
+
     this.#dispatch("open", undefined);
   }
 
   /** Fire a `close` event with the given frame code and reason. */
   emitClose(code = 1000, reason = ""): void {
 
+    this.#readyState = "closed";
     this.#dispatch("close", { code, reason });
   }
 

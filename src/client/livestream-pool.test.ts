@@ -12,12 +12,12 @@ import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload,
 import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-pool.ts";
 import type { LivestreamPoolOptions, LivestreamSubscribeOptions, RecoveryContext, RecoveryPolicy } from "./livestream-pool.ts";
 import type { LivestreamSpec, Segment } from "../transport/livestream-session.ts";
-import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_STALL_DEFAULT_MS,
-  PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
+import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT,
+  PROTECT_LIVESTREAM_STALL_DEFAULT_MS, PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamUnavailableError, ProtectNetworkError } from "../errors.ts";
+import { TIME_OF_DAY_STEP_MS, capturingLog, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
 import { buildInitSegment, buildMediaSegment } from "../transport/livestream-session.helpers.ts";
-import { capturingLog, settlement, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { Camera } from "../devices/camera.ts";
@@ -28,6 +28,9 @@ import { createDeviceSelectors } from "../state/selectors.ts";
 import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
 
 const SPEC: LivestreamSpec = { cameraId: "cam1", source: { channel: 0, type: "channel" } };
+
+// The line the media-stall watchdog logs as it closes a session that went media-silent, whose context carries the silence it read.
+const MEDIA_SILENT = "Livestream media went silent beyond the detection threshold; recovering the stalled session.";
 
 // The description of `AI_PRO_INIT`, the init bytes every helper-driven init carries unless a test passes its own.
 const AI_PRO_DESCRIPTION = {
@@ -1615,6 +1618,90 @@ describe("LivestreamPool", () => {
       await sub[Symbol.asyncDispose]();
     });
 
+    test("across backward steps of the time of day, the stall reports the time of day at the last segment and recovery the time that passed since it", async () => {
+
+      const stalls: LivestreamStallDetectedPayload[] = [];
+      const started: LivestreamRecoveryStartedPayload[] = [];
+
+      using stallSubscription = subscribeToChannel(channels.livestreamStallDetected, (payload) => void stalls.push(payload));
+      using startedSubscription = subscribeToChannel(channels.livestreamRecoveryStarted, (payload) => void started.push(payload));
+
+      const { clock, pool, sockets } = makePool();
+
+      // The subscriber opts out of media-stall detection, so the stall is the session heartbeat's, as in the row above.
+      const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      /* A second passes before the last segment, so its monotonic stamp is a second past every stamp taken before it, and a recovery measuring from an earlier one
+       * would read a second more. The time of day is then set back before the segment and again after it, and the heartbeat's wake is armed on the same timeline,
+       * so reaching it takes the steps as well as the window. The stall publishes the time of day the segment arrived at, a timestamp recorded as its event
+       * happened, while the recovery the stall starts reports the time that passed since that segment, which no step shrinks.
+       */
+      clock.advance(1000);
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      pushMedia(at(sockets, 0));
+      await settle();
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + (2 * TIME_OF_DAY_STEP_MS));
+      await settle();
+      await settle();
+
+      assert.equal(stalls.length, 1);
+      assert.equal(at(stalls, 0).lastSegmentAt, 1000 - TIME_OF_DAY_STEP_MS, "the stall carries the time of day the last segment arrived at");
+      assert.equal(at(stalls, 0).silentForMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + (2 * TIME_OF_DAY_STEP_MS));
+      assert.equal(started.length, 1);
+      assert.equal(at(started, 0).sinceLastSegmentMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + (2 * TIME_OF_DAY_STEP_MS),
+        "the recovery reports the time that passed since the last segment");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a backward step of the time of day during a recovery episode leaves its elapsed time and its downtime the time that passed", async () => {
+
+      const recovered: LivestreamRecoveryRecoveredPayload[] = [];
+      const elapsed: number[] = [];
+
+      using recoveredSubscription = subscribeToChannel(channels.livestreamRecoveryRecovered, (payload) => void recovered.push(payload));
+
+      // Establish patiently, then reconnect on a three-second window each time the recovering episode consults, recording the elapsed time it is handed.
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        elapsed.push(context.elapsedMs);
+
+        return { awaitMs: 3000, kind: "reconnect" };
+      };
+
+      const { clock, pool, sockets } = makePool({ recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      /* The controller drops the stream and the episode begins. The time of day is set back while the first reconnect's window runs, and the window is armed on the
+       * same timeline, so reaching its end takes the step as well as the window; the second reconnect's media lands a second later. All of it is time that passed.
+       */
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(3000 + TIME_OF_DAY_STEP_MS);
+      await settle();
+      clock.advance(1000);
+      await establish(at(sockets, 2), { codec: "avc1.640028" });
+
+      assert.deepEqual(elapsed, [ 0, 3000 + TIME_OF_DAY_STEP_MS ], "the policy is handed the time that passed since the episode began");
+      assert.equal(recovered.length, 1);
+      assert.equal(at(recovered, 0).downtimeMs, 4000 + TIME_OF_DAY_STEP_MS, "the downtime is the time that passed, never shrunk by the step");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
     test("recovery:exhausted fires and carries the attempt count when the policy gives up", async () => {
 
       const exhausted: LivestreamRecoveryExhaustedPayload[] = [];
@@ -1700,6 +1787,29 @@ describe("LivestreamPool", () => {
       assert.equal(disposed.length, 2);
       assert.equal(at(opened, 0).cameraId, "cam1");
       assert.ok(typeof at(created, 0).subscriptionId === "string");
+    });
+
+    test("a subscriber's last segment time is the time of day the segment arrived at, in its stats and in its disposed payload", async () => {
+
+      const disposed: LivestreamSubscriptionDisposedPayload[] = [];
+
+      using disposedSubscription = subscribeToChannel(channels.livestreamSubscriptionDisposed, (payload) => void disposed.push(payload));
+
+      const { clock, pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // The time of day is set back before the segments are pushed, so the stamp reads that time of day, a timestamp recorded as its event happened.
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.stats.lastSegmentAt, -TIME_OF_DAY_STEP_MS, "the stats carry the time of day the last segment arrived at");
+
+      await sub[Symbol.asyncDispose]();
+
+      assert.equal(disposed.length, 1);
+      assert.equal(at(disposed, 0).stats.lastSegmentAt, -TIME_OF_DAY_STEP_MS, "and so does the disposed payload");
     });
 
     test("session:closed carries the reason for a last-subscriber dispose and for a pool disposal", async () => {
@@ -1977,6 +2087,56 @@ describe("LivestreamPool", () => {
       await settle();
 
       assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a backward step of the time of day leaves the media silence the watchdog reads the time that passed", async () => {
+
+      const log = capturingLog();
+      const { clock, pool, sockets } = makePool({ log });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      /* The first media arms the watchdog, its wakes a poll period apart on the same timeline as the time of day. That is set back half a period, so reaching the
+       * first wake takes the step as well as the period, and the second wake a period more. The silence the second wake reads is all of it, past the 2s threshold
+       * however it is read, and the figure is the time that passed.
+       */
+      clock.advance(-(PROTECT_LIVESTREAM_STALL_POLL_MS / 2));
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS + (PROTECT_LIVESTREAM_STALL_POLL_MS / 2));
+      await settle();
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS);
+      await settle();
+
+      const silences = log.entries.filter((entry) => entry.message === MEDIA_SILENT).map(({ args }) => (args[0] as { silentForMs: number }).silentForMs);
+
+      assert.deepEqual(silences, [(2 * PROTECT_LIVESTREAM_STALL_POLL_MS) + (PROTECT_LIVESTREAM_STALL_POLL_MS / 2)], "the silence is the time that passed");
+      assert.equal(sub.state, "recovering");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a backward step of the time of day past the rest of the threshold trips the watchdog at its next wake", async () => {
+
+      const { clock, pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      /* Media lands halfway to the first wake, and the time of day is then set back the whole 2s threshold. Reaching the wake takes the rest of the period and the
+       * step, all of it media silence and together past the threshold, though the time of day at the wake reads only half a period on from the media.
+       */
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS / 2);
+      pushMedia(at(sockets, 0));
+      clock.advance(-2000);
+      clock.advance((PROTECT_LIVESTREAM_STALL_POLL_MS / 2) + 2000);
+      await settle();
+
+      assert.equal(sub.state, "recovering", "the wake trips on the silence that passed");
       assert.equal(sockets.length, 2);
 
       await sub[Symbol.asyncDispose]();
