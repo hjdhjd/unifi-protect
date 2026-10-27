@@ -163,11 +163,11 @@ async function probeBootstrap(transport: Transport, host: string, signal?: Abort
   response.ensureOk();
 }
 
-// Fetch and parse the controller bootstrap. Transport-level failures (network, timeout, throttle, abort) propagate raw - they are already typed and need no
-// bootstrap-stage wrapping. A non-2xx status becomes a `fetch`-stage bootstrap error; a malformed body becomes a `parse`-stage one. Shared by the connect sequence, the
-// store's refresh failsafe, and the connection-recovery re-bootstrap, so there is one bootstrap-fetch path in the library. The `probe` option marks the recovery caller:
-// it passes `true` so the re-bootstrap dispatches through an open breaker (the monitor's cadence is the rate limiter during recovery), while the connect and refresh
-// callers leave it `false` and stay subject to the breaker's cooldown gate.
+// Fetch and parse the controller bootstrap. Transport-level failures (network, timeout, throttle, abort) and the failure of a relogin a 401 on the fetch triggers
+// propagate raw and unwrapped - they are already typed and need no bootstrap-stage wrapping. A non-2xx status becomes a `fetch`-stage bootstrap error; a malformed
+// body becomes a `parse`-stage one. Shared by the connect sequence, the store's refresh failsafe, and the connection-recovery re-bootstrap, so there is one
+// bootstrap-fetch path in the library. The `probe` option marks the recovery caller: it passes `true` so the re-bootstrap dispatches through an open breaker (the
+// monitor's cadence is the rate limiter during recovery), while the connect and refresh callers leave it `false` and stay subject to the breaker's cooldown gate.
 async function fetchBootstrap(transport: Transport, host: string, opts: { probe?: boolean; signal?: AbortSignal } = {}): Promise<ProtectNvrBootstrap> {
 
   const response = await transport.send(bootstrapUrl(host),
@@ -290,7 +290,7 @@ export class ProtectClient implements AsyncDisposable {
       getAuthHeaders: (): Record<string, string> => auth.authHeaders(),
       host: opts.host,
       log,
-      onUnauthorized: (): Promise<boolean> => auth.reauthenticate(),
+      onUnauthorized: (relogin): Promise<boolean> => auth.reauthenticate(relogin),
       origin: "https://" + authority,
       ...((opts.dispatcher !== undefined) && { dispatcher: opts.dispatcher }),
       ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
@@ -302,10 +302,10 @@ export class ProtectClient implements AsyncDisposable {
 
     try {
 
-      // Stage 1: authenticate. A credential failure throws the fatal `ProtectAuthError`, a login answered with a status that is no verdict on the credentials (a
-      // readiness answer the transport already retried, or returned at once because it carried a Retry-After hint, among them) the fatal `ProtectRequestError`, and
-      // an unreachable controller the recoverable `ProtectNetworkError` - each already typed, propagated as-is rather than wrapped, so the caller sees the precise
-      // cause.
+      // Stage 1: authenticate. A credential failure throws the fatal `ProtectAuthError`; a readiness answer or a rate limit at the controller root, read before the
+      // login, or a login answered with a status that is no verdict on the credentials (a readiness answer the transport already retried, or returned at once because
+      // it carried a Retry-After hint, among them) the fatal `ProtectRequestError`; and an unreachable controller the recoverable `ProtectNetworkError` - each already
+      // typed, propagated as-is rather than wrapped, so the caller sees the precise cause.
       await auth.login({ host: authority, password: opts.password, username: opts.username }, (opts.signal !== undefined) ? { signal: opts.signal } : {});
 
       // Stage 2: fetch the initial bootstrap. Not a probe - the breaker is closed at connect time, and the initial fetch should respect the gate like any normal request.
@@ -747,7 +747,8 @@ export class ProtectClient implements AsyncDisposable {
    *
    * @returns The raw bootstrap JSON as returned by the controller.
    *
-   * @throws {@link ProtectBootstrapError} when the bootstrap cannot be fetched or parsed, or a transport-level `ProtectError`.
+   * @throws {@link ProtectBootstrapError} when the bootstrap cannot be fetched or parsed, a transport-level `ProtectError`, or the failure of a relogin a 401 on the
+   *   fetch triggered, raw and unwrapped, such as the {@link ProtectRequestError} a controller not ready to judge the sign-in answers with.
    */
   async fetchBootstrap(opts: { signal?: AbortSignal } = {}): Promise<unknown> {
 

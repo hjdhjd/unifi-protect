@@ -111,8 +111,9 @@ export interface RequestOptions {
  * - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the
  *   `ConnectionMonitor`'s cadence rather than waiting out the breaker's cooldown ({@link PROTECT_API_RETRY_INTERVAL}), while its outcome still books through the normal
  *   path - so a probe drawing the first answer `controllerServing` accepts closes the breaker exactly as the autonomous half-open trial would, and a probe its
- *   caller cancels books nothing, like any cancelled request. Only the monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh failsafe
- *   and device commands leave it `false` and stay gated, so the breaker still protects against operational hammering.
+ *   caller cancels books nothing, like any cancelled request. The monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`, and so does the handshake
+ *   of a relogin a 401 on one of them triggers, so that relogin reaches the controller as the trial did; the refresh failsafe and device commands leave it `false` and
+ *   stay gated, as does a relogin one of them triggers, so the breaker still protects against operational hammering.
  *
  * @category Transport
  */
@@ -131,8 +132,10 @@ export interface SendOptions extends RequestOptions {
  *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher. It also brings its own connector and its own retry
  *   policy, so a connection attempt a settled request leaves behind runs on that dispatcher's terms rather than the owned pool's; the request itself settles at
  *   once either way.
- * - `getAuthHeaders` supplies the cookie + CSRF headers stamped onto every request. `onUnauthorized` is the relogin hook invoked on a 401 before a single retry.
- *   Both point upward at `AuthSession`, so they are passed as plain function references (dependency inversion) rather than an `AuthSession` import.
+ * - `getAuthHeaders` supplies the cookie + CSRF headers stamped onto every request. `onUnauthorized` is the relogin hook invoked on a 401, told whether the request
+ *   that met it was a recovery probe so the relogin can carry the probe's mark: it resolves `true` to have the request retried once, resolves `false` to have the
+ *   401 handed back, and rejects with the relogin's own failure, which the request then throws. Both point upward at `AuthSession`, so they are passed as plain
+ *   function references (dependency inversion) rather than an `AuthSession` import.
  * - `verifyTls` opts the owned pool into strict TLS certificate verification. It defaults to `false`, because a controller presents a self-signed certificate that no
  *   verification chain accepts; a deployment that has installed a trusted certificate on its controller turns it on. An injected dispatcher brings its own TLS
  *   settings, so the option reaches only the pool this transport builds for itself.
@@ -146,7 +149,7 @@ export interface TransportOptions {
   getAuthHeaders?: () => Record<string, string>;
   host: string;
   log?: ProtectLogging;
-  onUnauthorized?: () => Promise<boolean>;
+  onUnauthorized?: (opts: { probe: boolean }) => Promise<boolean>;
   origin: string;
   verifyTls?: boolean;
 }
@@ -399,7 +402,8 @@ export class ProtectResponse {
  *   cancels, or one never sent because its caller had already aborted, books nothing, since neither says anything about the controller. Crossing
  *   {@link PROTECT_API_ERROR_LIMIT} consecutive failures trips the breaker open.
  * - **open:** for {@link PROTECT_API_RETRY_INTERVAL} seconds, `send` throws {@link ProtectThrottledError} before dispatching, except a `probe: true` request (the
- *   `ConnectionMonitor`'s recovery trial), which bypasses the cooldown gate and books exactly as a natural half-open attempt would, a cancelled one booking nothing.
+ *   `ConnectionMonitor`'s recovery trial, or the handshake of a relogin a 401 on that trial triggers), which bypasses the cooldown gate and books exactly as a
+ *   natural half-open attempt would, a cancelled one booking nothing.
  * - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first answer `controllerServing` accepts closes the
  *   breaker (and emits `throttleExited` only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
@@ -416,7 +420,7 @@ export class Transport implements AsyncDisposable {
   readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #host: string;
   readonly #log: ProtectLogging;
-  readonly #onUnauthorized: (() => Promise<boolean>) | undefined;
+  readonly #onUnauthorized: ((opts: { probe: boolean }) => Promise<boolean>) | undefined;
   readonly #origin: string;
   readonly #verifyTls: boolean;
 
@@ -473,15 +477,17 @@ export class Transport implements AsyncDisposable {
    * @returns The response.
    *
    * @throws {@link ProtectThrottledError} while the breaker is open and cooling; {@link ProtectTimeoutError}, {@link ProtectAbortedError}, or
-   *   {@link ProtectNetworkError} on transport-level failures.
+   *   {@link ProtectNetworkError} on transport-level failures; and whatever the relogin hook rejects with, when the handshake of a 401's relogin throws, the status
+   *   error that handshake was answered with among them.
    */
   async send(url: string, opts: SendOptions = {}): Promise<ProtectResponse> {
 
     // Gate first: if the breaker is open and still inside its cooldown window, refuse locally without touching the network. Once the cooldown has elapsed we fall
     // through and let this request act as the half-open recovery probe; `book` will close or re-arm the breaker based on its outcome, and a probe its caller cancels
-    // books nothing and leaves the breaker half-open. A `probe` request - the ConnectionMonitor's recovery trial - skips this gate entirely: the monitor's backoff
-    // curve is the rate limiter while it is recovering, so its probe dispatches at the monitor's cadence and the outcome it books (the first answer `controllerServing`
-    // accepts closes the breaker, a failure re-arms the cooldown, a cancel books nothing) is what keeps re-probe and breaker on one cadence.
+    // books nothing and leaves the breaker half-open. A `probe` request - the ConnectionMonitor's recovery trial, or the handshake of a relogin a 401 on that trial
+    // triggers - skips this gate entirely: the monitor's backoff curve is the rate limiter while it is recovering, so its probe dispatches at the monitor's cadence
+    // and the outcome it books (the first answer `controllerServing` accepts closes the breaker, a failure re-arms the cooldown, a cancel books nothing) is what keeps
+    // re-probe and breaker on one cadence.
     if((opts.probe !== true) && (this.#throttledSince !== null)) {
 
       const remaining = COOLDOWN_MS - millisecondsSince(this.#throttledSince, { clock: this.#clock });
@@ -494,7 +500,9 @@ export class Transport implements AsyncDisposable {
 
     // Relogin retry loop. The body of the loop runs at most twice: the original attempt, and - if it returns 401 and a relogin hook is wired and succeeds - one
     // retry with relogin disabled so a persistent 401 cannot spin. Only the attempt whose outcome we return can book, and it books nothing when its caller cancelled
-    // it or had already aborted before it was sent.
+    // it or had already aborted before it was sent. An attempt whose relogin throws books nothing either: the handshake books its own sends, and booking the 401
+    // beside them would count a controller that failed its relogin as one that served. The hook is told whether this request is the recovery probe, so a relogin
+    // the probe triggers carries its mark.
     let allowAuthRetry = opts.authRetry ?? true;
 
     for(;;) {
@@ -529,7 +537,7 @@ export class Transport implements AsyncDisposable {
       }
 
       // eslint-disable-next-line no-await-in-loop
-      if((result.statusCode === 401) && allowAuthRetry && (this.#onUnauthorized !== undefined) && (await this.#onUnauthorized())) {
+      if((result.statusCode === 401) && allowAuthRetry && (this.#onUnauthorized !== undefined) && (await this.#onUnauthorized({ probe: opts.probe === true }))) {
 
         allowAuthRetry = false;
 

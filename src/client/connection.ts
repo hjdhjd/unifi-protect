@@ -76,13 +76,14 @@ const NETWORK_RECOVERY_SCHEDULES_MS: Readonly<Record<RecoveryTrack, RecoverySche
 };
 
 /* The wait a failed recovery attempt's answer asks for, in milliseconds, or null when it asks for none. A controller asks for time with a `Retry-After`, which the
- * transport hands back at once among the headers of the `ProtectRequestError` it classifies the answer as: the liveness probe throws that error as itself, and the
- * re-bootstrap as the cause of a `ProtectBootstrapError`, so this reads the fault or the cause such a wrapper carries, by the one wrapper rule the readings of a
- * refusal share. No other fault carries an answer's headers: a refused sign-in is classified without them, and a socket that fails, the live stream's or a
- * relaunch's, has no answer to carry. A value of digits alone is delay-seconds, and any other value is read as an HTTP-date, a time of day, so its distance is
- * taken from `now`, the clock's time of day at the read, rather than from the monotonic reading, whose origin is the platform's and not the epoch a date is written
- * against. A value that reads as neither, or a distance of zero or less, asks for nothing. The wait is capped at the refusal schedule's steady interval, the
- * slowest rung recovery walks, so a controller that asks for hours or names a date far out never parks recovery past it.
+ * transport hands back at once among the headers of the `ProtectRequestError` it classifies the answer as: the liveness probe throws that error as itself, the
+ * re-bootstrap as the cause of a `ProtectBootstrapError`, and a relogin a 401 on one of them triggers throws its own answer's error as itself, unwrapped, so this
+ * reads the fault or the cause such a wrapper carries, by the one wrapper rule the readings of a refusal share. No other fault carries an answer's headers: a
+ * refused sign-in is classified without them, and a socket that fails, the live stream's or a relaunch's, has no answer to carry. A value of digits alone is
+ * delay-seconds, and any other value is read as an HTTP-date, a time of day, so its distance is taken from `now`, the clock's time of day at the read, rather than
+ * from the monotonic reading, whose origin is the platform's and not the epoch a date is written against. A value that reads as neither, or a distance of zero or
+ * less, asks for nothing. The wait is capped at the refusal schedule's steady interval, the slowest rung recovery walks, so a controller that asks for hours or
+ * names a date far out never parks recovery past it.
  */
 function recoveryHint(fault: ProtectError | null, options: { now: number }): number | null {
 
@@ -726,10 +727,11 @@ export class ConnectionMonitor {
    * The choice is made when the loop asks for its next wait, which is after the attempt before it recorded its own fault, so each wait answers the attempt just
    * made, and the first wait, read before any attempt, is the network schedule's.
    *
-   * A failed attempt whose answer carries a `Retry-After`, read off the probe's error or the cause of the bootstrap error, waits the longer of its scheduled delay
-   * and the hint, the hint capped at the refusal schedule's steady interval, so recovery waits as long as a hinted probe or bootstrap answer asks up to its slowest
-   * rung and never parks longer. The hint is read on the same pull as the schedule and from the same fault, so it lengthens the wait after the attempt it answered
-   * and no other, and it moves no rung: a controller that stops hinting finds the schedule where it would stand had it never hinted.
+   * A failed attempt whose answer carries a `Retry-After`, read off the probe's error, the cause of the bootstrap error, or the unwrapped failure of a relogin a 401
+   * on the re-bootstrap triggers, waits the longer of its scheduled delay and the hint, the hint capped at the refusal schedule's steady interval, so recovery waits
+   * as long as a hinted probe or bootstrap answer asks up to its slowest rung and never parks longer. The hint is read on the same pull as the schedule and from the
+   * same fault, so it lengthens the wait after the attempt it answered and no other, and it moves no rung: a controller that stops hinting finds the schedule where
+   * it would stand had it never hinted.
    *
    * A change of cause starts the other schedule at its first rung, because each ladder's delays are measured from when its cause began: a refusal that follows a
    * stretch of unreachability backs off from its own first refusal. A refusal that clears into a network fault restarts the unknown track rather than the episode's,

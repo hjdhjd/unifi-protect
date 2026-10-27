@@ -5,6 +5,7 @@
  * against an undici MockAgent.
  */
 import type { ConnectionTransitionPayload, HttpRequestStartPayload } from "../diagnostics.ts";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectConfigurationError, ProtectNetworkError,
   ProtectProtocolError } from "../errors.ts";
 import { TestClock, errnoError, present, settle } from "homebridge-plugin-utils/testing";
@@ -18,7 +19,6 @@ import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
-import { PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
 import { ProtectClient } from "./client.ts";
 import type { RawPacket } from "../protocol/packet.ts";
 import { Transport } from "../transport/http.ts";
@@ -41,9 +41,10 @@ function mockController(): { agent: MockAgent; pool: Interceptable } {
   return { agent, pool: agent.get("https://" + HOST) };
 }
 
-// Stub a successful UniFi OS login on the pool.
+// Stub a successful UniFi OS sign-in on the pool: the controller root answering with a CSRF token, then the login it stamps.
 function interceptLogin(pool: Interceptable): void {
 
+  pool.intercept({ method: "GET", path: "/" }).reply(200, "", { headers: { "x-csrf-token": "csrf0" } });
   pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(200, "", { headers: { "set-cookie": "TOKEN=abc", "x-csrf-token": "csrf1" } });
 }
 
@@ -182,9 +183,9 @@ describe("ProtectClient.connect", () => {
 
       const { agent, pool } = mockController();
 
-      // The login is rejected and the CSRF fetch yields no token, so the handshake cannot complete.
-      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad");
+      // The controller root answers without a CSRF token and the one login is rejected, so the sign-in fails as bad credentials.
       pool.intercept({ method: "GET", path: "/" }).reply(200, "");
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad");
 
       await assert.rejects(connect(agent), ProtectAuthError);
     });
@@ -661,6 +662,40 @@ describe("ProtectClient.connect", () => {
       assert.equal(clock.nextDeadline, clock.now(), "a failed reboot must leave the next fault on the prompt unknown track");
       assert.equal(clock.pending, 1, "and recovery parks on that one wait alone");
     });
+
+    test("a liveness probe answered 401 while the breaker is open relogs in through it, and the controller's answers close the breaker", async () => {
+
+      const { agent, pool } = mockController();
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ nvr: makeNvr() }));
+
+      await using client = await connect(agent);
+
+      // A controller going down for a reboot answers the liveness probe 503 until the consecutive failures open the breaker.
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(503, "starting").times(PROTECT_API_ERROR_LIMIT);
+
+      for(let attempt = 0; attempt < PROTECT_API_ERROR_LIMIT; attempt++) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await assert.rejects(client.connection.verify(), { statusCode: 503 });
+      }
+
+      assert.equal(client.connection.isThrottled, true, "consecutive server errors must have opened the breaker");
+
+      /* The session expired during the outage, so the next probe meets a 401. The composition root hands the relogin the probe's mark, so its root read and its
+       * login reach the controller through the open breaker rather than being refused locally, and the controller's answers close the breaker before the retried
+       * probe is answered.
+       */
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(401, "stale");
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ nvr: makeNvr() }));
+
+      await client.connection.verify();
+
+      assert.equal(client.connection.isThrottled, false, "the controller answered the relogin and the retried probe");
+      agent.assertNoPendingInterceptors();
+    });
   });
 
   describe("an IPv6 controller address", () => {
@@ -703,7 +738,7 @@ describe("ProtectClient.connect", () => {
         } });
     }
 
-    test("signs in through the CSRF retry, bootstraps and opens the events stream on the bracketed authority, reporting the address as configured", async () => {
+    test("reads the CSRF token, signs in, bootstraps and opens the events stream on the bracketed authority, reporting the address as configured", async () => {
 
       const { agent, pool } = mockBracketedController();
       const dialed: Dialed[] = [];
@@ -711,9 +746,7 @@ describe("ProtectClient.connect", () => {
 
       using startSubscription = subscribeToChannel(channels.httpRequestStart, (payload) => void hosts.push(payload.host));
 
-      // The first sign-in is rejected, so the session fetches a CSRF token from the controller root and signs in again, reaching the login URL and the root alike.
-      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "");
-      pool.intercept({ method: "GET", path: "/" }).reply(200, "", { headers: { "x-csrf-token": "csrf0" } });
+      // The sign-in reads a CSRF token from the controller root and then posts the login, reaching the root and the login URL alike.
       interceptLogin(pool);
       pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
 

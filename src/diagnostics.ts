@@ -75,9 +75,9 @@ export const channels = {
    */
   adoptionContradiction: typed<AdoptionContradictionPayload>("unifi-protect:adoption:contradiction"),
 
-  /** The 401-triggered relogin ran. The only visibility into mid-session session recovery, which is otherwise silent (it has no return value a consumer sees); the
-   * payload's `success` reports whether the session was recovered. Connect-time login is deliberately not channelled - the `connect()` result and the `http:request:*`
-   * channels already are its single source.
+  /** The 401-triggered relogin ran. Published once per run, whatever ended it, before a failure it met is thrown from the request that triggered it, so this is the one
+   * record of the relogin itself: that request shows it only through the answer it then returns or the failure it throws. The payload's `success` reports whether the
+   * session was recovered. Connect-time login is deliberately not channelled - the `connect()` result and the `http:request:*` channels already are its single source.
    */
   authRelogin: typed<AuthReloginPayload>("unifi-protect:auth:relogin"),
 
@@ -215,8 +215,9 @@ export interface AdoptionContradictionPayload {
 }
 
 /**
- * Payload published on {@link channels.authRelogin}. `success` is `true` when the relogin re-established the session, `false` when it could not (no retained credentials,
- * or the handshake failed).
+ * Payload published on {@link channels.authRelogin}. `success` is `true` when the relogin re-established the session, and `false` when it did not: the controller
+ * refused the sign-in or accepted it without a complete session, no credentials were retained, the session was ended or replaced while the relogin ran, or the
+ * handshake failed on anything else, a failure the request that triggered the relogin then throws.
  *
  * @category Diagnostics
  */

@@ -30,7 +30,7 @@ export function makeMockTransport(options: {
   getAuthHeaders?: () => Record<string, string>;
   host?: string;
   log?: ProtectLogging;
-  onUnauthorized?: () => Promise<boolean>;
+  onUnauthorized?: (opts: { probe: boolean }) => Promise<boolean>;
 } = {}): MockTransport {
 
   const host = options.host ?? "10.0.0.1";

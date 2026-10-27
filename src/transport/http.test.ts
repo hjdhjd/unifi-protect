@@ -461,6 +461,48 @@ describe("Transport", () => {
       assert.equal(response.statusCode, 401);
       assert.equal(calls, 0, "the handshake escape hatch must not recurse into relogin");
     });
+
+    test("tells the relogin hook whether the request that met the 401 was the recovery probe", async () => {
+
+      const asked: { probe: boolean }[] = [];
+      const { agent, host, pool, transport } = makeMockTransport({ onUnauthorized: async (relogin) => {
+
+        asked.push(relogin);
+
+        return false;
+      } });
+
+      pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale").times(2);
+
+      await transport.send(url(host, "/x"));
+      await transport.send(url(host, "/x"), { probe: true });
+
+      assert.deepEqual(asked, [ { probe: false }, { probe: true } ], "a plain request's relogin carries no mark, and a probe's carries the probe's");
+      agent.assertNoPendingInterceptors();
+    });
+
+    test("a 401 whose relogin hook rejects throws the hook's failure and books nothing for the attempt", async () => {
+
+      const failure = new ProtectRequestError("The UniFi Protect controller answered the request with HTTP status 503.", { statusCode: 503 });
+      const { agent, host, pool, transport } = makeMockTransport({ onUnauthorized: async () => Promise.reject(failure) });
+
+      /* One failure short of the trip threshold, then a 401 whose relogin rejects, then one more failure. The 401 books nothing, because the relogin's own sends book
+       * what the controller answers them, so the failure after it is the one that trips the breaker. A 401 booked as served would reset the count instead, and one
+       * booked as a failure would trip the breaker on the 401 itself.
+       */
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
+      pool.intercept({ method: "GET", path: "/x" }).reply(401, "stale");
+
+      await sendFailures(transport, url(host, "/f"), PROTECT_API_ERROR_LIMIT - 1);
+      await assert.rejects(transport.send(url(host, "/x")), (error: unknown) => error === failure);
+
+      assert.equal(transport.isThrottled, false, "the rejected relogin left the count where it stood");
+
+      await transport.send(url(host, "/f"));
+
+      assert.equal(transport.isThrottled, true, "so the next failure is the one that crosses the threshold");
+      agent.assertNoPendingInterceptors();
+    });
   });
 
   describe("transport-error classification", () => {
