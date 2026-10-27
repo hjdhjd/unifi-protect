@@ -2,14 +2,17 @@
  *
  * auth.test.ts: Unit tests for the authentication session - the UniFi OS credential handshake, the CSRF pre-fetch retry, the cookie/CSRF capture and stripping,
  * the throw-on-failure contract and the answers that are no verdict on the credentials, the logout / reauthenticate paths, the relogin's single-flight coalescing,
- * and the stale-session write guards. Driven against an undici MockAgent so the handshake exercises the real transport path.
+ * and the stale-session write guards. Driven against an undici MockAgent so the handshake exercises the real transport path, and over a loopback peer where a row
+ * reads what the owned pool's retry decision hands the handshake, which a MockAgent never reaches.
  */
 import { ProtectAuthError, ProtectRequestError } from "../errors.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
 import { AuthSession } from "./auth.ts";
 import type { ChannelListener } from "node:diagnostics_channel";
+import { Transport } from "./http.ts";
 import assert from "node:assert/strict";
+import { createLoopbackHttpsPeer } from "./tls-peer.helpers.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 
 // The login endpoint path and the controller-root path the handshake uses, relative to the mock controller origin.
@@ -96,9 +99,9 @@ describe("AuthSession", () => {
       assert.equal(auth.isAuthenticated, false);
     });
 
-    // A status that is no verdict on the credentials - a readiness answer from the transport's retried set, a 3xx, or a 5xx outside the set - surfaces as the
-    // classified request error rather than as a rejected sign-in, and the handshake leaves no session behind.
-    for(const status of [ 503, 404, 400, 501, 302 ]) {
+    // A status that is no verdict on the credentials - a readiness answer from the transport's retried set, a rate limit, a 3xx, or a 5xx outside the set - surfaces
+    // as the classified request error rather than as a rejected sign-in, and the handshake leaves no session behind.
+    for(const status of [ 503, 404, 400, 429, 501, 302 ]) {
 
       test("a login answered " + String(status) + " throws ProtectRequestError and stays unauthenticated", async () => {
 
@@ -111,6 +114,19 @@ describe("AuthSession", () => {
         assert.equal(auth.isAuthenticated, false);
       });
     }
+
+    test("a login answered 503 with a Retry-After over the owned pool throws ProtectRequestError after one request", async () => {
+
+      // The owned pool's retry decision returns a hinted readiness answer unretried, and the handshake still reads it as no verdict on the credentials.
+      await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{\"error\":\"starting\"}", headers: { "retry-after": "2" }, status: 503 }) });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
+
+      const auth = new AuthSession({ transport });
+
+      await assert.rejects(auth.login({ host: peer.host, password: "p", username: "u" }), { constructor: ProtectRequestError, statusCode: 503 });
+      assert.equal(peer.requests, 1);
+      assert.equal(auth.isAuthenticated, false);
+    });
 
     test("a login answered 503 over an authenticated session throws ProtectRequestError and drops the session cookie", async () => {
 
@@ -155,12 +171,26 @@ describe("AuthSession", () => {
       assert.equal(auth.isAuthenticated, false);
     });
 
+    test("a login answered 401 whose controller root answers 429 throws ProtectRequestError rather than a rejected sign-in", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+      const auth = new AuthSession({ transport });
+
+      // A 429 is outside the retried set, yet a rate-limited root has judged nothing, so the login's 401 is no verdict and the root's rate limit surfaces.
+      pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
+      pool.intercept({ method: "GET", path: ROOT_PATH }).reply(429, "slow down");
+
+      await assert.rejects(auth.login({ host, password: "p", username: "u" }), { constructor: ProtectRequestError, statusCode: 429 });
+      assert.equal(auth.isAuthenticated, false);
+    });
+
     test("a login answered 401 whose controller root answers 501 throws ProtectAuthError as a rejected sign-in", async () => {
 
       const { host, pool, transport } = makeMockTransport();
       const auth = new AuthSession({ transport });
 
-      // A root answer outside the retried set yields no token and leaves the login's own answer standing, so the 401 is read as the rejected sign-in it is.
+      // A root answer that is neither a readiness answer nor a rate limit yields no token and leaves the login's own answer standing, so the 401 is read as the
+      // rejected sign-in it is.
       pool.intercept({ method: "POST", path: LOGIN_PATH }).reply(401, "bad creds");
       pool.intercept({ method: "GET", path: ROOT_PATH }).reply(501, "not implemented");
 

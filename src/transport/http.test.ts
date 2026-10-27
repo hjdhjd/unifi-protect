@@ -3,8 +3,8 @@
  * http.test.ts: Unit tests for the HTTP transport - the send/request surface, ProtectResponse decoding, ensureOk classification and the responseOk 2xx test,
  * transport-error classification (timeout vs caller-abort vs certificate vs network), the auth-header hook and 401-relogin retry, the full throttle circuit-breaker
  * FSM (closed -> open -> half-open -> closed), the diagnostics-channel publishes for request start/end and throttle entered/exited, dispatcher-ownership semantics
- * for an injected versus an owned pool, the connection dial, a request in flight at a reset or a disposal, the owned pool's handling of the statuses it retries,
- * and the on/once/stream event-rail surface.
+ * for an injected versus an owned pool, the connection dial, a request in flight at a reset or a disposal, the owned pool's retry decision, read directly and
+ * against undici's own default, and its handling of the statuses it retries, and the on/once/stream event-rail surface.
  *
  * Every path is driven deterministically: an undici MockAgent injects responses and failures without a live controller, a `TestClock` advances breaker time and
  * fires request deadlines without real-time waits, and the rows that need a real connection open a loopback server of their own. The injected dispatcher and clock
@@ -15,13 +15,13 @@
 import { DIAL_SETTLE_BOUND_MS, createLoopbackHttpsPeer, createLoopbackHungHttpsPeer, createLoopbackResettingPeer, createLoopbackSilentPeer, elapsedSince,
   pendingThroughRedialWait } from "./tls-peer.helpers.ts";
 import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../diagnostics.ts";
-import { MockAgent, Pool, errors } from "undici";
+import { MockAgent, Pool, RetryHandler, errors } from "undici";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError,
   ProtectThrottledError, ProtectTimeoutError } from "../errors.ts";
+import { RETRY_POLICY, Transport, controllerServing, responseOk, retryUnlessHinted } from "./http.ts";
 import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
-import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
-import { Transport, responseOk } from "./http.ts";
+import { TestClock, errnoError, present, settle } from "homebridge-plugin-utils/testing";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
@@ -39,9 +39,68 @@ import { getEventListeners } from "node:events";
 // The breaker cooldown in milliseconds, mirroring the transport's own derivation, so the clock's advances line up with the gate math.
 const COOLDOWN_MS = PROTECT_API_RETRY_INTERVAL * 1000;
 
-// The owned pool's first retry backoff, the retry interceptor's `minTimeout` in Transport's #buildPool: how long after a retryable fault the interceptor would dial
-// again, which a row waits out before it reads that no second dial came. The interceptor's options are held as they stand there, so the row restates the value.
-const FIRST_RETRY_BACKOFF_MS = 100;
+// The owned pool's first retry backoff, read from the `minTimeout` of `RETRY_POLICY`: how long after a retryable failure the interceptor would send again, which a
+// row waits out before it reads that no second attempt came, and which bounds how soon an abort inside the backoff settles its request.
+const FIRST_RETRY_BACKOFF_MS = RETRY_POLICY.minTimeout;
+
+// The owned pool's retry options as undici resolves them, read from a retry handler undici builds over the options the transport's retry interceptor carries: the
+// fields of `RETRY_POLICY`, with only the decision and `throwOnError` beside them. The list of connection faults it retries is undici's own. Building the handler
+// sends nothing.
+const RESOLVED_RETRY_OPTIONS = (new RetryHandler({ method: "GET", path: "/", retryOptions: { ...RETRY_POLICY, methods: [...RETRY_POLICY.methods],
+  retry: retryUnlessHinted, statusCodes: [...RETRY_POLICY.statusCodes], throwOnError: false } }, { dispatch: (): boolean => true, handler: {} }) as unknown as
+  { retryOpts: RetryHandler.RetryOptions }).retryOpts;
+
+// What the retry interceptor hands its decision for one retry of a request: the dispatch options carrying the resolved retry options, and the retry's counter.
+function retryContext(counter: number, method: Dispatcher.HttpMethod = "GET"): RetryHandler.RetryContext {
+
+  return { opts: { method, path: "/", retryOptions: RESOLVED_RETRY_OPTIONS }, state: { counter } };
+}
+
+// undici's retry error for an answered status, built as its retry handler builds one, from an options object carrying the answer's headers. Its published
+// constructor type names positional headers instead, so the runtime constructor is typed here once.
+const RuntimeRetryError = errors.RequestRetryError as unknown as new (message: string, statusCode: number,
+  init: { data: { count: number }; headers: Record<string, string> }) => Error;
+
+function statusFailure(statusCode: number, headers: Record<string, string> = {}): Error {
+
+  return new RuntimeRetryError("Request failed", statusCode, { data: { count: 1 }, headers });
+}
+
+// Every failure the direct rows hand the decision, with the retry it is decided for, the method the request carried, and the backoff a retried one waits, or null
+// for a failure returned at once. Each outcome is a literal rather than a read of `RETRY_POLICY`, so the table is the oracle for the policy's verbs and its curve.
+const RETRY_DECISIONS: { counter: number; delay: number | null; error: Error; method: Dispatcher.HttpMethod; name: string }[] = [
+
+  { counter: 1, delay: null, error: statusFailure(503, { "retry-after": "2" }), method: "GET", name: "a hinted status in the retried set" },
+  { counter: 1, delay: 100, error: statusFailure(503), method: "GET", name: "an unhinted status in the retried set, on its first retry" },
+  { counter: 1, delay: null, error: statusFailure(429), method: "GET", name: "an unhinted status outside the retried set" },
+  { counter: 1, delay: 100, error: errnoError("read ECONNRESET", "ECONNRESET"), method: "GET", name: "a coded fault undici retries" },
+  { counter: 1, delay: null, error: new errors.ConnectTimeoutError(), method: "GET", name: "a coded fault undici does not retry" },
+  { counter: 1, delay: null, error: statusFailure(503), method: "PATCH", name: "a method outside the retried verbs" },
+  { counter: 1, delay: 100, error: statusFailure(503), method: "DELETE", name: "a DELETE, among the retried verbs" },
+  { counter: 1, delay: 100, error: statusFailure(503), method: "HEAD", name: "a HEAD, among the retried verbs" },
+  { counter: 1, delay: 100, error: statusFailure(503), method: "OPTIONS", name: "an OPTIONS, among the retried verbs" },
+  { counter: 1, delay: 100, error: statusFailure(503), method: "POST", name: "a POST, among the retried verbs" },
+  { counter: 1, delay: 100, error: statusFailure(503), method: "PUT", name: "a PUT, among the retried verbs" },
+  { counter: 2, delay: 200, error: statusFailure(503), method: "GET", name: "an unhinted status in the retried set, on its second retry" },
+  { counter: 3, delay: 400, error: statusFailure(503), method: "GET", name: "an unhinted status in the retried set, on its third retry" },
+  { counter: 4, delay: 800, error: statusFailure(503), method: "GET", name: "an unhinted status in the retried set, on its fourth retry" },
+  { counter: 5, delay: 1500, error: statusFailure(503), method: "GET", name: "an unhinted status in the retried set, on its last retry" },
+  { counter: 6, delay: null, error: statusFailure(503), method: "GET", name: "an unhinted status in the retried set, past its last retry" }
+];
+
+/* Failures in a shape undici's own errors never take: an abort's or a timeout's numeric code, a numeric code, an empty code, and a status held in a string. undici's
+ * default reads a code by its truth and a status by its presence rather than by its type, so the parity row hands these to retryUnlessHinted and to undici's default
+ * beside the table's own, with undici's default as their oracle.
+ */
+const ATYPICAL_FAILURES: Omit<(typeof RETRY_DECISIONS)[number], "delay">[] = [
+
+  { counter: 1, error: new DOMException("The operation was aborted.", "AbortError"), method: "GET", name: "an abort, whose code is a number" },
+  { counter: 1, error: new DOMException("The operation timed out.", "TimeoutError"), method: "GET", name: "a timeout, whose code is a number" },
+  { counter: 1, error: Object.assign(new Error("The request failed."), { code: 1 }), method: "GET", name: "a numeric code" },
+  { counter: 1, error: Object.assign(new Error("The request failed."), { code: "" }), method: "GET", name: "an empty code" },
+  { counter: 1, error: Object.assign(new Error("The request failed."), { statusCode: "503" }), method: "GET", name: "a status in the retried set, held in a string" },
+  { counter: 1, error: Object.assign(new Error("The request failed."), { statusCode: "200" }), method: "GET", name: "a status outside the retried set, held in a string" }
+];
 
 // Drive `count` sequential failing requests through the transport against a path the caller has set up to fail. Sequential awaits are intentional - the breaker
 // counts consecutive failures in order.
@@ -221,6 +280,78 @@ describe("Transport", () => {
     test("reads exactly the 2xx range as success, its boundaries included", () => {
 
       assert.deepEqual([ 199, 200, 299, 300 ].map((statusCode) => responseOk(statusCode)), [ false, true, true, false ]);
+    });
+  });
+
+  describe("controllerServing", () => {
+
+    test("reads no answer, a 429 and a 5xx as a controller not serving, and every other answer as one that served, the rate limit's neighbors included", () => {
+
+      // No production booking passes undefined, since a request that got no answer books its failure directly, so this row is what holds that arm.
+      const statuses = [ undefined, 200, 401, 428, 429, 430, 499, 500 ];
+
+      assert.deepEqual(statuses.map((statusCode) => controllerServing(statusCode)), [ false, true, true, true, false, true, true, false ]);
+    });
+  });
+
+  describe("retryUnlessHinted", () => {
+
+    test("returns a hinted answer and every failure undici would not retry at once, and comes back with the backoff timer for every other", (t) => {
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      for(const { counter, delay, error, method, name } of RETRY_DECISIONS) {
+
+        const received: (Error | null | undefined)[] = [];
+        const timer = retryUnlessHinted(error, retryContext(counter, method), (result) => void received.push(result));
+
+        if(delay === null) {
+
+          assert.equal(timer, undefined, name + " comes back with no timer");
+          assert.equal(received.length, 1, name + " is decided at once");
+          assert.ok(Object.is(received[0], error), name + " returns its own error");
+
+          continue;
+        }
+
+        assert.notEqual(timer, undefined, name + " comes back with its backoff timer");
+        t.mock.timers.tick(delay - 1);
+        assert.deepEqual(received, [], name + " waits out its backoff");
+        t.mock.timers.tick(1);
+        assert.deepEqual(received, [null], name + " is sent again once " + String(delay) + " ms have passed");
+      }
+    });
+
+    test("decides every unhinted failure as undici's own default decision does", (t) => {
+
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+
+      // undici keeps its default decision as a static of the retry handler, under a symbol it does not export.
+      const key = present(Object.getOwnPropertySymbols(RetryHandler).find((symbol) => symbol.description === "retry agent default retry"), "the default's symbol");
+      const undiciDefault = present((RetryHandler as unknown as Record<symbol, RetryHandler.RetryCallback | undefined>)[key], "undici's default retry decision");
+
+      // What a decision does with one failure: whether it hands a timer back, what its callback receives, and after how long, read by stepping the mocked clock.
+      const observe = (decide: (error: Error, context: RetryHandler.RetryContext, callback: RetryHandler.OnRetryCallback) => unknown,
+        { counter, error, method }: Omit<(typeof RETRY_DECISIONS)[number], "delay">): { received: unknown[]; timer: boolean; waited: number } => {
+
+        const received: unknown[] = [];
+        const timer = decide(error, retryContext(counter, method), (result) => void received.push(result)) !== undefined;
+        let waited = 0;
+
+        for(; (received.length === 0) && (waited < 2000); waited++) {
+
+          t.mock.timers.tick(1);
+        }
+
+        return { received, timer, waited };
+      };
+
+      const unhinted = RETRY_DECISIONS.filter(({ error }) => !(error instanceof errors.RequestRetryError) || (error.headers["retry-after"] === undefined));
+
+      for(const decision of [ ...unhinted, ...ATYPICAL_FAILURES ]) {
+
+        assert.deepEqual(observe(retryUnlessHinted, decision), observe(undiciDefault, decision), decision.name);
+      }
     });
   });
 
@@ -925,6 +1056,54 @@ describe("Transport", () => {
       await sendRejections(transport, url(host, "/x"), PROTECT_API_ERROR_LIMIT, { expected: { code: "ECONNREFUSED", constructor: ProtectNetworkError } });
 
       assert.equal(transport.isThrottled, true);
+    });
+
+    // An answer the controller served books a success whatever it said, so a run of application errors as long as the trip threshold never pauses the client.
+    for(const status of [ 401, 403, 404 ]) {
+
+      test("a run of " + String(status) + " answers as long as the threshold leaves the breaker closed and raises no throttleEntered", async () => {
+
+        let entered = 0;
+        const { host, pool, transport } = makeMockTransport();
+
+        using enteredSubscription = transport.on("throttleEntered", () => entered++);
+
+        pool.intercept({ method: "GET", path: "/refused" }).reply(status, "x").times(PROTECT_API_ERROR_LIMIT);
+
+        await sendFailures(transport, url(host, "/refused"), PROTECT_API_ERROR_LIMIT);
+
+        assert.equal(transport.isThrottled, false, "the controller answered every request, so the breaker stays closed");
+        assert.equal(entered, 0);
+      });
+    }
+
+    test("a run of 429 answers trips the breaker, the controller's rate limit counting as a controller not serving", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/limited" }).reply(429, "x").times(PROTECT_API_ERROR_LIMIT);
+
+      await sendFailures(transport, url(host, "/limited"), PROTECT_API_ERROR_LIMIT);
+
+      assert.equal(transport.isThrottled, true);
+    });
+
+    test("an answer the controller served resets the failure count, so the run that trips the breaker starts after it", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT - 1);
+      pool.intercept({ method: "GET", path: "/f" }).reply(404, "x");
+      pool.intercept({ method: "GET", path: "/f" }).reply(500, "x").times(PROTECT_API_ERROR_LIMIT);
+
+      // One failure short of the threshold, then a 404, then the same run again: a 404 that booked a failure, or nothing, would trip the breaker inside the run.
+      await sendFailures(transport, url(host, "/f"), (2 * PROTECT_API_ERROR_LIMIT) - 1);
+
+      assert.equal(transport.isThrottled, false, "the 404 started the count over");
+
+      await transport.send(url(host, "/f"));
+
+      assert.equal(transport.isThrottled, true, "and the threshold's worth of failures after it trips the breaker");
     });
 
     test("a cancelled half-open trial leaves the breaker as it found it", async () => {
@@ -1718,6 +1897,113 @@ describe("Transport", () => {
       assert.deepEqual(response.json<{ ok: boolean }>(), { ok: true });
       assert.equal(peer.requests, 3);
     });
+
+    test("a GET answered 429 returns its ProtectRequestError carrying the controller's Retry-After after one request", async () => {
+
+      /* The hint answers this one first: the decision returns an answer carrying a Retry-After before it reads the status, so the first answer comes straight back,
+       * its headers with it, and the caller reads the hinted wait from them. The unhinted 429 row is the one that holds a rate limit's own place outside the set.
+       */
+      await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{\"error\":\"slow down\"}", headers: { "retry-after": "2" }, status: 429 }) });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
+
+      await assert.rejects(transport.request(url(peer.host, "/limited")), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectRequestError);
+        assert.equal(error.statusCode, 429);
+        assert.equal(error.headers?.["retry-after"], "2", "the controller's hinted wait reaches the caller");
+
+        return true;
+      });
+
+      assert.equal(peer.requests, 1);
+    });
+
+    test("a GET answered 429 with no Retry-After returns its ProtectRequestError after one request", async () => {
+
+      // A rate limit sits outside the retried set in its own right, so an unhinted one comes straight back as well, read there by the status check alone.
+      await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{\"error\":\"slow down\"}", status: 429 }) });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
+
+      await assert.rejects(transport.request(url(peer.host, "/limited")), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectRequestError);
+        assert.equal(error.statusCode, 429);
+        assert.equal(error.headers?.["retry-after"], undefined, "the controller hinted no wait");
+
+        return true;
+      });
+
+      assert.equal(peer.requests, 1);
+    });
+
+    // A controller that asks for time is sent nothing more inside the call, whatever the status and whatever the wait it names.
+    for(const { hint, status } of [ { hint: "2", status: 503 }, { hint: "2", status: 404 }, { hint: "0", status: 503 } ]) {
+
+      test("a GET answered " + String(status) + " with a Retry-After of " + hint + " returns its ProtectRequestError carrying the header after one request", async () => {
+
+        await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{\"error\":\"starting\"}", headers: { "retry-after": hint }, status }) });
+        await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
+
+        await assert.rejects(transport.request(url(peer.host, "/hinted")), (error: unknown) => {
+
+          assert.ok(error instanceof ProtectRequestError);
+          assert.equal(error.statusCode, status);
+          assert.equal(error.headers?.["retry-after"], hint, "the controller's hinted wait reaches the caller");
+
+          return true;
+        });
+
+        assert.equal(peer.requests, 1);
+      });
+    }
+
+    test("a caller abort during an unhinted retry's backoff rejects at once, and no retry follows it", async () => {
+
+      await using peer = await createLoopbackHttpsPeer({ respond: () => ({ body: "{}", status: 503 }) });
+      await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
+
+      const controller = new AbortController();
+      const answered = Promise.withResolvers<undefined>();
+      const onHeaders: ChannelListener = () => answered.resolve(undefined);
+
+      // undici publishes an answer's headers in the same stack that hands the answer to the retry interceptor, so once this resolves the first backoff is under way.
+      diagnosticsChannel.subscribe("undici:request:headers", onHeaders);
+
+      try {
+
+        const pending = transport.send(url(peer.host, "/backoff"), { signal: controller.signal });
+
+        await answered.promise;
+
+        const startedAt = process.hrtime.bigint();
+
+        controller.abort();
+
+        await assert.rejects(pending, ProtectAbortedError);
+        assert.ok(elapsedSince(startedAt) < FIRST_RETRY_BACKOFF_MS, "the abort settles the request before its backoff would have elapsed");
+      } finally {
+
+        diagnosticsChannel.unsubscribe("undici:request:headers", onHeaders);
+      }
+
+      await delay(FIRST_RETRY_BACKOFF_MS * 2);
+      assert.equal(peer.requests, 1, "the backoff the abort landed in sends nothing");
+    });
+
+    // Every status the interceptor retries is still retried: answered once and then 200, each request succeeds on its second attempt.
+    for(const status of [ 400, 404, 500, 502, 503, 504 ]) {
+
+      test("a GET answered " + String(status) + " once and then 200 returns the 200 after two requests", async () => {
+
+        await using peer = await createLoopbackHttpsPeer({ respond: (request) => ((request === 1) ? { body: "{}", status } : { body: "{\"ok\":true}", status: 200 }) });
+        await using transport = new Transport({ host: peer.host, origin: "https://" + peer.host });
+
+        const response = await transport.send(url(peer.host, "/retried"));
+
+        assert.equal(response.statusCode, 200);
+        assert.equal(peer.requests, 2);
+      });
+    }
   });
 
   describe("event rails", () => {

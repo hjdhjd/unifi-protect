@@ -17,12 +17,13 @@ import timersPromises from "node:timers/promises";
  * duration and the elapsed time a failed one reports, a connection attempt's elapsed time, the silence each watchdog measures, a livestream recovery episode's
  * length and downtime, the time since the last segment a recovery reports, and the reboot anticipation window - each a whole-millisecond difference taken
  * through `millisecondsSince`, because a wall-clock step would move a measure taken on `now`, and these are readings a suite steps rather than waits for. `now` is
- * the time of day, read only for a timestamp that leaves the library, recorded when its event happens: the livestream stall diagnostic's and a subscriber's stats'
- * `lastSegmentAt`. `delay` serves the connection-recovery backoff curve and the livestream pool's establishing and recovery windows, each a one-shot wait of
- * varying duration. `schedule` serves the transport's request deadline, which `armDeadline` arms on it, so a suite fires the deadline rather than waiting it out
- * and a request releases its timer the moment it settles. A repeating consumer - the events and livestream heartbeat watchdogs, the livestream pool's media-stall
- * watchdog, the store's refresh failsafe - is itself a loop that awaits one `delay` per pass, so that single primitive covers a varying sequence and a fixed
- * period alike.
+ * the time of day, read for a timestamp that leaves the library, recorded when its event happens - the livestream stall diagnostic's and a subscriber's stats'
+ * `lastSegmentAt` - and for the one reading the library acts on itself: a `Retry-After` HTTP-date's distance from now, the hinted wait connection recovery reads
+ * off a controller's answer, because such a date is a time of day and `now` is the one reading on its timeline. `delay` serves the connection-recovery backoff
+ * curve and the livestream pool's establishing and recovery windows, each a one-shot wait of varying duration. `schedule` serves the transport's request deadline,
+ * which `armDeadline` arms on it, so a suite fires the deadline rather than waiting it out and a request releases its timer the moment it settles. A repeating
+ * consumer - the events and livestream heartbeat watchdogs, the livestream pool's media-stall watchdog, the store's refresh failsafe - is itself a loop that awaits
+ * one `delay` per pass, so that single primitive covers a varying sequence and a fixed period alike.
  *
  * The production clock is more than the primitives it wraps only where the platform timer's range runs out, and it answers there as homebridge-plugin-utils' clock
  * does. A finite span past the ceiling is carried in full rather than fired at once, and an infinite span never elapses: nothing is armed for it, so an infinite

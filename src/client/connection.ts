@@ -31,7 +31,7 @@
 import type { ConnectionRebootDetectedPayload, EventsReconnectingPayload } from "../diagnostics.ts";
 import { PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
   PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
-import { ProtectError, ProtectNetworkError, formatErrorChain, isSignInRefusal } from "../errors.ts";
+import { ProtectError, ProtectNetworkError, ProtectRequestError, formatErrorChain, isControllerRefusal, isSignInRefusal, unwrapBootstrapError } from "../errors.ts";
 import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
@@ -54,8 +54,8 @@ type RecoveryPhase = "degraded" | "healthy" | "lost" | "reconnecting";
 
 // Which network backoff curve a recovery episode opens on, chosen by how certain the fault's cause is. A `known` reboot (a self-initiated controller reboot, the one
 // case where the cause is certain) opens on the long, return-time-anticipating curve; everything else is `unknown` and opens on the prompt curve. The two differ only
-// in their delay schedule (see #recoveryDelays, which also gives way to the refusal schedule while the controller refuses the sign-in); the phase machinery is
-// identical.
+// in their delay schedule (see #recoveryDelays, which also gives way to the refusal schedule while the controller refuses the sign-in or limits the request
+// rate); the phase machinery is identical.
 /** @internal */
 type RecoveryTrack = "known" | "unknown";
 
@@ -75,28 +75,70 @@ const NETWORK_RECOVERY_SCHEDULES_MS: Readonly<Record<RecoveryTrack, RecoverySche
   unknown: { backoff: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, steady: PROTECT_RECOVERY_STEADY_INTERVAL_MS }
 };
 
-// The class a lost connection is announced as, chosen by what clears the loss: the controller stops refusing the sign-in, a person fixes the certificate or the
-// address, or the fault heals itself. Each class carries its own sentence and level, and an episode announces its loss again whenever the class changes.
-/** @internal */
-type LossClass = "mustFix" | "refused" | "selfHealing";
+/* The wait a failed recovery attempt's answer asks for, in milliseconds, or null when it asks for none. A controller asks for time with a `Retry-After`, which the
+ * transport hands back at once among the headers of the `ProtectRequestError` it classifies the answer as: the liveness probe throws that error as itself, and the
+ * re-bootstrap as the cause of a `ProtectBootstrapError`, so this reads the fault or the cause such a wrapper carries, by the one wrapper rule the readings of a
+ * refusal share. No other fault carries an answer's headers: a refused sign-in is classified without them, and a socket that fails, the live stream's or a
+ * relaunch's, has no answer to carry. A value of digits alone is delay-seconds, and any other value is read as an HTTP-date, a time of day, so its distance is
+ * taken from `now`, the clock's time of day at the read, rather than from the monotonic reading, whose origin is the platform's and not the epoch a date is written
+ * against. A value that reads as neither, or a distance of zero or less, asks for nothing. The wait is capped at the refusal schedule's steady interval, the
+ * slowest rung recovery walks, so a controller that asks for hours or names a date far out never parks recovery past it.
+ */
+function recoveryHint(fault: ProtectError | null, options: { now: number }): number | null {
 
-/* The lost line for each class. A refused sign-in and a fault a person must fix log at error, because nothing changes until someone acts; a fault that heals itself
- * logs at warning, which is the floor, because a lost connection always matters to a user even when recovery will clear it.
+  const answer = unwrapBootstrapError(fault);
+
+  if(!(answer instanceof ProtectRequestError)) {
+
+    return null;
+  }
+
+  const value = answer.headers?.["retry-after"];
+
+  if(value === undefined) {
+
+    return null;
+  }
+
+  const wait = /^\d+$/.test(value) ? (Number(value) * 1000) : (Date.parse(value) - options.now);
+
+  // A value that reads as no date is NaN here, and NaN fails this comparison as a distance of zero or less does.
+  if(!(wait > 0)) {
+
+    return null;
+  }
+
+  return Math.min(wait, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady);
+}
+
+// The class a lost connection is announced as, chosen by what clears the loss: the controller stops refusing the sign-in, it stops limiting the request rate, a
+// person fixes the certificate or the address, or the fault heals itself. Each class carries its own sentence and level, and an episode announces its loss again
+// whenever the class changes.
+/** @internal */
+type LossClass = "mustFix" | "rateLimited" | "refused" | "selfHealing";
+
+/* The lost line for each class. A refused sign-in and a fault a person must fix log at error, because nothing changes until someone acts. A rate limit, the
+ * controller asking to be asked less often, and a fault that heals itself log at warning, which is the floor, because a lost connection always matters to a user
+ * even when recovery will clear it.
  */
 const LOSS_ANNOUNCEMENTS: Readonly<Record<LossClass, { readonly level: "error" | "warn"; readonly sentence: string }>> = {
 
   mustFix: { level: "error",
     sentence: "The UniFi Protect controller cannot be reached until its certificate or its address is fixed; the connection is lost and recovery is polling." },
+  rateLimited: { level: "warn",
+    sentence: "The UniFi Protect controller is rate limiting requests; the connection is lost and recovery is retrying on the slower refusal schedule." },
   refused: { level: "error",
     sentence: "The UniFi Protect controller is refusing the sign-in; the connection is lost and recovery is retrying on the slower refusal schedule." },
   selfHealing: { level: "warn", sentence: "The UniFi Protect controller appears unreachable; the connection is lost and recovery is polling." }
 };
 
-/* The class a loss is announced as. A refused sign-in is read first, above the level table, which reads a refusal as a codeless failure like any other error type
- * of this library's own. Every other reason asks the table with `open` false, and that is the rule's own answer rather than a choice: every reason a loss is
- * concluded on is a one-shot request (the verify probe, the re-bootstrap) or a relaunch whose stream never opened, because a relaunch whose stream opens is a
- * recovery. The table's error, a certificate nothing trusts or a host name that does not resolve, is a fault a person must fix, and every other answer, quiet among
- * them, is a fault that heals itself, which is what holds the lost line at warning or above.
+/* The class a loss is announced as. The refusals are read first, above the level table, which reads a refused sign-in and a rate limit alike as a codeless failure
+ * like any other error type of this library's own: a refused sign-in, then any other refusal, which is a rate limit. Each is read by its published reading, so
+ * the class sees through the bootstrap wrapper exactly as the recovery schedule does, and a rate limit the re-bootstrap meets is announced as one. Every other
+ * reason asks the table with `open` false, and that is the rule's own answer rather than a choice: every reason a loss is concluded on is a one-shot request (the
+ * verify probe, the re-bootstrap) or a relaunch whose stream never opened, because a relaunch whose stream opens is a recovery. The table's error, a certificate
+ * nothing trusts or a host name that does not resolve, is a fault a person must fix, and every other answer, quiet among them, is a fault that heals itself, which
+ * is what holds the lost line at warning or above.
  */
 function lossClassOf(reason: ProtectError): LossClass {
 
@@ -105,14 +147,19 @@ function lossClassOf(reason: ProtectError): LossClass {
     return "refused";
   }
 
+  if(isControllerRefusal(reason)) {
+
+    return "rateLimited";
+  }
+
   return (connectionFaultLevel(classifyTransportError(reason), { open: false }) === "error") ? "mustFix" : "selfHealing";
 }
 
 /**
  * The connection's observable state. `healthy` is steady operation; `degraded` means a fault was detected and reachability is being probed; `reconnecting` means the
- * controller is reachable and the monitor is re-bootstrapping and relaunching the events stream; `lost` means the controller is unreachable or is refusing the sign-in,
- * and recovery is retrying on the schedule that cause calls for; `throttled` means the transport's circuit breaker is open (HTTP is paused on a cooldown).
- * `throttled` is derived live from the transport and takes precedence.
+ * controller is reachable and the monitor is re-bootstrapping and relaunching the events stream; `lost` means the controller is unreachable, is refusing the
+ * sign-in or is limiting the request rate, and recovery is retrying on the schedule that cause calls for; `throttled` means the transport's circuit breaker is open
+ * (HTTP is paused on a cooldown). `throttled` is derived live from the transport and takes precedence.
  *
  * @category Client
  */
@@ -136,8 +183,8 @@ export interface ConnectionTransition {
  * The events {@link ConnectionMonitor} publishes on its state, controller-lifecycle, and throttle rails.
  *
  * - `stateChanged` fires on every connection-state edge.
- * - `controllerLost` fires when the connection is concluded lost, and again whenever the cause of the loss changes class among a refused sign-in, a fault a person
- *   must fix and a fault that heals itself, carrying the typed fault that settled it.
+ * - `controllerLost` fires when the connection is concluded lost, and again whenever the cause of the loss changes class among a refused sign-in, a rate limit, a
+ *   fault a person must fix and a fault that heals itself, carrying the typed fault that settled it.
  * - `controllerRebooted` fires when the controller's self-reported boot time changes, carrying the previous and new values.
  * - `controllerRecovered` fires when the connection returns to healthy after having been lost.
  * - `throttleEntered` / `throttleExited` forward the transport breaker's transitions.
@@ -326,7 +373,8 @@ export class ConnectionMonitor {
   readonly #verifyProbe: (signal?: AbortSignal) => Promise<void>;
 
   // The recovery sub-state and the bookkeeping the FSM needs. `state` is derived from #phase and the transport's live throttle verdict, never stored. #lastFault is the
-  // most recent typed fault: it supplies the transition reason and the controllerLost payload, and whether it is a refused sign-in chooses the recovery schedule.
+  // most recent typed fault: it supplies the transition reason and the controllerLost payload, whether it is a refusal, a refused sign-in or a rate limit alike,
+  // chooses the recovery schedule, and a `Retry-After` its answer carries can lengthen the next wait.
   // #announcedLoss is the class the episode's loss was last announced as, null until an episode reaches `lost`, so a loss is announced again only when its class
   // changes and controllerRecovered fires only after a genuine loss. #reportedState caches the last emitted derived state purely to dedup stateChanged.
   // #recovering guards against re-entrant recovery. #recoveryWake holds the abort handle for the in-flight backoff wait, or is null when recovery is not currently
@@ -554,9 +602,10 @@ export class ConnectionMonitor {
 
   /* Conclude the connection is lost, recording the fault and the class it is announced as, which also marks the episode so a later return to healthy fires
    * controllerRecovered. One rule announces the loss, in the lost line and on controllerLost alike: the episode's first loss, and each turn of its class among a
-   * refused sign-in, a fault a person must fix and a fault that heals itself, never a failed attempt that leaves its class unchanged - including one that answered
-   * the probe and passed through reconnecting before it failed. The one derivation of the class chooses the line's sentence and its level, while the recovery
-   * schedule keeps its own refusal-or-not reading of the same fault.
+   * refused sign-in, a rate limit, a fault a person must fix and a fault that heals itself, never a failed attempt that leaves its class unchanged - including one
+   * that answered the probe and passed through reconnecting before it failed. The one derivation of the class chooses the line's sentence and its level, while the
+   * recovery schedule keeps its own refusal-or-not reading of the same fault, so a refused sign-in turning into a rate limit is announced again on the rung it
+   * stood on.
    */
   #enterLost(reason: ProtectError): void {
 
@@ -601,11 +650,12 @@ export class ConnectionMonitor {
 
   // The guarded recovery sequence: a network schedule, opened on the track fault certainty chooses, and a slower refusal schedule, picked per attempt by the cause of the
   // most recent fault and each walked out to a steady floor that recovery then polls at until the controller returns or the monitor is disposed. The #recoveryDelays
-  // generator yields the delay before each probe (the chosen schedule's staged prefix, then its floor forever), so the single loop is "wait the next delay, then
-  // attempt." The wait ends when its delay elapses and we probe on schedule, when a reachability wake aborts it (a detected reboot proves the controller is back, so we
-  // probe now rather than sleeping out the rest of the backoff), or when disposal aborts it and we end. Recovery therefore polls a slow-to-return or refusing controller
-  // for as long as the monitor lives - it never gives up after a handful of failures. The #recovering guard makes re-entrant faults no-ops, so the track is chosen (and
-  // the one-shot reboot anticipation consumed) once per episode, inside the guard.
+  // generator yields the delay before each probe (the chosen schedule's staged prefix, then its floor forever, any of them lengthened to the wait a hinted probe or
+  // bootstrap answer asks for, up to the refusal schedule's steady interval), so the single loop is "wait the next delay, then attempt." The wait ends when its delay
+  // elapses and we probe on schedule, when a reachability wake aborts it (a detected reboot proves the controller is back, so we probe now rather than sleeping out
+  // the rest of the backoff), or when disposal aborts it and we end. Recovery therefore polls a slow-to-return or refusing controller for as long as the monitor
+  // lives - it never gives up after a handful of failures. The #recovering guard makes re-entrant faults no-ops, so the track is chosen (and the one-shot reboot
+  // anticipation consumed) once per episode, inside the guard.
   async #recover(): Promise<void> {
 
     if(this.#recovering) {
@@ -670,16 +720,22 @@ export class ConnectionMonitor {
     this.#recoveryWake?.abort();
   }
 
-  /* The delays, in milliseconds, before each successive recovery probe, chosen per attempt from the most recent recorded fault: a refused sign-in walks the published
-   * refusal schedule, and anything else walks the network schedule, the episode's track and then the shared steady floor. A known reboot opens on the long,
-   * return-time-anticipating curve; an unknown fault on the prompt one (its leading zero reproduces "probe at once on the fault"). The choice is made when the loop
-   * asks for its next wait, which is after the attempt before it recorded its own fault, so each wait answers the attempt just made, and the first wait, read before
-   * any attempt, is the network schedule's.
+  /* The delays, in milliseconds, before each successive recovery probe, chosen per attempt from the most recent recorded fault: a refusal, a refused sign-in or a
+   * rate limit alike, walks the published refusal schedule, and anything else walks the network schedule, the episode's track and then the shared steady floor. A
+   * known reboot opens on the long, return-time-anticipating curve; an unknown fault on the prompt one (its leading zero reproduces "probe at once on the fault").
+   * The choice is made when the loop asks for its next wait, which is after the attempt before it recorded its own fault, so each wait answers the attempt just
+   * made, and the first wait, read before any attempt, is the network schedule's.
+   *
+   * A failed attempt whose answer carries a `Retry-After`, read off the probe's error or the cause of the bootstrap error, waits the longer of its scheduled delay
+   * and the hint, the hint capped at the refusal schedule's steady interval, so recovery waits as long as a hinted probe or bootstrap answer asks up to its slowest
+   * rung and never parks longer. The hint is read on the same pull as the schedule and from the same fault, so it lengthens the wait after the attempt it answered
+   * and no other, and it moves no rung: a controller that stops hinting finds the schedule where it would stand had it never hinted.
    *
    * A change of cause starts the other schedule at its first rung, because each ladder's delays are measured from when its cause began: a refusal that follows a
    * stretch of unreachability backs off from its own first refusal. A refusal that clears into a network fault restarts the unknown track rather than the episode's,
-   * because a refusal is the controller answering - any reboot the known track anticipated is over - so the controller is probed at once. The infinite steady tail is
-   * what makes recovery poll indefinitely - the loop ends only on success or disposal, never by exhausting the schedule.
+   * because a refusal is the controller answering - any reboot the known track anticipated is over - so the controller is probed at once. A refused sign-in that
+   * turns into a rate limit, or back, changes no schedule, so it keeps its rung. The infinite steady tail is what makes recovery poll indefinitely - the loop ends
+   * only on success or disposal, never by exhausting the schedule.
    */
   *#recoveryDelays(track: RecoveryTrack): Generator<number> {
 
@@ -689,7 +745,7 @@ export class ConnectionMonitor {
 
     for(;;) {
 
-      const refused = isSignInRefusal(this.#lastFault);
+      const refused = isControllerRefusal(this.#lastFault);
 
       if(!refused && (schedule === PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS)) {
 
@@ -704,7 +760,15 @@ export class ConnectionMonitor {
         rung = 0;
       }
 
-      yield chosen.backoff[rung] ?? chosen.steady;
+      const scheduled = chosen.backoff[rung] ?? chosen.steady;
+      const hint = recoveryHint(this.#lastFault, { now: this.#clock.now() }) ?? 0;
+
+      if(hint > scheduled) {
+
+        this.#log.debug("The UniFi Protect controller asked for more time, so recovery waits longer than its schedule before the next attempt.", { hintMs: hint });
+      }
+
+      yield Math.max(scheduled, hint);
       rung++;
     }
   }

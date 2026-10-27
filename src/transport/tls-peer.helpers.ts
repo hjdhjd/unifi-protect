@@ -186,11 +186,12 @@ export interface LoopbackPeerOptions {
  * Options for {@link createLoopbackHttpsPeer}, beside every {@link LoopbackPeerOptions} member.
  *
  * - `respond` decides each answer from the 1-based index of the request being answered, so a test scripts a sequence (two 503s, then a 200) as readily as a fixed
- *   reply. Each answer goes out under a JSON content type. It defaults to a 200 with `{"ok":true}` for every request.
+ *   reply. Each answer goes out under a JSON content type, with any `headers` it names beside it, which is how a test hands the client a header such as a rate
+ *   limit's `Retry-After`. It defaults to a 200 with `{"ok":true}` for every request.
  */
 export interface LoopbackHttpsPeerOptions extends LoopbackPeerOptions {
 
-  respond?: (request: number) => { body: string; status: number };
+  respond?: (request: number) => { body: string; headers?: Record<string, string>; status: number };
 }
 
 /**
@@ -241,9 +242,9 @@ export async function createLoopbackHttpsPeer({ ipv6 = false, respond = answerOk
 
     requests++;
 
-    const { body, status } = respond(requests);
+    const { body, headers, status } = respond(requests);
 
-    response.writeHead(status, { "content-type": "application/json" });
+    response.writeHead(status, { "content-type": "application/json", ...headers });
     response.end(body);
   });
 

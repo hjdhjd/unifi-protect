@@ -25,9 +25,14 @@ export { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorization
   ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError } from "./errors.ts";
 export type { ProtectBootstrapStage } from "./errors.ts";
 
-// The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator, and the reading a
-// consumer's own connect retry branches on to tell a refused sign-in from an unreachable controller, through the bootstrap wrapper it opens.
-export { formatErrorChain, isSignInRefusal } from "./errors.ts";
+// The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator, and the
+// readings of a controller's refusal, each opening the bootstrap wrapper: isControllerRefusal, a refused sign-in or a rate limit alike, which a consumer's own
+// connect retry chooses its schedule by as recovery does, and the narrower isSignInRefusal, which tells a refused sign-in apart and chooses how a loss is announced.
+export { formatErrorChain, isControllerRefusal, isSignInRefusal } from "./errors.ts";
+
+// The mask a consumer names a controller address through in its own log, so a line naming the address carries none of the userinfo it can hold. It is the rule each
+// refusal that names the address quotes it by, published so a consumer applies the library's own rule rather than restating it.
+export { maskAddressCredentials } from "./transport/url-host.ts";
 
 // Logging - the consumer-injectable logger interface and the silent default a consumer may pass to suppress output.
 export { noopLog } from "./logging.ts";

@@ -2,6 +2,7 @@
  *
  * http.ts: The HTTP transport for the UniFi Protect library - undici pooling, signal composition, typed-error classification, and the throttle circuit breaker.
  */
+import type { Dispatcher, RetryHandler } from "undici";
 import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../diagnostics.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../settings.ts";
 import { Pool, errors, interceptors, request } from "undici";
@@ -10,7 +11,6 @@ import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, Prote
 import { armDeadline, millisecondsSince, wallClock } from "../clock.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import type { Clock } from "../clock.ts";
-import type { Dispatcher } from "undici";
 import { EventBus } from "../event-bus.ts";
 import type { FatalError } from "../errors.ts";
 import type { IncomingHttpHeaders } from "node:http";
@@ -22,11 +22,46 @@ import { classifyTransportError } from "./failure.ts";
 import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
 
-// The transient-failure status codes the undici retry interceptor retries before `send` observes the controller's last answer. These are intentional and specific to
-// how Protect controllers behave under load and during reboots - they must not be trimmed (notably 400 and 404, which a controller transiently returns mid-reboot).
-// This is the HTTP-layer retry surface and is distinct from the throttle circuit breaker below, which counts the failures that survive these retries. The login
-// handshake is the set's second reader, through isTransientStatus: a status in it is the controller's readiness answer, never a verdict on the credentials.
-const RETRY_STATUS_CODES = [ 400, 404, 429, 500, 502, 503, 504 ] as const;
+// The transient-failure status codes the undici retry interceptor retries before `send` observes the controller's last answer, except an answer carrying a
+// Retry-After hint, which retryUnlessHinted returns at once whatever its status. These are intentional and specific to how Protect controllers behave under load
+// and during reboots - they must not be trimmed (notably 400 and 404, which a controller transiently returns mid-reboot). A 429 is not among them: retrying a rate
+// limit multiplies the load the controller asked to shed, so the first 429 returns to its caller, with the controller's Retry-After when it sent one. This is the
+// HTTP-layer retry surface and is distinct from the throttle circuit breaker below, which counts the failures that survive these retries. The login handshake reads
+// the set through isTransientStatus, with 429 beside it: a status in the set is the controller's readiness answer and a 429 its rate limit, and neither is a
+// verdict on the credentials.
+const RETRY_STATUS_CODES = [ 400, 404, 500, 502, 503, 504 ] as const;
+
+/* The shape of the owned pool's retry policy: how many retries follow the first attempt, the backoff curve's first delay and ceiling in milliseconds and the factor
+ * it grows by on each retry, and the verbs and the statuses the pool retries.
+ */
+interface RetryPolicy {
+
+  readonly maxRetries: number;
+  readonly maxTimeout: number;
+  readonly methods: readonly Dispatcher.HttpMethod[];
+  readonly minTimeout: number;
+  readonly statusCodes: readonly number[];
+  readonly timeoutFactor: number;
+}
+
+/* The owned pool's retry policy, the one record its retry interceptor is built from and retryUnlessHinted reads, so the two never disagree about a number.
+ *
+ * `maxRetries`, `minTimeout`, `timeoutFactor` and `maxTimeout` are the backoff curve, sized to outlast the same transient readiness gaps RETRY_STATUS_CODES
+ * targets: a reboot or a momentary load spike on a Protect controller typically clears within a few seconds, so the curve gives it that room to recover while
+ * keeping a caller from stalling through a much longer wait. The attempts and their backoff all run inside the one request deadline `#dispatch` arms, so a
+ * controller too slow to answer every attempt inside it ends the request as a timeout rather than as a response.
+ *
+ * `methods` is the conventionally retry-safe verbs plus POST. The interceptor fires only on the transient controller-readiness statuses and on the transient
+ * connection faults undici treats as retryable, and never on an answer carrying a Retry-After hint, which retryUnlessHinted returns at once. A refused connection
+ * or a controller still starting up means the controller was not in a state to accept the request, so re-sending a POST there cannot double-apply it; a 500, a
+ * gateway error, or a connection reset can arrive after the controller already acted, so a POST retried on one of those may apply twice. PATCH is held out of the
+ * set for that reason, because the config writes it carries are the one place a double-apply would be consequential and the undocumented API promises nothing
+ * about what a repeated write does.
+ *
+ * `statusCodes` is RETRY_STATUS_CODES, whose comment says why the pool retries each status in it and why a 429 is not among them.
+ */
+export const RETRY_POLICY: RetryPolicy = { maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
+  statusCodes: RETRY_STATUS_CODES, timeoutFactor: 2 };
 
 // The throttle cooldown in milliseconds, derived once from the seconds-valued constant so the breaker math reads in the same unit it compares against.
 const COOLDOWN_MS = PROTECT_API_RETRY_INTERVAL * 1000;
@@ -75,9 +110,9 @@ export interface RequestOptions {
  *   passes `false` so its own 401 cannot recurse back into relogin.
  * - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the
  *   `ConnectionMonitor`'s cadence rather than waiting out the breaker's cooldown ({@link PROTECT_API_RETRY_INTERVAL}), while its outcome still books through the normal
- *   path - so a successful probe closes the breaker exactly as the autonomous half-open trial would, and a probe its caller cancels books nothing, like any cancelled
- *   request. Only the monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh failsafe and device commands leave it `false` and stay
- *   gated, so the breaker still protects against operational hammering.
+ *   path - so a probe drawing the first answer `controllerServing` accepts closes the breaker exactly as the autonomous half-open trial would, and a probe its
+ *   caller cancels books nothing, like any cancelled request. Only the monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh failsafe
+ *   and device commands leave it `false` and stay gated, so the breaker still protects against operational hammering.
  *
  * @category Transport
  */
@@ -129,17 +164,86 @@ export function responseOk(statusCode: number | undefined): boolean {
 }
 
 /**
- * Determine whether an HTTP status code is one the owned pool's retry interceptor retries as the controller's transient readiness answer, the status a controller
- * that is rebooting, starting up, or shedding load answers with. The login handshake never reads such a status as a verdict on the credentials.
+ * Determine whether a request's outcome shows the controller serving, which is the one question the throttle breaker asks of every booking. No answer, a 5xx and
+ * a 429 are failures: the controller could not be reached, could not serve the request, or asked to be asked less often. Any other answer, a 401, a 403 or a 404
+ * among them, came from a controller that was there and served it, whatever it said. That is what keeps session validity and a missing resource out of the
+ * breaker: a run of refusals aimed at one bad credential or one wrong path says nothing about whether the controller is up.
+ *
+ * @param statusCode - The status code to test, or `undefined` when no response was received.
+ *
+ * @returns `true` for any defined status below 500 other than 429, `false` for `undefined`, for 429 and for every status of 500 or above.
+ */
+export function controllerServing(statusCode: number | undefined): boolean {
+
+  return (statusCode !== undefined) && (statusCode < 500) && (statusCode !== 429);
+}
+
+/**
+ * Determine whether an HTTP status code says nothing about the request it answers: the controller's transient readiness answer, the status a controller that is
+ * rebooting, starting up, or shedding load answers with, which the owned pool's retry interceptor retries unless the answer carries a Retry-After, or a 429, the
+ * controller's rate limit, which the interceptor returns at once. The set is wider than the retried one because its reader is the login handshake, where a status
+ * in it is never a verdict on the credentials, retried or not: a rate-limited sign-in judged nothing, so reading it as a refused sign-in would report a wrong
+ * password for a controller that only asked to be asked less.
  *
  * @param statusCode - The status code to test.
  *
- * @returns `true` for a status in the retried set, `false` otherwise.
+ * @returns `true` for a status in the retried set or a 429, `false` otherwise.
  */
 export function isTransientStatus(statusCode: number): boolean {
 
   // The set is a tuple of literals, whose `includes` accepts only those literals, so a status of any value is tested by comparison instead.
-  return RETRY_STATUS_CODES.some((code) => code === statusCode);
+  return (statusCode === 429) || RETRY_STATUS_CODES.some((code) => code === statusCode);
+}
+
+/**
+ * Decide whether the owned pool's retry interceptor sends a failed attempt again: undici's own default decision with one rule ahead of it, that an answer carrying
+ * a Retry-After header returns to its caller at once. A controller that asks for time gets it from the caller's own schedule rather than inside the call: undici
+ * would wait out a hint only up to the curve's ceiling, re-sending sooner than a longer hint asks, so every hinted answer returns at once, whatever its value. The
+ * hint is the header's presence, so the decision reads none of its value and reads no time of day.
+ *
+ * Every other failure takes undici's default decision, restated here because undici offers no supported way to call its own: a fault whose code is outside the
+ * connection faults undici retries, a method or a status outside the retried set, or a retry past the last returns the failure, and anything else is retried after
+ * the backoff curve's delay for that retry. The curve is the default's own without its Retry-After arm, and that arm is the one input the restatement does not
+ * mirror: undici reads the header off any error that carries one, where the hint rule reads it off undici's retry error alone, the one error that carries an
+ * answer's headers to the decision, so a failure of another kind carrying the header is retried on the curve here where undici would wait out its hint. The delay
+ * runs on the platform's timer, as undici's own does, because the retry backoff is the dependency's timing rather than the library clock's, and the timer goes back
+ * to the interceptor, which clears it when the request is aborted during the wait.
+ *
+ * @param error         - The failed attempt: undici's retry error for an answered status, carrying the answer's headers, or the connection fault itself.
+ * @param context       - What the interceptor hands every decision.
+ * @param context.opts  - The request's dispatch options, carrying the retry options undici resolved, whose list of retried connection faults the decision reads.
+ * @param context.state - The retry state, whose counter numbers the retry being decided.
+ * @param callback      - Called with the error to return it, or with `null` to send the request again.
+ *
+ * @returns The backoff timer when the attempt is retried, and nothing when the failure is returned at once.
+ */
+export function retryUnlessHinted(error: Error, { opts, state }: RetryHandler.RetryContext, callback: RetryHandler.OnRetryCallback): NodeJS.Timeout | undefined {
+
+  if((error instanceof errors.RequestRetryError) && (error.headers["retry-after"] !== undefined)) {
+
+    callback(error);
+
+    return undefined;
+  }
+
+  // The code and the status are read as undici's default reads them, off whatever error it is handed: a truthy code other than undici's own retry code and the
+  // connection faults it retries returns the failure, as does any status but null or undefined that is outside the retried set. Each read can be any value, which
+  // a typed list's `includes` refuses, so each list is tested by comparison instead. undici resolves every retry option before the decision runs, so the fallback
+  // for the list of retried faults answers a context no interceptor builds.
+  const code = ("code" in error) ? error.code : undefined;
+  const statusCode = ("statusCode" in error) ? error.statusCode : undefined;
+  const errorCodes = opts.retryOptions?.errorCodes ?? [];
+
+  if((code && (code !== "UND_ERR_REQ_RETRY") && !errorCodes.some((retried) => retried === code)) || !RETRY_POLICY.methods.includes(opts.method) ||
+    ((statusCode !== null) && (statusCode !== undefined) && !RETRY_POLICY.statusCodes.some((retried) => retried === statusCode)) ||
+    (state.counter > RETRY_POLICY.maxRetries)) {
+
+    callback(error);
+
+    return undefined;
+  }
+
+  return setTimeout(() => callback(null), Math.min(RETRY_POLICY.minTimeout * (RETRY_POLICY.timeoutFactor ** (state.counter - 1)), RETRY_POLICY.maxTimeout));
 }
 
 /**
@@ -290,16 +394,18 @@ export class ProtectResponse {
  *
  * The breaker is the canonical three-state model - `closed -> open -> half-open -> closed`:
  *
- * - **closed:** normal operation. Each request that is dispatched books an outcome; a 2xx resets the consecutive-failure count, a non-2xx or transport
- *   exception increments it. A request its caller cancels, or one never sent because its caller had already aborted, books nothing, since neither says anything about
- *   the controller. Crossing {@link PROTECT_API_ERROR_LIMIT} consecutive failures trips the breaker open.
+ * - **closed:** normal operation. Each request that is dispatched books an outcome, and `controllerServing` is the whole test: an answer from a controller
+ *   that served it, a 4xx other than a 429 among them, resets the consecutive-failure count, while no answer, a 5xx or a 429 increments it. A request its caller
+ *   cancels, or one never sent because its caller had already aborted, books nothing, since neither says anything about the controller. Crossing
+ *   {@link PROTECT_API_ERROR_LIMIT} consecutive failures trips the breaker open.
  * - **open:** for {@link PROTECT_API_RETRY_INTERVAL} seconds, `send` throws {@link ProtectThrottledError} before dispatching, except a `probe: true` request (the
  *   `ConnectionMonitor`'s recovery trial), which bypasses the cooldown gate and books exactly as a natural half-open attempt would, a cancelled one booking nothing.
- * - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first success closes the breaker (and emits `throttleExited`
- *   only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
+ * - **half-open:** once the cooldown elapses, requests are allowed through again as recovery probes. The first answer `controllerServing` accepts closes the
+ *   breaker (and emits `throttleExited` only then, so the public signal never flaps); a failure re-arms the cooldown from that moment and stays open silently.
  *
- * Reachability lives here; session validity lives in `AuthSession`. The breaker never calls login to probe recovery - the next real request is
- * the probe, and the independent 401-relogin concern is the injected `onUnauthorized` hook. The clock is injected so every transition is deterministically testable.
+ * Whether the controller is serving lives here; session validity lives in `AuthSession` and a missing resource with its caller. The breaker never calls login to
+ * probe recovery - the next real request is the probe, and the independent 401-relogin concern is the injected `onUnauthorized` hook. The clock is injected so every
+ * transition is deterministically testable.
  *
  * @category Transport
  */
@@ -374,8 +480,8 @@ export class Transport implements AsyncDisposable {
     // Gate first: if the breaker is open and still inside its cooldown window, refuse locally without touching the network. Once the cooldown has elapsed we fall
     // through and let this request act as the half-open recovery probe; `book` will close or re-arm the breaker based on its outcome, and a probe its caller cancels
     // books nothing and leaves the breaker half-open. A `probe` request - the ConnectionMonitor's recovery trial - skips this gate entirely: the monitor's backoff
-    // curve is the rate limiter while it is recovering, so its probe dispatches at the monitor's cadence and the outcome it books (success closes the breaker, failure
-    // re-arms the cooldown, a cancel books nothing) is what keeps re-probe and breaker on one cadence.
+    // curve is the rate limiter while it is recovering, so its probe dispatches at the monitor's cadence and the outcome it books (the first answer `controllerServing`
+    // accepts closes the breaker, a failure re-arms the cooldown, a cancel books nothing) is what keeps re-probe and breaker on one cadence.
     if((opts.probe !== true) && (this.#throttledSince !== null)) {
 
       const remaining = COOLDOWN_MS - millisecondsSince(this.#throttledSince, { clock: this.#clock });
@@ -430,7 +536,7 @@ export class Transport implements AsyncDisposable {
         continue;
       }
 
-      this.#book(responseOk(result.statusCode));
+      this.#book(controllerServing(result.statusCode));
 
       return new ProtectResponse(result.statusCode, result.headers, result.body);
     }
@@ -625,8 +731,8 @@ export class Transport implements AsyncDisposable {
     }
   }
 
-  // Book one breaker outcome. Success closes the breaker (and announces recovery only on the closing edge, so `throttleExited` never flaps); failure either trips the
-  // breaker once the threshold is crossed, or re-arms the cooldown if a half-open probe just failed.
+  // Book one breaker outcome. The first answer `controllerServing` accepts closes the breaker (and announces recovery only on the closing edge, so `throttleExited`
+  // never flaps); a failure either trips the breaker once the threshold is crossed, or re-arms the cooldown if a half-open probe just failed.
   #book(ok: boolean): void {
 
     if(ok) {
@@ -778,18 +884,10 @@ export class Transport implements AsyncDisposable {
   // attempt still in flight, and certificate verification follows the `verifyTls` option (permissive by default, since controllers ship self-signed certs). HTTP/2
   // is enabled and offered beside HTTP/1.1, and a controller that supports it negotiates h2 by its own preference. The pool holds five concurrent connections, a
   // 60-second client TTL so each pooled connection is recycled roughly once a minute rather than kept alive indefinitely (bounding how long a keepalive socket to a
-  // controller that has since rebooted or silently dropped the link can linger before it is retired), a fixed user-agent, the signal gate, and the exponential-backoff
-  // retry interceptor. The retried set is the conventionally retry-safe verbs plus POST: the interceptor only fires on the transient controller-readiness codes in
-  // RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable. A refused connection, a 429, or a controller still starting up means the
-  // controller was not in a state to accept the request, so re-sending a POST there cannot double-apply it; a 500, a gateway error, or a connection reset can arrive
-  // after the controller already acted, so a POST retried on one of those may apply twice. PATCH is held out of the set for that reason, because the config writes it
-  // carries are the one place a double-apply would be consequential and the undocumented API promises nothing about what a repeated write does. The backoff curve
-  // itself - up to five retries after the initial attempt, starting at a 100ms delay and doubling on each retry up to a 1500ms cap - is sized to outlast the same
-  // transient readiness gaps RETRY_STATUS_CODES targets: a reboot or a momentary load spike on a Protect controller typically clears within a few seconds, so the curve
-  // gives it that room to recover while keeping a caller from stalling through a much longer wait. With `throwOnError` off, the interceptor never discards an answer:
-  // once the retries run out, or at once for a status outside the set or a method outside the retried verbs, the controller's last response returns to `send` with its
-  // body, and `ensureOk` is where it becomes the classified error. The six attempts and their backoff all run inside the one request deadline `#dispatch` arms, so a
-  // controller too slow to answer every attempt inside it ends the request as a timeout rather than as a response.
+  // controller that has since rebooted or silently dropped the link can linger before it is retired), a fixed user-agent, the signal gate, and the retry
+  // interceptor, built from `RETRY_POLICY`, the record its decision, retryUnlessHinted, reads as well. With `throwOnError` off, the interceptor never discards an
+  // answer: once the retries run out, or at once for an answer its decision returns, the controller's last response returns to `send` with its body, and `ensureOk`
+  // is where it becomes the classified error.
   #buildPool(): OwnedDispatcher {
 
     const userAgent: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {
@@ -826,8 +924,8 @@ export class Transport implements AsyncDisposable {
     const allowH2 = true;
     const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
     const dispatcher = new Pool(this.#origin, { allowH2, clientTtl: 60000, connect: connector.connect, connections: 5 })
-      .compose(userAgent, signalGate, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ],
-        minTimeout: 100, statusCodes: [...RETRY_STATUS_CODES], throwOnError: false, timeoutFactor: 2 }));
+      .compose(userAgent, signalGate, interceptors.retry({ ...RETRY_POLICY, methods: [...RETRY_POLICY.methods], retry: retryUnlessHinted,
+        statusCodes: [...RETRY_POLICY.statusCodes], throwOnError: false }));
 
     return { connector, dispatcher };
   }

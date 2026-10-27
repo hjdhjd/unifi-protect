@@ -58,9 +58,9 @@ function getHeader(name: string, headers: IncomingHttpHeaders): string | null {
 }
 
 /**
- * Read a login answer as a verdict on the credentials. A 4xx is the controller judging the request it was sent, except a status in the transport's retried set, which
- * a controller rebooting or shedding load answers with (a 400 or a 404 mid-reboot among them) and which says nothing about the credentials. A 3xx or a 5xx says
- * nothing about them at all.
+ * Read a login answer as a verdict on the credentials. A 4xx is the controller judging the request it was sent, except a status the transport reads as transient:
+ * one in its retried set, which a controller rebooting or shedding load answers with (a 400 or a 404 mid-reboot among them), or a 429, its rate limit, and neither
+ * says anything about the credentials. A 3xx or a 5xx says nothing about them at all.
  *
  * @param statusCode - The status the controller answered with.
  *
@@ -145,7 +145,7 @@ export class AuthSession {
    *
    * @throws {@link ProtectAuthError} if the handshake does not yield a cookie and CSRF token.
    * @throws {@link ProtectRequestError} if the controller answers with a status that is no verdict on the credentials, such as a readiness answer the transport
-   *   already retried, which a reconnecting caller retries again later.
+   *   already retried, or returned at once because it carried a Retry-After hint, which a reconnecting caller retries again later.
    */
   async login(credentials: ProtectCredentials, opts: { signal?: AbortSignal } = {}): Promise<void> {
 
@@ -261,10 +261,10 @@ export class AuthSession {
    * transport's getAuthHeaders hook being wired back to this same session.
    *
    * A false return is a rejected sign-in, which login() reports as bad credentials and which a reconnecting consumer counts against its budget, so only an answer that
-   * judges the credentials earns it: a 4xx outside the transport's retried set. A readiness answer the transport already retried, a 3xx, or any other 5xx says nothing
-   * about the credentials, so each throws the error the transport classifies it as, and a controller answering mid-reboot is never reported as a wrong password. The
-   * controller root's answer is read by the same rule: a readiness answer there throws as well, because a controller not ready to serve its root was not ready to
-   * judge the login it rejected.
+   * judges the credentials earns it: a 4xx that is neither a readiness answer nor a rate limit. A readiness answer, which the transport already retried unless it
+   * carried a Retry-After hint, a rate limit, a 3xx, or any other 5xx says nothing about the credentials, so each throws the error the transport classifies it as,
+   * and a controller answering mid-reboot or shedding sign-ins is never reported as a wrong password. The controller root's answer is read by the same rule: a
+   * readiness answer or a rate limit there throws as well, because a controller not ready to serve its root was not ready to judge the login it rejected.
    */
   async #handshake(signal?: AbortSignal): Promise<boolean> {
 
@@ -286,8 +286,8 @@ export class AuthSession {
 
       const csrfResponse = await this.#transport.send("https://" + credentials.host, { authRetry: false, method: "GET", ...((signal !== undefined) && { signal }) });
 
-      // A root answering with a readiness status means the controller is not ready to judge a sign-in, so its classified error surfaces rather than the login's
-      // rejection standing as a verdict. Any other root answer that yields no token leaves the login's own answer to the read below.
+      // A root answering with a readiness status or a rate limit means the controller is not ready to judge a sign-in, so its classified error surfaces rather than
+      // the login's rejection standing as a verdict. Any other root answer that yields no token leaves the login's own answer to the read below.
       if(isTransientStatus(csrfResponse.statusCode)) {
 
         csrfResponse.ensureOk();

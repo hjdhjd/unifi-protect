@@ -4,7 +4,8 @@
  */
 
 /**
- * Number of consecutive API failures to accept before we back off so we don't slam a Protect controller.
+ * Number of consecutive requests the controller did not serve (no answer, a status of 500 or above, or a 429) to accept before we back off so we don't slam a
+ * Protect controller.
  */
 export const PROTECT_API_ERROR_LIMIT = 10;
 
@@ -57,19 +58,21 @@ export const PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS = [ 0, 5000, 15000, 30000 ];
 /**
  * Connection-recovery steady-state floor, in milliseconds. Each network backoff track walks out to this interval and then probes at it indefinitely until the
  * controller returns or the monitor is disposed. This is the single "recover without slamming a down controller" guarantee: no matter how an unreachable episode
- * began, sustained re-probing settles to this cadence, while a refused sign-in settles onto the slower floor of its own schedule. It sits well below the
- * bootstrap-refresh and throttle windows so recovery is prompt, yet coarse enough not to hammer a rebooting controller.
+ * began, sustained re-probing settles to this cadence, while a refusal settles onto the slower floor of its own schedule, and a controller whose
+ * `Retry-After` hint asks for longer than this floor sets the pace instead, up to the refusal schedule's steady interval. It sits well below the bootstrap-refresh
+ * and throttle windows so recovery is prompt, yet coarse enough not to hammer a rebooting controller.
  */
 export const PROTECT_RECOVERY_STEADY_INTERVAL_MS = 60000;
 
 /**
- * The published refused-sign-in schedule, in milliseconds: the delays before each successive attempt to recover a connection the controller refused on identity or
- * privilege grounds, followed by the steady interval recovery settles onto and polls at for as long as the refusal lasts. A refusal is a fact about the credentials
- * rather than the network - the controller answered, and asking it again moments later cannot change its answer - so probing at the network tracks' pace buys
- * nothing. It would also cost something they never risk: UniFi OS locks an account after repeated failed sign-ins, so a wrong password retried at that pace could
- * lock the owner out of the controller's own interface, and this cadence stays under that threshold. It is not slower still, because a credential or permission
- * corrected on the controller is picked up within one interval of the correction. A consumer's own connect retry waits by this same schedule, which is why it is
- * published rather than held inside the recovery loop.
+ * The published refusal schedule, in milliseconds: the delays before each successive attempt to recover a connection the controller refused, on identity or
+ * privilege grounds or by refusing the request rate, followed by the steady interval recovery settles onto and polls at for as long as the refusal lasts. A
+ * refusal is the controller's answer rather than the network's silence - the controller answered, and asking it again moments later cannot change its answer -
+ * so probing at the network tracks' pace buys nothing. It would also cost something they never risk: UniFi OS refuses sign-ins once an account passes a threshold
+ * of failed attempts it does not publish, and a rate limit is the controller asking to be asked less often, so the network pace would send more of exactly what
+ * it asked to shed. The cadence is therefore kept deliberately sparse. It is not slower still, because a credential or permission corrected on the controller, or
+ * a rate limit it lifts, is picked up within one interval. A consumer's own connect retry waits by this same schedule, choosing it by `isControllerRefusal` as
+ * recovery does, which is why it is published rather than held inside the recovery loop.
  */
 export const PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS = {
 

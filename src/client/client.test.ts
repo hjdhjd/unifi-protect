@@ -164,6 +164,20 @@ describe("ProtectClient.connect", () => {
 
   describe("atomicity - failures are typed and leave no client", () => {
 
+    test("a missing controller host rejects with ProtectConfigurationError before any request is sent", async () => {
+
+      const { agent } = mockController();
+      const starts: HttpRequestStartPayload[] = [];
+
+      using startSubscription = subscribeToChannel(channels.httpRequestStart, (payload) => void starts.push(payload));
+
+      // A JavaScript consumer's configuration can omit the address, which the cast hands in past the type.
+      await assert.rejects(ProtectClient.connect({ dispatcher: agent, host: undefined as unknown as string, log: silentLog(), password: "p", refreshIntervalMs: false,
+        username: "u", webSocket: () => new FakeWebSocket() }), ProtectConfigurationError);
+
+      assert.equal(starts.length, 0, "the refusal comes before any request");
+    });
+
     test("bad credentials reject with ProtectAuthError", async () => {
 
       const { agent, pool } = mockController();

@@ -65,8 +65,11 @@ import { wallClock } from "../clock.ts";
  * `host` is the controller's address without a scheme: a hostname or an IPv4 address, with an optional `:port`, or an IPv6 literal, accepted bare (`fe80::1`) or
  * bracketed (`[fe80::1]`), with a port only after the bracketed form (`[fe80::1]:7443`), because a bare literal's own colons leave no way to tell a port from its
  * last group. A single trailing `/` is accepted and dropped, so `nvr.local/` connects as `nvr.local`, because it is the empty path every URL places after the
- * address anyway. An address no URL can carry is refused with {@link ProtectConfigurationError} before any request is sent: an IPv6 literal with a zone
- * (`fe80::1%en0`), or a value carrying credentials, a path, a query or a fragment.
+ * address anyway. An address no URL can carry is refused with {@link ProtectConfigurationError} before any request is sent: a host that is missing or not a
+ * string, refused first and quoting nothing, an IPv6 literal with a zone (`fe80::1%en0`), a value carrying a userinfo before its last `@`, because the account
+ * belongs in `username` and `password` rather than in the address, or a value carrying a path, a query or a fragment. An empty marker before the `@` names no
+ * account and folds away, so `@nvr.local` and `:@nvr.local` connect as `nvr.local`. Each refusal that names the address quotes it through
+ * {@link maskAddressCredentials}, so no userinfo written into `host` is printed.
  *
  * The rest are optional injected dependencies, each defaulted at the composition root:
  *
@@ -300,8 +303,9 @@ export class ProtectClient implements AsyncDisposable {
     try {
 
       // Stage 1: authenticate. A credential failure throws the fatal `ProtectAuthError`, a login answered with a status that is no verdict on the credentials (a
-      // readiness answer the transport already retried among them) the fatal `ProtectRequestError`, and an unreachable controller the recoverable
-      // `ProtectNetworkError` - each already typed, propagated as-is rather than wrapped, so the caller sees the precise cause.
+      // readiness answer the transport already retried, or returned at once because it carried a Retry-After hint, among them) the fatal `ProtectRequestError`, and
+      // an unreachable controller the recoverable `ProtectNetworkError` - each already typed, propagated as-is rather than wrapped, so the caller sees the precise
+      // cause.
       await auth.login({ host: authority, password: opts.password, username: opts.username }, (opts.signal !== undefined) ? { signal: opts.signal } : {});
 
       // Stage 2: fetch the initial bootstrap. Not a probe - the breaker is closed at connect time, and the initial fetch should respect the gate like any normal request.

@@ -9,7 +9,7 @@ import type { ConnectionState, ConnectionTransition, ThrottleSource } from "./co
 import { PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
   PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectError,
-  ProtectNetworkError } from "../errors.ts";
+  ProtectNetworkError, ProtectRequestError } from "../errors.ts";
 import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, silentLog } from "../testing.helpers.ts";
 import { TestClock, advanceThroughSchedule, errnoError, present } from "homebridge-plugin-utils/testing";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
@@ -31,9 +31,14 @@ import { errors } from "undici";
 const HOST = "10.0.0.1";
 const BOOT_TIME = 1700000000000;
 
-// A phrase unique to each of the lost line's sentences, so a reading by sentence tells a refused sign-in, a fault a person must fix and an unreachable controller
-// apart.
+// A real instant a row seeds the clock at, so an HTTP-date it builds reads against a time of day rather than the virtual timeline's zero. It falls on a whole
+// second, the finest an HTTP-date carries, so a date built from it reads back exactly.
+const REAL_INSTANT = 1792929600000;
+
+// A phrase unique to each of the lost line's sentences, so a reading by sentence tells a refused sign-in, a rate limit, a fault a person must fix and an
+// unreachable controller apart.
 const MUST_FIX_SENTENCE = "cannot be reached until its certificate or its address is fixed";
+const RATE_LIMIT_SENTENCE = "is rate limiting requests";
 const REFUSAL_SENTENCE = "is refusing the sign-in";
 const UNREACHABLE_SENTENCE = "appears unreachable";
 
@@ -114,8 +119,10 @@ interface CapturedEvents {
 // Build a ConnectionMonitor over fakes: a real StateStore (failsafe disabled, seeded with one bootstrap), a fake throttle source, an events-stream factory that hands out
 // FakeWebSockets we can drive, and controllable verify / re-bootstrap hooks. Returns the monitor plus the levers a test pulls. `webSocket` builds the socket for the
 // stream at a given position, the initial stream at zero and each relaunch after it, for a row whose relaunched socket must not open on its own. `setVerifyAction`
-// hands each verify call, and the monitor's signal it carries, to a row that decides how the probe settles; null restores the verify error lever.
-function harness(options: { initialUpSince?: number; log?: ProtectLogging; throttledAtStart?: boolean; webSocket?: (index: number) => FakeWebSocket } = {}): {
+// hands each verify call, and the monitor's signal it carries, to a row that decides how the probe settles; null restores the verify error lever. `clockStart`
+// seeds the clock's time of day and its monotonic reading alike, for a row that reads a real date against the clock.
+function harness(options: { clockStart?: number; initialUpSince?: number; log?: ProtectLogging; throttledAtStart?: boolean;
+  webSocket?: (index: number) => FakeWebSocket; } = {}): {
   clock: TestClock;
   control: {
     reBootstrapCalls: () => number;
@@ -134,7 +141,7 @@ function harness(options: { initialUpSince?: number; log?: ProtectLogging; throt
   throttle: ThrottleControl;
 } {
 
-  const clock = new TestClock();
+  const clock = new TestClock(options.clockStart);
   const log = options.log ?? silentLog();
   const initialUpSince = options.initialUpSince ?? BOOT_TIME;
   const store = new StateStore({ clock, log, refresh: (): Promise<never> => new Promise<never>(() => undefined), refreshIntervalMs: false });
@@ -310,6 +317,20 @@ async function assertRecoveryDelays(options: { delays: readonly number[]; label:
 function lostLines(log: CapturingLogger, phrase: string): CapturedLogEntry["level"][] {
 
   return log.entries.filter((entry) => entry.message.includes(phrase)).map(({ level }) => level);
+}
+
+// A controller's answer other than a refused sign-in, a rate limit among them, as the transport classifies it: the HTTP-status error carrying the answer's headers,
+// the controller's Retry-After among them, when it sent one, under the lowercase name the transport keeps.
+function answeredWith(options: { retryAfter?: string; statusCode: number }): ProtectRequestError {
+
+  return new ProtectRequestError("The UniFi Protect controller answered the request with HTTP status " + options.statusCode.toString() + ".",
+    { headers: (options.retryAfter === undefined) ? {} : { "retry-after": options.retryAfter }, statusCode: options.statusCode });
+}
+
+// The context of every debug line that names a hinted wait, in the order logged, so a row reads how many hinted waits were logged and what each carried.
+function hintLines(log: CapturingLogger): unknown[][] {
+
+  return log.entries.filter((entry) => (entry.level === "debug") && entry.message.includes("asked for more time")).map(({ args }) => args);
 }
 
 describe("ConnectionMonitor", () => {
@@ -835,9 +856,9 @@ describe("ConnectionMonitor", () => {
       await monitor[Symbol.asyncDispose]();
     });
 
-    /* The lost line's level by its cause, a row per cause: a fault a person must fix and a refused sign-in at error, each in its own sentence, and every fault that
-     * heals itself at warning. A pool reset is among the last, the level table reading its kind as quiet while dialing, because a lost connection always matters to a
-     * user and the line is never quieter than a warning.
+    /* The lost line's level by its cause, a row per cause: a fault a person must fix and a refused sign-in at error, each in its own sentence, a rate limit at
+     * warning in its own, and every fault that heals itself at warning. A pool reset is among the last, the level table reading its kind as quiet while dialing,
+     * because a lost connection always matters to a user and the line is never quieter than a warning.
      */
     const lossLevels: readonly { level: CapturedLogEntry["level"]; name: string; reason: ProtectError; sentence: string }[] = [
 
@@ -847,6 +868,7 @@ describe("ConnectionMonitor", () => {
         reason: new ProtectNetworkError("A network error occurred communicating with the UniFi Protect controller.",
           { cause: errnoError("getaddrinfo ENOTFOUND controller", "ENOTFOUND") }), sentence: MUST_FIX_SENTENCE },
       { level: "error", name: "a refused sign-in", reason: new ProtectAuthError("refused", { statusCode: 401 }), sentence: REFUSAL_SENTENCE },
+      { level: "warn", name: "a rate limit", reason: answeredWith({ statusCode: 429 }), sentence: RATE_LIMIT_SENTENCE },
       { level: "warn", name: "a reason carrying no code", reason: new ProtectNetworkError("unreachable"), sentence: UNREACHABLE_SENTENCE },
       { level: "warn", name: "a pool reset", reason: new ProtectNetworkError("The request was interrupted because the connection pool was reset.",
         { cause: new errors.ClientDestroyedError() }), sentence: UNREACHABLE_SENTENCE }
@@ -913,6 +935,39 @@ describe("ConnectionMonitor", () => {
 
         await monitor[Symbol.asyncDispose]();
       });
+
+    test("a refused sign-in that turns into a rate limit is announced once as each, at its own level, in the lost line and on controllerLost", async () => {
+
+      const log = capturingLog();
+      const { clock, control, events, monitor, streams } = harness({ log });
+      const refusal = new ProtectAuthError("refused", { statusCode: 401 });
+      const rateLimit = answeredWith({ statusCode: 429 });
+
+      await monitor.opened;
+      await settle();
+
+      // The stream's own fault releases the first attempt at once, and the refusal schedule's first rung releases another, each met by the refusal.
+      control.setVerifyError(refusal);
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 1) ],
+        label: "while refusing", rig: { clock, control } });
+
+      // The controller turns to rate limiting, met on consecutive attempts the refusal schedule's next rungs release.
+      control.setVerifyError(rateLimit);
+      await assertRecoveryDelays({ delays: PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(1, 3), label: "once rate limited", rig: { clock, control } });
+
+      assert.deepEqual(log.entries.filter((entry) => entry.message.includes("the connection is lost")).map(({ level, message }) => ({ level, message })), [
+
+        { level: "error",
+          message: "The UniFi Protect controller is refusing the sign-in; the connection is lost and recovery is retrying on the slower refusal schedule." },
+        { level: "warn",
+          message: "The UniFi Protect controller is rate limiting requests; the connection is lost and recovery is retrying on the slower refusal schedule." }
+      ], "the refusal is announced once at error, and the turn to a rate limit once at warning, in its own sentence, across the attempts that meet it");
+      assert.deepEqual(events.lost, [ refusal, rateLimit ], "and controllerLost fires at the turn and only then");
+
+      await monitor[Symbol.asyncDispose]();
+    });
   });
 
   describe("backoff cadence", () => {
@@ -1349,6 +1404,104 @@ describe("ConnectionMonitor", () => {
       await monitor[Symbol.asyncDispose]();
     });
 
+    test("a rate limit on the probe walks the refusal schedule out to its floor", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      control.setVerifyError(answeredWith({ statusCode: 429 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+
+      /* The episode opens on the stream's own fault, which is no refusal, so the first wait is the network schedule's first rung. The attempt it releases is rate
+       * limited with no hint, and every wait from there walks the refusal schedule: each of its rungs in turn, then its floor, held for a second interval.
+       */
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff,
+        PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "a rate limit", rig: { clock, control } });
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a rate limit wrapped in a bootstrap error walks the refusal schedule and is announced as a rate limit", async () => {
+
+      const log = capturingLog();
+      const { clock, control, events, monitor, streams } = harness({ log });
+
+      await monitor.opened;
+      await settle();
+
+      /* A rate-limited bootstrap read arrives wrapped in a bootstrap error at the fetch stage, so this rate limit arrives that way: the probe answers, so each attempt
+       * passes through reconnecting and fails at the re-bootstrap. The first wait was chosen from the stream's own fault, the network schedule's first rung, and the
+       * attempt it releases lands the first wrapped rate limit; every wait after that walks the refusal schedule out to its floor, held for a second interval.
+       */
+      control.setReBootstrapError(new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.",
+        { cause: answeredWith({ statusCode: 429 }), stage: "fetch" }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff,
+        PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "a wrapped rate limit", rig: { clock, control } });
+
+      assert.deepEqual(lostLines(log, RATE_LIMIT_SENTENCE), ["warn"], "the wrapped rate limit is announced once, at warning, for the whole walk");
+      assert.deepEqual(lostLines(log, UNREACHABLE_SENTENCE), [], "and never as an unreachable controller");
+      assert.deepEqual(lostLines(log, REFUSAL_SENTENCE), [], "nor as a refused sign-in");
+      assert.equal(events.lost.length, 1, "and controllerLost fires once for the episode");
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a controller that turns from rate limiting to unreachable walks the unknown track from its first rung", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      // The stream's own fault opens the episode on the network schedule's first rung, which releases the first rate-limited attempt; the refusal schedule's
+      // opening rungs follow, each releasing another rate-limited attempt.
+      control.setVerifyError(answeredWith({ statusCode: 429 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2) ],
+        label: "while rate limited", rig: { clock, control } });
+
+      /* The controller stops rate limiting and becomes unreachable. The wait already parked was chosen from the rate limit, so it runs out on the refusal schedule
+       * and releases the first unreachable attempt; every wait after that walks the unknown track from its first rung, an immediate attempt, out to its floor.
+       */
+      control.setVerifyError(new ProtectNetworkError("down"));
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(2, 3), ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
+        PROTECT_RECOVERY_STEADY_INTERVAL_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS ], label: "once unreachable", rig: { clock, control } });
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a refused sign-in that turns into a rate limit keeps its rung on the refusal schedule", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      // The stream's own fault opens the episode on the network schedule's first rung, which releases the first refused attempt; the refusal schedule's opening
+      // rungs follow, each releasing another refused attempt.
+      control.setVerifyError(new ProtectAuthError("refused", { statusCode: 401 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 2) ],
+        label: "while refusing", rig: { clock, control } });
+
+      /* The controller turns to rate limiting. A rate limit is a refusal as a refused sign-in is, so the schedule holds and so does its rung: the wait already
+       * parked releases the first rate-limited attempt, and every wait after it walks on from the rung the refusal had reached, out to the floor, rather than from the
+       * schedule's first rung.
+       */
+      control.setVerifyError(answeredWith({ statusCode: 429 }));
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(2), PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady,
+        PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "once rate limited", rig: { clock, control } });
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
     test("disposal while recovery is parked on the refusal schedule ends the loop without a further attempt", async () => {
 
       const { clock, control, monitor, streams } = harness();
@@ -1381,6 +1534,215 @@ describe("ConnectionMonitor", () => {
       assert.equal(control.verifyCalls(), attempts, "disposal must not release a further attempt");
       assert.equal(streams.length, before, "disposal must not relaunch the stream");
       assert.equal(streams[0]?.closeRequested, true);
+    });
+  });
+
+  describe("the recovery hint", () => {
+
+    test("an attempt answered with a hint longer than its rung waits the hint, and one debug line names the lengthened wait", async () => {
+
+      const log = capturingLog();
+      const { clock, control, monitor, streams } = harness({ log });
+
+      await monitor.opened;
+      await settle();
+
+      /* The episode opens on the stream's own fault, which carries no answer, so the first wait is the network schedule's first rung. The attempt it releases is
+       * answered 503 with a hint longer than the rung that follows, and so is every attempt after it, so every wait from there is the hint.
+       */
+      control.setVerifyError(answeredWith({ retryAfter: "120", statusCode: 503 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), label: "the first hinted attempt", rig: { clock, control } });
+
+      assert.deepEqual(hintLines(log), [[{ hintMs: 120000 }]], "the wait the hint lengthens is named in one debug line carrying the hint");
+
+      await assertRecoveryDelays({ delays: [ 120000, 120000 ], label: "a hint longer than its rung", rig: { clock, control } });
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("an attempt answered with a hint shorter than its rung waits the rung, and no line names a hint", async () => {
+
+      const log = capturingLog();
+      const { clock, control, monitor, streams } = harness({ log });
+
+      await monitor.opened;
+      await settle();
+
+      // Every attempt is answered with a hint shorter than each rung that follows it, so the schedule's own delays hold.
+      control.setVerifyError(answeredWith({ retryAfter: "2", statusCode: 503 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 3), label: "a hint shorter than its rung", rig: { clock, control } });
+
+      assert.deepEqual(hintLines(log), [], "a hint that lengthens no wait is named in no line");
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a hint past the refusal schedule's steady interval waits that interval", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      // Every attempt asks for longer than the slowest rung recovery walks, so every wait after the first is capped at it.
+      control.setVerifyError(answeredWith({ retryAfter: "600", statusCode: 503 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady,
+        PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady ], label: "a hint past the cap", rig: { clock, control } });
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("an HTTP-date hint waits its distance from the time of day, after the time of day is set back", async () => {
+
+      const { clock, control, monitor, streams } = harness({ clockStart: REAL_INSTANT });
+
+      await monitor.opened;
+      await settle();
+
+      /* Set the time of day back, as an NTP correction can, so it parts from the monotonic reading the clock was seeded at, and a date measured against that
+       * reading would wait another span. The answer names a date later than the time of day, read on the pull that follows the attempt it answered, at the same
+       * instant, so the wait is the date's whole distance. The date stays where the controller set it, so the attempt that wait releases finds it reached, which
+       * asks for nothing, and the schedule's next rung follows.
+       */
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      control.setVerifyError(answeredWith({ retryAfter: new Date(clock.now() + 90000).toUTCString(), statusCode: 503 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), 90000, ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(2, 3) ],
+        label: "an HTTP-date", rig: { clock, control } });
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("an answer with no Retry-After, or one whose value is a date already past, unreadable or empty, waits the rung", async () => {
+
+      // Each answer asks for nothing a wait can be read from, so the schedule's own delays hold. The past date is built from the clock, seeded at a real instant.
+      const answers: readonly { error: (clock: TestClock) => ProtectRequestError; label: string }[] = [
+
+        { error: () => answeredWith({ statusCode: 503 }), label: "an answer with no Retry-After" },
+        { error: (clock) => answeredWith({ retryAfter: new Date(clock.now() - 60000).toUTCString(), statusCode: 503 }), label: "a date already past" },
+        { error: () => answeredWith({ retryAfter: "soon", statusCode: 503 }), label: "an unreadable value" },
+        { error: () => answeredWith({ retryAfter: "", statusCode: 503 }), label: "an empty value" }
+      ];
+
+      const walk = async (answer: (typeof answers)[number]): Promise<void> => {
+
+        const { clock, control, monitor, streams } = harness({ clockStart: REAL_INSTANT });
+
+        await monitor.opened;
+        await settle();
+
+        control.setVerifyError(answer.error(clock));
+        streams[0]?.emitError(new Error("socket dropped"));
+        await settle();
+        await assertRecoveryDelays({ delays: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 3), label: answer.label, rig: { clock, control } });
+
+        await monitor[Symbol.asyncDispose]();
+      };
+
+      for(const answer of answers) {
+
+        // Sequential by intent: each answer walks its own monitor.
+        // eslint-disable-next-line no-await-in-loop
+        await walk(answer);
+      }
+    });
+
+    test("a hint on the bootstrap answer is read through the cause of the bootstrap error", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      /* The probe answers, so each attempt passes through reconnecting and fails at the re-bootstrap, whose hinted answer arrives as the cause of a bootstrap error
+       * at the fetch stage. The wrapper carries no headers of its own, so the hint is read off the answer it wraps.
+       */
+      control.setReBootstrapError(new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.",
+        { cause: answeredWith({ retryAfter: "120", statusCode: 503 }), stage: "fetch" }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), 120000, 120000 ], label: "a hinted bootstrap answer",
+        rig: { clock, control } });
+
+      assert.equal(control.reBootstrapCalls(), 3, "every attempt answered the probe and failed at the re-bootstrap");
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a refusal after a hinted attempt walks the refusal schedule from its first rung", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      // The first attempt is answered with a hint longer than the rung that follows, so the wait it parks recovery on is the hint.
+      control.setVerifyError(answeredWith({ retryAfter: "120", statusCode: 503 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), label: "the hinted attempt", rig: { clock, control } });
+
+      /* The controller turns to refusing. The hinted wait releases the first refused attempt, and a refused sign-in carries no headers, so every wait after it is the
+       * refusal schedule's own, from its first rung out to its floor.
+       */
+      control.setVerifyError(new ProtectAuthError("refused", { statusCode: 401 }));
+      await assertRecoveryDelays({ delays: [ 120000, ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.steady ],
+        label: "once refusing", rig: { clock, control } });
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a controller that stops hinting resumes the schedule at the rung after the hinted wait", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      // The first attempt is answered with a hint longer than the rung that follows, so the wait it parks recovery on is the hint.
+      control.setVerifyError(answeredWith({ retryAfter: "120", statusCode: 503 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), label: "the hinted attempt", rig: { clock, control } });
+
+      /* The controller stops hinting and stays unreachable. The hinted wait stood in for the rung it was pulled on and moved no rung, so the waits after it walk the
+       * rest of the schedule out to its floor, as they would had the controller never hinted.
+       */
+      control.setVerifyError(new ProtectNetworkError("down"));
+      await assertRecoveryDelays({ delays: [ 120000, ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(2), PROTECT_RECOVERY_STEADY_INTERVAL_MS ],
+        label: "once unhinted", rig: { clock, control } });
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a rate limit answered with a hint longer than its refusal-schedule rung waits the hint, and the rungs after it are the schedule's own", async () => {
+
+      const log = capturingLog();
+      const { clock, control, monitor, streams } = harness({ log });
+
+      await monitor.opened;
+      await settle();
+
+      /* Every attempt is answered 429 with a hint longer than the refusal schedule's first rung and shorter than its second. The first wait is the network
+       * schedule's first rung, chosen from the stream's own fault; the rate-limited attempt it releases puts recovery on the refusal schedule, whose first rung the
+       * hint lengthens. The hint moves no rung, and every rung after it is longer than the hint, so each of those waits is the schedule's own.
+       */
+      control.setVerifyError(answeredWith({ retryAfter: "45", statusCode: 429 }));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1), 45000, ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(1, 3) ],
+        label: "a hinted rate limit", rig: { clock, control } });
+
+      assert.deepEqual(hintLines(log), [[{ hintMs: 45000 }]], "the one wait the hint lengthens is named in one debug line carrying the hint");
+
+      await monitor[Symbol.asyncDispose]();
     });
   });
 

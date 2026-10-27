@@ -70,14 +70,35 @@ interface CredentialsFile {
 // and the boolean field - which has its own reader - cannot be asked for here.
 type CredentialsStringField = { [K in keyof CredentialsFile]-?: NonNullable<CredentialsFile[K]> extends string ? K : never }[keyof CredentialsFile];
 
-// Normalize the configured controller address to the bare host[:port] the connect path wants. A value carrying a scheme is parsed as a URL and reduced to its host
-// (scheme and path dropped, port kept); a bare value has any trailing path stripped. This is what lets ufp.json carry either "https://10.0.0.1" or "10.0.0.1" and behave
-// identically.
+// The clause V8's JSON parser closes a message with when it reports where a parse failed, such as "at position 2 (line 1 column 3)".
+const JSON_ERROR_POSITION = /at position \d+ \(line \d+ column \d+\)/;
+
+/* Normalize the configured controller address to the bare host[:port] the connect path wants. The value is read as the library reads an address: once it is trimmed
+ * and any `<scheme>://` prefix set aside, text before its last `@` that is anything but nothing or a lone `:` is an account, which a host never carries, so the value
+ * is refused before the scheme parse or the path cut reads it. Neither reading can be trusted with it, because a failed parse keeps the whole value on its cause and
+ * the cut would pass whatever of a password comes before its first `/` on as the host. An empty marker names no account, so it is left in place for the library,
+ * whose parse folds it away. The refusal quotes none of the value, because the value is not yet split into a host and a path: the text after its last `@` is the
+ * host only when no path follows the account, and in `10.0.0.1/a@b` it is a fragment of a path, so a masked quote could present that fragment as the address. The
+ * message names the field instead, which is what locates the value in the file.
+ *
+ * A value carrying a scheme is parsed as a URL and reduced to its host (scheme and path dropped, port kept); a bare value has any trailing path stripped. This is what
+ * lets ufp.json carry either "https://10.0.0.1" or "10.0.0.1" and behave identically.
+ */
 function normalizeHost(controller: string): string {
 
   const trimmed = controller.trim();
 
-  if(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+  // One match of the scheme prefix serves the account read below and the scheme test after it, so the two can never disagree about where the authority begins.
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.exec(trimmed)?.[0] ?? "";
+  const afterScheme = trimmed.slice(scheme.length);
+  const at = afterScheme.lastIndexOf("@");
+
+  if((at !== -1) && ![ "", ":" ].includes(afterScheme.slice(0, at))) {
+
+    throw new CliError("The controller address in the ufp.json configuration carries an account before an \"@\", and a host never carries one.");
+  }
+
+  if(scheme !== "") {
 
     try {
 
@@ -396,7 +417,13 @@ export async function loadCredentials(opts: LoadCredentialsOptions = {}): Promis
     parsed = JSON.parse(raw);
   } catch(error) {
 
-    throw new CliError("The ufp.json configuration at " + source + " is not valid JSON.", { cause: error });
+    /* The parser's own error is not carried, because its message can quote the file: where V8 does not report the position the parse failed at, it quotes a
+     * snippet of the text around the failure instead, and a snippet's quoted token is the bad value's first character, which in a hand-written ufp.json is as likely
+     * a password's as anything else. The position alone says where to look and quotes nothing, so it is the one part of that message the refusal keeps.
+     */
+    const position = (error instanceof SyntaxError) ? JSON_ERROR_POSITION.exec(error.message)?.[0] : undefined;
+
+    throw new CliError("The ufp.json configuration at " + source + " is not valid JSON" + ((position !== undefined) ? (" " + position) : "") + ".");
   }
 
   if(!isPlainObject(parsed)) {

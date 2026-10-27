@@ -12,7 +12,8 @@ import type { LivestreamInit } from "./protocol/init-segment.ts";
  *   abort, a livestream stall). The caller decides the retry policy; the library does not retry user operations on the caller's behalf.
  * - {@link FatalError} means retrying the same call will fail the same way (bad credentials, insufficient privileges, a 4xx/5xx the controller will keep returning,
  *   a protocol violation, a structural bootstrap failure), except that a {@link ProtectRequestError} carrying a status the transport retries is one the transport has
- *   already retried, which a caller on a reconnect schedule retries again later. The caller should surface or propagate it.
+ *   already retried unless the answer carried a `Retry-After` hint, and one carrying a 429 or any such hint is the controller asking to be asked later, the hint among
+ *   the error's headers, so a caller on a reconnect schedule retries such a request again later. The caller should surface or propagate it.
  *
  * Consumers branch on the abstract base for policy (`if(err instanceof RecoverableError) { defer(); }`) and on the concrete class for specific handling
  * (`if(err instanceof ProtectThrottledError) { waitFor(err.cooldownMs); }`). This is the Node idiom - a class hierarchy with `instanceof` - chosen deliberately over
@@ -303,8 +304,10 @@ export function assertNever(value: never): never {
 
 /**
  * A connect option the library cannot act on, refused by `connect()` before any request is sent: a controller address no URL can carry, such as an IPv6 literal with
- * a zone (`fe80::1%en0`) or a value carrying credentials, a path, a query or a fragment. The message names the address as configured. Fatal because the same
- * configuration is refused the same way on every attempt, so the caller corrects it rather than retrying.
+ * a zone (`fe80::1%en0`), a value carrying a userinfo before its last `@`, which a host never does, or one carrying a path, a query or a fragment. An empty marker
+ * before the `@` (`@nvr.local`, `:@nvr.local`) names no account and folds away rather than being refused. Each refusal that names the address quotes it as
+ * configured, masked by {@link maskAddressCredentials}, so a userinfo written into the address is never printed. Fatal because the same configuration is refused
+ * the same way on every attempt, so the caller corrects it rather than retrying.
  *
  * @category Errors
  */
@@ -322,7 +325,7 @@ export class ProtectConfigurationError extends FatalError {
  * generic "connect failed." A login or reachability failure is not wrapped here: a transport-level failure reaching the endpoint propagates as its own typed error
  * (`ProtectNetworkError`, `ProtectTimeoutError`, `ProtectThrottledError`, `ProtectAbortedError`), and a login failure as `ProtectAuthError` when the controller
  * rejected the sign-in or as `ProtectRequestError` when it answered with a status that is no verdict on the credentials (a readiness answer the transport already
- * retried, a 3xx, or a 5xx outside the retried set).
+ * retried, or returned at once because it carried a `Retry-After` hint, a rate limit, a 3xx, or a 5xx outside the retried set).
  *
  * @category Errors
  */
@@ -521,29 +524,59 @@ export function formatErrorChain(error: unknown): string {
 }
 
 /**
- * Whether a failure is the controller refusing the sign-in, on either ground: the identity itself, which the transport classifies as a {@link ProtectAuthError},
- * or a privilege the identity lacks, which it classifies as a {@link ProtectAuthorizationError}. A refusal is a fact about the credentials rather than the network -
- * the controller answered - so a caller retrying a connection waits for it on a slower schedule than for a controller it cannot reach, and the library's own
- * recovery does exactly that.
+ * Whether a failure is the controller refusing in a way that asking again sooner cannot change: a refused identity or privilege, as {@link isSignInRefusal} reads
+ * one, or a refused request rate, the HTTP 429 the transport classifies as a {@link ProtectRequestError}. In each the controller answered, and its answer stands
+ * until a person corrects the credentials or the privilege, or the controller lifts its limit, so a caller retrying a connection waits for any of them on the slower
+ * `PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS` rather than at the pace it keeps for a controller it cannot reach. The library's own recovery chooses its schedule by this
+ * reading, so a connect retry that branches on it walks that schedule for exactly the failures recovery walks it for.
  *
- * What is read is the error handed in, or the `cause` of a {@link ProtectBootstrapError} handed in, and no further. A refused bootstrap read arrives wrapped in that
- * error at the fetch stage, so this opens that one wrapper. Every other error is read as itself, so a network fault carrying a refusal somewhere below it is the
- * network fault it is, and a bootstrap error wrapping another bootstrap error answers false.
+ * It pairs with {@link isSignInRefusal}, the narrower reading: this one chooses the schedule, and that one chooses how a loss is announced, because a refused
+ * sign-in waits on a person to correct the credentials while a rate limit is the controller asking to be asked less often.
+ *
+ * A {@link ProtectBootstrapError} handed in is read by the `cause` it carries, because a refused bootstrap read arrives wrapped in that error at the fetch stage,
+ * and no further, so a bootstrap error wrapping another bootstrap error answers false. Every other error is read as itself, so a network fault carrying a refusal
+ * somewhere below it is the network fault it is. The answer is a plain `boolean` rather than a type guard, because in the wrapped case the refusal is the `cause`
+ * of the value handed in rather than that value.
+ *
+ * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
+ *
+ * @returns `true` when the failure, or the cause a bootstrap error carries, is a refused identity, a refused privilege or a refused request rate; `false` for
+ *   anything else.
+ *
+ * @category Utilities
+ */
+export function isControllerRefusal(error: unknown): boolean {
+
+  const answer = unwrapBootstrapError(error);
+
+  return isSignInRefusal(error) || ((answer instanceof ProtectRequestError) && (answer.statusCode === 429));
+}
+
+/**
+ * Whether a failure is the controller refusing the sign-in, on either ground: the identity itself, which the transport classifies as a {@link ProtectAuthError},
+ * or a privilege the identity lacks, which it classifies as a {@link ProtectAuthorizationError}. It is the narrower reading of a refusal, and it chooses the
+ * library's refused announcement, because nothing changes until a person corrects the credentials or the privilege. It chooses no schedule: a caller retrying a
+ * connection chooses its schedule by {@link isControllerRefusal}, which reads a refused sign-in and a rate limit alike.
+ *
+ * A {@link ProtectBootstrapError} handed in is read by the `cause` it carries, because a refused bootstrap read arrives wrapped in that error at the fetch stage,
+ * and no further, so a bootstrap error wrapping another bootstrap error answers false. Every other error is read as itself, so a network fault carrying a refusal
+ * somewhere below it is the network fault it is.
  *
  * The answer is a plain `boolean` rather than a type guard, because in the wrapped case the value handed in is the wrapper and the refusal is its `cause`, so
  * narrowing the value handed in would claim something untrue of it.
  *
  * @param error - The error value to classify. Typed `unknown` because catch bindings, event handlers, and rejected promises all deliver untyped values.
  *
- * @returns `true` when the failure, or the cause a bootstrap error carries, is a refused identity or a refused privilege; `false` for anything else.
+ * @returns `true` when the failure, or the cause a bootstrap error carries, is a refused identity or a refused privilege; `false` for anything else, a rate limit
+ *   among them.
  *
  * @category Utilities
  */
 export function isSignInRefusal(error: unknown): boolean {
 
-  const refusal = (error instanceof ProtectBootstrapError) ? error.cause : error;
+  const answer = unwrapBootstrapError(error);
 
-  return (refusal instanceof ProtectAuthError) || (refusal instanceof ProtectAuthorizationError);
+  return (answer instanceof ProtectAuthError) || (answer instanceof ProtectAuthorizationError);
 }
 
 /**
@@ -584,4 +617,26 @@ export function resolveErrnoCause(error: unknown): NodeJS.ErrnoException | undef
   }
 
   return undefined;
+}
+
+/**
+ * The failure a reading of what went wrong reads. The readings of a refusal and the recovery hint all open the bootstrap wrapper through this one rule, so they
+ * never disagree on which error they read.
+ *
+ * What is read is the error handed in, or the `cause` of a {@link ProtectBootstrapError} handed in, and no further. A bootstrap read the controller answered with
+ * a failure, a refusal or an answer carrying a `Retry-After` among them, arrives wrapped in that error at the fetch stage, so this opens that one wrapper. Every
+ * other error is read as itself, so a network fault carrying a refusal somewhere below it is the network fault it is, and a bootstrap error wrapping another
+ * bootstrap error yields the inner wrapper, which no reading recognizes.
+ *
+ * It is not published from the library's public surface, because its readers are the library's own.
+ *
+ * @param error - Whatever was thrown or rejected. Any value at all can be handed to it, including values that are not errors.
+ *
+ * @returns The cause a bootstrap error carries, or the value handed in when it is anything else.
+ *
+ * @category Utilities
+ */
+export function unwrapBootstrapError(error: unknown): unknown {
+
+  return (error instanceof ProtectBootstrapError) ? error.cause : error;
 }

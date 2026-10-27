@@ -327,8 +327,9 @@ export interface HttpRequestStartPayload {
 }
 
 /**
- * Payload published on {@link channels.httpThrottleEntered}. `consecutiveFailures` is the count of consecutive failed requests that tripped the breaker, and
- * `cooldownMs` is how long, in milliseconds, the transport refuses requests before it lets them through again as recovery probes.
+ * Payload published on {@link channels.httpThrottleEntered}. `consecutiveFailures` is the count of consecutive requests the controller did not serve (no answer,
+ * a status of 500 or above, or a 429) that tripped the breaker, and `cooldownMs` is how long, in milliseconds, the transport refuses requests before it lets them
+ * through again as recovery probes.
  *
  * @category Diagnostics
  */

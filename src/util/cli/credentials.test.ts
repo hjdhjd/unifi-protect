@@ -4,15 +4,21 @@
  * interactive credential prompt (asking, masking, the save offer, cancellation, and listener hygiene).
  */
 import { PassThrough, Writable } from "node:stream";
+import { ProtectAbortedError, formatErrorChain } from "../../index.ts";
 import { describe, test } from "node:test";
+import { inspect, promisify } from "node:util";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { CliError } from "./shared.ts";
 import type { InteractivePrompt } from "./credentials.ts";
-import { ProtectAbortedError } from "../../index.ts";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { loadCredentials } from "./credentials.ts";
 import path from "node:path";
 import { tmpdir } from "node:os";
+
+// The CLI's entry point, which a row runs as its own process to read what the CLI itself prints for a refusal.
+const CLI_ENTRY = fileURLToPath(new URL("./index.ts", import.meta.url));
 
 // Run a test body with a fresh, isolated working directory and home directory, cleaning both afterward so the developer's real ~/.ufp.json is never touched.
 async function withDirs(body: (cwd: string, home: string) => Promise<void>): Promise<void> {
@@ -90,7 +96,45 @@ describe("loadCredentials", () => {
       await writeFile(path.join(cwd, "ufp.json"), "{ not json");
       await writeFile(path.join(home, ".ufp.json"), JSON.stringify({ controller: "home-host", password: "p", username: "u" }));
 
-      await assert.rejects(loadCredentials({ cwd, home }), { constructor: CliError, message: /is not valid JSON/ });
+      // The parser reports where this one failed, a position that quotes nothing of the file, so the refusal carries it to say where to look.
+      await assert.rejects(loadCredentials({ cwd, home }), (error: unknown): boolean => {
+
+        assert.ok(error instanceof CliError);
+        assert.match(error.message, /is not valid JSON at position 2 \(line 1 column 3\)\.$/);
+        assert.equal(error.cause, undefined, "the parser's error is not carried");
+
+        return true;
+      });
+    });
+  });
+
+  test("a malformed configuration prints none of its text, whether the CLI renders the refusal, the chain renderer does or it is inspected", async () => {
+
+    await withDirs(async (cwd, home) => {
+
+      /* An unquoted password is the shape a hand edit leaves, and the parser reports it with a snippet of the text around the value rather than a position, its
+       * quoted token the value's first character, so neither the value nor that token may reach any form of the refusal. The CLI's own rendering is read from a
+       * run of the entry point itself over this working directory and home, with nothing on its input, so no prompt is offered and the refusal is the run's end.
+       * The run silences the runtime's own warnings, so its standard error holds what the CLI wrote and nothing Node adds beside it, and it is bounded, so a run
+       * that never ends fails this row rather than holding the suite.
+       */
+      await writeFile(path.join(cwd, "ufp.json"), "{ \"controller\": \"nvr.local\", \"password\": xyzzy-secret, \"username\": \"u\" }");
+
+      const error = await loadCredentials({ cwd, home }).then(() => assert.fail("the malformed configuration loaded"), (rejection: unknown) => rejection);
+      const run = await promisify(execFile)(process.execPath, [ CLI_ENTRY, "info" ], { cwd, env: { ...process.env, HOME: home, NODE_NO_WARNINGS: "1" }, timeout: 10000 })
+        .then(() => assert.fail("the CLI exited cleanly over a malformed configuration"), (rejection: unknown) => rejection as { code: number; stderr: string });
+
+      assert.ok(error instanceof CliError);
+      assert.equal(error.cause, undefined, "the parser's error is not carried");
+      assert.match(error.message, /is not valid JSON\.$/, "and its snippet adds nothing to the message");
+      assert.equal(run.code, 1);
+      assert.match(run.stderr, /^ufp: The ufp\.json configuration at .+ is not valid JSON\.\n$/, "the CLI renders the refusal as its one line");
+
+      for(const rendered of [ run.stderr, formatErrorChain(error), inspect(error) ]) {
+
+        assert.ok(!rendered.includes("xyzzy"), "no rendering carries the value: " + rendered);
+        assert.ok(!rendered.includes("'x'"), "nor the token the parser quoted: " + rendered);
+      }
     });
   });
 
@@ -121,6 +165,78 @@ describe("loadCredentials", () => {
 
         return true;
       });
+    });
+  });
+
+  test("refuses a controller carrying an account before an @ before it parses or cuts it, quoting none of it", async () => {
+
+    await withDirs(async (cwd, home) => {
+
+      const file = path.join(cwd, "ufp.json");
+
+      /* Load a controller value that must be refused, and assert the refusal says a host carries no account while neither its message nor its printed form carries
+       * any of the fragments given. A value's fragments cover each way a refusal could quote it - whole, masked through its last `@`, or as the host its own
+       * reading would pass on, the cut at the first `/` for a bare value and the parse for one carrying a scheme - so a refusal quoting it any of those ways would
+       * print at least one fragment.
+       */
+      const refuse = async (controller: string, fragments: readonly string[]): Promise<void> => {
+
+        await writeFile(file, JSON.stringify({ controller, password: "p", username: "u" }));
+
+        await assert.rejects(loadCredentials({ cwd, home }), (error: unknown): boolean => {
+
+          assert.ok(error instanceof CliError, JSON.stringify(controller) + " is refused with a CLI error");
+          assert.match(error.message, /carries an account before an "@", and a host never carries one\.$/);
+
+          for(const fragment of fragments) {
+
+            assert.ok(!error.message.includes(fragment), JSON.stringify(controller) + "'s refusal message quotes none of " + JSON.stringify(fragment));
+            assert.ok(!inspect(error).includes(fragment), JSON.stringify(controller) + "'s printed refusal carries none of " + JSON.stringify(fragment));
+          }
+
+          return true;
+        });
+      };
+
+      // A password holding a `/` is the value a path cut would pass on as the host `user:pa`, and a scheme in front is one the URL parse would reduce to its host
+      // without a word.
+      await refuse("user:pa/ss@10.0.0.1", [ "user:pa", "pa/ss", "10.0.0.1" ]);
+      await refuse("https://user:pass@10.0.0.1", [ "user:pass", "10.0.0.1" ]);
+
+      // A user alone, a password of one colon behind a scheme, and an `@` in a path, whose text before it is read as an account because nothing has cut the path.
+      await refuse("user@nvr.local", [ "user@", "nvr.local" ]);
+      await refuse("https://::@nvr.local", [ "::@", "nvr.local" ]);
+      await refuse("10.0.0.1/a@b", [ "10.0.0.1", "@b" ]);
+
+      // A value with no `@` passes the refusal and is normalized: a bare value loses its path, and a scheme value is reduced to its host and port.
+      await writeFile(file, JSON.stringify({ controller: "10.0.0.1/proxy", password: "p", username: "u" }));
+
+      assert.equal((await loadCredentials({ cwd, home })).host, "10.0.0.1");
+
+      await writeFile(file, JSON.stringify({ controller: "https://10.0.0.5:7443/proxy", password: "p", username: "u" }));
+
+      assert.equal((await loadCredentials({ cwd, home })).host, "10.0.0.5:7443");
+    });
+  });
+
+  test("leaves an empty marker before the controller's @ for the library to fold, whether or not a scheme precedes it", async () => {
+
+    await withDirs(async (cwd, home) => {
+
+      const file = path.join(cwd, "ufp.json");
+
+      // Load a controller value and answer the host the CLI normalized it to.
+      const normalized = async (controller: string): Promise<string> => {
+
+        await writeFile(file, JSON.stringify({ controller, password: "p", username: "u" }));
+
+        return (await loadCredentials({ cwd, home })).host;
+      };
+
+      // A bare value keeps its empty marker, which the library's parse folds away at connect, and a value carrying a scheme is parsed here, which folds it already.
+      assert.equal(await normalized("@nvr.local"), "@nvr.local");
+      assert.equal(await normalized(":@nvr.local"), ":@nvr.local");
+      assert.equal(await normalized("https://@nvr.local"), "nvr.local");
     });
   });
 

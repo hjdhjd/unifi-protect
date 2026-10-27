@@ -8,10 +8,12 @@
 import * as errorModule from "./errors.ts";
 import { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectCodecChangeError,
   ProtectConfigurationError, ProtectError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError,
-  ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, causeChain, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
+  ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, causeChain, isControllerRefusal, isSignInRefusal,
+  resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import { DOORBELL_INIT } from "./protocol/init-segment.fixtures.ts";
 import assert from "node:assert/strict";
+import { isControllerRefusal as barrelIsControllerRefusal } from "./index.ts";
 import { describeInitSegment } from "./protocol/init-segment.ts";
 import { errnoError } from "homebridge-plugin-utils/testing";
 
@@ -249,6 +251,56 @@ describe("causeChain", () => {
 
     // The bound is what ends the descent, so the two links alternate until it is exhausted rather than the walk running forever.
     assert.deepEqual([...causeChain(outer)], [ outer, inner, outer, inner, outer, inner, outer, inner, outer ]);
+  });
+});
+
+describe("isControllerRefusal", () => {
+
+  test("recognizes the transport's classification of a refused identity, a refused privilege and a refused request rate", () => {
+
+    assert.equal(isControllerRefusal(new ProtectAuthError("auth", { statusCode: 401 })), true, "a refused identity is a refusal");
+    assert.equal(isControllerRefusal(new ProtectAuthorizationError("authz", { statusCode: 403 })), true, "and so is a refused privilege");
+    assert.equal(isControllerRefusal(new ProtectRequestError("rate", { statusCode: 429 })), true, "and so is a refused request rate");
+  });
+
+  test("reads a bootstrap error by the cause it carries", () => {
+
+    // A failed bootstrap read arrives wrapped at the fetch stage, so this is the shape a refused or rate-limited recovery re-bootstrap arrives in.
+    const wrapped = (cause: Error): ProtectBootstrapError => new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.",
+      { cause, stage: "fetch" });
+
+    assert.equal(isControllerRefusal(wrapped(new ProtectAuthError("auth", { statusCode: 401 }))), true, "a wrapped identity refusal is read through its wrapper");
+    assert.equal(isControllerRefusal(wrapped(new ProtectAuthorizationError("authz", { statusCode: 403 }))), true, "and so is a wrapped privilege refusal");
+    assert.equal(isControllerRefusal(wrapped(new ProtectRequestError("rate", { statusCode: 429 }))), true, "and so is a wrapped rate limit");
+    assert.equal(isControllerRefusal(wrapped(new ProtectRequestError("unavailable", { statusCode: 503 }))), false,
+      "while a bootstrap error whose cause is no refusal is not one");
+  });
+
+  test("opens a bootstrap error alone, and only the one handed in", () => {
+
+    const rateLimit = new ProtectRequestError("rate", { statusCode: 429 });
+    const nested = new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.",
+      { cause: new ProtectBootstrapError("Unable to fetch the UniFi Protect controller bootstrap.", { cause: rateLimit, stage: "fetch" }), stage: "fetch" });
+
+    assert.equal(isControllerRefusal(new ProtectNetworkError("net", { cause: rateLimit })), false, "a wrapper of any other class is read as itself");
+    assert.equal(isControllerRefusal(nested), false, "and a rate limit below a second bootstrap error is past the one wrapper opened");
+  });
+
+  test("does not recognize a value that is not one of the refusals", () => {
+
+    assert.equal(isControllerRefusal(new ProtectRequestError("server", { statusCode: 500 })), false, "a controller that failed to serve the request is no refusal");
+    assert.equal(isControllerRefusal(new ProtectRequestError("unavailable", { statusCode: 503 })), false, "and neither is one not yet ready to serve it");
+    assert.equal(isControllerRefusal(new ProtectNetworkError("net", { code: "ECONNREFUSED" })), false, "nor a controller that cannot be reached");
+    assert.equal(isControllerRefusal(new Error("refused")), false, "a plain error is not a refusal whatever its message says");
+    assert.equal(isControllerRefusal(null), false);
+  });
+
+  test("the barrel publishes the very function", () => {
+
+    /* Nothing else in the suite establishes that the reading reached the public surface, and TypeDoc reads the barrel alone, so a symbol missing from it has no
+     * page and no consumer. Identity rather than behavior is the assertion, because a re-export that resolved to another function would still answer correctly.
+     */
+    assert.ok(Object.is(barrelIsControllerRefusal, isControllerRefusal), "the barrel's isControllerRefusal is the errors function itself");
   });
 });
 

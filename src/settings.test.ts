@@ -79,12 +79,12 @@ describe("settings", () => {
     assert.deepEqual(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, [ 0, 5000, 15000, 30000 ], "the unknown track must probe at once then walk out to the floor");
   });
 
-  // The refusal schedule is the slower ladder a refused sign-in walks - 30 seconds, then doubling to 4 minutes, then every 5 minutes - and a consumer's own connect
-  // retry reads the same value, so its shape is asserted whole.
+  // The refusal schedule is the slower ladder a refusal walks - 30 seconds, then doubling to 4 minutes, then every 5 minutes - and a consumer's own connect retry
+  // reads the same value, so its shape is asserted whole.
   test("PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS walks 30, 60, 120 and 240 seconds, then every 300 seconds", () => {
 
     assert.deepEqual(PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, { backoff: [ 30000, 60000, 120000, 240000 ], steady: 300000 },
-      "a refused sign-in must walk the documented ladder out to its five-minute floor");
+      "a refusal must walk the documented ladder out to its five-minute floor");
   });
 
   test("PROTECT_REBOOT_ANTICIPATION_WINDOW_MS is 60000 ms", () => {
