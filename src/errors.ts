@@ -70,15 +70,18 @@ export class ProtectThrottledError extends RecoverableError {
 }
 
 /**
- * Our own request deadline elapsed before the controller responded. Distinct from {@link ProtectAbortedError}: this fires when the deadline the transport arms on
- * its clock for each request wins the race, whereas an aborted error fires when the caller's signal wins. The transport tells the two apart by what was thrown - the
- * caller's own abort, whatever reason it carries, or the library's deadline - never by whether the caller's signal happens to read aborted once the failure arrives.
+ * The controller did not answer in time. The request path raises it when the deadline the transport arms on its clock for each request elapses, when a connection
+ * attempt times out, and when the controller stops responding before its reply is complete; each socket raises it when its connection attempt times out.
+ *
+ * Distinct from {@link ProtectAbortedError}: the deadline raises this when it wins the race, whereas an aborted error fires when the caller's signal wins. The
+ * transport tells the two apart by identity - the failure a cancelled or expired request rejects with is the reason of the signal that fired - never by whether the
+ * caller's signal happens to read aborted once the failure arrives.
  *
  * @category Errors
  */
 export class ProtectTimeoutError extends RecoverableError {
 
-  /** Milliseconds elapsed between dispatch and the deadline firing. */
+  /** Milliseconds elapsed from the start of the request, or of a socket's connection attempt, to the timeout. */
   readonly elapsedMs: number;
 
   constructor(message: string, options: { cause?: unknown; elapsedMs: number }) {
@@ -106,6 +109,50 @@ export class ProtectNetworkError extends RecoverableError {
     super(message, { cause: options?.cause });
 
     this.code = options?.code ?? resolveErrnoCause(options?.cause)?.code;
+  }
+}
+
+/**
+ * The controller presented a certificate the platform's verification refused. The request path and every socket raise it, so a caller reads one class wherever the
+ * refusal was met, and its sentence names the address that was dialed and the verifier's own reason.
+ *
+ * Recoverable, and deliberately so: an operator who installs a certificate the verifier accepts fixes this while the process runs, so the connection monitor keeps
+ * trying on its own cadence and finds the controller answering rather than stopping on a fault it would never retry. Subclassing {@link ProtectNetworkError} is what
+ * keeps that true without any policy being restated - every reading that treats a reachability failure as recoverable treats this one the same way, and a caller that
+ * wants the certificate case in particular branches on this class.
+ *
+ * @category Errors
+ */
+export class ProtectCertificateError extends ProtectNetworkError {
+
+  /**
+   * The address that was dialed, exactly as the transport or the socket dialed it: the host and port of the request path's origin, or of the socket's URL, which for
+   * a media socket is the port the controller minted for it.
+   */
+  readonly host: string;
+
+  constructor(options: { cause: unknown; host: string }) {
+
+    super(ProtectCertificateError.#sentence(options), { cause: options.cause });
+
+    this.host = options.host;
+  }
+
+  /* The sentence the class carries, composed from the address and what the platform said about the certificate. Every site that raises the class wants the same
+   * words, so the composition lives here rather than at any of them, and a reader who wants to know exactly what a user is told reads this method.
+   *
+   * The reason clause is the platform's own message, trimmed, because the platform owns that text: a hand-kept map from code to prose would be a second source of
+   * truth, and it would drift from Node's the moment the verifier's wording moved. A cause the errno resolution cannot read carries neither a reason nor a code, and
+   * the sentence simply states the refusal - which is what a caller constructing this class outside the transport sites still gets.
+   */
+  static #sentence({ cause, host }: { cause: unknown; host: string }): string {
+
+    const errno = resolveErrnoCause(cause);
+    const code = errno?.code ?? "";
+    const reason = errno?.message.trim() ?? "";
+
+    return "The UniFi Protect controller at " + host + " presented a certificate that could not be verified" + ((reason.length > 0) ? (": " + reason) : "") +
+      ((code.length > 0) ? (" (" + code + ")") : "") + ".";
   }
 }
 
@@ -377,19 +424,21 @@ export class ProtectUnsupportedError extends FatalError {
 }
 
 /**
- * Predicate for the WebSocket-error-handler suppression rule shared by every WebSocket subsystem in the library - the realtime events WS, the livestream WS, and
- * the talkback WS.
+ * Predicate for the error-line suppression rule shared by every WebSocket subsystem in the library - the realtime events WS, the livestream WS, and the talkback WS.
  *
- * Each subsystem classifies an undici teardown `TypeError` and an `ETIMEDOUT` errno as expected disconnects rather than user-actionable errors:
+ * A socket's error line fires only once its `open` event has fired, since a failure before then reaches its caller through the socket's handshake answer. The line
+ * reads the raw cause the socket classifies - its connector's record of the dial when the dial failed, and the socket's own event error otherwise - and never the
+ * typed error the socket builds from it. Each subsystem classifies the following shapes of that cause as expected disconnects rather than user-actionable errors:
  *
- * 1. A `TypeError` from undici's internal WebSocket teardown - the error class undici raises when the socket closes mid-frame during a disconnect.
+ * 1. A `TypeError` - the content-free error undici's WebSocket dispatches whenever a socket closes without a close frame, which is how the loss of an open socket
+ *    reads, since a dial that succeeded leaves its connector no failure to record.
  * 2. An `ETIMEDOUT` errno on the cause chain - the slow-controller path. The events and livestream subsystems each run their own silence watchdog (the events WS
  *    against `PROTECT_EVENTS_WATCHDOG_TIMEOUT`, a livestream session against its heartbeat timeout) that reports prolonged silence separately; this predicate instead
  *    classifies the socket-level errno, so the two are complementary and logging this disconnect-during-reboot symptom at the error level would be duplicate noise.
  *
  * Centralizing the predicate means a future addition (`EPIPE`, `ECONNRESET`, etc.) lands in one place and every WebSocket subsystem picks it up identically.
  *
- * @param error - The error value to classify. Typed `unknown` because WebSocket `ErrorEvent.error` is untyped at the contract level.
+ * @param error - The raw cause to classify. Typed `unknown` because a WebSocket `ErrorEvent.error` is untyped at the contract level.
  *
  * @returns `true` if the error matches an expected-disconnect shape and the call site should suppress its log; `false` to log normally.
  *
@@ -398,6 +447,48 @@ export class ProtectUnsupportedError extends FatalError {
 export function isExpectedWsDisconnect(error: unknown): boolean {
 
   return (error instanceof TypeError) || (resolveErrnoCause(error)?.code === "ETIMEDOUT");
+}
+
+/* How far below the value that was caught any reader of a `cause` chain descends. Real chains are short - a client wraps a transport failure, the transport wraps
+ * a socket failure - and the bound is what makes the descent terminate at all: a chain that refers back to itself simply exhausts it, so no cycle bookkeeping has
+ * to exist. Counted in descents, so the value handed in is depth zero and this many links below it are still read.
+ */
+const CAUSE_CHAIN_DEPTH = 8;
+
+/**
+ * Yield a thrown value and then each link beneath it down its `cause` chain, ending at a link that carries no further cause or at the depth bound.
+ *
+ * A wrapped failure presents what a reader needs below what it caught, so every reader asking such a question descends the same chain, and the descent lives here
+ * once: the transport failure classifier takes the codes and the cancellation markers from it. The library takes no runtime dependency on homebridge-plugin-utils,
+ * so the descent its `causeChain` states is implemented here as well, and the differential tests that hold each reader to homebridge-plugin-utils' own are what keep
+ * the two descents one rule.
+ *
+ * Every link is yielded verbatim, including a final one that is not an object, and what a link means is left to the reader. It is not published from the library's
+ * public surface, because its readers are the library's own.
+ *
+ * @param error - Whatever was thrown or rejected. Any value at all can be handed to it, including values that are not errors.
+ *
+ * @returns A generator yielding the value handed in, then each `cause` beneath it.
+ *
+ * @category Utilities
+ */
+export function *causeChain(error: unknown): Generator<unknown, void, undefined> {
+
+  let link: unknown = error;
+
+  for(let depth = 0; depth <= CAUSE_CHAIN_DEPTH; depth++) {
+
+    yield link;
+
+    // A value that is not an object holds nothing beneath it, and neither does one carrying no `cause` key at all, so either ends the descent. A key present with
+    // the value `undefined` is a link like any other: the descent yields it, finds nothing beneath it, and ends on the following pass.
+    if((typeof link !== "object") || (link === null) || !("cause" in link)) {
+
+      return;
+    }
+
+    link = link.cause;
+  }
 }
 
 /**

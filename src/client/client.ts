@@ -70,8 +70,8 @@ import { wallClock } from "../clock.ts";
  *
  * The rest are optional injected dependencies, each defaulted at the composition root:
  *
- * - `clock` is the time source threaded into every subsystem (transport, store, event stream, connection monitor, livestream pool); it defaults to the wall clock,
- *   and tests inject a fake to drive timers deterministically.
+ * - `clock` is the time source threaded into every subsystem (transport, store, event stream, connection monitor, livestream pool, and each talkback session,
+ *   which reads it only to time a connection attempt); it defaults to the wall clock, and tests inject a fake to drive timers deterministically.
  * - `dispatcher` is an undici `Dispatcher` for the transport's connection pool; when omitted the transport builds and owns its own pool.
  * - `log` is the structured logger; it defaults to a no-op sink.
  * - `recoveryPolicy` is the per-stream livestream recovery decision authority handed to the livestream pool; it defaults to {@link
@@ -375,6 +375,7 @@ export class ProtectClient implements AsyncDisposable {
     const talkback = (params: { cameraId: string }, callOpts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> => TalkbackSession.connect({
 
       cameraId: params.cameraId,
+      clock,
       log,
       resolveUrl: resolveTalkbackUrl,
       ...((callOpts.signal !== undefined) && { signal: callOpts.signal }),

@@ -6,13 +6,15 @@
  * errno-resolution helpers behave across the shapes undici and Node produce.
  */
 import * as errorModule from "./errors.ts";
-import { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCodecChangeError, ProtectConfigurationError,
-  ProtectError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError,
-  ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, isExpectedWsDisconnect, resolveErrnoCause } from "./errors.ts";
+import { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectCodecChangeError,
+  ProtectConfigurationError, ProtectError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError,
+  ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, causeChain, isExpectedWsDisconnect,
+  resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
 import { DOORBELL_INIT } from "./protocol/init-segment.fixtures.ts";
 import assert from "node:assert/strict";
 import { describeInitSegment } from "./protocol/init-segment.ts";
+import { errnoError } from "homebridge-plugin-utils/testing";
 
 // A livestream init, the shape the codec-change error carries on both sides of the change, shared by the hierarchy rows and the cause row.
 const init = { codec: "avc1.640028", data: DOORBELL_INIT, description: describeInitSegment(DOORBELL_INIT) };
@@ -22,6 +24,7 @@ describe("ProtectError hierarchy", () => {
   const recoverable = [
 
     new ProtectAbortedError("aborted"),
+    new ProtectCertificateError({ cause: new Error("self-signed certificate"), host: "10.0.0.1" }),
     new ProtectNetworkError("net", { code: "ECONNREFUSED" }),
     new ProtectStallError("stall", { silentForMs: 10000 }),
     new ProtectThrottledError("throttle", { cooldownMs: 300000 }),
@@ -79,6 +82,7 @@ describe("typed error fields and cause chaining", () => {
       new ProtectAuthError("m", { cause: root }),
       new ProtectAuthorizationError("m", { cause: root }),
       new ProtectBootstrapError("m", { cause: root, stage: "fetch" }),
+      new ProtectCertificateError({ cause: root, host: "10.0.0.1" }),
       new ProtectCodecChangeError("m", { cause: root, from: init, to: init }),
       new ProtectConfigurationError("m", { cause: root }),
       new ProtectLivestreamUnavailableError("m", { attempts: 1, cause: root, phase: "establishing" }),
@@ -148,6 +152,104 @@ describe("typed error fields and cause chaining", () => {
     assert.equal(new ProtectNetworkError("m", { cause: errno }).code, "ENOTFOUND");
     assert.equal(new ProtectNetworkError("m", { code: "ECONNREFUSED" }).code, "ECONNREFUSED", "an explicit code wins over the cause chain");
     assert.equal(new ProtectNetworkError("m").code, undefined, "no code and no resolvable cause yields undefined");
+  });
+});
+
+describe("ProtectCertificateError", () => {
+
+  const selfSigned = errnoError("self-signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT");
+
+  test("is a ProtectNetworkError, so every reading that already treats a reachability failure as recoverable covers it", () => {
+
+    const error = new ProtectCertificateError({ cause: selfSigned, host: "10.0.0.1" });
+
+    assert.ok(error instanceof ProtectNetworkError, "a certificate refusal is a network failure with a name");
+    assert.ok(error instanceof RecoverableError, "an operator installing a certificate fixes it while the process runs");
+    assert.ok(!(error instanceof FatalError), "a fatal classification would stop the connection monitor trying again");
+  });
+
+  test("names the address dialed, the reason, and the code, with the code read from the cause", () => {
+
+    const error = new ProtectCertificateError({ cause: selfSigned, host: "[fe80::1]:7443" });
+
+    assert.equal(error.message, "The UniFi Protect controller at [fe80::1]:7443 presented a certificate that could not be verified: self-signed certificate " +
+      "(DEPTH_ZERO_SELF_SIGNED_CERT).");
+    assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT", "the code lifts from the very cause the sentence was composed from");
+    assert.equal(error.host, "[fe80::1]:7443");
+    assert.ok(Object.is(error.cause, selfSigned));
+  });
+
+  test("reads an errno one hop down the cause, as ProtectNetworkError reads its code", () => {
+
+    const error = new ProtectCertificateError({ cause: new TypeError("fetch failed", { cause: selfSigned }), host: "10.0.0.1" });
+
+    assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+    assert.ok(error.message.endsWith(": self-signed certificate (DEPTH_ZERO_SELF_SIGNED_CERT)."));
+  });
+
+  test("drops the reason clause when the platform supplied no words", () => {
+
+    const error = new ProtectCertificateError({ cause: errnoError("", "DEPTH_ZERO_SELF_SIGNED_CERT"), host: "10.0.0.1" });
+
+    assert.equal(error.message, "The UniFi Protect controller at 10.0.0.1 presented a certificate that could not be verified (DEPTH_ZERO_SELF_SIGNED_CERT).",
+      "a sentence with nothing to introduce carries no colon to introduce it with");
+  });
+
+  test("states the refusal alone when the cause carries no errno to read", () => {
+
+    // The class is public, so a caller can construct it around a cause the errno resolution cannot read. There is then neither a reason nor a code to report, and the
+    // sentence says the one thing still known.
+    const error = new ProtectCertificateError({ cause: new TypeError("terminated"), host: "10.0.0.1" });
+
+    assert.equal(error.message, "The UniFi Protect controller at 10.0.0.1 presented a certificate that could not be verified.");
+    assert.equal(error.code, undefined, "there was no errno to lift one from");
+  });
+
+  test("trims the platform's own padding out of the reason clause", () => {
+
+    const error = new ProtectCertificateError({ cause: errnoError("  self-signed certificate \n", "DEPTH_ZERO_SELF_SIGNED_CERT"), host: "10.0.0.1" });
+
+    assert.ok(error.message.includes(": self-signed certificate ("), "the reason reads as one clause rather than carrying the platform's whitespace");
+  });
+});
+
+describe("causeChain", () => {
+
+  test("yields the value handed in and then each cause beneath it, nearest first", () => {
+
+    const errno = errnoError("connect ECONNREFUSED", "ECONNREFUSED");
+    const middle = new Error("the dial failed.", { cause: errno });
+    const outer = new TypeError("fetch failed", { cause: middle });
+
+    assert.deepEqual([...causeChain(outer)], [ outer, middle, errno ], "a link carrying no cause key is the last one yielded");
+    assert.deepEqual([...causeChain("refused")], ["refused"], "a value that is not an object is yielded and holds nothing beneath it");
+
+    // A cause that is not an object is still a link: it is yielded verbatim, and what it means is left to the reader.
+    assert.deepEqual([...causeChain(new Error("wrapped", { cause: "refused" }))].slice(1), ["refused"]);
+  });
+
+  test("stops at the depth bound", () => {
+
+    const links: Error[] = [new Error("level 11.")];
+
+    for(let level = 10; level >= 0; level--) {
+
+      links.unshift(new Error("level " + level.toString() + ".", { cause: links[0] }));
+    }
+
+    // The value handed in is depth zero, and the bound's worth of links below it are still yielded...the link one past the bound, and everything beneath it, is not.
+    assert.deepEqual([...causeChain(links[0])], links.slice(0, 9));
+  });
+
+  test("terminates on a chain that refers back to itself", () => {
+
+    const outer = new Error("Unable to fetch the bootstrap.");
+    const inner = new Error("the controller refused the request.", { cause: outer });
+
+    outer.cause = inner;
+
+    // The bound is what ends the descent, so the two links alternate until it is exhausted rather than the walk running forever.
+    assert.deepEqual([...causeChain(outer)], [ outer, inner, outer, inner, outer, inner, outer, inner, outer ]);
   });
 });
 

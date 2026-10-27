@@ -20,9 +20,9 @@
 // a deliberate, reviewable contract rather than whatever each module happens to export.
 
 // Errors - the typed hierarchy. Consumers branch on these with `instanceof`, so they are value exports; the bootstrap-stage tag is a type.
-export { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCodecChangeError, ProtectConfigurationError,
-  ProtectError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError,
-  ProtectTimeoutError, ProtectUnsupportedError, RecoverableError } from "./errors.ts";
+export { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectCodecChangeError,
+  ProtectConfigurationError, ProtectError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectStallError,
+  ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError } from "./errors.ts";
 export type { ProtectBootstrapStage } from "./errors.ts";
 
 // Logging - the consumer-injectable logger interface and the silent default a consumer may pass to suppress output.

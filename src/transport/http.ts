@@ -5,17 +5,20 @@
 import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../diagnostics.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../settings.ts";
 import { Pool, errors, interceptors, request } from "undici";
-import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectThrottledError,
-  ProtectTimeoutError } from "../errors.ts";
+import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError,
+  ProtectThrottledError, ProtectTimeoutError, assertNever } from "../errors.ts";
 import { armDeadline, wallClock } from "../clock.ts";
+import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import type { Clock } from "../clock.ts";
 import type { Dispatcher } from "undici";
 import { EventBus } from "../event-bus.ts";
 import type { FatalError } from "../errors.ts";
 import type { IncomingHttpHeaders } from "node:http";
+import type { OwnedDispatcher } from "./connector.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { StreamOptions } from "../event-bus.ts";
 import { channels } from "../diagnostics.ts";
+import { classifyTransportError } from "./failure.ts";
 import { noopLog } from "../logging.ts";
 import { randomUUID } from "node:crypto";
 
@@ -90,7 +93,9 @@ export interface SendOptions extends RequestOptions {
  * else is an injected dependency.
  *
  * - `dispatcher` substitutes the undici dispatcher (an `undici.MockAgent` in tests, or a consumer-supplied pool). When injected, the transport never destroys or
- *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher.
+ *   rebuilds it - lifecycle stays with the injector, so `reset()` and disposal are no-ops on the dispatcher. It also brings its own connector and its own retry
+ *   policy, so a connection attempt a settled request leaves behind runs on that dispatcher's terms rather than the owned pool's; the request itself settles at
+ *   once either way.
  * - `getAuthHeaders` supplies the cookie + CSRF headers stamped onto every request. `onUnauthorized` is the relogin hook invoked on a 401 before a single retry.
  *   Both point upward at `AuthSession`, so they are passed as plain function references (dependency inversion) rather than an `AuthSession` import.
  * - `verifyTls` opts the owned pool into strict TLS certificate verification. It defaults to `false`, because a controller presents a self-signed certificate that no
@@ -279,7 +284,9 @@ export class ProtectResponse {
 
 /**
  * The HTTP transport. Owns the undici connection pool, composes each request's deadline with the caller's cancellation, classifies every failure into the typed
- * `ProtectError` hierarchy, and runs the throttle circuit breaker that protects a degraded controller from being hammered.
+ * `ProtectError` hierarchy, and runs the throttle circuit breaker that protects a degraded controller from being hammered. A cancellation or the deadline settles
+ * its own request the instant it fires, whatever stage that request has reached, and touches no other; the owned pool's connector holds every socket from the
+ * moment it is vended, so a reset or a disposal releases a connection attempt still in flight rather than leaving it to run out undici's own connect timer.
  *
  * The breaker is the canonical three-state model - `closed -> open -> half-open -> closed`:
  *
@@ -305,13 +312,16 @@ export class Transport implements AsyncDisposable {
   readonly #log: ProtectLogging;
   readonly #onUnauthorized: (() => Promise<boolean>) | undefined;
   readonly #origin: string;
-  readonly #ownsDispatcher: boolean;
   readonly #verifyTls: boolean;
 
-  // The breaker's only mutable state: the consecutive-failure count and the timestamp the cooldown last (re-)armed. `null` means the breaker is closed. The
-  // dispatcher is reassignable because reset() rebuilds the owned pool.
+  /* The breaker's only mutable state: the consecutive-failure count and the timestamp the cooldown last (re-)armed. `null` means the breaker is closed.
+   *
+   * The pool is the dispatcher every request goes to and the connector built beside it, travelling as one value so the two can never disagree about which pool a
+   * dial belongs to, and reassigned whole because reset() rebuilds both together. An injected dispatcher is carried with a connector of `null`: its lifecycle
+   * belongs to the injector, so a reset or a disposal here has nothing of its own to release.
+   */
   #consecutiveFailures = 0;
-  #dispatcher: Dispatcher;
+  #pool: OwnedDispatcher | { readonly connector: null; readonly dispatcher: Dispatcher };
   #throttledSince: number | null = null;
 
   constructor(options: TransportOptions) {
@@ -327,9 +337,9 @@ export class Transport implements AsyncDisposable {
     this.#origin = options.origin;
     this.#verifyTls = options.verifyTls ?? false;
 
-    // When a dispatcher is injected we adopt it and never touch its lifecycle - the injector owns construction and teardown. Otherwise we build (and own) the pool.
-    this.#ownsDispatcher = options.dispatcher === undefined;
-    this.#dispatcher = options.dispatcher ?? this.#buildPool();
+    // When a dispatcher is injected we adopt it and never touch its lifecycle - the injector owns construction and teardown, and it brings a connector of its own
+    // that we have no handle on. Otherwise we build (and own) the pool and the connector beside it.
+    this.#pool = (options.dispatcher === undefined) ? this.#buildPool() : { connector: null, dispatcher: options.dispatcher };
   }
 
   /**
@@ -443,20 +453,24 @@ export class Transport implements AsyncDisposable {
 
   /**
    * Rebuild the owned connection pool, dropping every keepalive connection to the controller. Called when the breaker trips so the next attempt starts from a clean
-   * pool rather than reusing sockets to a degraded controller. A no-op when the dispatcher was injected - that lifecycle belongs to the injector.
+   * pool rather than reusing sockets to a degraded controller. A request in flight, over HTTP/2 or HTTP/1.1, fails as the pool-reset interruption, and a connection
+   * attempt still in flight is released along with the keepalive connections, so a request waiting on one fails at once the same way rather than running on to
+   * undici's own connect timer. A no-op when the dispatcher was injected - that lifecycle belongs to the injector.
    */
   reset(): void {
 
-    if(!this.#ownsDispatcher) {
+    const pool = this.#pool;
+
+    if(pool.connector === null) {
 
       return;
     }
 
-    // The old pool's destroy is deliberately not awaited: the breaker calls this synchronously as it trips, and the next request needs only the rebuilt pool.
-    // Destroying the pool rejects any request still in flight on it with ClientDestroyedError, which books a failure on the breaker, already open when the
-    // breaker itself is the caller.
-    void this.#dispatcher.destroy();
-    this.#dispatcher = this.#buildPool();
+    // The old pool's teardown is deliberately not awaited: the breaker calls this synchronously as it trips, and the next request needs only the rebuilt pool. The
+    // destroy rejects any request still in flight on it with ClientDestroyedError, which books a failure on the breaker, already open when the breaker itself is the
+    // caller. releaseOwned holds the order the pool and its connector are let go in.
+    void releaseOwned(pool);
+    this.#pool = this.#buildPool();
   }
 
   /**
@@ -499,13 +513,16 @@ export class Transport implements AsyncDisposable {
   }
 
   /**
-   * Dispose the transport, destroying the owned pool. A no-op on an injected dispatcher.
+   * Dispose the transport, destroying the owned pool. A connection attempt still in flight is severed before the pool's own teardown is awaited. A no-op on an
+   * injected dispatcher.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
-    if(this.#ownsDispatcher) {
+    const pool = this.#pool;
 
-      await this.#dispatcher.destroy();
+    if(pool.connector !== null) {
+
+      await releaseOwned(pool);
     }
   }
 
@@ -518,8 +535,8 @@ export class Transport implements AsyncDisposable {
 
     /* Compose our own deadline with the caller's optional cancellation. The deadline is armed on the injected clock rather than on the platform, so a suite fires it
      * on virtual time instead of waiting it out. It is held for exactly this exchange: `using` releases it when the method returns, on every path, so a settled request
-     * leaves no timer behind. #classifyTransportError later tells the caller's cancellation from our deadline by what undici threw: the caller's own abort reason, or
-     * undici's RequestAbortedError when that reason is falsy, is the caller's cancel, and any other abort is ours.
+     * leaves no timer behind. #classifyTransportError later tells the caller's cancellation from our deadline by identity, comparing the failure against each signal's
+     * own reason, because a cancelled or expired request rejects with the reason of the signal that fired.
      */
     using deadline = armDeadline(timeout, { clock: this.#clock });
     const signal = (opts.signal !== undefined) ? AbortSignal.any([ opts.signal, deadline.signal ]) : deadline.signal;
@@ -543,19 +560,53 @@ export class Transport implements AsyncDisposable {
 
     try {
 
-      const response = await request(url, { dispatcher: this.#dispatcher, headers, method, signal, ...((opts.body !== undefined) && { body: opts.body }) });
-      const body = Buffer.from(await response.body.arrayBuffer());
+      /* A signal that has already fired when the request reaches here never runs a listener attached to it, so the settlement below would never settle, and undici
+       * applies a signal only at request start, after the connect has completed. The check ahead of the dispatch is what keeps such a request from opening a
+       * connection at all, on any dispatcher, and throwing the reason inside the try sends it through the same catch as every other failure, so it classifies by
+       * identity and publishes the same end diagnostic. `send` answers a caller that had aborted before the request began, so what reaches this check is an abort
+       * landing in between, such as a start-channel subscriber aborting the caller's signal while the request start is published.
+       */
+      if(signal.aborted) {
+
+        throw signal.reason;
+      }
+
+      /* undici applies a signal's abort at request start and on a live socket, never to a connection attempt still in flight, so the transport settles the caller
+       * itself the moment the signal fires: the exchange races a settlement that rejects with the signal's own reason, which is also what lets the classification
+       * below name the cause by identity. A connection attempt the settled request leaves behind runs to the pool's own connect timer, or completes and meets
+       * undici's request start, where the deferred abort destroys it before a byte is written.
+       *
+       * The listener is registered after the check above, so a signal that has already fired constructs nothing it would then discard, and it lives for exactly
+       * this request, because a caller's signal may outlive it: `once` takes it off when it fires, and the race's `finally` takes it off when the exchange ends
+       * first. The race observes the losing exchange's own later rejection as well, so a settled request leaves nothing unhandled behind it.
+       */
+      const settlement = Promise.withResolvers<never>();
+      const settle = (): void => settlement.reject(signal.reason);
+
+      signal.addEventListener("abort", settle, { once: true });
+
+      // The exchange is an async function so that a synchronous throw from undici's own argument checks still arrives as a rejection the race observes, which is
+      // what takes the listener off on every path rather than leaving it to fire into a settlement nobody is waiting on. The body is buffered inside it, so the race
+      // bounds the whole exchange and the pool slot frees as soon as the bytes are in hand.
+      const exchange = async (): Promise<{ body: Buffer; headers: IncomingHttpHeaders; statusCode: number }> => {
+
+        const response = await request(url, { dispatcher: this.#pool.dispatcher, headers, method, signal, ...((opts.body !== undefined) && { body: opts.body }) });
+
+        return { body: Buffer.from(await response.body.arrayBuffer()), headers: response.headers, statusCode: response.statusCode };
+      };
+
+      const result = await Promise.race([ exchange(), settlement.promise ]).finally(() => signal.removeEventListener("abort", settle));
 
       if(channels.httpRequestEnd.hasSubscribers) {
 
         requestId ??= randomUUID();
-        this.#publishEnd({ durationMs: this.#clock.now() - startedAt, method, requestId, statusCode: response.statusCode, url });
+        this.#publishEnd({ durationMs: this.#clock.now() - startedAt, method, requestId, statusCode: result.statusCode, url });
       }
 
-      return { body, headers: response.headers, statusCode: response.statusCode };
+      return result;
     } catch(error) {
 
-      const classified = this.#classifyTransportError(error, opts.signal, this.#clock.now() - startedAt);
+      const classified = this.#classifyTransportError(error, { callerSignal: opts.signal, deadline: deadline.signal, elapsedMs: this.#clock.now() - startedAt });
 
       if(channels.httpRequestEnd.hasSubscribers) {
 
@@ -623,53 +674,88 @@ export class Transport implements AsyncDisposable {
     }
   }
 
-  // Classify an undici exception into the typed hierarchy. The caller's cancellation is recognized by what was thrown rather than by the caller's signal state
-  // alone, so a failure of any other shape stays what it is even when the caller aborts after it; an abort that is not the caller's is our own deadline.
-  #classifyTransportError(error: unknown, callerSignal: AbortSignal | undefined, elapsedMs: number): ProtectAbortedError | ProtectNetworkError | ProtectTimeoutError {
+  /* Translate a failed exchange into the typed hierarchy. A cancellation is read by identity first: the error a cancelled or expired request rejects with IS the
+   * reason of the signal that fired, from the settlement or from the check ahead of the dispatch, so comparing against each signal's own reason names which of them
+   * caused the failure exactly - whatever that reason is, an `Error`, an empty string, or anything else - where asking whether the caller's signal is aborted at
+   * classification time would misname a deadline that fired first on a request its caller went on to cancel a moment later.
+   *
+   * Every other failure is sorted by the transport failure classifier, the local mirror of homebridge-plugin-utils' taxonomy that every socket sorts its failures by
+   * as well, and each kind maps to the typed error it reports as. The classifier is handed no signal, because the signals this transport composed are exactly what
+   * the identity reads have already answered. A network error lifts its public `code` from the cause chain as `ProtectNetworkError` always has, so no arm hands the
+   * classifier's own reading of the code to the error.
+   */
+  #classifyTransportError(error: unknown, { callerSignal, deadline, elapsedMs }: { callerSignal: AbortSignal | undefined; deadline: AbortSignal; elapsedMs: number }):
+    ProtectAbortedError | ProtectNetworkError | ProtectTimeoutError {
 
-    // The shapes an abort takes. Our deadline is the one armDeadline arms, which aborts with the platform's deadline reason, a DOMException named "TimeoutError". An
-    // "AbortError" DOMException and undici's RequestAbortedError, which undici substitutes when the signal it was given aborts with a falsy reason, are tested as well,
-    // as a defensive fallback for an abort that is neither our TimeoutError nor the caller's own reason.
-    const isAbort = ((error instanceof DOMException) && ((error.name === "AbortError") || (error.name === "TimeoutError"))) ||
-      (error instanceof errors.RequestAbortedError);
-
-    // The caller's cancellation: the caller's signal has aborted, and what undici threw is that abort. Undici rethrows a truthy reason as it is and substitutes
-    // its own RequestAbortedError for a falsy one, so both are tested. A deadline of ours that fired first matches neither, and stays ours even when the caller
-    // aborts a moment later.
-    if((callerSignal?.aborted === true) &&
-      ((error === callerSignal.reason) || (!callerSignal.reason && (error instanceof errors.RequestAbortedError)))) {
-
-      return new ProtectAbortedError("The request was aborted by the caller's signal.", { cause: error });
-    }
-
-    // Any other abort is reported as our own deadline: our timeout is the only abort this transport arms, so the defensive fallbacks above are classified with it.
-    if(isAbort) {
+    // Our own deadline caused this failure, and settled the request at whatever stage it had reached. Each identity read asks first whether its signal fired,
+    // because an unfired signal's reason is `undefined`, which a thrown `undefined` would otherwise match.
+    if(deadline.aborted && (error === deadline.reason)) {
 
       return new ProtectTimeoutError("The UniFi Protect controller did not respond before the request deadline elapsed.", { cause: error, elapsedMs });
     }
 
-    // Our own pool was torn down, by reset() or by disposal. Recoverable: a retry helps only after a reset, which rebuilds the pool; after disposal nothing is rebuilt.
-    if(error instanceof errors.ClientDestroyedError) {
+    // The caller's own signal caused it, and stays the cause even when our deadline fires a moment later.
+    if((callerSignal?.aborted === true) && (error === callerSignal.reason)) {
 
-      return new ProtectNetworkError("The request was interrupted because the connection pool was reset.", { cause: error });
+      return new ProtectAbortedError("The request was aborted by the caller's signal.", { cause: error });
     }
 
-    // The retry interceptor raises RequestRetryError for a response whose bytes it cannot reconcile with the request: a resumed retry the controller answered without
-    // the matching range, or a body whose length disagrees with the length its headers declared. The controller was reached, but what arrived is not one whole
-    // response, so it is classified with the connection faults a later attempt can clear.
-    if(error instanceof errors.RequestRetryError) {
+    const failure = classifyTransportError(error);
 
-      return new ProtectNetworkError("The response from the UniFi Protect controller did not match the range or length the request expected.", { cause: error });
+    switch(failure.kind) {
+
+      /* A connect-phase timeout, distinct from our request deadline. The arm is reached when a caller's `timeout` option exceeds undici's own ten-second connect
+       * timer, which then bounds the connect phase and wins. It is also reached by a request queued behind a connection attempt a settled request left running, when
+       * that attempt's ten-second timer fires before the queued request's own deadline: a failed connect fails every request queued on that client, and undici's
+       * retry interceptor does not retry UND_ERR_CONNECT_TIMEOUT, so the connect timer's error reaches the queued request.
+       */
+      case "connect-timeout":
+
+        return new ProtectTimeoutError("The connection to the UniFi Protect controller timed out.", { cause: error, elapsedMs });
+
+      /* The controller accepted the request and then stopped answering before its reply was complete, which undici's own response timers report. They are reached
+       * when a request's deadline exceeds those timers, or through an injected dispatcher that brings timers of its own. A timeout or a cancellation that is not one
+       * of this transport's own signals classifies as a timeout too, the reading homebridge-plugin-utils gives it, and reports the same way.
+       */
+      case "timeout":
+
+        return new ProtectTimeoutError("The UniFi Protect controller stopped responding before its reply was complete.", { cause: error, elapsedMs });
+
+      // Our own pool was torn down, by reset() or by disposal, under a request in flight or a connection attempt. Recoverable: a retry helps only after a reset,
+      // which rebuilds the pool; after disposal nothing is rebuilt.
+      case "destroyed":
+
+        return new ProtectNetworkError("The request was interrupted because the connection pool was reset.", { cause: error });
+
+      /* The retry interceptor raises its retry error for a response whose bytes it cannot reconcile with the request: a resumed retry the controller answered
+       * without the matching range, or a body whose length disagrees with the length its headers declared, because the interceptor runs with `throwOnError` off and
+       * hands every other last answer back as a response. The controller was reached, but what arrived is not one whole response, so it is classified with the
+       * connection faults a later attempt can clear.
+       */
+      case "retries-exhausted":
+
+        return new ProtectNetworkError("The response from the UniFi Protect controller did not match the range or length the request expected.", { cause: error });
+
+      // The controller's certificate failed the platform's verification, so the failure names the address dialed rather than reporting an unreachable host.
+      case "certificate":
+
+        return new ProtectCertificateError({ cause: error, host: new URL(this.#origin).host });
+
+      // Everything else is a connect, DNS, or socket failure. The aborted kind answers only a signal handed to the classifier, and this translation hands it none, so
+      // it is listed here for the union to stay exhaustive rather than because a request can reach it.
+      case "aborted":
+      case "dns":
+      case "refused":
+      case "reset":
+      case "transport":
+
+        return new ProtectNetworkError("A network error occurred communicating with the UniFi Protect controller.", { cause: error });
+
+      default:
+
+        // Exhaustiveness guard. A new kind joining the union without a case above stops `failure` being `never` here, and this fails to compile.
+        return assertNever(failure);
     }
-
-    // A connect-phase timeout (distinct from our request deadline) - surface it as a timeout, carrying the elapsed time.
-    if(error instanceof errors.ConnectTimeoutError) {
-
-      return new ProtectTimeoutError("The connection to the UniFi Protect controller timed out.", { cause: error, elapsedMs });
-    }
-
-    // Everything else is a connect/DNS/TLS/socket failure; ProtectNetworkError lifts the errno from the cause chain.
-    return new ProtectNetworkError("A network error occurred communicating with the UniFi Protect controller.", { cause: error });
   }
 
   // Publish the request:end diagnostic. Centralized so the success and failure paths emit the same shape, and the controller host is stamped once here for both paths
@@ -680,11 +766,12 @@ export class Transport implements AsyncDisposable {
     channels.httpRequestEnd.publish({ ...payload, host: this.#host } satisfies HttpRequestEndPayload);
   }
 
-  // Build the owned connection pool: certificate verification follows the `verifyTls` option (permissive by default, since controllers ship self-signed certs), HTTP/2
-  // enabled and preferred in the ALPN offer so a controller that supports it negotiates h2 rather than falling back to HTTP/1.1, five concurrent connections, a
+  // Build the owned connection pool and the connector beside it: the pool dials through the owned connector, so a reset or a disposal can release a connection
+  // attempt still in flight, and certificate verification follows the `verifyTls` option (permissive by default, since controllers ship self-signed certs). HTTP/2
+  // is enabled and offered beside HTTP/1.1, and a controller that supports it negotiates h2 by its own preference. The pool holds five concurrent connections, a
   // 60-second client TTL so each pooled connection is recycled roughly once a minute rather than kept alive indefinitely (bounding how long a keepalive socket to a
-  // controller that has since rebooted or silently dropped the link can linger before it is retired), a fixed user-agent, and the exponential-backoff retry
-  // interceptor. The retried set is the conventionally retry-safe verbs plus POST: the interceptor only fires on the transient controller-readiness codes in
+  // controller that has since rebooted or silently dropped the link can linger before it is retired), a fixed user-agent, the signal gate, and the exponential-backoff
+  // retry interceptor. The retried set is the conventionally retry-safe verbs plus POST: the interceptor only fires on the transient controller-readiness codes in
   // RETRY_STATUS_CODES and on the transient connection faults undici treats as retryable. A refused connection, a 429, or a controller still starting up means the
   // controller was not in a state to accept the request, so re-sending a POST there cannot double-apply it; a 500, a gateway error, or a connection reset can arrive
   // after the controller already acted, so a POST retried on one of those may apply twice. PATCH is held out of the set for that reason, because the config writes it
@@ -695,7 +782,7 @@ export class Transport implements AsyncDisposable {
   // once the retries run out, or at once for a status outside the set or a method outside the retried verbs, the controller's last response returns to `send` with its
   // body, and `ensureOk` is where it becomes the classified error. The six attempts and their backoff all run inside the one request deadline `#dispatch` arms, so a
   // controller too slow to answer every attempt inside it ends the request as a timeout rather than as a response.
-  #buildPool(): Dispatcher {
+  #buildPool(): OwnedDispatcher {
 
     const userAgent: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {
 
@@ -709,8 +796,31 @@ export class Transport implements AsyncDisposable {
       return dispatch(dispatchOptions, handler);
     };
 
-    return new Pool(this.#origin, { allowH2: true, clientTtl: 60000, connect: { preferH2: true, rejectUnauthorized: this.#verifyTls }, connections: 5 })
-      .compose(userAgent, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ], minTimeout: 100,
-        statusCodes: [...RETRY_STATUS_CODES], throwOnError: false, timeoutFactor: 2 }));
+    /* The retry interceptor's handler learns of a request's signal only once that request has started on a connection, so without this gate a connection attempt
+     * that fails with a retryable fault is dispatched again for a request the transport has already settled, and so is a request cancelled while it waits out a
+     * retry backoff. Listed ahead of the retry interceptor, which undici's composition wraps around it, the gate sees every attempt and refuses one whose signal has
+     * already fired with undici's own class for an aborted request. A refusal thrown from a retry's dispatch goes straight to the request's own handler, so the
+     * request ends there without another connection attempt. The signal travels on the dispatch options without appearing in their type, so the gate narrows to it
+     * rather than casting, and it reads that signal and nothing else - it holds no state, and its only lifecycle is the pool's own.
+     */
+    const signalGate: Dispatcher.DispatcherComposeInterceptor = (dispatch) => (dispatchOptions, handler) => {
+
+      if(("signal" in dispatchOptions) && (dispatchOptions.signal instanceof AbortSignal) && dispatchOptions.signal.aborted) {
+
+        throw new errors.RequestAbortedError();
+      }
+
+      return dispatch(dispatchOptions, handler);
+    };
+
+    // `allowH2` reaches the connector and the pool alike, because the two read it for different things: the connector's copy decides the ALPN offer, and the
+    // pool's decides how it handles the connection once the connect has completed. One binding is what keeps the two from disagreeing.
+    const allowH2 = true;
+    const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
+    const dispatcher = new Pool(this.#origin, { allowH2, clientTtl: 60000, connect: connector.connect, connections: 5 })
+      .compose(userAgent, signalGate, interceptors.retry({ maxRetries: 5, maxTimeout: 1500, methods: [ "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT" ],
+        minTimeout: 100, statusCodes: [...RETRY_STATUS_CODES], throwOnError: false, timeoutFactor: 2 }));
+
+    return { connector, dispatcher };
   }
 }

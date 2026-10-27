@@ -151,9 +151,10 @@ export interface ConnectionMonitorOptions {
  *
  * Both bridges are attached synchronously at build time, before any await, preserving the race-free "subscribe before open" property the composition root relies on. On
  * `relaunch` the subscriptions are disposed *before* the old stream is torn down, so a dying socket's late frames never reach the monitor or the firehose. For fault
- * detection it listens only to `error`, never `closed`: the `EventStream` routes every unsolicited termination there - a stall, a socket error, and an unsolicited close
- * (the peer dropping a live socket, e.g. a controller reboot, which arrives as a `close` with no socket `error`). A self-initiated close (relaunch / dispose) stays
- * informational on `closed`, so the error rail alone is the failure signal and `closed` needs no handling.
+ * detection it listens only to `error`, never `closed`: the `EventStream` routes every unsolicited termination of an open stream there - a stall, a socket error, and
+ * an unsolicited close (the peer dropping a live socket, e.g. a controller reboot, which arrives as a `close` with no socket `error`). A self-initiated close (relaunch
+ * / dispose) stays informational on `closed`, and a failure before the open reaches whoever awaits `opened` alone - the composition root's connect, or `relaunch`'s
+ * caller, which marks the monitor lost with it - so the error rail alone is the failure signal of an open stream and `closed` needs no handling.
  */
 class ManagedEventStream implements AsyncDisposable {
 

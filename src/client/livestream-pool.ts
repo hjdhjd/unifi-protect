@@ -214,7 +214,7 @@ export interface LivestreamSubscribeOptions {
  * Construction options for {@link LivestreamPool}. `resolveUrl` is the transport-backed negotiation hook (build it with {@link livestreamUrlResolver}, the shared {@link
  * wsEndpointResolver}'s livestream specialization); `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s and threaded down to each session;
  * `recoveryPolicy` is the per-stream recovery decision authority, defaulting to {@link defaultLivestreamRecoveryPolicy}; `verifyTls` is the strict-TLS opt-in threaded
- * down to each session's owned agent, defaulting to `false` for the controller's self-signed certificate; `clock` is the time source, defaulting to the wall clock
+ * down to each session's owned connection, defaulting to `false` for the controller's self-signed certificate; `clock` is the time source, defaulting to the wall clock
  * and replaceable for tests; `log` is the logger, defaulting to a no-op.
  *
  * @category Client
@@ -773,7 +773,7 @@ class ManagedSession implements SubscriptionHost {
 
         if(decision.kind === "giveUp") {
 
-          this.#giveUp();
+          this.#giveUp(this.#current?.closeCause ?? undefined);
 
           return;
         }
@@ -810,9 +810,10 @@ class ManagedSession implements SubscriptionHost {
       }
     } catch(error) {
 
-      // A consumer-supplied policy that throws must not leak an unhandled rejection or wedge the stream; treat it as a give-up and tear down.
+      // A consumer-supplied policy that throws must not leak an unhandled rejection or wedge the stream; treat it as a give-up whose cause is the policy's throw, and
+      // tear down.
       this.#log.error("The UniFi Protect livestream recovery policy threw; tearing the stream down.", error);
-      this.#giveUp();
+      this.#giveUp(error);
     }
   }
 
@@ -1162,9 +1163,14 @@ class ManagedSession implements SubscriptionHost {
     this.#teardown("the livestream codec changed");
   }
 
-  // The recovery policy gave up. Publish the exhausted diagnostic (the signal an opt-in consumer self-heal observer watches), then tear the stream down with a
-  // ProtectLivestreamUnavailableError carrying the regime and the attempt count. An establishing give-up also resolves the establishment latch false.
-  #giveUp(): void {
+  /* The recovery policy gave up. Publish the exhausted diagnostic (the signal an opt-in consumer self-heal observer watches), then tear the stream down with a
+   * ProtectLivestreamUnavailableError carrying the regime and the attempt count. An establishing give-up also resolves the establishment latch false.
+   *
+   * The error's cause is what ended the last attempt: the last session's `closeCause`, the first typed cause its teardown recorded - a certificate refusal, a refused
+   * dial, a stall - so a consumer reads why the stream could not be established without the pool keeping a record of its own. A session that closed plainly, or one
+   * still open when the policy gave up, recorded none, and the give-up carries none. A policy that threw passes its throw instead.
+   */
+  #giveUp(cause: unknown): void {
 
     const attempts = this.#attempts;
     const phase = this.#phase;
@@ -1177,7 +1183,7 @@ class ManagedSession implements SubscriptionHost {
     const message = (phase === "establishing") ? "The UniFi Protect livestream could not be established within the deadline." :
       "The UniFi Protect livestream could not be recovered.";
 
-    this.#lastError = new ProtectLivestreamUnavailableError(message, { attempts, phase });
+    this.#lastError = new ProtectLivestreamUnavailableError(message, { attempts, cause, phase });
 
     if(phase === "establishing") {
 

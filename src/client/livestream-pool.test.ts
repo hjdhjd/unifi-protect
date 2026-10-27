@@ -14,8 +14,8 @@ import type { LivestreamPoolOptions, LivestreamSubscribeOptions, RecoveryContext
 import type { LivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_STALL_DEFAULT_MS,
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
-import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamUnavailableError } from "../errors.ts";
-import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamUnavailableError, ProtectNetworkError } from "../errors.ts";
+import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
 import { buildInitSegment, buildMediaSegment } from "../transport/livestream-session.helpers.ts";
 import { capturingLog, settlement, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
@@ -1043,6 +1043,64 @@ describe("LivestreamPool", () => {
         assert.ok(error instanceof ProtectLivestreamUnavailableError);
         assert.equal(error.phase, "establishing");
         assert.equal(error.attempts, 2);
+
+        return true;
+      });
+    });
+
+    test("a give-up carries what ended the last session as its cause, and nothing when that session closed plainly or is still open", async () => {
+
+      const policy: RecoveryPolicy = (context) => (context.attempts >= 1) ? { kind: "giveUp" } : { awaitMs: 1000, kind: "reconnect" };
+      const failing = makePool({ clock: new TestClock(), recoveryPolicy: policy });
+      const failingSub = failing.pool.subscribe(SPEC);
+      const boom = new Error("socket boom");
+
+      await settle();
+
+      // The one attempt's socket fails, which the session records as its closure's cause; the attempt's window then elapses and the policy gives up.
+      present(failing.sockets[0], "the attempt's socket").emitError(boom);
+      failing.clock.advance(1000);
+      await settle();
+
+      await assert.rejects(failingSub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.ok(error.cause instanceof ProtectNetworkError, "the give-up says why the stream could not be established");
+        assert.ok(Object.is(error.cause.cause, boom));
+
+        return true;
+      });
+
+      const quiet = makePool({ clock: new TestClock(), recoveryPolicy: policy });
+      const quietSub = quiet.pool.subscribe(SPEC);
+
+      await settle();
+
+      // This attempt's socket stays open and silent, so its session recorded no cause and the give-up has none to carry.
+      quiet.clock.advance(1000);
+      await settle();
+
+      await assert.rejects(quietSub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.equal(error.cause, undefined);
+
+        return true;
+      });
+    });
+
+    test("a give-up a throwing policy forces carries the policy's throw as its cause", async () => {
+
+      const thrown = new Error("the recovery policy threw");
+      const { pool } = makePool({ recoveryPolicy: () => { throw thrown; } });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      await assert.rejects(sub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.ok(Object.is(error.cause, thrown));
 
         return true;
       });

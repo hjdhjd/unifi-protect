@@ -4,9 +4,11 @@
  * the three-rail fan-out, schema-drift surfacing, decode-failure resilience, the silence watchdog, and teardown. Driven through an injected fake WebSocket and a
  * `TestClock`, so the realtime stream is exercised deterministically without a live controller.
  */
+import type { ConnectionOptions, TLSSocket } from "node:tls";
+import { DIAL_SETTLE_BOUND_MS, createLoopbackAlpnPeer, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
-import { ProtectAbortedError, ProtectNetworkError, ProtectProtocolError, ProtectStallError } from "../errors.ts";
-import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
+import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
 import { assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
@@ -18,8 +20,8 @@ import { PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
-import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
+import tls from "node:tls";
 
 const HOST = "10.0.0.1";
 
@@ -165,9 +167,23 @@ describe("EventStream", () => {
       await using peer = await createLoopbackWebSocketPeer();
       const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log: silentLog(), verifyTls: true });
 
-      // The same peer and the same upgrade, one option apart. Asking for verification against a certificate that cannot provide it fails the connect, and a pre-open
-      // failure reaches the caller on the handshake rejection exactly as every other one does.
-      await assert.rejects(stream.opened, ProtectNetworkError);
+      const errors = collect(stream, "error");
+
+      /* The same peer and the same upgrade, one option apart. Asking for verification against a certificate that cannot provide it fails the connect, and the
+       * pre-open failure reaches the caller on the handshake rejection alone, naming the address dialed and the verifier's own code, which the socket's own error
+       * event never carried at all.
+       */
+      await assert.rejects(stream.opened, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCertificateError, "a certificate the verifier refused reaches the caller as the refusal it is");
+        assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+        assert.equal(error.host, peer.host, "the address reported is the one the stream dialed");
+
+        return true;
+      });
+
+      assert.equal(errors.length, 0, "a failure before the open stays off the error rail");
+
       await stream.close();
     });
   });
@@ -475,6 +491,35 @@ describe("EventStream", () => {
 
       await stream.close();
     });
+
+    test("a socket error before the open reaches the caller on the handshake rejection alone", async () => {
+
+      const log = capturingLog();
+      const ws = new FakeWebSocket({ autoOpen: false });
+      const stream = new EventStream({ clock: new TestClock(), host: HOST, lastUpdateId: "u0", log, webSocket: (): FakeWebSocket => ws });
+      const errors = collect(stream, "error");
+      const failure = new Error("socket reset");
+
+      ws.emitError(failure);
+
+      /* A stream that never opened has no recovery acting on it, only a caller waiting out the connect, so the failure is that caller's rejection and nothing else:
+       * the classified failure itself, carrying what the socket reported, rather than the generic pre-open close. A rail fault here would start a recovery for a
+       * connect its caller is already failing, and an error line would log one failure twice.
+       */
+      await assert.rejects(stream.opened, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.ok(Object.is(error.cause, failure));
+        assert.equal(error.message, "The UniFi Protect realtime events API connection failed.");
+
+        return true;
+      });
+
+      assert.equal(errors.length, 0, "a fault before the open stays off the error rail");
+      assert.equal(log.entries.some((entry) => entry.level === "error"), false, "a fault before the open leaves no error-level line from the stream itself");
+
+      await stream.close();
+    });
   });
 
   describe("silence watchdog", () => {
@@ -676,6 +721,149 @@ describe("EventStream", () => {
       ws.emitMessage("a string frame the binary protocol never sends");
 
       assert.equal(stream.lastMessageAt, 1234);
+
+      await stream.close();
+    });
+  });
+
+  /* What the stream does with the connection it owns, over the default factory's real socket. A fake has no connection to release and never fires the synchronous
+   * `error` and `close` a real socket fires when it is closed mid-connect, so nothing above a fake can tell whether the real connection was let go or whether a
+   * teardown the stream asked for reached its error rail. Each row bounds a release on real time, against undici's ten-second connect timer.
+   */
+  describe("a real connection", () => {
+
+    test("close() of a live stream ends its connection at once, though the peer never answers the close frame", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log: silentLog() });
+
+      await stream.opened;
+
+      const connection = await peer.connection(0);
+      const startedAt = process.hrtime.bigint();
+
+      // The peer holds its own end open and ignores the close frame, so nothing but the stream's release of the socket the upgrade handed over can end it.
+      await stream.close();
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "the stream's close releases the connection rather than waiting on the peer");
+    });
+
+    test("a caller abort during the TLS dial releases the socket at once and keeps the error rail empty", async () => {
+
+      await using peer = await createLoopbackSilentPeer();
+
+      const controller = new AbortController();
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log: silentLog(), signal: controller.signal });
+      const closed = collect(stream, "closed");
+      const errors = collect(stream, "error");
+      const connection = await peer.connection(0);
+      const startedAt = process.hrtime.bigint();
+
+      /* The peer accepts the connection and answers nothing, so the TLS handshake is still in flight when the caller cancels. The listeners come off before the socket
+       * is asked to close, which is what keeps a teardown the stream itself ran off the error rail and names the caller's cancel on the close rail.
+       */
+      controller.abort();
+
+      await assert.rejects(stream.opened, ProtectAbortedError);
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a cancelled connection attempt is released at once rather than lingering to undici's own timer");
+      assert.equal(errors.length, 0, "a caller's cancel before open reaches the opened handshake alone");
+      assert.deepEqual(closed, [[{ code: 1000, reason: "connection aborted by the caller's signal" }]], "the close rail names the caller's cancel");
+
+      await stream.close();
+    });
+
+    test("a caller abort while the upgrade is pending keeps the error rail empty, over a connection that offered HTTP/1.1 alone", async () => {
+
+      await using peer = await createLoopbackAlpnPeer();
+
+      const controller = new AbortController();
+      const stream = new EventStream({ clock: new TestClock(), host: peer.host, lastUpdateId: "u0", log: silentLog(), signal: controller.signal });
+      const errors = collect(stream, "error");
+      const connection = await peer.connection(0);
+
+      // The peer offers h2 ahead of http/1.1, so negotiating http/1.1 is a reading of the stream's own offer, which a WebSocket upgrade keeps to HTTP/1.1.
+      assert.equal(await peer.protocol(0), "http/1.1");
+
+      // One stage further along than the row above: TLS has completed and the upgrade is what goes unanswered. The teardown is the stream's own either way.
+      controller.abort();
+
+      await assert.rejects(stream.opened, ProtectAbortedError);
+      await connection.closed;
+      await stream.close();
+
+      assert.equal(errors.length, 0, "a caller's cancel before open reaches the opened handshake alone");
+    });
+
+    test("a dial nothing is listening for carries the platform's own errno to the caller", async () => {
+
+      const stream = new EventStream({ clock: new TestClock(), host: "127.0.0.1:" + (await freePort()).toString(), lastUpdateId: "u0", log: silentLog() });
+      const errors = collect(stream, "error");
+
+      /* Every dial failure loses its errno on the way to the socket's error event, not a certificate refusal alone, so a refused port arrives as an empty failure
+       * unless the connector's record is read first. This is the row that says the record serves the whole class rather than the certificate case.
+       */
+      await assert.rejects(stream.opened, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError, "a refused dial is a reachability failure");
+        assert.ok(!(error instanceof ProtectCertificateError), "and nothing about a certificate, since no handshake was reached to present one");
+        assert.equal(error.code, "ECONNREFUSED");
+
+        return true;
+      });
+
+      assert.equal(errors.length, 0, "a failure before the open stays off the error rail");
+
+      await stream.close();
+    });
+
+    test("a connection attempt that times out reaches the caller as ProtectTimeoutError measured on the injected clock", async (t) => {
+
+      await using peer = await createLoopbackSilentPeer();
+
+      const clock = new TestClock();
+      const dials: TLSSocket[] = [];
+      const dial = tls.connect;
+      const elapsedMs = 2500;
+      const log = capturingLog();
+
+      /* undici's own connect timer runs on real time, ten seconds of it, so this row reaches a connect timeout by undici's other route to one. The platform's dial is
+       * wrapped for this test alone, which hands the row the socket the owned connector vended, and destroying that socket with the aggregate `ETIMEDOUT` the
+       * platform raises when every attempted address times out is what undici's connect normalization turns into its `ConnectTimeoutError`. The failure therefore
+       * reaches the stream exactly as a real one does, through the connector's record of the dial.
+       */
+      t.mock.method(tls, "connect", (options: ConnectionOptions): TLSSocket => {
+
+        const socket = dial(options);
+
+        dials.push(socket);
+
+        return socket;
+      });
+
+      const stream = new EventStream({ clock, host: peer.host, lastUpdateId: "u0", log });
+      const errors = collect(stream, "error");
+
+      await peer.connection(0);
+      clock.advance(elapsedMs);
+
+      present(dials[0], "the dial the owned connector vended").destroy(Object.assign(new AggregateError([errnoError("connect ETIMEDOUT " + peer.host, "ETIMEDOUT")],
+        "connect ETIMEDOUT"), { code: "ETIMEDOUT" }));
+
+      await assert.rejects(stream.opened, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectTimeoutError, "a connection attempt that timed out reads as a timeout, as it does on the request path");
+        assert.equal(error.message, "The UniFi Protect realtime events API connection timed out.");
+        assert.equal(error.elapsedMs, elapsedMs, "the elapsed time is the injected clock's own measure from the start of the attempt");
+        assert.equal((error.cause as NodeJS.ErrnoException).code, "UND_ERR_CONNECT_TIMEOUT", "the cause is undici's normalization, read from the connector's record");
+
+        return true;
+      });
+
+      assert.equal(errors.length, 0, "a failure before the open stays off the error rail");
+      assert.equal(log.entries.some((entry) => entry.level === "error"), false, "a failure before the open leaves no error-level line from the stream itself");
 
       await stream.close();
     });

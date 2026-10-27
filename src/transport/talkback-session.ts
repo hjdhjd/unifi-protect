@@ -9,9 +9,9 @@
  * the livestream, but its structural sibling is **{@link EventStream}, not {@link LivestreamSession}**. The distinction is deliberate - `LivestreamSession` is
  * constructed non-atomically only because its pool needs synchronous map registration so concurrent early subscribers can share one in-flight session, a constraint
  * talkback (per call, never shared) does not have. So talkback follows `EventStream`'s atomic `static connect()`: ready or throws, no half-open. It is *simpler* than
- * both siblings: no frame decoder, no init-segment cache, no segment rail, and **no `EventBus`, no watchdog, no `Clock`, no recovery loop**. The channel is write-only,
- * the bytes are opaque, and there is no inbound stream to time out or reconnect mid-sentence (silently replaying stale buffered audio into a live conversation is worse
- * than a clean end).
+ * both siblings: no frame decoder, no init-segment cache, no segment rail, and **no `EventBus`, no watchdog, no timer, no recovery loop** - its injected `Clock` is
+ * read only to time a connection attempt, never on the write path. The channel is write-only, the bytes are opaque, and there is no inbound stream to time out or
+ * reconnect mid-sentence (silently replaying stale buffered audio into a live conversation is worse than a clean end).
  *
  * **The write API is the dual of the receive channel.** The livestream's consumer surface is `AsyncIterable<Segment>` - the library is the source, the consumer pulls.
  * The honest mirror inverts that: the consumer is the source and the library pulls. So the single write entry, {@link TalkbackSession.send}, drains a consumer-supplied
@@ -35,16 +35,21 @@
 import { Agent, WebSocket } from "undici";
 import { ProtectAbortedError, ProtectError, ProtectNetworkError, isExpectedWsDisconnect } from "../errors.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
+import { createOwnedConnector, releaseOwned } from "./connector.ts";
+import type { Clock } from "../clock.ts";
+import type { OwnedDispatcher } from "./connector.ts";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWritableWebSocket } from "./ws.ts";
 import { channels } from "../diagnostics.ts";
+import { classifySocketFailure } from "./ws.ts";
 import { noopLog } from "../logging.ts";
+import { wallClock } from "../clock.ts";
 
 /**
  * The deterministic lifecycle of a talkback session. The transitions are: construction begins connecting (`connecting`); WebSocket `open` advances to `live` (and the
  * static `connect()`'s promise resolves); every teardown path - an error, the caller's abort, an explicit `close()`, or a peer-initiated close - moves to `closed`
- * synchronously, and the owned agent is released asynchronously behind `close()`'s promise. `closing` is a momentary arm set inside the teardown call just before
+ * synchronously, and the owned connection is released asynchronously behind `close()`'s promise. `closing` is a momentary arm set inside the teardown call just before
  * `closed`, so a reader of `state` never observes it. There is no `handshaking` arm - talkback has no init segment.
  *
  * @category Transport
@@ -55,13 +60,15 @@ export type TalkbackState = "closed" | "closing" | "connecting" | "live";
  * Construction options for {@link TalkbackSession}.
  *
  * - `cameraId` is the camera whose speaker receives the audio - the only negotiation param.
+ * - `clock` is the time source a connection attempt that times out is measured on; it defaults to the wall clock, and tests inject a fake. It is read only for that
+ *   measure, never on the write path.
  * - `log` receives the session's diagnostics logging; it defaults to a no-op logger.
  * - `resolveUrl` is the negotiation hook, identical in type to {@link LivestreamSession}'s: given the request params it returns the controller-minted, host-rewritten
  *   WebSocket URL. The composition root wires it to a transport-backed GET (see `talkbackUrlResolver`); tests pass a one-line fake.
  * - `webSocket` is the injected I/O dependency - the write-direction `ProtectWritableWebSocket`, distinct from the receive-direction interface {@link EventStream} /
  *   {@link LivestreamSession} share; omit it for the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts, the session tears down and an in-flight `send` rejects.
- * - `verifyTls` opts the owned agent into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
+ * - `verifyTls` opts the owned connection into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
  *   `webSocket` factory builds no agent here, so the option is inert alongside one.
  *
  * @category Transport
@@ -69,6 +76,7 @@ export type TalkbackState = "closed" | "closing" | "connecting" | "live";
 export interface TalkbackSessionOptions {
 
   cameraId: string;
+  clock?: Clock;
   log?: ProtectLogging;
   resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   signal?: AbortSignal;
@@ -86,6 +94,7 @@ export interface TalkbackSessionOptions {
 export class TalkbackSession implements AsyncDisposable {
 
   readonly #cameraId: string;
+  readonly #clock: Clock;
   // One AbortController governs every WebSocket listener and the caller's abort. A single abort() detaches them all at once - the same teardown primitive the sibling
   // sessions use.
   readonly #controller = new AbortController();
@@ -102,12 +111,15 @@ export class TalkbackSession implements AsyncDisposable {
   readonly #opened: Promise<void>;
   readonly #settleOpen: (error?: ProtectError) => void;
 
-  // The agent we own only when we built the default WebSocket; null when a factory was injected. Mirrors EventStream / LivestreamSession: we never destroy what we did
-  // not create. The socket itself is built only after the URL is negotiated, so it is null through the connecting phase.
-  #ownedAgent: Agent | null = null;
+  // The agent and the connector we own only when we built the default WebSocket, travelling as one value; null when a factory was injected. Mirrors EventStream /
+  // LivestreamSession: we never destroy what we did not create. The socket itself is built only after the URL is negotiated, so it is null through the connecting
+  // phase, and so are the address it dials and the stamp of when its connection attempt began, which a certificate refusal and a timeout read.
+  #owned: OwnedDispatcher | null = null;
   #ws: ProtectWritableWebSocket | null = null;
+  #address = "";
+  #connectStartedAt = 0;
 
-  // The single teardown gate and the agent-destruction promise close()/dispose await; the typed failure an in-flight or subsequent send rejects with (set by a socket
+  // The single teardown gate and the connection-release promise close()/dispose await; the typed failure an in-flight or subsequent send rejects with (set by a socket
   // error or unsolicited close); and the flags that distinguish a self-initiated close from a peer one and gate the open handshake.
   #closePromise: Promise<void> | null = null;
   #closeInitiated = false;
@@ -120,6 +132,7 @@ export class TalkbackSession implements AsyncDisposable {
   private constructor(options: TalkbackSessionOptions) {
 
     this.#cameraId = options.cameraId;
+    this.#clock = options.clock ?? wallClock;
     this.#log = options.log ?? noopLog;
     this.#resolveUrl = options.resolveUrl;
     this.#verifyTls = options.verifyTls ?? false;
@@ -186,8 +199,9 @@ export class TalkbackSession implements AsyncDisposable {
    *
    * @returns A connected {@link TalkbackSession}.
    *
-   * @throws The classified `FatalError` negotiation surfaces on a non-2xx (typically {@link ProtectRequestError}), a {@link ProtectNetworkError} when the socket fails
-   *   to open, and {@link ProtectAbortedError} when the caller's signal aborts the connect.
+   * @throws The classified `FatalError` negotiation surfaces on a non-2xx (typically {@link ProtectRequestError}), the socket's classified failure when it fails
+   *   to open - a {@link ProtectNetworkError}, a {@link ProtectCertificateError} when the controller's certificate is refused, or a {@link ProtectTimeoutError}
+   *   when the connection attempt timed out - and {@link ProtectAbortedError} when the caller's signal aborts the connect.
    */
   static async connect(options: TalkbackSessionOptions): Promise<TalkbackSession> {
 
@@ -321,8 +335,8 @@ export class TalkbackSession implements AsyncDisposable {
   }
 
   /**
-   * Close the session: request the WebSocket close, detach every listener, and destroy the owned agent. Safe to call more than once, and awaitable. An in-flight {@link
-   * TalkbackSession.send} rejects.
+   * Close the session: detach every listener, request the WebSocket close, and release the connection the session owns. Safe to call more than once, and awaitable.
+   * An in-flight {@link TalkbackSession.send} rejects.
    */
   async close(): Promise<void> {
 
@@ -379,17 +393,25 @@ export class TalkbackSession implements AsyncDisposable {
       return;
     }
 
-    // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent whose certificate posture follows `verifyTls`, which is
-    // permissive by default for the controller's self-signed certificate. undici's WebSocket structurally satisfies the minimal ProtectWritableWebSocket surface, so it
-    // assigns directly - no cast.
+    /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its
+     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. `allowH2` reaches the connector and the
+     * agent alike, because a WebSocket upgrade can use HTTP/2 in neither. undici's WebSocket structurally satisfies the minimal ProtectWritableWebSocket surface, so it
+     * assigns directly - no cast. Building the socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of
+     * it, the address parsed without a throw because an injected factory may be handed a URL undici would refuse, and this runs detached.
+     */
+    this.#address = URL.parse(url)?.host ?? url;
+    this.#connectStartedAt = this.#clock.now();
+
     if(this.#webSocketFactory !== undefined) {
 
       this.#ws = this.#webSocketFactory(url);
     } else {
 
-      const agent = new Agent({ connect: { rejectUnauthorized: this.#verifyTls } });
+      const allowH2 = false;
+      const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
+      const agent = new Agent({ allowH2, connect: connector.connect });
 
-      this.#ownedAgent = agent;
+      this.#owned = { connector, dispatcher: agent };
       this.#ws = new WebSocket(url, { dispatcher: agent });
     }
 
@@ -417,23 +439,29 @@ export class TalkbackSession implements AsyncDisposable {
     }
   }
 
-  // The socket reported an error. Suppress the expected-disconnect noise (the same predicate the sibling sessions use), store the typed failure so an in-flight or
-  // subsequent send rejects with it, and request a close so teardown flows through the single close path.
+  /* The socket reported an error. The cause is taken from the connector ahead of the event, as the sibling sessions take it: a failed upgrade reports a content-free
+   * `TypeError` on this event while the connector still holds the dial's own error. The error line belongs to a live session and suppresses the expected-disconnect
+   * noise (the same predicate the sibling sessions use); a failure before open reaches its caller as the connect() rejection alone. The classified failure is stored
+   * so the connect handshake, an in-flight send or a later one rejects with it, and the request to close sends teardown through the single close path.
+   */
   #onError(event: { error?: unknown; message?: string }): void {
 
-    if(!isExpectedWsDisconnect(event.error)) {
+    const cause = this.#owned?.connector.lastDialFailure ?? event.error;
 
-      this.#log.error("The UniFi Protect talkback API reported an error.", event.error ?? event.message);
+    if(this.#live && !isExpectedWsDisconnect(cause)) {
+
+      this.#log.error("The UniFi Protect talkback API reported an error.", cause ?? event.message);
     }
 
-    this.#failure ??= new ProtectNetworkError("The UniFi Protect talkback API connection failed.", { cause: event.error });
+    this.#failure ??= classifySocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt, failed: "The UniFi Protect talkback API connection failed.",
+      host: this.#address, timedOut: "The UniFi Protect talkback API connection timed out." });
     this.#shutdown(1006, "the talkback connection errored");
   }
 
   // The single teardown. Guarded so it runs once whether triggered by the socket's close event, an error, the caller's abort, or an explicit close. An unsolicited close
   // - the peer dropped a live socket without our asking - is a failure we did not initiate, so it stores a network failure if none is set yet. Aborts the controller
   // (detaching every listener), settles a still-pending open handshake as a failure, rejects the fault promise (interrupting any in-flight send), publishes the closed
-  // diagnostic, and destroys the owned agent.
+  // diagnostic, and releases the connection the session owns.
   #onClose(code: number, reason: string): void {
 
     if(this.#closed) {
@@ -463,7 +491,9 @@ export class TalkbackSession implements AsyncDisposable {
       channels.talkbackSessionClosed.publish({ cameraId: this.#cameraId, reason } satisfies TalkbackSessionClosedPayload);
     }
 
-    this.#closePromise = (this.#ownedAgent === null) ? Promise.resolve() : this.#ownedAgent.destroy();
+    // releaseOwned destroys the agent and then releases the connector, in the order and for the reasons it states; the connector's release is what severs a socket
+    // a completed upgrade handed to the WebSocket machinery, or one still in its handshake.
+    this.#closePromise = (this.#owned === null) ? Promise.resolve() : releaseOwned(this.#owned);
   }
 
   // The caller's own signal fired. Record it as a typed aborted failure BEFORE teardown, so both places #onClose surfaces the stored #failure - the connect handshake's
@@ -475,11 +505,11 @@ export class TalkbackSession implements AsyncDisposable {
     this.#shutdown(1000, "the talkback session was aborted by the caller's signal");
   }
 
-  // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - destroying the owned agent (in #onClose) is what guarantees the
-  // underlying connection is released even if the close frame never completes. A teardown before the socket was built (a negotiation abort) has nothing to release: the
-  // owned agent is created together with the socket, so neither exists yet. `code` classifies the teardown for the debug log using the RFC 6455 status codes and is never
-  // sent as a close frame: 1000 marks a teardown this session chose (an explicit close(), an aborted signal), and 1006 marks one forced on it (a negotiation failure, a
-  // socket error).
+  // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - releasing the owned connection (in #onClose) is what
+  // guarantees it is let go even if the close frame never completes. A teardown before the socket was built (a negotiation abort) has nothing to release: the owned
+  // agent and connector are created together with the socket, so none exists yet. `code` classifies the teardown for the debug log using the RFC 6455 status codes and
+  // is never sent as a close frame: 1000 marks a teardown this session chose (an explicit close(), an aborted signal), and 1006 marks one forced on it (a negotiation
+  // failure, a socket error).
   #shutdown(code: number, reason: string): void {
 
     // Mark this as a self-initiated teardown so #onClose does not misclassify the resulting close event as an unsolicited (failure) one.
@@ -489,6 +519,11 @@ export class TalkbackSession implements AsyncDisposable {
 
       this.#state = "closing";
     }
+
+    // The socket's listeners come off before it is asked to close, as the sibling sessions take them off: closing a socket that is still connecting makes undici fire
+    // `error` and `close` synchronously inside close(), which an attached listener would report as a socket failure for a teardown this session asked for. The abort
+    // is what detaches them, and the caller-signal binding with them.
+    this.#controller.abort();
 
     try {
 

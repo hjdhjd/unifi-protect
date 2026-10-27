@@ -30,15 +30,17 @@
 import { Agent, WebSocket } from "undici";
 import { PROTECT_LIVESTREAM_CHUNK_SIZE, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_SEGMENT_LENGTH } from "../settings.ts";
 import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectStallError, assertNever, isExpectedWsDisconnect } from "../errors.ts";
+import { classifySocketFailure, toBuffer } from "./ws.ts";
+import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { LivestreamInit } from "../protocol/init-segment.ts";
+import type { OwnedDispatcher } from "./connector.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWebSocket } from "./ws.ts";
 import type { StreamOptions } from "../event-bus.ts";
 import { describeInitSegment } from "../protocol/init-segment.ts";
 import { noopLog } from "../logging.ts";
-import { toBuffer } from "./ws.ts";
 import { wallClock } from "../clock.ts";
 
 // The frame-type identifier byte that prefixes every UniFi Protect livestream WebSocket payload. The single byte tells us how to read the body that follows it. An
@@ -70,7 +72,7 @@ const TIMESTAMP_BYTES = 8;
 /**
  * The deterministic lifecycle of a livestream session. The transitions are: `idle -> connecting` (construction begins; the URL is negotiated and the socket built),
  * `connecting -> handshaking` (WebSocket `open`), `handshaking -> live` (first init segment received and cached), and `any -> closed` (teardown run, listeners
- * detached; the owned agent's destruction is what close() awaits). A teardown the session runs itself - self-initiated (an explicit close() or an aborted signal) or
+ * detached; the owned connection's release is what close() awaits). A teardown the session runs itself - self-initiated (an explicit close() or an aborted signal) or
  * failure-driven (a negotiation failure, a socket error, or a watchdog stall) - passes through `closing` only momentarily inside that teardown, so `closing` is never
  * observable from outside; a peer-initiated close reaches `closed` directly.
  *
@@ -169,9 +171,10 @@ export type Segment =
  *   or a watchdog stall). It also carries the optional typed {@link ProtectError} cause an initiated teardown recorded - a caller abort, a failed negotiation, a socket
  *   error, or the watchdog stall - omitted for a plain or spontaneous close.
  * - `error` carries a typed {@link ProtectError}: the watchdog always emits a {@link ProtectStallError}, and a negotiation or socket failure typically wraps as a
- *   {@link ProtectNetworkError} - but when the injected `resolveUrl` hook throws an already-typed {@link ProtectError}, that instance passes through onto this rail
- *   unwrapped, so a negotiation failure can also surface a {@link ProtectStallError} or another {@link ProtectError} subtype. The error *type* is what a subscriber acts
- *   on.
+ *   {@link ProtectNetworkError} - a socket failure classified by the rule the request path reads, so a refused certificate is a {@link ProtectCertificateError} and
+ *   a connection attempt that timed out a {@link ProtectTimeoutError} - but when the injected `resolveUrl` hook throws an already-typed {@link ProtectError}, that
+ *   instance passes through onto this rail unwrapped, so a negotiation failure can also surface a {@link ProtectStallError} or another {@link ProtectError} subtype.
+ *   The error *type* is what a subscriber acts on.
  *
  * @category Transport
  */
@@ -192,7 +195,7 @@ export interface LivestreamSessionEvents {
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts at any point, the session tears down.
  * - `clock` is the watchdog's time source; it defaults to the wall clock, and tests inject a fake to drive the silence watchdog deterministically.
  * - `log` is the destination for the session's diagnostic output; it defaults to a no-op logger, so a caller that never provides one incurs no logging cost.
- * - `verifyTls` opts the owned agent into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
+ * - `verifyTls` opts the owned connection into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
  *   `webSocket` factory builds no agent here, so the option is inert alongside one.
  *
  * @category Transport
@@ -307,12 +310,18 @@ export class LivestreamSession implements AsyncDisposable {
   readonly #verifyTls: boolean;
   readonly #webSocketFactory: ((url: string) => ProtectWebSocket) | undefined;
 
-  // The agent we own only when we built the default WebSocket; null when a factory was injected. Mirrors EventStream: we never destroy what we did not create.
-  #ownedAgent: Agent | null = null;
+  // The agent and the connector we own only when we built the default WebSocket, travelling as one value; null when a factory was injected. Mirrors EventStream: we
+  // never destroy what we did not create.
+  #owned: OwnedDispatcher | null = null;
   // The socket, built only after the URL is negotiated, so it is null through the connecting phase. close() guards on it being present.
   #ws: ProtectWebSocket | null = null;
 
-  // The single teardown gate and the agent-destruction promise close()/dispose await. lastSegmentAt is the watchdog's liveness source - clock-stamped on every frame.
+  // The address the socket dials and when its connection attempt began on the injected clock, both set as the socket is built: a certificate refusal names the
+  // address, and a connection attempt that times out measures its elapsed time from the stamp.
+  #address = "";
+  #connectStartedAt = 0;
+
+  // The single teardown gate and the connection-release promise close()/dispose await. lastSegmentAt is the watchdog's liveness source - clock-stamped on every frame.
   #closePromise: Promise<void> | null = null;
   #closed = false;
   #lastSegmentAt = 0;
@@ -423,7 +432,8 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   /**
-   * Close the session: request the WebSocket close, detach every listener, end the watchdog, and destroy the owned agent. Safe to call more than once, and awaitable.
+   * Close the session: detach every listener, end the watchdog, request the WebSocket close, and release the connection the session owns. Safe to call more than
+   * once, and awaitable.
    */
   async close(): Promise<void> {
 
@@ -483,17 +493,26 @@ export class LivestreamSession implements AsyncDisposable {
       return;
     }
 
-    // Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent whose certificate posture follows `verifyTls`, which is
-    // permissive by default for the controller's self-signed certificate. The negotiated URL already carries its own authorization token, so - unlike EventStream - no
-    // auth headers are stamped on the upgrade. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it assigns directly.
+    /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its
+     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. `allowH2` reaches the connector and the
+     * agent alike, because a WebSocket upgrade can use HTTP/2 in neither. The negotiated URL already carries its own authorization token, so - unlike EventStream - no
+     * auth headers are stamped on the upgrade. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it assigns directly. Building the
+     * socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of it. The address is parsed without a throw,
+     * because an injected factory may be handed a URL undici would refuse, and this runs detached.
+     */
+    this.#address = URL.parse(url)?.host ?? url;
+    this.#connectStartedAt = this.#clock.now();
+
     if(this.#webSocketFactory !== undefined) {
 
       this.#ws = this.#webSocketFactory(url);
     } else {
 
-      const agent = new Agent({ connect: { rejectUnauthorized: this.#verifyTls } });
+      const allowH2 = false;
+      const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
+      const agent = new Agent({ allowH2, connect: connector.connect });
 
-      this.#ownedAgent = agent;
+      this.#owned = { connector, dispatcher: agent };
       this.#ws = new WebSocket(url, { dispatcher: agent });
     }
 
@@ -747,24 +766,30 @@ export class LivestreamSession implements AsyncDisposable {
     return total;
   }
 
-  // The socket reported an error. Suppress the expected-disconnect noise (the same predicate EventStream uses), surface a typed error, and request a close so teardown
-  // flows through the single close path.
+  /* The socket reported an error. The cause is taken from the connector ahead of the event, as EventStream takes it: a failed upgrade reports a content-free
+   * `TypeError` on this event while the connector still holds the dial's own error. The error line belongs to a socket whose `open` event has fired, in
+   * `handshaking` as in `live`, and suppresses the expected-disconnect noise (the same predicate EventStream uses); a failure before then reaches the pool on the rail
+   * and in the closure's cause. Either way the classified failure goes out on the error rail, and the request to close sends teardown through the single close path.
+   */
   #onError(event: { error?: unknown; message?: string }): void {
 
-    if(!isExpectedWsDisconnect(event.error)) {
+    const cause = this.#owned?.connector.lastDialFailure ?? event.error;
 
-      this.#log.error("The UniFi Protect livestream API reported an error.", event.error ?? event.message);
+    if(((this.#state === "handshaking") || (this.#state === "live")) && !isExpectedWsDisconnect(cause)) {
+
+      this.#log.error("The UniFi Protect livestream API reported an error.", cause ?? event.message);
     }
 
     // Construct the socket failure once: the same object goes out on the error rail and is carried to `#shutdown` as the closure's cause.
-    const failure = new ProtectNetworkError("The UniFi Protect livestream API connection failed.", { cause: event.error });
+    const failure = classifySocketFailure(cause, { elapsed: this.#clock.now() - this.#connectStartedAt, failed: "The UniFi Protect livestream API connection failed.",
+      host: this.#address, timedOut: "The UniFi Protect livestream API connection timed out." });
 
     this.#bus.emit("error", failure);
     this.#shutdown(1006, "the livestream connection errored", failure);
   }
 
   // The single teardown. Guarded so it runs once whether triggered by the socket's close event, an error, the watchdog, or an explicit close. Aborts the controller
-  // (detaching every listener and ending the watchdog), announces the close, and destroys the owned agent.
+  // (detaching every listener and ending the watchdog), announces the close, and releases the connection the session owns.
   #onClose(code: number, reason: string): void {
 
     if(this.#closed) {
@@ -778,15 +803,17 @@ export class LivestreamSession implements AsyncDisposable {
     this.#log.debug("The UniFi Protect livestream API connection closed.", { code, reason });
     this.#bus.emit("closed", { ...((this.#closeCause !== null) && { cause: this.#closeCause }), code, reason });
 
-    this.#closePromise = (this.#ownedAgent === null) ? Promise.resolve() : this.#ownedAgent.destroy();
+    // releaseOwned destroys the agent and then releases the connector, in the order and for the reasons it states; the connector's release is what severs a socket
+    // a completed upgrade handed to the WebSocket machinery, or one still in its handshake.
+    this.#closePromise = (this.#owned === null) ? Promise.resolve() : releaseOwned(this.#owned);
   }
 
-  // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - destroying the owned agent (in #onClose) is what guarantees the
-  // underlying connection is released even if the close frame never completes, or if we tear down before the socket was ever built (negotiation abort). An initiated
-  // teardown that knows why it closed hands the typed cause here; it is recorded only when none is set yet, so the first cause wins and a later trigger never overwrites
-  // it. `code` classifies the teardown for the `closed` event's consumers using the RFC 6455 status codes, rather than an actual close frame value: 1000 marks every
-  // self-initiated teardown (an explicit close(), an aborted signal), and 1006 marks a failure-driven one (a negotiation failure, a socket error, a stalled heartbeat).
-  // Only a close the peer starts carries the real frame's code and reason, since it reaches `#onClose` directly.
+  // Request a graceful WebSocket close, then run teardown. Calling close() on the socket is best-effort - releasing the owned connection (in #onClose) is what
+  // guarantees it is let go even if the close frame never completes, and a teardown before the socket was ever built (negotiation abort) has nothing to release. An
+  // initiated teardown that knows why it closed hands the typed cause here; it is recorded only when none is set yet, so the first cause wins and a later trigger never
+  // overwrites it. `code` classifies the teardown for the `closed` event's consumers using the RFC 6455 status codes, rather than an actual close frame value: 1000
+  // marks every self-initiated teardown (an explicit close(), an aborted signal), and 1006 marks a failure-driven one (a negotiation failure, a socket error, a stalled
+  // heartbeat). Only a close the peer starts carries the real frame's code and reason, since it reaches `#onClose` directly.
   #shutdown(code: number, reason: string, cause: ProtectError | null = null): void {
 
     this.#closeCause ??= cause;
@@ -795,6 +822,11 @@ export class LivestreamSession implements AsyncDisposable {
 
       this.#state = "closing";
     }
+
+    // The socket's listeners come off before it is asked to close, as EventStream takes them off: closing a socket that is still connecting makes undici fire `error`
+    // and `close` synchronously inside close(), which an attached listener would report as a socket failure for a teardown this session asked for. The abort is what
+    // detaches them, and it ends the watchdog and the caller-signal binding with them.
+    this.#controller.abort();
 
     try {
 

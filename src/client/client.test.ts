@@ -4,9 +4,10 @@
  * mapping for each failure stage, the Disposable event subscription, clean teardown, and the controller's URL authority at every URL the client composes. Driven
  * against an undici MockAgent.
  */
+import type { ConnectionTransitionPayload, HttpRequestStartPayload } from "../diagnostics.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectConfigurationError, ProtectNetworkError,
   ProtectProtocolError } from "../errors.ts";
-import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
+import { TestClock, errnoError, present, settle } from "homebridge-plugin-utils/testing";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
@@ -15,7 +16,6 @@ import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview,
   makeViewer } from "../fixtures.helpers.ts";
 import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
-import type { HttpRequestStartPayload } from "../diagnostics.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
 import { PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
@@ -230,6 +230,50 @@ describe("ProtectClient.connect", () => {
 
       assert.ok(captured !== undefined, "the events WebSocket factory must have been invoked during connect");
       assert.equal(captured.closeRequested, true, "the failed connect's teardown closed the socket it built");
+    });
+
+    test("connect rejects with the classified socket failure when the events WebSocket errors before it opens, and starts no recovery", async () => {
+
+      const { agent, pool } = mockController();
+      const transitions: ConnectionTransitionPayload[] = [];
+      const refused = errnoError("connect ECONNREFUSED", "ECONNREFUSED");
+      let bootstrapFetches = 0;
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(() => {
+
+        bootstrapFetches++;
+
+        return { data: makeBootstrap(), statusCode: 200 };
+      }).persist();
+
+      using transitionSubscription = subscribeToChannel(channels.connectionTransition, (payload) => void transitions.push(payload));
+
+      /* The socket errors before it opens. The connect its caller is awaiting is already failing, so the failure is that caller's rejection - the classified socket
+       * failure itself, carrying the dial's errno - and nothing reaches the error rail the connection monitor recovers from: no transition, and no verify probe
+       * fetching the bootstrap a second time.
+       */
+      await assert.rejects(ProtectClient.connect({ dispatcher: agent, host: HOST, log: silentLog(), password: "p", refreshIntervalMs: false, username: "u",
+        webSocket: (): FakeWebSocket => {
+
+          const ws = new FakeWebSocket({ autoOpen: false });
+
+          queueMicrotask(() => ws.emitError(refused));
+
+          return ws;
+        } }), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.ok(Object.is(error.cause, refused), "the rejection carries the dial's own failure");
+        assert.equal(error.code, "ECONNREFUSED");
+
+        return true;
+      });
+
+      await delay(20);
+
+      assert.deepEqual(transitions, [], "a connect that failed before the open starts no recovery");
+      assert.equal(bootstrapFetches, 1, "the verify probe never runs");
     });
   });
 

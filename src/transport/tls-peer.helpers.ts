@@ -1,18 +1,73 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * tls-peer.helpers.ts: Loopback TLS peers presenting a self-signed certificate - an HTTPS responder for the request path and a hand-rolled WebSocket upgrader for the
- * socket paths - so the certificate-verification option can be exercised at each construction site that owns a TLS connection, and the owned pool's retry
- * interceptor against the statuses a test scripts.
+ * tls-peer.helpers.ts: Loopback peers the transport suites drive real sockets against - an HTTPS responder for the request path, a hand-rolled WebSocket upgrader
+ * for the socket paths, an HTTPS peer that takes requests and answers none, a TLS peer that offers HTTP/2 ahead of HTTP/1.1 and answers nothing, a silent peer that
+ * holds a dial in its handshake, and a peer that resets every connection it accepts - with the real-time bounds a settlement and a release are read against.
  */
+import type { Http2ServerRequest, ServerHttp2Session } from "node:http2";
 import type { Server, Socket } from "node:net";
 import { loopbackCertificateFixture, loopbackPrivateKeyFixture } from "./tls.fixtures.ts";
+import type { IncomingMessage } from "node:http";
+import type { TLSSocket } from "node:tls";
 import { createHash } from "node:crypto";
 import { createServer as createHttpsServer } from "node:https";
+import { createSecureServer } from "node:http2";
+import { createServer as createTcpServer } from "node:net";
 import { createServer as createTlsServer } from "node:tls";
+import { setTimeout as delay } from "node:timers/promises";
 
 // The fixed value RFC 6455 defines for the handshake digest, and the blank line that ends an HTTP header block.
 const WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const HEADER_TERMINATOR = "\r\n\r\n";
+
+/* The real-time bound, in milliseconds, within which a cancelled or expired request settles and within which a reset or a teardown releases a connection, before a
+ * test calls it a failure. It sits more than an order of magnitude above what either costs and an order of magnitude below undici's own ten-second connect timer -
+ * which is what a settlement or a release that silently did nothing would fall through to, and is what makes the bound tell the two apart.
+ */
+export const DIAL_SETTLE_BOUND_MS = 1000;
+
+/* How long a dial test waits on real time before it reads what a cancel left alone: that no second connection attempt reached the peer, that a connection attempt
+ * left to the pool is still open, and that a request waiting on it is still pending. A re-dial is a connect syscall and an accept event, a couple of milliseconds on
+ * loopback, which a single macrotask turn does not reliably span; this wait spans it more than an order of magnitude over.
+ */
+const REDIAL_WAIT_MS = 50;
+
+// How long the resetting peer holds a connection before it resets it. The accept and a test's own reaction to it share one turn of the event loop, so any delay
+// orders the reset after whatever the test does to the connection attempt; this one also gives the client time to send the opening of its handshake.
+const HANDSHAKE_RESET_DELAY_MS = 50;
+
+// Nanoseconds per millisecond, which is the unit `process.hrtime.bigint()` answers in and the one the bound above is written in.
+const NANOSECONDS_PER_MILLISECOND = 1000000;
+
+/**
+ * Real elapsed milliseconds since a `process.hrtime.bigint()` reading.
+ *
+ * A settlement has to be bounded on real time whatever clock its subject is driven by: a virtual clock cannot tell a prompt settlement from undici's own connect
+ * timer, because the two end a request the same way and a `TestClock` reports whatever elapsed time its advance says.
+ *
+ * @param startedAt - The reading to measure from.
+ *
+ * @returns Milliseconds of real time elapsed since that reading.
+ */
+export function elapsedSince(startedAt: bigint): number {
+
+  return Number(process.hrtime.bigint() - startedAt) / NANOSECONDS_PER_MILLISECOND;
+}
+
+/**
+ * Wait out the re-dial wait on real time, and report whether every promise given was still pending when it elapsed.
+ *
+ * A promise that settles inside the wait - a rejection as much as a resolution - ends the wait early and answers `false`, so a test that expects something to stay
+ * open learns at once when it did not.
+ *
+ * @param promises - What has to stay pending: a request, an accepted connection's `closed`, or a connection the peer has yet to accept.
+ *
+ * @returns Whether the wait elapsed with every one of them still pending.
+ */
+export async function pendingThroughRedialWait(...promises: Promise<unknown>[]): Promise<boolean> {
+
+  return Promise.race([ delay(REDIAL_WAIT_MS, true), ...promises.map(async (promise) => promise.then(() => false, () => false)) ]);
+}
 
 /**
  * One connection the peer accepted, as a test observes it. `closed` is armed at accept rather than on demand, because a client that refuses the certificate severs
@@ -27,17 +82,30 @@ export interface LoopbackConnection {
  * A listening loopback peer. `host` is the `address:port` authority the library's own URL builders expect, `127.0.0.1:<port>` or, for a peer bound to IPv6,
  * `[::1]:<port>`, so a test hands it straight to a client as the controller address. Dispose it (or call `close()`) to sever every connection and stop listening.
  *
- * `handshakes` counts the TLS handshakes that completed, which is what distinguishes a client that accepted the certificate from one that refused it: both open a TCP
- * connection, and only the accepting one gets above it. `connection(index)` resolves with the connection at that position in accept order, and `whenHandshakes(count)`
- * once that many have completed - either resolving immediately if it already happened, so a test can arm itself before the client dials or read the result after.
- * Each index and each count supports a single outstanding waiter: a second concurrent call with the same argument replaces the first, whose promise never settles.
+ * `accepted` counts the connections the peer accepted at the TCP layer, which is how a test proves that a settled request was never dialed again, and
+ * `connection(index)` resolves with the connection at that position in accept order, at once if it already arrived, so a test can arm itself before the client
+ * dials or read the result after. Each index supports a single outstanding waiter: a second concurrent call with the same argument replaces the first, whose
+ * promise never settles.
  */
-export interface LoopbackTlsPeer extends AsyncDisposable {
+export interface LoopbackPeer extends AsyncDisposable {
 
-  readonly handshakes: number;
+  readonly accepted: number;
   readonly host: string;
   close(): Promise<void>;
   connection(index: number): Promise<LoopbackConnection>;
+}
+
+/**
+ * A listening loopback TLS peer. Beside every {@link LoopbackPeer} member, `handshakes` counts the TLS handshakes that completed, which is what distinguishes a
+ * client that accepted the certificate from one that refused it: both open a TCP connection, and only the accepting one gets above it. `whenHandshakes(count)`
+ * resolves once that many have completed, and `protocol(index)` with the application protocol the handshake at that position negotiated, which a test asserts
+ * before anything protocol-specific, because a row meant for one protocol that quietly ran over the other would pass for the wrong reason. Each count and each
+ * index supports a single outstanding waiter, as `connection` does.
+ */
+export interface LoopbackTlsPeer extends LoopbackPeer {
+
+  readonly handshakes: number;
+  protocol(index: number): Promise<string | false | null>;
   whenHandshakes(count: number): Promise<void>;
 }
 
@@ -48,6 +116,25 @@ export interface LoopbackTlsPeer extends AsyncDisposable {
 export interface LoopbackHttpsPeer extends LoopbackTlsPeer {
 
   readonly requests: number;
+}
+
+/**
+ * One request a peer that answers nothing received, as a test observes it: the method and the path it carried. Each is typed as the platform's request declares
+ * it, optional because that class carries a client's responses as well, though a request a server receives always carries each.
+ */
+export interface UnansweredRequest {
+
+  readonly method: string | undefined;
+  readonly path: string | undefined;
+}
+
+/**
+ * A listening loopback HTTPS peer that answers nothing. Beside every {@link LoopbackTlsPeer} member, `request(index)` resolves with the request at that position in
+ * arrival order, at once if it already arrived.
+ */
+export interface LoopbackHungHttpsPeer extends LoopbackTlsPeer {
+
+  request(index: number): Promise<UnansweredRequest>;
 }
 
 /**
@@ -71,8 +158,22 @@ export interface LoopbackHttpsPeerOptions extends LoopbackPeerOptions {
   respond?: (request: number) => { body: string; status: number };
 }
 
+/**
+ * Options for {@link createLoopbackHungHttpsPeer}, beside every {@link LoopbackPeerOptions} member.
+ *
+ * - `offerH2` decides whether the peer negotiates HTTP/2 with a client that offers it. It defaults to `true`, a secure HTTP/2 server that takes HTTP/1.1 as well and
+ *   offers `h2` ahead of `http/1.1`; `false` makes it an HTTPS server that speaks HTTP/1.1 alone, which is how a test holds a request on HTTP/1.1.
+ */
+export interface LoopbackHungHttpsPeerOptions extends LoopbackPeerOptions {
+
+  offerH2?: boolean;
+}
+
 // The answer a peer gives when a test scripts none: a 200 and a small JSON body, all a test asking whether a request completes needs.
 const answerOk = (): { body: string; status: number } => ({ body: "{\"ok\":true}", status: 200 });
+
+// The throwaway self-signed identity every TLS peer here presents, which stands in for the certificate a controller itself presents.
+const identity = { cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture };
 
 /**
  * Build a loopback HTTPS peer that answers each request as `respond` decides and counts the requests it answered, presenting the throwaway self-signed identity a
@@ -90,7 +191,7 @@ export async function createLoopbackHttpsPeer({ ipv6 = false, respond = answerOk
 
   let requests = 0;
 
-  const server = createHttpsServer({ cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture }, (_request, response) => {
+  const server = createHttpsServer(identity, (_request, response) => {
 
     requests++;
 
@@ -101,11 +202,75 @@ export async function createLoopbackHttpsPeer({ ipv6 = false, respond = answerOk
   });
 
   const peer = await startPeer(server, { ipv6 });
-  const close = async (): Promise<void> => peer.close();
 
-  // The peer is wrapped member by member rather than spread, because a spread copies the `handshakes` getter's value once and would freeze the count at that moment.
+  // The peer is wrapped member by member rather than spread, because a spread copies each getter's value once and would freeze its count at that moment.
   return {
 
+    get accepted(): number {
+
+      return peer.accepted;
+    },
+    close: async (): Promise<void> => peer.close(),
+    connection: async (index: number): Promise<LoopbackConnection> => peer.connection(index),
+    get handshakes(): number {
+
+      return peer.handshakes;
+    },
+    host: peer.host,
+    protocol: async (index: number): Promise<string | false | null> => peer.protocol(index),
+    get requests(): number {
+
+      return requests;
+    },
+    whenHandshakes: async (count: number): Promise<void> => peer.whenHandshakes(count),
+    [Symbol.asyncDispose]: async (): Promise<void> => peer.close()
+  };
+}
+
+/**
+ * Build a loopback HTTPS peer that takes every request and answers none, over HTTP/2 or HTTP/1.1.
+ *
+ * A request this peer has received is in flight on an established connection for as long as a test needs it, which is the state a teardown meets once the dial is
+ * over and the one neither the silent peers nor the responder can hold. Each request is recorded as it arrives, so a test arms itself against it before the client
+ * sends it and tears down only once it is in flight.
+ *
+ * @param options - The peer's options; see {@link LoopbackHungHttpsPeerOptions}.
+ *
+ * @returns The listening peer. Dispose it to end every session and connection and stop listening.
+ */
+export async function createLoopbackHungHttpsPeer({ ipv6 = false, offerH2 = true }: LoopbackHungHttpsPeerOptions = {}): Promise<LoopbackHungHttpsPeer> {
+
+  const requests = createLedger<UnansweredRequest>();
+  const sessions: ServerHttp2Session[] = [];
+
+  // Each server hands this one handler its requests, and it reads only what the HTTP/2 server's request and the HTTPS server's request have in common.
+  const onRequest = (request: Http2ServerRequest | IncomingMessage): void => requests.record({ method: request.method, path: request.url });
+
+  /* Which server answers decides the protocol, rather than a setting on one server: the HTTP/2 server writes its own offer, with `h2` at its head, while the HTTPS
+   * server offers `http/1.1` alone. Only the HTTP/2 server opens sessions, so only it records them for the disposal to end.
+   */
+  const server = offerH2 ? createSecureServer({ ...identity, allowHTTP1: true }, onRequest).on("session", (session) => void sessions.push(session)) :
+    createHttpsServer(identity, onRequest);
+
+  const peer = await startPeer(server, { ipv6 });
+
+  // An HTTP/2 session is ended ahead of the socket it runs over, so no session outlives the connection under it.
+  const close = async (): Promise<void> => {
+
+    for(const session of sessions) {
+
+      session.destroy();
+    }
+
+    await peer.close();
+  };
+
+  return {
+
+    get accepted(): number {
+
+      return peer.accepted;
+    },
     close,
     connection: async (index: number): Promise<LoopbackConnection> => peer.connection(index),
     get handshakes(): number {
@@ -113,13 +278,72 @@ export async function createLoopbackHttpsPeer({ ipv6 = false, respond = answerOk
       return peer.handshakes;
     },
     host: peer.host,
-    get requests(): number {
-
-      return requests;
-    },
+    protocol: async (index: number): Promise<string | false | null> => peer.protocol(index),
+    request: async (index: number): Promise<UnansweredRequest> => requests.at(index),
     whenHandshakes: async (count: number): Promise<void> => peer.whenHandshakes(count),
     [Symbol.asyncDispose]: close
   };
+}
+
+/**
+ * Build a loopback TLS peer that offers `h2` ahead of `http/1.1`, completes the handshake, and then answers nothing above it.
+ *
+ * The peer negotiates whatever the client offered that it prefers, so the protocol each handshake recorded is a reading of the client's own offer: `h2` from a client
+ * that offers HTTP/2 and `http/1.1` from one that withholds it. Answering nothing also holds a WebSocket upgrade pending after TLS, one stage further along than the
+ * silent peer holds a dial.
+ *
+ * @param options - The peer's options; see {@link LoopbackPeerOptions}.
+ *
+ * @returns The listening peer.
+ */
+export async function createLoopbackAlpnPeer({ ipv6 = false }: LoopbackPeerOptions = {}): Promise<LoopbackTlsPeer> {
+
+  const server = createTlsServer({ ALPNProtocols: [ "h2", "http/1.1" ], ...identity });
+
+  // Every accepted socket is put in flowing mode, because a socket that is never read may never emit `close` once its peer severs it.
+  server.on("secureConnection", (socket: TLSSocket) => socket.resume());
+
+  return startPeer(server, { ipv6 });
+}
+
+/**
+ * Build a loopback peer that accepts every connection and then says nothing at all.
+ *
+ * A TLS client dialing it completes TCP and waits forever in the handshake, which is the one peer behavior that leaves a connection attempt in flight for as long as
+ * a test needs it - a black hole at a loopback address, with none of a routed black hole's dependence on the network.
+ *
+ * @param options - The peer's options; see {@link LoopbackPeerOptions}.
+ *
+ * @returns The listening peer.
+ */
+export async function createLoopbackSilentPeer({ ipv6 = false }: LoopbackPeerOptions = {}): Promise<LoopbackPeer> {
+
+  // Every accepted socket is put in flowing mode, because a socket that is never read may never emit `close` once its peer severs it.
+  return startPeer(createTcpServer((socket) => socket.resume()), { ipv6 });
+}
+
+/**
+ * Build a loopback peer that accepts every connection, says nothing, and resets it a short while later.
+ *
+ * A TLS client dialing it completes TCP and then has its handshake reset under it, reported as `ECONNRESET` - a connection fault undici's retry interceptor treats as
+ * retryable, so this is the peer that asks whether a failed connection attempt is dialed again. The delay before the reset is the window a test acts in while the
+ * attempt is still in flight, and the accepted connection's `closed` is how a test knows the reset has landed.
+ *
+ * @param options - The peer's options; see {@link LoopbackPeerOptions}.
+ *
+ * @returns The listening peer.
+ */
+export async function createLoopbackResettingPeer({ ipv6 = false }: LoopbackPeerOptions = {}): Promise<LoopbackPeer> {
+
+  return startPeer(createTcpServer((socket) => {
+
+    socket.resume();
+
+    const reset = setTimeout(() => socket.resetAndDestroy(), HANDSHAKE_RESET_DELAY_MS);
+
+    // A connection that ends before its reset is due, severed by the client or by disposal, has nothing left to reset.
+    socket.once("close", () => clearTimeout(reset));
+  }), { ipv6 });
 }
 
 /**
@@ -128,8 +352,8 @@ export async function createLoopbackHttpsPeer({ ipv6 = false, respond = answerOk
  *
  * Holding rather than conversing is the whole point. Every WebSocket URL this library connects to is `wss://` - the events URL by construction, and the negotiated
  * livestream and talkback URLs as the controller mints them - so reaching a session's own socket path takes a real TLS peer, and what these tests ask is whether the
- * handshake completes at all - which the client's `open` event answers on its own. The frame protocol above the socket is the injected-fake suites' subject, not
- * this peer's.
+ * handshake completes at all - which the client's `open` event answers on its own - and whether a teardown ends the connection, which a peer that never answers the
+ * close frame leaves to the client alone. The frame protocol above the socket is the injected-fake suites' subject, not this peer's.
  *
  * @param options - The peer's options; see {@link LoopbackPeerOptions}.
  *
@@ -138,7 +362,7 @@ export async function createLoopbackHttpsPeer({ ipv6 = false, respond = answerOk
 export async function createLoopbackWebSocketPeer({ ipv6 = false }: LoopbackPeerOptions = {}): Promise<LoopbackTlsPeer> {
 
   // The peer offers only http/1.1 over ALPN because the WebSocket upgrade it answers by hand is an HTTP/1.1 exchange.
-  const server = createTlsServer({ ALPNProtocols: ["http/1.1"], cert: loopbackCertificateFixture, key: loopbackPrivateKeyFixture });
+  const server = createTlsServer({ ALPNProtocols: ["http/1.1"], ...identity });
 
   server.on("secureConnection", (socket) => {
 
@@ -182,25 +406,72 @@ function acceptDigest(key: string): string {
   return createHash("sha1").update(key + WEBSOCKET_ACCEPT_GUID).digest("base64");
 }
 
+// The arrival-order bookkeeping every peer here shares: values recorded in the order they arrive, and an accessor that resolves with the one at a given position
+// whether it has already arrived or is still to come. Arming against a value before the client produces it is what these tests need, because severance lands within
+// milliseconds of a teardown and a listener attached after the fact would miss the very event it exists to observe.
+interface Ledger<T> {
+
+  readonly count: number;
+  at(index: number): Promise<T>;
+  record(value: T): void;
+}
+
+function createLedger<T>(): Ledger<T> {
+
+  const values: T[] = [];
+  const waiting = new Map<number, (value: T) => void>();
+
+  return {
+
+    at: async (index: number): Promise<T> => {
+
+      const arrived = values[index];
+
+      if(arrived !== undefined) {
+
+        return arrived;
+      }
+
+      const { promise, resolve } = Promise.withResolvers<T>();
+
+      waiting.set(index, resolve);
+
+      return promise;
+    },
+    get count(): number {
+
+      return values.length;
+    },
+    record: (value: T): void => {
+
+      const index = values.length;
+
+      values.push(value);
+      waiting.get(index)?.(value);
+      waiting.delete(index);
+    }
+  };
+}
+
 // Bind the server to an ephemeral port on the loopback address of the family asked for and wrap it as a disposable peer. Shared by every peer above so the listen,
-// address, and teardown semantics are identical whichever protocol runs on top.
+// address, accept-order and teardown semantics are identical whichever protocol runs on top, or none.
 async function startPeer(server: Server, { ipv6 }: Required<LoopbackPeerOptions>): Promise<LoopbackTlsPeer> {
 
-  const connections: LoopbackConnection[] = [];
+  const connections = createLedger<LoopbackConnection>();
   const listening = Promise.withResolvers<undefined>();
+  const protocols = createLedger<string | false | null>();
   const sockets: Socket[] = [];
-  const waiting = new Map<number, (connection: LoopbackConnection) => void>();
   const waitingOnHandshakes = new Map<number, (value: undefined) => void>();
-  let handshakes = 0;
 
-  // Handshakes are counted above the TCP layer, so the count rises only for a client that accepted the certificate.
-  server.on("secureConnection", () => {
+  // Handshakes are counted above the TCP layer, so the count rises only for a client that accepted the certificate, and the protocol each one negotiated is recorded
+  // in the same order. A server with no TLS above it never reaches this event, so its count stays at zero.
+  server.on("secureConnection", (socket: TLSSocket) => {
 
-    handshakes++;
+    protocols.record(socket.alpnProtocol);
 
     for(const [ count, resolve ] of waitingOnHandshakes) {
 
-      if(handshakes >= count) {
+      if(protocols.count >= count) {
 
         waitingOnHandshakes.delete(count);
         resolve(undefined);
@@ -214,18 +485,14 @@ async function startPeer(server: Server, { ipv6 }: Required<LoopbackPeerOptions>
   server.on("connection", (socket: Socket) => {
 
     const closed = Promise.withResolvers<undefined>();
-    const connection: LoopbackConnection = { closed: closed.promise.then(() => undefined) };
-    const index = connections.length;
 
-    connections.push(connection);
     sockets.push(socket);
     socket.once("close", () => closed.resolve(undefined));
 
     // A client severing its end is what these tests arrange, so the reset it raises here is expected rather than a fault.
     socket.on("error", () => undefined);
 
-    waiting.get(index)?.(connection);
-    waiting.delete(index);
+    connections.record({ closed: closed.promise.then(() => undefined) });
   });
 
   server.listen(0, ipv6 ? "::1" : "127.0.0.1", () => listening.resolve(undefined));
@@ -257,30 +524,21 @@ async function startPeer(server: Server, { ipv6 }: Required<LoopbackPeerOptions>
 
   return {
 
-    close,
-    connection: async (index: number): Promise<LoopbackConnection> => {
+    get accepted(): number {
 
-      const arrived = connections[index];
-
-      if(arrived !== undefined) {
-
-        return arrived;
-      }
-
-      const { promise, resolve } = Promise.withResolvers<LoopbackConnection>();
-
-      waiting.set(index, resolve);
-
-      return promise;
+      return connections.count;
     },
+    close,
+    connection: async (index: number): Promise<LoopbackConnection> => connections.at(index),
     get handshakes(): number {
 
-      return handshakes;
+      return protocols.count;
     },
     host: (ipv6 ? "[::1]:" : "127.0.0.1:") + address.port.toString(),
+    protocol: async (index: number): Promise<string | false | null> => protocols.at(index),
     whenHandshakes: async (count: number): Promise<void> => {
 
-      if(handshakes >= count) {
+      if(protocols.count >= count) {
 
         return;
       }

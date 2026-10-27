@@ -4,10 +4,12 @@
  * and teardown. Driven through an injected fake WebSocket, a fake resolver, and a `TestClock`, so the session is exercised deterministically without a live controller.
  */
 import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
+import type { ConnectionOptions, TLSSocket } from "node:tls";
+import { DIAL_SETTLE_BOUND_MS, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
 import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
-import { ProtectAbortedError, ProtectNetworkError, ProtectStallError } from "../errors.ts";
-import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
+import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
 import { assertNoUnhandledRejections, silentLog } from "../testing.helpers.ts";
 import { buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { describe, test } from "node:test";
@@ -15,8 +17,8 @@ import { FakeWebSocket } from "./events-stream.helpers.ts";
 import { PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT } from "../settings.ts";
 import type { ProtectError } from "../errors.ts";
 import assert from "node:assert/strict";
-import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
+import tls from "node:tls";
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
@@ -622,9 +624,115 @@ describe("LivestreamSession", () => {
       await Promise.race([ session.once("error"), peer.whenHandshakes(1) ]);
 
       assert.equal(peer.handshakes, 0, "a strict session must refuse the certificate before the handshake completes");
-      assert.ok(errors[0] instanceof ProtectNetworkError);
+
+      const [refusal] = errors;
+
+      // The refusal reads as one here as on the request path, naming the address the session dialed, and is the closure's cause the pool reads at a give-up.
+      assert.ok(refusal instanceof ProtectCertificateError);
+      assert.equal(refusal.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+      assert.equal(refusal.host, peer.host);
+      assert.ok(Object.is(session.closeCause, refusal));
 
       await session.close();
+    });
+  });
+
+  /* What the session does with the connection it owns, over the default factory's real socket. A fake has no connection to release and never fires the synchronous
+   * `error` and `close` a real socket fires when it is closed mid-connect, so nothing above a fake can tell whether the real connection was let go or whether a
+   * teardown the session asked for reached its error rail. Each row bounds a release on real time, against undici's ten-second connect timer.
+   */
+  describe("a real connection", () => {
+
+    test("close() of an open session ends its connection at once, though the peer never answers the close frame", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      const connection = await peer.connection(0);
+      const startedAt = process.hrtime.bigint();
+
+      await session.close();
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "the session's close releases the connection rather than waiting on the peer");
+    });
+
+    test("a caller abort during the TLS dial releases the socket at once and keeps the error rail empty", async () => {
+
+      await using peer = await createLoopbackSilentPeer();
+
+      const controller = new AbortController();
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", signal: controller.signal,
+        spec: { cameraId: "cam1" } });
+      const errors = collectErrors(session);
+      const closed = Promise.withResolvers<{ cause?: ProtectError; code: number; reason: string }>();
+
+      session.on("closed", (info) => closed.resolve(info));
+
+      const connection = await peer.connection(0);
+      const startedAt = process.hrtime.bigint();
+
+      // The listeners come off before the socket is asked to close, so the teardown the caller asked for carries its own cause rather than a socket failure.
+      controller.abort();
+
+      const info = await closed.promise;
+
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a cancelled connection attempt is released at once rather than lingering to undici's own timer");
+      assert.deepEqual(errors, [], "a caller's cancel is no socket failure");
+      assert.equal(info.code, 1000);
+      assert.ok(info.cause instanceof ProtectAbortedError);
+    });
+
+    test("a dial nothing is listening for carries the platform's own errno onto the rail", async () => {
+
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://127.0.0.1:" + (await freePort()).toString() + "/live",
+        spec: { cameraId: "cam1" } });
+      const [error] = await session.once("error");
+
+      assert.ok(error instanceof ProtectNetworkError);
+      assert.ok(!(error instanceof ProtectCertificateError));
+      assert.equal(error.code, "ECONNREFUSED", "the connector's record of the dial is what carries the errno");
+      assert.ok(Object.is(session.closeCause, error));
+    });
+
+    test("a connection attempt that times out reaches the rail as ProtectTimeoutError measured on the injected clock", async (t) => {
+
+      await using peer = await createLoopbackSilentPeer();
+
+      const clock = new TestClock();
+      const dials: TLSSocket[] = [];
+      const dial = tls.connect;
+      const elapsedMs = 2500;
+
+      // The platform's dial is wrapped for this test alone, as the events stream's own row wraps it, so a timeout reaches the session the way a real one does.
+      t.mock.method(tls, "connect", (options: ConnectionOptions): TLSSocket => {
+
+        const socket = dial(options);
+
+        dials.push(socket);
+
+        return socket;
+      });
+
+      const session = new LivestreamSession({ clock, log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+        spec: { cameraId: "cam1" } });
+      const failing = session.once("error");
+
+      await peer.connection(0);
+      clock.advance(elapsedMs);
+
+      present(dials[0], "the dial the owned connector vended").destroy(Object.assign(new AggregateError([errnoError("connect ETIMEDOUT " + peer.host, "ETIMEDOUT")],
+        "connect ETIMEDOUT"), { code: "ETIMEDOUT" }));
+
+      const [error] = await failing;
+
+      assert.ok(error instanceof ProtectTimeoutError);
+      assert.equal(error.message, "The UniFi Protect livestream API connection timed out.");
+      assert.equal(error.elapsedMs, elapsedMs, "the elapsed time is the injected clock's own measure from the start of the attempt");
     });
   });
 

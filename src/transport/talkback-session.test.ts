@@ -4,8 +4,11 @@
  * failure, backpressure ceiling, ffmpeg-style Readable, and which exits wait on the source's cleanup), the FSM, teardown, and the diagnostics channels. Driven
  * through an injected fake WebSocket and a fake resolver, so the write-only channel is exercised deterministically without a live controller.
  */
-import { ProtectAbortedError, ProtectNetworkError, ProtectRequestError } from "../errors.ts";
+import type { ConnectionOptions, TLSSocket } from "node:tls";
+import { DIAL_SETTLE_BOUND_MS, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
+import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectRequestError, ProtectTimeoutError } from "../errors.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../diagnostics.ts";
+import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
 import { assertNoUnhandledRejections, silentLog } from "../testing.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
@@ -14,8 +17,7 @@ import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
 import { Readable } from "node:stream";
 import { TalkbackSession } from "./talkback-session.ts";
 import assert from "node:assert/strict";
-import { createLoopbackWebSocketPeer } from "./tls-peer.helpers.ts";
-import { settle } from "homebridge-plugin-utils/testing";
+import tls from "node:tls";
 
 // A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
 const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
@@ -418,9 +420,114 @@ describe("TalkbackSession", () => {
       await using peer = await createLoopbackWebSocketPeer();
 
       // The same peer and the same upgrade, one option apart. connect() is atomic, so a handshake the client will not complete surfaces as its rejection - there is
-      // no half-open session to inspect.
+      // no half-open session to inspect - and the rejection is the refusal itself, naming the address the session dialed.
       await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log: silentLog(),
-        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback", verifyTls: true }), ProtectNetworkError);
+        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback", verifyTls: true }), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCertificateError);
+        assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
+        assert.equal(error.host, peer.host);
+
+        return true;
+      });
+    });
+  });
+
+  /* What the session does with the connection it owns, over the default factory's real socket. A fake has no connection to release and never fires the synchronous
+   * `error` and `close` a real socket fires when it is closed mid-connect. Each row bounds a release on real time, against undici's ten-second connect timer.
+   */
+  describe("a real connection", () => {
+
+    test("close() of a live session ends its connection at once, though the peer never answers the close frame", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const session = await TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+      const connection = await peer.connection(0);
+      const startedAt = process.hrtime.bigint();
+
+      await session.close();
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "the session's close releases the connection rather than waiting on the peer");
+    });
+
+    test("a caller abort during the TLS dial releases the socket at once and records the caller's cancel as the closure", async () => {
+
+      await using peer = await createLoopbackSilentPeer();
+
+      const payloads: TalkbackSessionClosedPayload[] = [];
+
+      using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed, (payload) => void payloads.push(payload));
+
+      const controller = new AbortController();
+      const connecting = TalkbackSession.connect({ cameraId: "cam-dial-abort", log: silentLog(),
+        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback", signal: controller.signal });
+      const connection = await peer.connection(0);
+      const startedAt = process.hrtime.bigint();
+
+      /* The listeners come off before the socket is asked to close, so the closure the session publishes is the caller's cancel rather than the socket failure a
+       * listener left attached would have reported first. connect() rejects with the caller's abort either way, so the closed diagnostic is what tells them apart.
+       */
+      controller.abort();
+
+      await assert.rejects(connecting, ProtectAbortedError);
+      await connection.closed;
+
+      assert.ok(elapsedSince(startedAt) < DIAL_SETTLE_BOUND_MS, "a cancelled connection attempt is released at once rather than lingering to undici's own timer");
+      assert.deepEqual(payloads.filter((payload) => payload.cameraId === "cam-dial-abort"),
+        [{ cameraId: "cam-dial-abort", reason: "the talkback session was aborted by the caller's signal" }]);
+    });
+
+    test("a dial nothing is listening for rejects connect with the platform's own errno", async () => {
+
+      const url = "wss://127.0.0.1:" + (await freePort()).toString() + "/talkback";
+
+      await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveUrl: async (): Promise<string> => url }), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectNetworkError);
+        assert.ok(!(error instanceof ProtectCertificateError));
+        assert.equal(error.code, "ECONNREFUSED", "the connector's record of the dial is what carries the errno");
+
+        return true;
+      });
+    });
+
+    test("a connection attempt that times out rejects connect with ProtectTimeoutError measured on the injected clock", async (t) => {
+
+      await using peer = await createLoopbackSilentPeer();
+
+      const clock = new TestClock();
+      const dials: TLSSocket[] = [];
+      const dial = tls.connect;
+      const elapsedMs = 2500;
+
+      // The platform's dial is wrapped for this test alone, as the events stream's own row wraps it, so a timeout reaches the session the way a real one does.
+      t.mock.method(tls, "connect", (options: ConnectionOptions): TLSSocket => {
+
+        const socket = dial(options);
+
+        dials.push(socket);
+
+        return socket;
+      });
+
+      const connecting = TalkbackSession.connect({ cameraId: "cam1", clock, log: silentLog(),
+        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      await peer.connection(0);
+      clock.advance(elapsedMs);
+
+      present(dials[0], "the dial the owned connector vended").destroy(Object.assign(new AggregateError([errnoError("connect ETIMEDOUT " + peer.host, "ETIMEDOUT")],
+        "connect ETIMEDOUT"), { code: "ETIMEDOUT" }));
+
+      await assert.rejects(connecting, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectTimeoutError);
+        assert.equal(error.message, "The UniFi Protect talkback API connection timed out.");
+        assert.equal(error.elapsedMs, elapsedMs, "the elapsed time is the injected clock's own measure from the start of the attempt");
+
+        return true;
+      });
     });
   });
 
