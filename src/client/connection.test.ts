@@ -333,6 +333,25 @@ function hintLines(log: CapturingLogger): unknown[][] {
   return log.entries.filter((entry) => (entry.level === "debug") && entry.message.includes("asked for more time")).map(({ args }) => args);
 }
 
+// The availability facts as a synchronous stateChanged listener reads them at an edge, beside the state that edge reached.
+interface EdgeFacts {
+
+  isLost: boolean;
+  isRebooting: boolean;
+  to: ConnectionState;
+}
+
+// Read the availability facts inside a stateChanged listener at every edge from here on, so a row asserts what a consumer sees at the moment each edge fires
+// rather than after the work that follows it has run.
+function factsAtEachEdge(monitor: ConnectionMonitor): EdgeFacts[] {
+
+  const edges: EdgeFacts[] = [];
+
+  monitor.on("stateChanged", ({ to }): void => void edges.push({ isLost: monitor.isLost, isRebooting: monitor.isRebooting, to }));
+
+  return edges;
+}
+
 describe("ConnectionMonitor", () => {
 
   describe("initial state", () => {
@@ -1099,6 +1118,280 @@ describe("ConnectionMonitor", () => {
       assert.equal(clock.pending, 1, "and recovery parks on that one wait alone");
 
       await monitor[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("availability facts", () => {
+
+    test("an unknown fault that recovers on its first probe reads neither fact at any edge", async () => {
+
+      const { clock, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      assert.equal(monitor.isLost, false, "a healthy connection is not lost");
+      assert.equal(monitor.isRebooting, false, "and is not rebooting");
+
+      const edges = factsAtEachEdge(monitor);
+
+      streams[0]?.emitError(new Error("socket dropped"));
+      await pump(clock);
+      await expectAt(() => monitor.state === "healthy", { message: "expected the first probe to recover the connection" });
+
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: false, to: "degraded" }, { isLost: false, isRebooting: false, to: "reconnecting" },
+        { isLost: false, isRebooting: false, to: "healthy" } ]);
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("an unknown fault that fails then recovers reads lost from the edge into lost until the edge back to healthy", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factsAtEachEdge(monitor);
+
+      control.setVerifyError(new ProtectNetworkError("down"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await pump(clock);
+      await expectAt(() => monitor.state === "lost", { message: "expected the failed probe to report the connection lost" });
+
+      control.setVerifyError(null);
+      await pump(clock);
+      await expectAt(() => monitor.state === "healthy", { message: "expected recovery once the controller returned" });
+
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: false, to: "degraded" }, { isLost: true, isRebooting: false, to: "lost" },
+        { isLost: true, isRebooting: false, to: "reconnecting" }, { isLost: false, isRebooting: false, to: "healthy" } ]);
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a known reboot back on the first probe reads rebooting from the edge into degraded until the edge back to healthy", async () => {
+
+      const { clock, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factsAtEachEdge(monitor);
+
+      monitor.expectReboot();
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_KNOWN_MS.slice(0, 1));
+      await expectAt(() => monitor.state === "healthy", { message: "expected the known track's first probe to recover the connection" });
+
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: true, to: "degraded" }, { isLost: false, isRebooting: true, to: "reconnecting" },
+        { isLost: false, isRebooting: false, to: "healthy" } ]);
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a known reboot that fails then recovers reads lost and rebooting from the edge into lost until the edge back to healthy", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factsAtEachEdge(monitor);
+
+      control.setVerifyError(new ProtectNetworkError("rebooting"));
+      monitor.expectReboot();
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_KNOWN_MS.slice(0, 1));
+      await expectAt(() => monitor.state === "lost", { message: "expected the still-rebooting controller to be reported lost" });
+
+      control.setVerifyError(null);
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_KNOWN_MS.slice(1, 2));
+      await expectAt(() => monitor.state === "healthy", { message: "expected recovery once the controller returned" });
+
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: true, to: "degraded" }, { isLost: true, isRebooting: true, to: "lost" },
+        { isLost: true, isRebooting: true, to: "reconnecting" }, { isLost: false, isRebooting: false, to: "healthy" } ]);
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a known reboot whose controller then refuses reads rebooting until the edge back to healthy, though recovery leaves the known track", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factsAtEachEdge(monitor);
+
+      // A known reboot opens the episode on the long track, and the attempt its first delay releases is refused.
+      control.setVerifyError(new ProtectAuthError("refused", { statusCode: 401 }));
+      monitor.expectReboot();
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+      await assertRecoveryDelays({ delays: PROTECT_RECOVERY_BACKOFF_KNOWN_MS.slice(0, 1), label: "the known track's first wait", rig: { clock, control } });
+
+      /* The refusal's first rung releases an attempt that finds the controller unreachable, so the network schedule restarts on the unknown track, whose immediate
+       * rung releases another. Recovery has left the track the episode opened on, and the episode is still the reboot it opened as.
+       */
+      control.setVerifyError(new ProtectNetworkError("down"));
+      await assertRecoveryDelays({ delays: [ ...PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS.backoff.slice(0, 1), ...PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1) ],
+        label: "a refusal, then unreachable", rig: { clock, control } });
+      assert.equal(monitor.isRebooting, true, "a refusal does not end the reboot the episode opened as");
+
+      control.setVerifyError(null);
+      await pump(clock);
+      await expectAt(() => monitor.state === "healthy", { message: "expected recovery once the controller answered" });
+
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: true, to: "degraded" }, { isLost: true, isRebooting: true, to: "lost" },
+        { isLost: true, isRebooting: true, to: "reconnecting" }, { isLost: false, isRebooting: false, to: "healthy" } ]);
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a reboot armed mid-episode leaves rebooting off until recovery, and the next episode's fault inside the window turns it on", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factsAtEachEdge(monitor);
+
+      // The unknown track's immediate rung releases an attempt that fails, so the episode is lost before the reboot is armed.
+      control.setVerifyError(new ProtectNetworkError("down"));
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1));
+      await expectAt(() => monitor.state === "lost", { message: "expected the failed probe to report the connection lost" });
+
+      monitor.expectReboot();
+      assert.equal(monitor.isRebooting, false, "a reboot armed mid-episode leaves the episode as it opened");
+
+      // The next rung recovers the connection well inside the anticipation window, so the anticipation is still armed when the next episode opens.
+      control.setVerifyError(null);
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(1, 2));
+      await expectAt(() => monitor.state === "healthy", { message: "expected recovery once the controller returned" });
+
+      control.setVerifyError(new ProtectNetworkError("rebooting"));
+      streams.at(-1)?.emitError(new Error("socket dropped again"));
+      await settle();
+
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0], "the known track's first delay"),
+        "the next episode's opening fault spent the anticipation on the known track");
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: false, to: "degraded" }, { isLost: true, isRebooting: false, to: "lost" },
+        { isLost: true, isRebooting: false, to: "reconnecting" }, { isLost: false, isRebooting: false, to: "healthy" },
+        { isLost: false, isRebooting: true, to: "degraded" } ]);
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("a fault inside an episode underway, after a reboot is armed, changes neither fact and leaves the anticipation for the next episode", async () => {
+
+      const log = capturingLog();
+      const { clock, control, monitor, streams } = harness({ log });
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factsAtEachEdge(monitor);
+
+      // An undecodable frame faults the stream without closing it, so the same live stream can fault again while the episode it opened is recovering.
+      control.setVerifyError(new ProtectNetworkError("down"));
+      streams[0]?.emitMessage(Buffer.from([ 1, 2, 3 ]));
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(0, 1));
+      await expectAt(() => monitor.state === "lost", { message: "expected the failed probe to report the connection lost" });
+
+      monitor.expectReboot();
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+
+      assert.equal(log.entries.filter((entry) => entry.message.includes("faulted; beginning recovery")).length, 2, "the second fault reached the monitor");
+      assert.equal(monitor.isRebooting, false, "a fault inside an episode underway leaves the episode as it opened");
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: false, to: "degraded" }, { isLost: true, isRebooting: false, to: "lost" } ]);
+
+      control.setVerifyError(null);
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS.slice(1, 2));
+      await expectAt(() => monitor.state === "healthy", { message: "expected recovery once the controller returned" });
+
+      control.setVerifyError(new ProtectNetworkError("rebooting"));
+      streams.at(-1)?.emitError(new Error("socket dropped again"));
+      await settle();
+
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_KNOWN_MS[0], "the known track's first delay"),
+        "the fault inside the earlier episode left the anticipation for the next one");
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("an anticipation that expires before the fault leaves rebooting off at the edge into degraded", async () => {
+
+      const { clock, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      monitor.expectReboot();
+      clock.advance(PROTECT_REBOOT_ANTICIPATION_WINDOW_MS + 1);
+
+      const edges = factsAtEachEdge(monitor);
+
+      streams[0]?.emitError(new Error("socket dropped"));
+      await settle();
+
+      assert.equal(clock.nextDeadline, clock.now() + present(PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS[0], "the unknown track's first delay"),
+        "the expired anticipation opened the episode on the unknown track");
+      assert.deepEqual(edges, [{ isLost: false, isRebooting: false, to: "degraded" }]);
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("recovery into an open breaker reads neither fact at the edge into throttled", async () => {
+
+      const { clock, control, monitor, streams, throttle } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factsAtEachEdge(monitor);
+
+      control.setVerifyError(new ProtectNetworkError("rebooting"));
+      monitor.expectReboot();
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_KNOWN_MS.slice(0, 1));
+      await expectAt(() => monitor.state === "lost", { message: "expected the still-rebooting controller to be reported lost" });
+
+      // The breaker opens while recovery owns the phase, so it drives no edge of its own, and recovery completes into it.
+      throttle.set(true);
+      control.setVerifyError(null);
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_KNOWN_MS.slice(1, 2));
+      await expectAt(() => monitor.state === "throttled", { message: "expected recovery to complete into the open breaker" });
+
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: true, to: "degraded" }, { isLost: true, isRebooting: true, to: "lost" },
+        { isLost: true, isRebooting: true, to: "reconnecting" }, { isLost: false, isRebooting: false, to: "throttled" } ]);
+
+      await monitor[Symbol.asyncDispose]();
+    });
+
+    test("disposal mid-episode emits no edge, and lost and rebooting keep the values they last held", async () => {
+
+      const { clock, control, monitor, streams } = harness();
+
+      await monitor.opened;
+      await settle();
+
+      const edges = factsAtEachEdge(monitor);
+
+      control.setVerifyError(new ProtectNetworkError("rebooting"));
+      monitor.expectReboot();
+      streams[0]?.emitError(new Error("socket dropped"));
+      await advanceThroughSchedule(clock, PROTECT_RECOVERY_BACKOFF_KNOWN_MS.slice(0, 1));
+      await expectAt(() => monitor.state === "lost", { message: "expected the still-rebooting controller to be reported lost" });
+
+      await monitor[Symbol.asyncDispose]();
+      await settle();
+
+      assert.deepEqual(edges, [ { isLost: false, isRebooting: true, to: "degraded" }, { isLost: true, isRebooting: true, to: "lost" } ], "disposal emits no edge");
+      assert.equal(monitor.isLost, true, "a disposed monitor keeps the loss it last held");
+      assert.equal(monitor.isRebooting, true, "and the reboot it last held");
     });
   });
 

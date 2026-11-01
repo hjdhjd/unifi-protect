@@ -387,8 +387,9 @@ export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandl
     cameras,
     chime: lookup(chimes),
     chimes,
-    // Always healthy: the fake has no network layer to degrade, and no test currently needs an unhealthy or throttled connection to drive.
-    connection: { isHealthy: true, isThrottled: false, state: "healthy" },
+    // Always healthy: the fake has no network layer, so there is no connection to degrade, lose, throttle or reboot, and every connection fact reads its
+    // steady-operation value.
+    connection: { isHealthy: true, isLost: false, isRebooting: false, isThrottled: false, state: "healthy" },
     controllerName: (options.controllerName === undefined) ? "Fake NVR" : options.controllerName,
     events: (opts?: { signal?: AbortSignal }): AsyncGenerator<TypedEvent> => driveRail(events, {
 

@@ -53,9 +53,9 @@ import { selectControllerUpSince } from "../state/selectors.ts";
 type RecoveryPhase = "degraded" | "healthy" | "lost" | "reconnecting";
 
 // Which network backoff curve a recovery episode opens on, chosen by how certain the fault's cause is. A `known` reboot (a self-initiated controller reboot, the one
-// case where the cause is certain) opens on the long, return-time-anticipating curve; everything else is `unknown` and opens on the prompt curve. The two differ only
-// in their delay schedule (see #recoveryDelays, which also gives way to the refusal schedule while the controller refuses the sign-in or limits the request
-// rate); the phase machinery is identical.
+// case where the cause is certain) opens on the long, return-time-anticipating curve; everything else is `unknown` and opens on the prompt curve. A track sets the
+// episode's delay schedule (see #recoveryDelays, which also gives way to the refusal schedule while the controller refuses the sign-in or limits the request rate)
+// and is what isRebooting reports; the phase machinery is identical.
 /** @internal */
 type RecoveryTrack = "known" | "unknown";
 
@@ -377,12 +377,16 @@ export class ConnectionMonitor {
   // most recent typed fault: it supplies the transition reason and the controllerLost payload, whether it is a refusal, a refused sign-in or a rate limit alike,
   // chooses the recovery schedule, and a `Retry-After` its answer carries can lengthen the next wait.
   // #announcedLoss is the class the episode's loss was last announced as, null until an episode reaches `lost`, so a loss is announced again only when its class
-  // changes and controllerRecovered fires only after a genuine loss. #reportedState caches the last emitted derived state purely to dedup stateChanged.
+  // changes, controllerRecovered fires only after a genuine loss, and isLost is its public reading. #episodeTrack is the backoff track of the episode in progress,
+  // chosen by its opening fault, and "unknown" outside one, since a connection with no outage in progress is not a known reboot: recovery opens its network schedule
+  // on it and isRebooting reads it, so the track and the fact are one value decided once.
+  // #reportedState caches the last emitted derived state purely to dedup stateChanged.
   // #recovering guards against re-entrant recovery. #recoveryWake holds the abort handle for the in-flight backoff wait, or is null when recovery is not currently
   // parked on a wait. #lastUpSince tracks the controller's last-seen boot time for reboot detection. #rebootAnticipatedAt is the clock's monotonic reading when
-  // expectReboot() armed the self-expiring anticipation, null when none is armed; a fault inside the window that follows it enters the known-reboot backoff track, a
-  // fault after it the unknown one.
+  // expectReboot() armed the self-expiring anticipation, null when none is armed; the fault that opens the next episode inside the window that follows it takes the
+  // known-reboot backoff track, and one after it the unknown one.
   #announcedLoss: LossClass | null = null;
+  #episodeTrack: RecoveryTrack = "unknown";
   #lastFault: ProtectError | null = null;
   #lastUpSince: number | null;
   #phase: RecoveryPhase = "healthy";
@@ -439,6 +443,40 @@ export class ConnectionMonitor {
   get isHealthy(): boolean {
 
     return this.#derive() === "healthy";
+  }
+
+  /**
+   * Whether the current recovery episode has concluded the connection lost. It turns true at the episode's first loss, the edge into `lost` that fires
+   * `controllerLost`, holds through every failed attempt and every `reconnecting` that follows, and turns false at the edge recovery completes on, into `healthy` or
+   * into `throttled` when the transport's breaker is open, which is the edge `controllerRecovered` follows. A fault that recovers before any attempt fails never
+   * turns it on.
+   *
+   * It changes only on a `stateChanged` transition: it is set before the edge into `lost` emits and cleared before the edge recovery completes on emits, so a
+   * listener reads at each edge the value that edge stands for. It can read true together with {@link ConnectionMonitor.isRebooting}, since an anticipated reboot
+   * can be lost too. Disposal emits no edge, so a disposed monitor keeps the value it last held.
+   */
+  get isLost(): boolean {
+
+    return this.#announcedLoss !== null;
+  }
+
+  /**
+   * Whether the current recovery episode is an anticipated controller reboot. It turns true at the edge into `degraded` when the fault that opens the episode lands
+   * inside the window {@link ProtectClient.reboot} arms once the controller accepts the reboot, holds through every phase recovery walks, a refusal or a long outage
+   * among them, and turns false at the edge recovery completes on, into `healthy` or into `throttled` when the transport's breaker is open. A reboot armed while an
+   * episode is underway leaves that episode as it opened and colors the next one if that episode opens inside the window.
+   *
+   * It changes only on a `stateChanged` transition: it is set before the edge into `degraded` emits and cleared before the edge recovery completes on emits, so a
+   * listener reads at each edge the value that edge stands for. It can read true together with {@link ConnectionMonitor.isLost}, since a controller that is slow to
+   * return from its reboot is lost as well. Disposal emits no edge, so a disposed monitor keeps the value it last held.
+   *
+   * This describes the connection to the controller, unlike the `isRebooting` field of a device record, which is the controller's report on that device. Recovery
+   * never gives up, so a controller that never returns keeps this true for as long as the monitor lives: a consumer that quiets its own presentation on it brings its
+   * own time limit.
+   */
+  get isRebooting(): boolean {
+
+    return this.#episodeTrack === "known";
   }
 
   /** Whether the transport's throttle breaker is open. Delegates verbatim to the transport - the single source of truth for reachability backoff. */
@@ -533,12 +571,14 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Arm the monitor to treat the next connection fault as a *known* controller reboot, so recovery enters the long, return-time-anticipating backoff track rather than
-   * the prompt one. Called by {@link ProtectClient.reboot} after the controller accepts the reboot - the one moment a fault's cause is certain. Package-internal: it is
-   * not a consumer recovery trigger, only a hint that colors the recovery episode the imminent fault will trigger on its own.
+   * Arm the monitor to treat the fault that opens the next recovery episode as a *known* controller reboot, so recovery enters the long, return-time-anticipating
+   * backoff track rather than the prompt one and {@link ConnectionMonitor.isRebooting} reads true until recovery. Called by {@link ProtectClient.reboot} after the
+   * controller accepts the reboot - the one moment a fault's cause is certain. Package-internal: it is not a consumer recovery trigger, only a hint that colors the
+   * recovery episode the imminent fault will trigger on its own.
    *
-   * The anticipation is bounded: it self-expires {@link PROTECT_REBOOT_ANTICIPATION_WINDOW_MS} after now, and is consumed by the next fault. So a reboot whose fault
-   * never arrives cannot mis-route a much-later unrelated fault into the known track, and a fault after the window correctly takes the unknown track.
+   * The anticipation is bounded: it self-expires {@link PROTECT_REBOOT_ANTICIPATION_WINDOW_MS} after this call, and is consumed by the fault that opens the next episode,
+   * while a fault inside an episode already underway neither consumes it nor changes that episode's track. So a reboot whose fault never arrives cannot mis-route a
+   * much-later unrelated fault into the known track, and a fault after the window correctly takes the unknown track.
    */
   expectReboot(): void {
 
@@ -634,8 +674,9 @@ export class ConnectionMonitor {
     this.#recompute();
   }
 
-  // The events channel reported an unsolicited fault (a watchdog stall or a socket error). Record it, mark the connection degraded if it was healthy, and kick the
-  // guarded recovery sequence. A deliberate relaunch/close fires no error, so this runs only for genuine faults.
+  // The events channel reported an unsolicited fault (a watchdog stall or a socket error). Record it, and if the connection was healthy, open an episode: choose its
+  // backoff track, consuming the one-shot reboot anticipation, before marking the connection degraded, so isRebooting already reads the episode's track at that
+  // edge. Then kick the guarded recovery sequence. A deliberate relaunch/close fires no error, so this runs only for genuine faults.
   #onStreamFault(err: ProtectError): void {
 
     this.#lastFault = err;
@@ -643,6 +684,7 @@ export class ConnectionMonitor {
 
     if(this.#phase === "healthy") {
 
+      this.#episodeTrack = this.#consumeRecoveryTrack();
       this.#enterPhase("degraded");
     }
 
@@ -655,8 +697,8 @@ export class ConnectionMonitor {
   // bootstrap answer asks for, up to the refusal schedule's steady interval), so the single loop is "wait the next delay, then attempt." The wait ends when its delay
   // elapses and we probe on schedule, when a reachability wake aborts it (a detected reboot proves the controller is back, so we probe now rather than sleeping out
   // the rest of the backoff), or when disposal aborts it and we end. Recovery therefore polls a slow-to-return or refusing controller for as long as the monitor
-  // lives - it never gives up after a handful of failures. The #recovering guard makes re-entrant faults no-ops, so the track is chosen (and the one-shot reboot
-  // anticipation consumed) once per episode, inside the guard.
+  // lives - it never gives up after a handful of failures. The #recovering guard makes re-entrant faults no-ops, and the track the loop opens on is the one the
+  // episode's opening fault chose in #onStreamFault, so it is chosen (and the one-shot reboot anticipation consumed) once per episode.
   async #recover(): Promise<void> {
 
     if(this.#recovering) {
@@ -666,11 +708,11 @@ export class ConnectionMonitor {
 
     this.#recovering = true;
 
-    const track = this.#consumeRecoveryTrack();
-
     try {
 
-      for(const delay of this.#recoveryDelays(track)) {
+      // #onStreamFault is the one caller, and the phase leaves healthy only through its degraded edge, which sets the episode's track first, so the loop opens on
+      // the track this episode's opening fault chose.
+      for(const delay of this.#recoveryDelays(this.#episodeTrack)) {
 
         // Park on the next scheduled delay, but make the wait interruptible by a reachability wake distinct from disposal. We compose the monitor's lifetime
         // signal with a per-iteration wake controller: disposal aborts the former, #wakeRecovery() the latter. AbortSignal.any handles a pre-aborted lifetime signal
@@ -775,10 +817,11 @@ export class ConnectionMonitor {
     }
   }
 
-  // Choose the backoff track for an episode and consume the one-shot reboot anticipation. A fault inside the anticipation window armed by expectReboot() is a known
-  // reboot (the long track); anything else is unknown (the prompt track). We clear the anticipation unconditionally so it is strictly one-shot - an expired or absent
-  // window simply yields the unknown track. (A reboot issued while an unknown episode is already recovering does not upgrade the in-flight track; the steady floor still
-  // recovers it within an interval of the controller's return, and the window self-expires - an acceptable, rare degradation, not a correctness gap.)
+  // Choose the backoff track for an episode at its opening fault and consume the one-shot reboot anticipation. A fault inside the anticipation window armed by
+  // expectReboot() is a known reboot (the long track); anything else is unknown (the prompt track). We clear the anticipation unconditionally so it is strictly
+  // one-shot - an expired or absent window simply yields the unknown track. (A reboot issued while an unknown episode is already recovering does not upgrade the
+  // in-flight track or turn isRebooting on; the steady floor still recovers it within an interval of the controller's return, and the window self-expires - an
+  // acceptable, rare degradation, not a correctness gap.)
   #consumeRecoveryTrack(): RecoveryTrack {
 
     const anticipated = (this.#rebootAnticipatedAt !== null) &&
@@ -844,14 +887,16 @@ export class ConnectionMonitor {
     }
   }
 
-  // Recovery completed. Clear the fault, return to healthy, and announce recovery only if the episode had reached `lost` (a transient stall that re-bootstrapped without
-  // the controller ever going unreachable does not warrant a controllerRecovered). The non-lost path still logs a quieter stream-level confirmation in the `else` so a
-  // transient relaunch that announced "Reconnecting..." still has a visible resolution.
+  // Recovery completed. Clear the fault and end the episode, its loss cleared and its track reset before the healthy edge so isLost and isRebooting read false on
+  // it, return to healthy, and announce recovery only if the episode had reached `lost` (a transient stall that re-bootstrapped without the controller ever going
+  // unreachable does not warrant a controllerRecovered). The non-lost path still logs a quieter stream-level confirmation in the `else` so a transient relaunch that
+  // announced "Reconnecting..." still has a visible resolution.
   #onRecovered(): void {
 
     const recovered = this.#announcedLoss !== null;
 
     this.#announcedLoss = null;
+    this.#episodeTrack = "unknown";
     this.#lastFault = null;
     this.#enterPhase("healthy");
 

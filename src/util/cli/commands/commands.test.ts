@@ -1711,9 +1711,10 @@ describe("doctor", () => {
       const out = stdout();
 
       // Every subsystem is exercised against the fake; the diagnostics-channels check warns (nothing publishes), which is not a failure, so the run exits zero. The
-      // livestream check prints what the stream is beside its codec label.
+      // livestream check prints what the stream is beside its codec label, and the connection-monitor check prints the connection's loss and reboot facts.
       assert.match(out, /PASS/);
       assert.match(out, /codec avc1 \(h264 1920x1080 L40, aac 16000 Hz mono\)/);
+      assert.match(out, /Connection monitor {2}state=healthy, throttled=false, lost=false, rebooting=false/);
       assert.match(out, /\d+ passed, \d+ warnings, 0 failed\./);
       assert.equal(process.exitCode, 0);
     } finally {

@@ -271,7 +271,8 @@ const doctorHandler: CommandHandler = async (ctx) => {
 
     await check("Connection monitor", () => Promise.resolve({
 
-      detail: "state=" + connected.connection.state + ", throttled=" + connected.connection.isThrottled.toString(),
+      detail: "state=" + connected.connection.state + ", throttled=" + connected.connection.isThrottled.toString() + ", lost=" + connected.connection.isLost.toString() +
+        ", rebooting=" + connected.connection.isRebooting.toString(),
       status: connected.connection.isHealthy ? "pass" : "fail"
     }));
 
