@@ -887,10 +887,10 @@ export class ConnectionMonitor {
     }
   }
 
-  // Recovery completed. Clear the fault and end the episode, its loss cleared and its track reset before the healthy edge so isLost and isRebooting read false on
-  // it, return to healthy, and announce recovery only if the episode had reached `lost` (a transient stall that re-bootstrapped without the controller ever going
-  // unreachable does not warrant a controllerRecovered). The non-lost path still logs a quieter stream-level confirmation in the `else` so a transient relaunch that
-  // announced "Reconnecting..." still has a visible resolution.
+  // Recovery completed. Clear the fault and end the episode, its loss cleared and its track reset before the edge recovery completes on, so isLost and isRebooting read
+  // false on it, return to healthy, which reads as throttled while the breaker is open, and announce recovery only if the episode had reached `lost` (a transient stall
+  // that re-bootstrapped without the controller ever going unreachable does not warrant a controllerRecovered). The non-lost path still logs a quieter stream-level
+  // confirmation in the `else` so a transient relaunch that announced "Reconnecting..." still has a visible resolution.
   #onRecovered(): void {
 
     const recovered = this.#announcedLoss !== null;
