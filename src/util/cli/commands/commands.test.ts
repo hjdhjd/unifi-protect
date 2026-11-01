@@ -208,7 +208,8 @@ describe("info", () => {
 
     // The fake derives a device's mac from its id, so this camera id makes the camera and the NVR report one address - the input a referential check needs. The
     // controller name is the other half: it is a copy of the NVR record's own name, and both have to land on the same stand-in.
-    const { client } = makeFakeClient({ cameras: [{ id: "DDEEFF", name: "Front Door" }], controllerName: "Winterfell", nvr: { mac: "AABBCCDDEEFF", name: "Winterfell" } });
+    const { client } = makeFakeClient({ cameras: [{ id: "DDEEFF", name: "Front Door" }], controllerName: "Winterfell",
+      nvr: { mac: "AABBCCDDEEFF", name: "Winterfell" } });
     const { ctx, stdout } = makeCommandContext({ args: [ "--json", "--scrub" ], client });
 
     await info.run(ctx);
