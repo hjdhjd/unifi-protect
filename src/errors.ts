@@ -325,9 +325,10 @@ export class ProtectConfigurationError extends FatalError {
 }
 
 /**
- * The bootstrap sequence failed while fetching or parsing the controller bootstrap document. `stage` marks which - `"fetch"` when the bootstrap endpoint returns
- * a non-2xx status, `"parse"` when the body cannot be decoded - so the caller and the diagnostics surface can report the precise point of failure rather than a
- * generic "connect failed." A login or reachability failure is not wrapped here: a transport-level failure reaching the endpoint propagates as its own typed error
+ * The bootstrap sequence failed while fetching, parsing or applying the controller bootstrap document. `stage` marks which - `"fetch"` when the bootstrap endpoint
+ * returns a non-2xx status, `"parse"` when the body cannot be decoded, `"apply"` when a decoded document cannot be folded into the state model - so the caller and the
+ * diagnostics surface can report the precise point of failure rather than a generic "connect failed." A login or reachability failure is not wrapped here: a
+ * transport-level failure reaching the endpoint propagates as its own typed error
  * (`ProtectNetworkError`, `ProtectTimeoutError`, `ProtectThrottledError`, `ProtectAbortedError`), and a login failure as `ProtectAuthError` when the controller
  * rejected the sign-in or as `ProtectRequestError` when it answered with a status that is no verdict on the credentials (a readiness answer in the transport's
  * retried set, a rate limit, a 3xx, or a 5xx outside the retried set).
@@ -348,15 +349,16 @@ export class ProtectBootstrapError extends FatalError {
 }
 
 /**
- * The stages of the `connect()` sequence, used to tag a {@link ProtectBootstrapError}. The sequence authenticates, fetches the bootstrap document, parses it, then
- * subscribes to the realtime stream; only the fetch and parse stages are wrapped as a bootstrap error. A login failure already propagates as its own typed error -
- * `ProtectAuthError` (fatal) when the controller rejected the sign-in, `ProtectRequestError` (fatal) when it answered with a status that is no verdict on the
- * credentials - and a reachability failure as `ProtectNetworkError` (recoverable). A failure to open the realtime subscription propagates unwrapped rather than tagged
- * with any stage, so `"login"` and `"subscribe"` name stages of the sequence without either one being a tag a caller will observe on a thrown `ProtectBootstrapError`.
+ * The stages of the `connect()` sequence, used to tag a {@link ProtectBootstrapError}. The sequence authenticates, fetches the bootstrap document, parses it, applies
+ * it, then subscribes to the realtime stream; only the fetch, parse and apply stages are wrapped as a bootstrap error. A login failure already propagates as its own
+ * typed error - `ProtectAuthError` (fatal) when the controller rejected the sign-in, `ProtectRequestError` (fatal) when it answered with a status that is no verdict on
+ * the credentials - and a reachability failure as `ProtectNetworkError` (recoverable). A failure to open the realtime subscription propagates unwrapped rather than
+ * tagged with any stage, so `"login"` and `"subscribe"` name stages of the sequence without either one being a tag a caller will observe on a thrown
+ * `ProtectBootstrapError`.
  *
  * @category Errors
  */
-export type ProtectBootstrapStage = "fetch" | "login" | "parse" | "subscribe";
+export type ProtectBootstrapStage = "apply" | "fetch" | "login" | "parse" | "subscribe";
 
 /**
  * A pooled livestream reconnected and the controller delivered a different stream than the one in flight: its codec label or its description differs (H.264 to HEVC,

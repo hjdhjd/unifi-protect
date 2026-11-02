@@ -190,6 +190,21 @@ async function fetchBootstrap(transport: Transport, host: string, opts: { probe?
   }
 }
 
+/* Apply a fetched bootstrap to the store, classifying a failure to fold it as the apply stage. The document arrived and decoded, so neither the fetch nor the parse
+ * stage describes what went wrong: a throw here is a wire shape the store does not model or a fault in the store itself, and naming it apart points a report at the
+ * right fix. The connect seed and the recovery re-bootstrap apply through here; the refresh failsafe dispatches inside the store, whose own catch reads that failure.
+ */
+function applyBootstrapDocument(store: StateStore, bootstrap: ProtectNvrBootstrap): void {
+
+  try {
+
+    store.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
+  } catch(error) {
+
+    throw new ProtectBootstrapError("Unable to apply the UniFi Protect controller bootstrap.", { cause: error, stage: "apply" });
+  }
+}
+
 /**
  * The UniFi Protect client. Construct via {@link ProtectClient.connect}.
  *
@@ -266,8 +281,8 @@ export class ProtectClient implements AsyncDisposable {
    * @returns A fully-ready client.
    *
    * @throws {@link ProtectConfigurationError} when no URL can carry the controller address, {@link ProtectAuthError} on bad credentials, {@link ProtectNetworkError}
-   *   when the controller is unreachable, {@link ProtectBootstrapError} when the bootstrap cannot be fetched or parsed - and any other typed `FatalError` the login or
-   *   fetch surfaces. No partial client escapes a failure.
+   *   when the controller is unreachable, {@link ProtectBootstrapError} when the bootstrap cannot be fetched, parsed or applied - and any other typed `FatalError` the
+   *   login or fetch surfaces. No partial client escapes a failure.
    */
   static async connect(opts: ConnectOptions): Promise<ProtectClient> {
 
@@ -328,7 +343,19 @@ export class ProtectClient implements AsyncDisposable {
       ...((opts.refreshIntervalMs !== undefined) && { refreshIntervalMs: opts.refreshIntervalMs })
     });
 
-    store.dispatch({ data: bootstrap, kind: "bootstrapLoaded" });
+    /* The store's refresh failsafe is already running, and no client exists yet for the caller to dispose...a store left standing behind a rejected connect would keep
+     * fetching through a transport nobody can reach. So a first apply that fails tears down the store and then the transport it fetches through.
+     */
+    try {
+
+      applyBootstrapDocument(store, bootstrap);
+    } catch(error) {
+
+      await store[Symbol.asyncDispose]();
+      await transport[Symbol.asyncDispose]();
+
+      throw error;
+    }
 
     // Stage 4: build the events-channel hooks the ConnectionMonitor drives. The factory is the single events-stream construction path - used for the initial stream and
     // every recovery relaunch; its optional signal is bound only to the initial connect. `reBootstrap` reuses the shared bootstrap fetch and the store's single dispatch
@@ -352,7 +379,7 @@ export class ProtectClient implements AsyncDisposable {
       // must dispatch through a possibly-still-open breaker rather than be refused by the cooldown gate. The monitor's backoff curve is the rate limiter here.
       const refreshed = await fetchBootstrap(transport, authority, { probe: true, ...((signal !== undefined) && { signal }) });
 
-      store.dispatch({ data: refreshed, kind: "bootstrapLoaded" });
+      applyBootstrapDocument(store, refreshed);
 
       return refreshed.lastUpdateId;
     };

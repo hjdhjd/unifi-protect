@@ -2,7 +2,7 @@
  *
  * client.test.ts: Integration tests for ProtectClient.connect() - the atomic login+bootstrap factory, the projection surface over a real bootstrap, the typed-error
  * mapping for each failure stage, the Disposable event subscription, clean teardown, and the controller's URL authority at every URL the client composes. Driven
- * against an undici MockAgent.
+ * against an undici MockAgent, and against a loopback peer where a row reads the pool the client builds for itself.
  */
 import type { ConnectionTransitionPayload, HttpRequestStartPayload } from "../diagnostics.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
@@ -12,7 +12,7 @@ import { TestClock, errnoError, present, settle } from "homebridge-plugin-utils/
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
-import { expectAt, silentLog } from "../testing.helpers.ts";
+import { expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
   makeViewer } from "../fixtures.helpers.ts";
 import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
@@ -24,6 +24,7 @@ import type { RawPacket } from "../protocol/packet.ts";
 import { Transport } from "../transport/http.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
+import { createLoopbackHttpsPeer } from "../transport/tls-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { describeInitSegment } from "../protocol/init-segment.ts";
 
@@ -220,6 +221,58 @@ describe("ProtectClient.connect", () => {
 
         return true;
       });
+    });
+
+    test("a bootstrap the store cannot apply rejects at the apply stage and stops the refresh failsafe it started", async () => {
+
+      const { agent, pool } = mockController();
+      const clock = new TestClock();
+      let bootstrapFetches = 0;
+
+      /* The store and its failsafe exist by the time the document is applied, so the throw is what proves the seed runs under the connect's teardown. The reply
+       * persists, so a refresh pass that survived the rejection would be served rather than failing for want of an interceptor, which is what makes the count below a
+       * real measurement.
+       */
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(() => {
+
+        bootstrapFetches++;
+
+        return { data: {}, statusCode: 200 };
+      }).persist();
+
+      await assert.rejects(ProtectClient.connect({ clock, dispatcher: agent, host: HOST, log: silentLog(), password: "p", refreshIntervalMs: 1000, username: "u",
+        webSocket: () => new FakeWebSocket() }), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectBootstrapError);
+        assert.equal(error.stage, "apply");
+        assert.ok(error.cause instanceof TypeError, "the store's own throw is the cause rather than a message this layer composed");
+
+        return true;
+      });
+
+      assert.equal(bootstrapFetches, 1, "the connect read the bootstrap once");
+
+      clock.advance(5000);
+      await settle();
+
+      assert.equal(bootstrapFetches, 1, "the failsafe was disposed with the store, so no refresh pass followed the rejection");
+    });
+
+    test("a bootstrap the store cannot apply destroys the pool the connect built, closing its connection", async () => {
+
+      /* No dispatcher is injected, so the connect builds its own pool over a real connection to the peer, and the failsafe is off, so nothing else fetches through it.
+       * That connection's idle keepalive would outlast the bounded wait below unless the teardown destroyed the pool holding it.
+       */
+      await using peer = await createLoopbackHttpsPeer({ respond: (request) => ((request <= 2) ?
+        { body: "", headers: { "set-cookie": "TOKEN=abc", "x-csrf-token": "csrf0" }, status: 200 } : { body: "{}", status: 200 }) });
+
+      await assert.rejects(ProtectClient.connect({ host: peer.host, log: silentLog(), password: "p", refreshIntervalMs: false, username: "u",
+        webSocket: () => new FakeWebSocket() }), { constructor: ProtectBootstrapError, stage: "apply" });
+
+      const connection = await peer.connection(0);
+
+      await expectAt(settlement(connection.closed), { message: "the rejected connect must destroy the pool it built, closing its connection" });
     });
 
     test("connect rejects with no client left behind when the events WebSocket fails to open", async () => {
@@ -694,6 +747,67 @@ describe("ProtectClient.connect", () => {
       await client.connection.verify();
 
       assert.equal(client.connection.isThrottled, false, "the controller answered the relogin and the retried probe");
+      agent.assertNoPendingInterceptors();
+    });
+  });
+
+  describe("connection recovery", () => {
+
+    test("a re-bootstrap the store cannot apply is reported lost at the apply stage, and a later good re-bootstrap recovers", async () => {
+
+      const { agent, pool } = mockController();
+      const clock = new TestClock();
+      const dialed: FakeWebSocket[] = [];
+      const losses: Error[] = [];
+      let recoveries = 0;
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap());
+
+      await using client = await ProtectClient.connect({ clock, dispatcher: agent, host: HOST, log: silentLog(), password: "p", refreshIntervalMs: false, username: "u",
+        webSocket: (): FakeWebSocket => {
+
+          const socket = new FakeWebSocket();
+
+          dialed.push(socket);
+
+          return socket;
+        } });
+
+      using lostSubscription = client.connection.on("controllerLost", (reason) => void losses.push(reason));
+      using recoveredSubscription = client.connection.on("controllerRecovered", () => {
+
+        recoveries++;
+      });
+
+      // The events socket drops, so recovery waits out its prompt first delay, then verifies with one fetch and re-bootstraps with another. The controller answers each
+      // with a document the store cannot apply, and only the re-bootstrap reads it. The prompt delay is due the moment it parks, so the timeline's next deadline reaching
+      // the present is the sign it has parked.
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, {}).times(2);
+      dialed[0]?.emitError(new Error("socket dropped"));
+      await expectAt(() => clock.nextDeadline === clock.now());
+      clock.advance(0);
+      await expectAt(() => losses.length === 1);
+
+      const [loss] = losses;
+
+      assert.ok(loss instanceof ProtectBootstrapError);
+      assert.equal(loss.stage, "apply");
+      assert.ok(loss.cause instanceof TypeError, "the store's own throw is the cause rather than a message this layer composed");
+      assert.equal(client.connection.isLost, true);
+      assert.equal(client.state.snapshot().bootstrapId, 1, "the document that could not be applied left the state as it stood");
+
+      // Recovery stays on its polling schedule, parked on its next delay alone, so stepping to that deadline runs the next attempt against a controller answering well.
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap()).times(2);
+      await expectAt(() => clock.pending === 1);
+      clock.advanceToNext();
+      await expectAt(() => recoveries === 1);
+
+      assert.equal(losses.length, 1, "the loss was announced once");
+      assert.equal(client.connection.isLost, false);
+      assert.equal(client.connection.state, "healthy");
+      assert.equal(client.state.snapshot().bootstrapId, 2, "the good re-bootstrap advanced the state");
+      assert.equal(dialed.length, 2, "recovery relaunched the events stream");
       agent.assertNoPendingInterceptors();
     });
   });
