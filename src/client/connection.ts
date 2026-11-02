@@ -187,7 +187,7 @@ export interface ConnectionTransition {
  * - `controllerLost` fires when the connection is concluded lost, and again whenever the cause of the loss changes class among a refused sign-in, a rate limit, a
  *   fault a person must fix and a fault that heals itself, carrying the typed fault that settled it.
  * - `controllerRebooted` fires when the controller's self-reported boot time changes, carrying the previous and new values.
- * - `controllerRecovered` fires when the connection returns to healthy after having been lost.
+ * - `controllerRecovered` fires when recovery completes after the connection was lost, into `healthy` or into `throttled` when the transport's breaker is open.
  * - `throttleEntered` / `throttleExited` forward the transport breaker's transitions.
  *
  * @category Client
