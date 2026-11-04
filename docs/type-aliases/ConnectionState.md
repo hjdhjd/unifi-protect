@@ -11,5 +11,6 @@ type ConnectionState = RecoveryPhase | "throttled";
 ```
 
 The connection's observable state. `healthy` is steady operation; `degraded` means a fault was detected and reachability is being probed; `reconnecting` means the
-controller is reachable and the monitor is re-bootstrapping and relaunching the events stream; `lost` means the controller is unreachable and recovery is polling;
-`throttled` means the transport's circuit breaker is open (HTTP is paused on a cooldown). `throttled` is derived live from the transport and takes precedence.
+controller is reachable and the monitor is re-bootstrapping and relaunching the events stream; `lost` means the controller is unreachable, is refusing the
+sign-in or is limiting the request rate, and recovery is retrying on the schedule that cause calls for; `throttled` means the transport's circuit breaker is open
+(HTTP is paused on a cooldown). `throttled` is derived live from the transport and takes precedence.

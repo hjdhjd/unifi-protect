@@ -6,8 +6,8 @@
 
 # Interface: Chime
 
-A chime projection. Inherits the read-through getters, live `observe`, and write-through `update` from [DeviceProjection](DeviceProjection.md); chime *configuration* (default
-volume, per-camera ringtone assignment) is expressed through `update` payloads, while the things a chime can be told to *do* are first-class commands.
+A chime projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from [DeviceProjection](DeviceProjection.md); chime *configuration*
+(default volume, per-camera ringtone assignment) is expressed through `update` payloads, while the things a chime can be told to *do* are first-class commands.
 
 The controller exposes each of the chime's sound sources through its own endpoint, so each is a distinct method rather than a single parameterized call:
 [Chime.playSpeaker](#playspeaker) plays a ringtone through the speaker, and [Chime.playBuzzer](#playbuzzer) plays the piezo buzzer. None is capability-gated - every chime has them
@@ -114,7 +114,7 @@ touch it. Pair it with the sync getters: getters for "what is it now", observe f
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -171,7 +171,7 @@ returns; it does not fold any response into the store.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -197,7 +197,7 @@ options the controller plays the chime's default assigned ringtone; supply [Play
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`PlaySpeakerOptions`](PlaySpeakerOptions.md) | The ringtone selection and playback overrides, plus an optional abort signal. All fields are optional. |
+| `opts?` | [`PlaySpeakerOptions`](PlaySpeakerOptions.md) | The ringtone selection and playback overrides, plus an optional abort signal. All fields are optional. |
 
 #### Returns
 
@@ -223,7 +223,7 @@ re-establishes the device; the projection reflects the cycle as the realtime str
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -254,7 +254,7 @@ is reflected once the realtime stream (or the next refresh) delivers it.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `payload` | `DeepPartial`\<`TConfig`\> | The partial configuration to apply. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

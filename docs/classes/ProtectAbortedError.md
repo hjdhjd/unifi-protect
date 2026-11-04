@@ -35,6 +35,4 @@ new ProtectAbortedError(message, options?): ProtectAbortedError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`

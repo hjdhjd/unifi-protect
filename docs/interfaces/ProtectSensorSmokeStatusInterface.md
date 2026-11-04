@@ -6,8 +6,13 @@
 
 # Interface: ProtectSensorSmokeStatusInterface
 
-A description of the UniFi Protect sensor smoke/CO detector status JSON, reported by a sensor with a smoke sensor and `null` on one without. It carries the alarm and
-fault booleans plus the raw smoke, CO, and battery-voltage readings.
+A description of the UniFi Protect sensor smoke/CO detector status JSON. It carries the alarm and fault booleans plus the raw smoke, CO, and battery-voltage
+readings.
+
+The controller reports the block on sensors of every model: across a field fleet it is populated on air-quality and environmental units and `null` on other units
+of those same models, so its presence says nothing about whether a sensor has smoke hardware. Neither does `featureFlags.alarmTypes`: that advertisement names
+the alarm kinds a unit deals in, and an environmental unit with no detector hardware advertises smoke and CO because it listens for those alarm sounds. The
+model family is the hardware signal.
 
 ## Indexable
 

@@ -22,6 +22,7 @@ sensor without a given capability reports that metric with a `null` value.
 | <a id="aqi"></a> `aqi` | [`ProtectAirQualityMetricInterface`](ProtectAirQualityMetricInterface.md) |
 | <a id="co2"></a> `co2` | [`ProtectAirQualityMetricInterface`](ProtectAirQualityMetricInterface.md) |
 | <a id="humidity"></a> `humidity` | [`ProtectAirQualityMetricInterface`](ProtectAirQualityMetricInterface.md) |
+| <a id="nox"></a> `nox` | [`ProtectAirQualityMetricInterface`](ProtectAirQualityMetricInterface.md) |
 | <a id="pm10p0"></a> `pm10p0` | [`ProtectAirQualityMetricInterface`](ProtectAirQualityMetricInterface.md) |
 | <a id="pm1p0"></a> `pm1p0` | [`ProtectAirQualityMetricInterface`](ProtectAirQualityMetricInterface.md) |
 | <a id="pm2p5"></a> `pm2p5` | [`ProtectAirQualityMetricInterface`](ProtectAirQualityMetricInterface.md) |

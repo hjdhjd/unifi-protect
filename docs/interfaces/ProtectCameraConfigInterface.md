@@ -22,24 +22,24 @@ A semi-complete description of the UniFi Protect camera JSON.
 
 | Property | Type | Overrides | Inherited from |
 | ------ | ------ | ------ | ------ |
-| <a id="accessdevicemetadata"></a> `accessDeviceMetadata?` | \{ `channels`: \{ `bitrate`: `number`; `fps`: `number`; `fpsValues`: `number`[]; `height`: `number`; `id`: `number`; `localStreamName`: `string`; `quality`: `string`; `width`: `number`; \}[]; `connectedSince`: `number`; `disableRecordingByDefault`: `boolean`; `doorInfo`: \{ `canLock`: `boolean`; `lockState`: `string`; \}; `featureFlags`: \{ `supportLivestream`: `boolean`; `supportMicManagement`: `boolean`; `supportUnlock`: `boolean`; \}; `ledSettings`: \{ `isEnabled`: `boolean`; \}; `micVolume`: `number`; `pairedInfo`: \{ `guid`: `Nullable`\<`string`\>; `name`: `string`; `uri`: `string`; \}; `speakerSettings`: \{ `areSystemSoundsEnabled`: `boolean`; \}; `talkbackSettings`: [`ProtectCameraTalkbackConfigInterface`](ProtectCameraTalkbackConfigInterface.md)[]; \} | - | - |
+| <a id="accesscontrolplane"></a> `accessControlPlane` | `string` | - | - |
+| <a id="accessdevicemetadata"></a> `accessDeviceMetadata?` | \{ `channels`: \{ `bitrate`: `number`; `fps`: `number`; `fpsValues`: `number`[]; `height`: `number`; `id`: `number`; `localStreamName`: `string`; `quality`: `string`; `width`: `number`; \}[]; `connectedSince`: `Nullable`\<`number`\>; `disableRecordingByDefault`: `boolean`; `doorInfo`: \{ `canLock`: `boolean`; `lockState`: `Nullable`\<`string`\>; \}; `featureFlags`: \{ `supportLivestream`: `boolean`; `supportMicManagement`: `boolean`; `supportUnlock`: `boolean`; \}; `ledSettings`: [`ProtectLedSettingsInterface`](ProtectLedSettingsInterface.md); `micVolume`: `number`; `pairedInfo`: \{ `guid`: `Nullable`\<`string`\>; `name`: `Nullable`\<`string`\>; `uri`: `Nullable`\<`string`\>; \}; `speakerSettings`: \{ `areSystemSoundsEnabled`: `boolean`; \}; `talkbackSettings`: [`ProtectCameraTalkbackConfigInterface`](ProtectCameraTalkbackConfigInterface.md)[]; \} | - | - |
 | `accessDeviceMetadata.channels` | \{ `bitrate`: `number`; `fps`: `number`; `fpsValues`: `number`[]; `height`: `number`; `id`: `number`; `localStreamName`: `string`; `quality`: `string`; `width`: `number`; \}[] | - | - |
-| `accessDeviceMetadata.connectedSince` | `number` | - | - |
+| `accessDeviceMetadata.connectedSince` | `Nullable`\<`number`\> | - | - |
 | `accessDeviceMetadata.disableRecordingByDefault` | `boolean` | - | - |
-| `accessDeviceMetadata.doorInfo` | \{ `canLock`: `boolean`; `lockState`: `string`; \} | - | - |
+| `accessDeviceMetadata.doorInfo` | \{ `canLock`: `boolean`; `lockState`: `Nullable`\<`string`\>; \} | - | - |
 | `accessDeviceMetadata.doorInfo.canLock` | `boolean` | - | - |
-| `accessDeviceMetadata.doorInfo.lockState` | `string` | - | - |
+| `accessDeviceMetadata.doorInfo.lockState` | `Nullable`\<`string`\> | - | - |
 | `accessDeviceMetadata.featureFlags` | \{ `supportLivestream`: `boolean`; `supportMicManagement`: `boolean`; `supportUnlock`: `boolean`; \} | - | - |
 | `accessDeviceMetadata.featureFlags.supportLivestream` | `boolean` | - | - |
 | `accessDeviceMetadata.featureFlags.supportMicManagement` | `boolean` | - | - |
 | `accessDeviceMetadata.featureFlags.supportUnlock` | `boolean` | - | - |
-| `accessDeviceMetadata.ledSettings` | \{ `isEnabled`: `boolean`; \} | - | - |
-| `accessDeviceMetadata.ledSettings.isEnabled` | `boolean` | - | - |
+| `accessDeviceMetadata.ledSettings` | [`ProtectLedSettingsInterface`](ProtectLedSettingsInterface.md) | - | - |
 | `accessDeviceMetadata.micVolume` | `number` | - | - |
-| `accessDeviceMetadata.pairedInfo` | \{ `guid`: `Nullable`\<`string`\>; `name`: `string`; `uri`: `string`; \} | - | - |
+| `accessDeviceMetadata.pairedInfo` | \{ `guid`: `Nullable`\<`string`\>; `name`: `Nullable`\<`string`\>; `uri`: `Nullable`\<`string`\>; \} | - | - |
 | `accessDeviceMetadata.pairedInfo.guid` | `Nullable`\<`string`\> | - | - |
-| `accessDeviceMetadata.pairedInfo.name` | `string` | - | - |
-| `accessDeviceMetadata.pairedInfo.uri` | `string` | - | - |
+| `accessDeviceMetadata.pairedInfo.name` | `Nullable`\<`string`\> | - | - |
+| `accessDeviceMetadata.pairedInfo.uri` | `Nullable`\<`string`\> | - | - |
 | `accessDeviceMetadata.speakerSettings` | \{ `areSystemSoundsEnabled`: `boolean`; \} | - | - |
 | `accessDeviceMetadata.speakerSettings.areSystemSoundsEnabled` | `boolean` | - | - |
 | `accessDeviceMetadata.talkbackSettings` | [`ProtectCameraTalkbackConfigInterface`](ProtectCameraTalkbackConfigInterface.md)[] | - | - |
@@ -57,7 +57,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `alarms.panTiltMotorFaults` | `string`[] | - | - |
 | `alarms.tiltThermal` | `number` | - | - |
 | <a id="anonymousdeviceid"></a> `anonymousDeviceId` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`anonymousDeviceId`](ProtectDeviceBaseInterface.md#anonymousdeviceid) |
-| <a id="apmac"></a> `apMac` | `string` | - | - |
+| <a id="apmac"></a> `apMac` | `Nullable`\<`string`\> | - | - |
 | <a id="apmgmtip"></a> `apMgmtIp` | `Nullable`\<`string`\> | - | - |
 | <a id="aprssi"></a> `apRssi` | `Nullable`\<`string`\> | - | - |
 | <a id="audiobitrate"></a> `audioBitrate` | `number` | - | - |
@@ -74,11 +74,13 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="channels"></a> `channels` | [`ProtectCameraChannelConfigInterface`](ProtectCameraChannelConfigInterface.md)[] | - | - |
 | <a id="chimeduration"></a> `chimeDuration` | `number` | - | - |
 | <a id="clarityzones"></a> `clarityZones` | `ProtectKnownJsonValue`[] | - | - |
-| <a id="connectedsince"></a> `connectedSince` | `number` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`connectedSince`](ProtectDeviceBaseInterface.md#connectedsince) |
+| <a id="connectedsince"></a> `connectedSince` | `Nullable`\<`number`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`connectedSince`](ProtectDeviceBaseInterface.md#connectedsince) |
 | <a id="connectionhost"></a> `connectionHost` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`connectionHost`](ProtectDeviceBaseInterface.md#connectionhost) |
 | <a id="currentresolution"></a> `currentResolution` | `string` | - | - |
 | <a id="displayname"></a> `displayName` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`displayName`](ProtectDeviceBaseInterface.md#displayname) |
-| <a id="doorbellsession"></a> `doorbellSession` | \{ `sessionId`: `Nullable`\<`string`\>; `status`: `Nullable`\<`string`\>; \} | - | - |
+| <a id="doorbellsession"></a> `doorbellSession` | \{ `currentGroupIndex`: `Nullable`\<`number`\>; `directoryId`: `Nullable`\<`string`\>; `sessionId`: `Nullable`\<`string`\>; `status`: `Nullable`\<`string`\>; \} | - | - |
+| `doorbellSession.currentGroupIndex` | `Nullable`\<`number`\> | - | - |
+| `doorbellSession.directoryId` | `Nullable`\<`string`\> | - | - |
 | `doorbellSession.sessionId` | `Nullable`\<`string`\> | - | - |
 | `doorbellSession.status` | `Nullable`\<`string`\> | - | - |
 | <a id="downscalemode"></a> `downScaleMode` | `number` | - | - |
@@ -91,7 +93,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `faceUnlockSettings.faceDetectionSensitive` | `string` | - | - |
 | `faceUnlockSettings.lastUpdateTime` | `number` | - | - |
 | `faceUnlockSettings.licenseConfigured` | `boolean` | - | - |
-| <a id="featureflags"></a> `featureFlags` | \{ `audio`: `string`[]; `audioCodecs`: `string`[]; `audioStyle`: `string`[]; `canAdjustIrLedLevel`: `boolean`; `canAdjustIspSettings`: `boolean`; `canAdjustSpeakerVolume`: `boolean`; `canMagicZoom`: `boolean`; `canOpticalZoom`: `boolean`; `canTouchFocus`: `boolean`; `clarityZones`: `Nullable`\<\{ `maxZones`: `number`; `rectangleOnly`: `boolean`; \}\>; `downScaleResolutions`: `number`[][]; `excludeZones`: \{ `maxZones`: `number`; `rectangleOnly`: `boolean`; \}; `flashRange`: `Nullable`\<`number`\>; `focus`: [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md); `hallwayModeWarningRequired`: `boolean`; `hasAccelerometer`: `boolean`; `hasAec`: `boolean`; `hasAutoICROnly`: `boolean`; `hasBluetooth`: `boolean`; `hasChime`: `boolean`; `hasColorLcdScreen`: `boolean`; `hasEdgeRecording`: `boolean`; `hasExternalIr`: `boolean`; `hasFingerprintSensor`: `boolean`; `hasFisheye`: `boolean`; `hasFlash`: `boolean`; `hasHallwayMode`: `boolean`; `hasHallwayModeHdrOnRequired`: `boolean`; `hasHdr`: `boolean`; `hasHorizontalFlip`: `boolean`; `hasIcrSensitivity`: `boolean`; `hasInfrared`: `boolean`; `hasLcdScreen`: `boolean`; `hasLdc`: `boolean`; `hasLedIr`: `boolean`; `hasLedStatus`: `boolean`; `hasLineCrossing`: `boolean`; `hasLineCrossingCounting`: `boolean`; `hasLineIn`: `boolean`; `hasLiveviewTracking`: `boolean`; `hasLprReflex`: `boolean`; `hasLuxCheck`: `boolean`; `hasManualPersonOfInterest`: `boolean`; `hasMic`: `boolean`; `hasMotionZones`: `boolean`; `hasOptimizeIr`: `boolean`; `hasPackageCamera`: `boolean`; `hasPackageZoneSupportForPrimaryLens`: `boolean`; `hasPackageZoneSupportForSecondaryLens`: `boolean`; `hasPrivacyMask`: `boolean`; `hasRtc`: `boolean`; `hasSdCard`: `boolean`; `hasSmartDetect`: `boolean`; `hasSmartZoom`: `boolean`; `hasSmokeCover`: `boolean`; `hasSpeaker`: `boolean`; `hasSquareEventThumbnail`: `boolean`; `hasTamperDetection`: `boolean`; `hasVerticalFlip`: `boolean`; `hasWdr`: `boolean`; `hasWifi`: `boolean`; `hotplug`: \{ `audio`: `Nullable`\<`string`\>; `extender`: \{ `flashRange`: `Nullable`\<`number`\>; `hasFlash`: `boolean`; `hasIR`: `boolean`; `hasRadar`: `boolean`; `isAttached`: `boolean`; `radarRangeMax`: `Nullable`\<`number`\>; `radarRangeMin`: `Nullable`\<`number`\>; \}; `sdCardAttached`: `boolean`; `standaloneAdoption`: `boolean`; `video`: `Nullable`\<`string`\>; \}; `isDoorbell`: `boolean`; `isPtz`: `boolean`; `lensModel`: `Nullable`\<`string`\>; `lensType`: `Nullable`\<`string`\>; `maxScaleDownLevel`: `number`; `motionAlgorithms`: `string`[]; `mountPositions`: `string`[]; `pan`: [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md); `presetMinDuration`: `Nullable`\<`number`\>; `presetTour`: `boolean`; `privacyMaskCapability`: \{ `maxMasks`: `number`; `rectangleOnly`: `boolean`; \}; `reader`: \{ `canAdjustBrightness`: `boolean`; `support2fa`: `boolean`; `supportAccessMethods`: `string`[]; `supportAdjustSpeakerVolume`: `boolean`; `supportAudioCodecs`: `string`[]; `supportAutoBrightness`: `boolean`; `supportAutoTurnOffDisplay`: `boolean`; `supportCallerManager`: `boolean`; `supportDoorbellTriggerMethod`: `boolean`; `supportDoorDirection`: `boolean`; `supportFloodLed`: `boolean`; `supportGateStop`: `boolean`; `supportGreetings`: `boolean`; `supportInterfaceDesigner`: `boolean`; `supportInterfaceDirectory`: `boolean`; `supportInterfaceLayout`: `boolean`; `supportLocate`: `boolean`; `supportManualDownloadSupportFile`: `boolean`; `supportManualFirmwareUpdate`: `boolean`; `supportMic`: `boolean`; `supportShowHeading`: `boolean`; `supportShowInterfaceImage`: `boolean`; `supportShowStatusBar`: `boolean`; `supportShowUnlockSchedule`: `boolean`; `supportSpeaker`: `boolean`; `supportSsh`: `boolean`; `supportStatusLed`: `boolean`; `supportStreamEncryption`: `boolean`; `supportTwilioSip`: `boolean`; `supportWelcomeLed`: `boolean`; \}; `smartDetectAudioTypes`: `string`[]; `smartDetectTypes`: `string`[]; `stitchDistance`: \{ `support`: `boolean`; \}; `storage`: \{ `sdSlotCount`: `number`; `ssdSlotCount`: `number`; \}; `streamEncryptable`: `boolean`; `supportCustomRingtone`: `boolean`; `supportDoorAccessConfig`: `boolean`; `supportFullHdSnapshot`: `boolean`; `supportLocate`: `boolean`; `supportLpDetectionWithoutVehicle`: `boolean`; `supportMinMotionAdaptiveBitrate`: `boolean`; `supportNfc`: `boolean`; `supportPtzTrackingTimeout`: `boolean`; `tilt`: [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md); `verticalFlipWarning`: `boolean`; `videoCodecs`: `string`[]; `videoDeviceCount`: `Nullable`\<`number`\>; `videoInputModes`: `string`[]; `videoModeMaxFps`: `number`[]; `videoModes`: `string`[]; `zoom`: [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md) & \{ `ratio`: `number`; \}; \} | - | - |
+| <a id="featureflags"></a> `featureFlags` | \{ `audio`: `string`[]; `audioCodecs`: `string`[]; `audioStyle`: `string`[]; `canAdjustIrLedLevel`: `boolean`; `canAdjustIspSettings`: `boolean`; `canAdjustSpeakerVolume`: `boolean`; `canMagicZoom`: `boolean`; `canOpticalZoom`: `boolean`; `canTouchFocus`: `boolean`; `clarityZones`: `Nullable`\<\{ `maxZones`: `number`; `rectangleOnly`: `boolean`; \}\>; `downScaleLevels`: `Nullable`\<`string`[]\>; `downScaleResolutions`: `number`[][]; `excludeZones`: \{ `maxZones`: `number`; `rectangleOnly`: `boolean`; \}; `flashRange`: `Nullable`\<`number`\>; `focus`: [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md); `hallwayModeWarningRequired`: `boolean`; `hasAccelerometer`: `boolean`; `hasAec`: `boolean`; `hasAutoICROnly`: `boolean`; `hasBluetooth`: `boolean`; `hasChime`: `boolean`; `hasColorLcdScreen`: `boolean`; `hasEdgeRecording`: `boolean`; `hasExternalIr`: `boolean`; `hasFingerprintSensor`: `boolean`; `hasFisheye`: `boolean`; `hasFlash`: `boolean`; `hasHallwayMode`: `boolean`; `hasHallwayModeHdrOnRequired`: `boolean`; `hasHdr`: `boolean`; `hasHorizontalFlip`: `boolean`; `hasIcrSensitivity`: `boolean`; `hasInfrared`: `boolean`; `hasLcdScreen`: `boolean`; `hasLdc`: `boolean`; `hasLedIr`: `boolean`; `hasLedStatus`: `boolean`; `hasLineCrossing`: `boolean`; `hasLineCrossingCounting`: `boolean`; `hasLineIn`: `boolean`; `hasLiveviewTracking`: `boolean`; `hasLocalBufferRecording`: `boolean`; `hasLprReflex`: `boolean`; `hasLuxCheck`: `boolean`; `hasManualPersonOfInterest`: `boolean`; `hasMic`: `boolean`; `hasMotionDetection`: `boolean`; `hasMotionZones`: `boolean`; `hasNewOverlay`: `boolean`; `hasOptimizeIr`: `boolean`; `hasPackageCamera`: `boolean`; `hasPackageZoneSupportForPrimaryLens`: `boolean`; `hasPackageZoneSupportForSecondaryLens`: `boolean`; `hasPrivacyMask`: `boolean`; `hasRtc`: `boolean`; `hasSafetyZones`: `boolean`; `hasSdCard`: `boolean`; `hasSmartDetect`: `boolean`; `hasSmartZoom`: `boolean`; `hasSmokeCover`: `boolean`; `hasSpeaker`: `boolean`; `hasSquareEventThumbnail`: `boolean`; `hasTamperDetection`: `boolean`; `hasVerticalFlip`: `boolean`; `hasWdr`: `boolean`; `hasWifi`: `boolean`; `hotplug`: \{ `audio`: `Nullable`\<`string`\>; `extender`: \{ `flashRange`: `Nullable`\<`number`\>; `hasFlash`: `Nullable`\<`boolean`\>; `hasIR`: `Nullable`\<`boolean`\>; `hasRadar`: `Nullable`\<`boolean`\>; `isAttached`: `Nullable`\<`boolean`\>; `radarRangeMax`: `Nullable`\<`number`\>; `radarRangeMin`: `Nullable`\<`number`\>; \}; `sdCardAttached`: `boolean`; `standaloneAdoption`: `boolean`; `video`: `Nullable`\<`string`\>; \}; `isDoorbell`: `boolean`; `isPtz`: `boolean`; `lensModel`: `Nullable`\<`string`\>; `lensType`: `Nullable`\<`string`\>; `maxScaleDownLevel`: `Nullable`\<`number`\>; `motionAlgorithms`: `string`[]; `mountPositions`: `string`[]; `overlay`: `Nullable`\<\{ `placeholders`: `string`[]; \}\>; `pan`: [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md); `presetMinDuration`: `Nullable`\<`number`\>; `presetTour`: `boolean`; `privacyMaskCapability`: \{ `maxMasks`: `Nullable`\<`number`\>; `rectangleOnly`: `boolean`; \}; `radar`: `boolean`; `radarFeatures`: `ProtectKnownJsonValue`; `reader`: \{ `canAdjustBrightness`: `boolean`; `support2fa`: `boolean`; `supportAccessMethods`: `string`[]; `supportAdjustSpeakerVolume`: `boolean`; `supportAudioCodecs`: `string`[]; `supportAutoBrightness`: `boolean`; `supportAutoTurnOffDisplay`: `boolean`; `supportCallerManager`: `boolean`; `supportDoorbellTriggerMethod`: `boolean`; `supportDoorDirection`: `boolean`; `supportFloodLed`: `boolean`; `supportGateStop`: `boolean`; `supportGifInterfaceImage`: `boolean`; `supportGreetings`: `boolean`; `supportInterfaceDesigner`: `boolean`; `supportInterfaceDirectory`: `boolean`; `supportInterfaceLayout`: `boolean`; `supportLocate`: `boolean`; `supportManualDownloadSupportFile`: `boolean`; `supportManualFirmwareUpdate`: `boolean`; `supportMic`: `boolean`; `supportPinCodeShuffle`: `boolean`; `supportShowHeading`: `boolean`; `supportShowInterfaceImage`: `boolean`; `supportShowStatusBar`: `boolean`; `supportShowUnlockSchedule`: `boolean`; `supportSpeaker`: `boolean`; `supportSsh`: `boolean`; `supportStatusLed`: `boolean`; `supportStatusSound`: `boolean`; `supportStreamEncryption`: `boolean`; `supportThirdPartySip`: `boolean`; `supportTwilioSip`: `boolean`; `supportWelcomeLed`: `boolean`; \}; `smartDetectAudioTypes`: `string`[]; `smartDetectTypes`: `string`[]; `stitchDistance`: \{ `default?`: `number`; `max?`: `number`; `min?`: `number`; `support`: `boolean`; \}; `storage`: \{ `sdSlotCount`: `number`; `ssdSlotCount`: `number`; \}; `streamEncryptable`: `boolean`; `supportAccessManagedByProtect`: `boolean`; `supportCustomRingtone`: `boolean`; `supportDoorAccessConfig`: `boolean`; `supportFullHdSnapshot`: `boolean`; `supportLocate`: `boolean`; `supportLpDetectionWithoutVehicle`: `boolean`; `supportMinMotionAdaptiveBitrate`: `boolean`; `supportNfc`: `boolean`; `supportPtzTrackingTimeout`: `boolean`; `supportPtzVehicleTracking`: `boolean`; `teleportState`: `ProtectKnownJsonValue`; `tilt`: [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md); `verticalFlipWarning`: `boolean`; `videoCodecs`: `string`[]; `videoDeviceCount`: `Nullable`\<`number`\>; `videoInputModes`: `string`[]; `videoModeMaxFps`: `number`[]; `videoModes`: `string`[]; `zoom`: [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md) & \{ `ratio`: `number`; \}; \} | - | - |
 | `featureFlags.audio` | `string`[] | - | - |
 | `featureFlags.audioCodecs` | `string`[] | - | - |
 | `featureFlags.audioStyle` | `string`[] | - | - |
@@ -102,6 +104,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.canOpticalZoom` | `boolean` | - | - |
 | `featureFlags.canTouchFocus` | `boolean` | - | - |
 | `featureFlags.clarityZones` | `Nullable`\<\{ `maxZones`: `number`; `rectangleOnly`: `boolean`; \}\> | - | - |
+| `featureFlags.downScaleLevels` | `Nullable`\<`string`[]\> | - | - |
 | `featureFlags.downScaleResolutions` | `number`[][] | - | - |
 | `featureFlags.excludeZones` | \{ `maxZones`: `number`; `rectangleOnly`: `boolean`; \} | - | - |
 | `featureFlags.excludeZones.maxZones` | `number` | - | - |
@@ -134,17 +137,21 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.hasLineCrossingCounting` | `boolean` | - | - |
 | `featureFlags.hasLineIn` | `boolean` | - | - |
 | `featureFlags.hasLiveviewTracking` | `boolean` | - | - |
+| `featureFlags.hasLocalBufferRecording` | `boolean` | - | - |
 | `featureFlags.hasLprReflex` | `boolean` | - | - |
 | `featureFlags.hasLuxCheck` | `boolean` | - | - |
 | `featureFlags.hasManualPersonOfInterest` | `boolean` | - | - |
 | `featureFlags.hasMic` | `boolean` | - | - |
+| `featureFlags.hasMotionDetection` | `boolean` | - | - |
 | `featureFlags.hasMotionZones` | `boolean` | - | - |
+| `featureFlags.hasNewOverlay` | `boolean` | - | - |
 | `featureFlags.hasOptimizeIr` | `boolean` | - | - |
 | `featureFlags.hasPackageCamera` | `boolean` | - | - |
 | `featureFlags.hasPackageZoneSupportForPrimaryLens` | `boolean` | - | - |
 | `featureFlags.hasPackageZoneSupportForSecondaryLens` | `boolean` | - | - |
 | `featureFlags.hasPrivacyMask` | `boolean` | - | - |
 | `featureFlags.hasRtc` | `boolean` | - | - |
+| `featureFlags.hasSafetyZones` | `boolean` | - | - |
 | `featureFlags.hasSdCard` | `boolean` | - | - |
 | `featureFlags.hasSmartDetect` | `boolean` | - | - |
 | `featureFlags.hasSmartZoom` | `boolean` | - | - |
@@ -155,14 +162,14 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.hasVerticalFlip` | `boolean` | - | - |
 | `featureFlags.hasWdr` | `boolean` | - | - |
 | `featureFlags.hasWifi` | `boolean` | - | - |
-| `featureFlags.hotplug` | \{ `audio`: `Nullable`\<`string`\>; `extender`: \{ `flashRange`: `Nullable`\<`number`\>; `hasFlash`: `boolean`; `hasIR`: `boolean`; `hasRadar`: `boolean`; `isAttached`: `boolean`; `radarRangeMax`: `Nullable`\<`number`\>; `radarRangeMin`: `Nullable`\<`number`\>; \}; `sdCardAttached`: `boolean`; `standaloneAdoption`: `boolean`; `video`: `Nullable`\<`string`\>; \} | - | - |
+| `featureFlags.hotplug` | \{ `audio`: `Nullable`\<`string`\>; `extender`: \{ `flashRange`: `Nullable`\<`number`\>; `hasFlash`: `Nullable`\<`boolean`\>; `hasIR`: `Nullable`\<`boolean`\>; `hasRadar`: `Nullable`\<`boolean`\>; `isAttached`: `Nullable`\<`boolean`\>; `radarRangeMax`: `Nullable`\<`number`\>; `radarRangeMin`: `Nullable`\<`number`\>; \}; `sdCardAttached`: `boolean`; `standaloneAdoption`: `boolean`; `video`: `Nullable`\<`string`\>; \} | - | - |
 | `featureFlags.hotplug.audio` | `Nullable`\<`string`\> | - | - |
-| `featureFlags.hotplug.extender` | \{ `flashRange`: `Nullable`\<`number`\>; `hasFlash`: `boolean`; `hasIR`: `boolean`; `hasRadar`: `boolean`; `isAttached`: `boolean`; `radarRangeMax`: `Nullable`\<`number`\>; `radarRangeMin`: `Nullable`\<`number`\>; \} | - | - |
+| `featureFlags.hotplug.extender` | \{ `flashRange`: `Nullable`\<`number`\>; `hasFlash`: `Nullable`\<`boolean`\>; `hasIR`: `Nullable`\<`boolean`\>; `hasRadar`: `Nullable`\<`boolean`\>; `isAttached`: `Nullable`\<`boolean`\>; `radarRangeMax`: `Nullable`\<`number`\>; `radarRangeMin`: `Nullable`\<`number`\>; \} | - | - |
 | `featureFlags.hotplug.extender.flashRange` | `Nullable`\<`number`\> | - | - |
-| `featureFlags.hotplug.extender.hasFlash` | `boolean` | - | - |
-| `featureFlags.hotplug.extender.hasIR` | `boolean` | - | - |
-| `featureFlags.hotplug.extender.hasRadar` | `boolean` | - | - |
-| `featureFlags.hotplug.extender.isAttached` | `boolean` | - | - |
+| `featureFlags.hotplug.extender.hasFlash` | `Nullable`\<`boolean`\> | - | - |
+| `featureFlags.hotplug.extender.hasIR` | `Nullable`\<`boolean`\> | - | - |
+| `featureFlags.hotplug.extender.hasRadar` | `Nullable`\<`boolean`\> | - | - |
+| `featureFlags.hotplug.extender.isAttached` | `Nullable`\<`boolean`\> | - | - |
 | `featureFlags.hotplug.extender.radarRangeMax` | `Nullable`\<`number`\> | - | - |
 | `featureFlags.hotplug.extender.radarRangeMin` | `Nullable`\<`number`\> | - | - |
 | `featureFlags.hotplug.sdCardAttached` | `boolean` | - | - |
@@ -172,16 +179,19 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.isPtz` | `boolean` | - | - |
 | `featureFlags.lensModel` | `Nullable`\<`string`\> | - | - |
 | `featureFlags.lensType` | `Nullable`\<`string`\> | - | - |
-| `featureFlags.maxScaleDownLevel` | `number` | - | - |
+| `featureFlags.maxScaleDownLevel` | `Nullable`\<`number`\> | - | - |
 | `featureFlags.motionAlgorithms` | `string`[] | - | - |
 | `featureFlags.mountPositions` | `string`[] | - | - |
+| `featureFlags.overlay` | `Nullable`\<\{ `placeholders`: `string`[]; \}\> | - | - |
 | `featureFlags.pan` | [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md) | - | - |
 | `featureFlags.presetMinDuration` | `Nullable`\<`number`\> | - | - |
 | `featureFlags.presetTour` | `boolean` | - | - |
-| `featureFlags.privacyMaskCapability` | \{ `maxMasks`: `number`; `rectangleOnly`: `boolean`; \} | - | - |
-| `featureFlags.privacyMaskCapability.maxMasks` | `number` | - | - |
+| `featureFlags.privacyMaskCapability` | \{ `maxMasks`: `Nullable`\<`number`\>; `rectangleOnly`: `boolean`; \} | - | - |
+| `featureFlags.privacyMaskCapability.maxMasks` | `Nullable`\<`number`\> | - | - |
 | `featureFlags.privacyMaskCapability.rectangleOnly` | `boolean` | - | - |
-| `featureFlags.reader` | \{ `canAdjustBrightness`: `boolean`; `support2fa`: `boolean`; `supportAccessMethods`: `string`[]; `supportAdjustSpeakerVolume`: `boolean`; `supportAudioCodecs`: `string`[]; `supportAutoBrightness`: `boolean`; `supportAutoTurnOffDisplay`: `boolean`; `supportCallerManager`: `boolean`; `supportDoorbellTriggerMethod`: `boolean`; `supportDoorDirection`: `boolean`; `supportFloodLed`: `boolean`; `supportGateStop`: `boolean`; `supportGreetings`: `boolean`; `supportInterfaceDesigner`: `boolean`; `supportInterfaceDirectory`: `boolean`; `supportInterfaceLayout`: `boolean`; `supportLocate`: `boolean`; `supportManualDownloadSupportFile`: `boolean`; `supportManualFirmwareUpdate`: `boolean`; `supportMic`: `boolean`; `supportShowHeading`: `boolean`; `supportShowInterfaceImage`: `boolean`; `supportShowStatusBar`: `boolean`; `supportShowUnlockSchedule`: `boolean`; `supportSpeaker`: `boolean`; `supportSsh`: `boolean`; `supportStatusLed`: `boolean`; `supportStreamEncryption`: `boolean`; `supportTwilioSip`: `boolean`; `supportWelcomeLed`: `boolean`; \} | - | - |
+| `featureFlags.radar` | `boolean` | - | - |
+| `featureFlags.radarFeatures` | `ProtectKnownJsonValue` | - | - |
+| `featureFlags.reader` | \{ `canAdjustBrightness`: `boolean`; `support2fa`: `boolean`; `supportAccessMethods`: `string`[]; `supportAdjustSpeakerVolume`: `boolean`; `supportAudioCodecs`: `string`[]; `supportAutoBrightness`: `boolean`; `supportAutoTurnOffDisplay`: `boolean`; `supportCallerManager`: `boolean`; `supportDoorbellTriggerMethod`: `boolean`; `supportDoorDirection`: `boolean`; `supportFloodLed`: `boolean`; `supportGateStop`: `boolean`; `supportGifInterfaceImage`: `boolean`; `supportGreetings`: `boolean`; `supportInterfaceDesigner`: `boolean`; `supportInterfaceDirectory`: `boolean`; `supportInterfaceLayout`: `boolean`; `supportLocate`: `boolean`; `supportManualDownloadSupportFile`: `boolean`; `supportManualFirmwareUpdate`: `boolean`; `supportMic`: `boolean`; `supportPinCodeShuffle`: `boolean`; `supportShowHeading`: `boolean`; `supportShowInterfaceImage`: `boolean`; `supportShowStatusBar`: `boolean`; `supportShowUnlockSchedule`: `boolean`; `supportSpeaker`: `boolean`; `supportSsh`: `boolean`; `supportStatusLed`: `boolean`; `supportStatusSound`: `boolean`; `supportStreamEncryption`: `boolean`; `supportThirdPartySip`: `boolean`; `supportTwilioSip`: `boolean`; `supportWelcomeLed`: `boolean`; \} | - | - |
 | `featureFlags.reader.canAdjustBrightness` | `boolean` | - | - |
 | `featureFlags.reader.support2fa` | `boolean` | - | - |
 | `featureFlags.reader.supportAccessMethods` | `string`[] | - | - |
@@ -194,6 +204,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.reader.supportDoorDirection` | `boolean` | - | - |
 | `featureFlags.reader.supportFloodLed` | `boolean` | - | - |
 | `featureFlags.reader.supportGateStop` | `boolean` | - | - |
+| `featureFlags.reader.supportGifInterfaceImage` | `boolean` | - | - |
 | `featureFlags.reader.supportGreetings` | `boolean` | - | - |
 | `featureFlags.reader.supportInterfaceDesigner` | `boolean` | - | - |
 | `featureFlags.reader.supportInterfaceDirectory` | `boolean` | - | - |
@@ -202,6 +213,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.reader.supportManualDownloadSupportFile` | `boolean` | - | - |
 | `featureFlags.reader.supportManualFirmwareUpdate` | `boolean` | - | - |
 | `featureFlags.reader.supportMic` | `boolean` | - | - |
+| `featureFlags.reader.supportPinCodeShuffle` | `boolean` | - | - |
 | `featureFlags.reader.supportShowHeading` | `boolean` | - | - |
 | `featureFlags.reader.supportShowInterfaceImage` | `boolean` | - | - |
 | `featureFlags.reader.supportShowStatusBar` | `boolean` | - | - |
@@ -209,17 +221,23 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.reader.supportSpeaker` | `boolean` | - | - |
 | `featureFlags.reader.supportSsh` | `boolean` | - | - |
 | `featureFlags.reader.supportStatusLed` | `boolean` | - | - |
+| `featureFlags.reader.supportStatusSound` | `boolean` | - | - |
 | `featureFlags.reader.supportStreamEncryption` | `boolean` | - | - |
+| `featureFlags.reader.supportThirdPartySip` | `boolean` | - | - |
 | `featureFlags.reader.supportTwilioSip` | `boolean` | - | - |
 | `featureFlags.reader.supportWelcomeLed` | `boolean` | - | - |
 | `featureFlags.smartDetectAudioTypes` | `string`[] | - | - |
 | `featureFlags.smartDetectTypes` | `string`[] | - | - |
-| `featureFlags.stitchDistance` | \{ `support`: `boolean`; \} | - | - |
+| `featureFlags.stitchDistance` | \{ `default?`: `number`; `max?`: `number`; `min?`: `number`; `support`: `boolean`; \} | - | - |
+| `featureFlags.stitchDistance.default?` | `number` | - | - |
+| `featureFlags.stitchDistance.max?` | `number` | - | - |
+| `featureFlags.stitchDistance.min?` | `number` | - | - |
 | `featureFlags.stitchDistance.support` | `boolean` | - | - |
 | `featureFlags.storage` | \{ `sdSlotCount`: `number`; `ssdSlotCount`: `number`; \} | - | - |
 | `featureFlags.storage.sdSlotCount` | `number` | - | - |
 | `featureFlags.storage.ssdSlotCount` | `number` | - | - |
 | `featureFlags.streamEncryptable` | `boolean` | - | - |
+| `featureFlags.supportAccessManagedByProtect` | `boolean` | - | - |
 | `featureFlags.supportCustomRingtone` | `boolean` | - | - |
 | `featureFlags.supportDoorAccessConfig` | `boolean` | - | - |
 | `featureFlags.supportFullHdSnapshot` | `boolean` | - | - |
@@ -228,6 +246,8 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `featureFlags.supportMinMotionAdaptiveBitrate` | `boolean` | - | - |
 | `featureFlags.supportNfc` | `boolean` | - | - |
 | `featureFlags.supportPtzTrackingTimeout` | `boolean` | - | - |
+| `featureFlags.supportPtzVehicleTracking` | `boolean` | - | - |
+| `featureFlags.teleportState` | `ProtectKnownJsonValue` | - | - |
 | `featureFlags.tilt` | [`ProtectPtzAxisRangeInterface`](ProtectPtzAxisRangeInterface.md) | - | - |
 | `featureFlags.verticalFlipWarning` | `boolean` | - | - |
 | `featureFlags.videoCodecs` | `string`[] | - | - |
@@ -242,14 +262,15 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `fingerprintSettings.mode` | `string` | - | - |
 | `fingerprintSettings.reportCaptureComplete` | `boolean` | - | - |
 | `fingerprintSettings.reportFingerTouch` | `boolean` | - | - |
-| <a id="fingerprintstate"></a> `fingerprintState` | \{ `fingerprintId`: `string`; `free`: `number`; `progress`: `string`; `status`: `string`; `total`: `number`; \} | - | - |
-| `fingerprintState.fingerprintId` | `string` | - | - |
+| <a id="fingerprintstate"></a> `fingerprintState` | \{ `fingerprintId`: `Nullable`\<`string`\>; `free`: `number`; `progress`: `Nullable`\<`string`\>; `status`: `Nullable`\<`string`\>; `total`: `number`; \} | - | - |
+| `fingerprintState.fingerprintId` | `Nullable`\<`string`\> | - | - |
 | `fingerprintState.free` | `number` | - | - |
-| `fingerprintState.progress` | `string` | - | - |
-| `fingerprintState.status` | `string` | - | - |
+| `fingerprintState.progress` | `Nullable`\<`string`\> | - | - |
+| `fingerprintState.status` | `Nullable`\<`string`\> | - | - |
 | `fingerprintState.total` | `number` | - | - |
-| <a id="firmwarebuild"></a> `firmwareBuild` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`firmwareBuild`](ProtectDeviceBaseInterface.md#firmwarebuild) |
+| <a id="firmwarebuild"></a> `firmwareBuild` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`firmwareBuild`](ProtectDeviceBaseInterface.md#firmwarebuild) |
 | <a id="firmwareversion"></a> `firmwareVersion` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`firmwareVersion`](ProtectDeviceBaseInterface.md#firmwareversion) |
+| <a id="fogdetection"></a> `fogDetection` | `ProtectKnownJsonValue` | - | - |
 | <a id="fwupdatestate"></a> `fwUpdateState` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`fwUpdateState`](ProtectDeviceBaseInterface.md#fwupdatestate) |
 | <a id="globalalarmmanagerscopenames"></a> `globalAlarmManagerScopeNames` | `string`[] | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`globalAlarmManagerScopeNames`](ProtectDeviceBaseInterface.md#globalalarmmanagerscopenames) |
 | <a id="greetingsettings"></a> `greetingSettings` | \{ `greetingBroadcastName`: `string`; `greetingText`: `string`; \} | - | - |
@@ -274,8 +295,9 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `homekitSettings.streamInProgress` | `boolean` | - | - |
 | `homekitSettings.talkbackSettingsActive` | `boolean` | - | - |
 | <a id="host"></a> `host` | `string` | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`host`](ProtectDeviceBaseInterface.md#host) | - |
-| <a id="hqbytesperday"></a> `hqBytesPerDay` | `number` | - | - |
-| <a id="hubmac"></a> `hubMac` | `string` | - | - |
+| <a id="hqbytesperday"></a> `hqBytesPerDay` | `Nullable`\<`number`\> | - | - |
+| <a id="hqbytesperdayupdatedat"></a> `hqBytesPerDayUpdatedAt` | `Nullable`\<`number`\> | - | - |
+| <a id="hubmac"></a> `hubMac` | `Nullable`\<`string`\> | - | - |
 | <a id="id"></a> `id` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`id`](ProtectDeviceBaseInterface.md#id) |
 | <a id="interfacesettings"></a> `interfaceSettings` | \{ `bgImageId`: `Nullable`\<`string`\>; `callMethod`: `string`; `heading`: `Nullable`\<`string`\>; `layout`: `string`; `logoImageId`: `Nullable`\<`string`\>; `showLogo`: `boolean`; `showTime`: `boolean`; `showWeather`: `boolean`; `subHeading`: `Nullable`\<`string`\>; \} | - | - |
 | `interfaceSettings.bgImageId` | `Nullable`\<`string`\> | - | - |
@@ -301,6 +323,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="isdark"></a> `isDark` | `boolean` | - | - |
 | <a id="isdeleting"></a> `isDeleting` | `boolean` | - | - |
 | <a id="isdownloadingfw"></a> `isDownloadingFW` | `boolean` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`isDownloadingFW`](ProtectDeviceBaseInterface.md#isdownloadingfw) |
+| <a id="isentry"></a> `isEntry` | `boolean` | - | - |
 | <a id="isextenderinstalledever"></a> `isExtenderInstalledEver` | `boolean` | - | - |
 | <a id="isintercom"></a> `isIntercom` | `boolean` | - | - |
 | <a id="isliveheatmapenabled"></a> `isLiveHeatmapEnabled` | `boolean` | - | - |
@@ -312,7 +335,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="ispoornetwork"></a> `isPoorNetwork` | `boolean` | - | - |
 | <a id="isprobingforwifi"></a> `isProbingForWifi` | `boolean` | - | - |
 | <a id="isprovisioned"></a> `isProvisioned` | `boolean` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`isProvisioned`](ProtectDeviceBaseInterface.md#isprovisioned) |
-| <a id="ispsettings"></a> `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `denoise`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hdrMode`: `string`; `hue`: `number`; `icrCustomValue`: `number`; `icrSensitivity`: `number`; `icrSwitchMode`: `string`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isColorNightVisionEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `isSmokeCoverModeEnabled`: `boolean`; `mountPosition`: `string`; `saturation`: `number`; `sceneMode`: `string`; `sharpness`: `number`; `spotlightDuration`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} | - | - |
+| <a id="ispsettings"></a> `ispSettings` | \{ `aeMode`: `string`; `brightness`: `number`; `contrast`: `number`; `denoise`: `number`; `dZoomCenterX`: `number`; `dZoomCenterY`: `number`; `dZoomScale`: `number`; `dZoomStreamId`: `number`; `focusMode`: `string`; `focusPosition`: `number`; `hdrMode`: `string`; `hue`: `number`; `icrCustomValue`: `number`; `icrSensitivity`: `number`; `icrSwitchMode`: `string`; `irLedLevel`: `number`; `irLedMode`: `string`; `is3dnrEnabled`: `boolean`; `isAggressiveAntiFlickerEnabled`: `boolean`; `isAutoRotateEnabled`: `boolean`; `isColorNightVisionEnabled`: `boolean`; `isExternalIrEnabled`: `boolean`; `isFlippedHorizontal`: `boolean`; `isFlippedVertical`: `boolean`; `isLdcEnabled`: `boolean`; `isPauseMotionEnabled`: `boolean`; `isSmokeCoverModeEnabled`: `boolean`; `mountPosition`: `Nullable`\<`string`\>; `saturation`: `number`; `sceneMode`: `string`; `sharpness`: `number`; `spotlightDuration`: `number`; `touchFocusX`: `number`; `touchFocusY`: `number`; `wdr`: `number`; `zoomPosition`: `number`; \} | - | - |
 | `ispSettings.aeMode` | `string` | - | - |
 | `ispSettings.brightness` | `number` | - | - |
 | `ispSettings.contrast` | `number` | - | - |
@@ -340,7 +363,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `ispSettings.isLdcEnabled` | `boolean` | - | - |
 | `ispSettings.isPauseMotionEnabled` | `boolean` | - | - |
 | `ispSettings.isSmokeCoverModeEnabled` | `boolean` | - | - |
-| `ispSettings.mountPosition` | `string` | - | - |
+| `ispSettings.mountPosition` | `Nullable`\<`string`\> | - | - |
 | `ispSettings.saturation` | `number` | - | - |
 | `ispSettings.sceneMode` | `string` | - | - |
 | `ispSettings.sharpness` | `number` | - | - |
@@ -359,25 +382,28 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="issmartdetected"></a> `isSmartDetected` | `boolean` | - | - |
 | <a id="issshenabled"></a> `isSshEnabled` | `boolean` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`isSshEnabled`](ProtectDeviceBaseInterface.md#issshenabled) |
 | <a id="isthirdpartycamera"></a> `isThirdPartyCamera` | `boolean` | - | - |
+| <a id="istransferringgap"></a> `isTransferringGap` | `boolean` | - | - |
 | <a id="isupdating"></a> `isUpdating` | `boolean` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`isUpdating`](ProtectDeviceBaseInterface.md#isupdating) |
 | <a id="iswaterproofcaseattached"></a> `isWaterproofCaseAttached` | `boolean` | - | - |
 | <a id="iswirelessuplinkenabled"></a> `isWirelessUplinkEnabled` | `boolean` | - | - |
 | <a id="lastdisconnect"></a> `lastDisconnect` | `Nullable`\<`number`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`lastDisconnect`](ProtectDeviceBaseInterface.md#lastdisconnect) |
-| <a id="lastmotion"></a> `lastMotion` | `number` | - | - |
+| <a id="lastmotion"></a> `lastMotion` | `Nullable`\<`number`\> | - | - |
+| <a id="lastmotiondetectiontypes"></a> `lastMotionDetectionTypes` | `string`[] | - | - |
 | <a id="lastring"></a> `lastRing` | `Nullable`\<`number`\> | - | - |
 | <a id="lastseen"></a> `lastSeen` | `number` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`lastSeen`](ProtectDeviceBaseInterface.md#lastseen) |
 | <a id="latestfirmwaresizebytes"></a> `latestFirmwareSizeBytes` | `Nullable`\<`number`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`latestFirmwareSizeBytes`](ProtectDeviceBaseInterface.md#latestfirmwaresizebytes) |
-| <a id="latestfirmwareversion"></a> `latestFirmwareVersion` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`latestFirmwareVersion`](ProtectDeviceBaseInterface.md#latestfirmwareversion) |
+| <a id="latestfirmwareversion"></a> `latestFirmwareVersion` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`latestFirmwareVersion`](ProtectDeviceBaseInterface.md#latestfirmwareversion) |
 | <a id="lcdmessage"></a> `lcdMessage?` | `DeepPartial`\<[`ProtectCameraLcdMessageConfigInterface`](ProtectCameraLcdMessageConfigInterface.md)\> | - | - |
 | <a id="ledsettings"></a> `ledSettings` | \{ `floodLed`: `boolean`; `isEnabled`: `boolean`; `welcomeLed`: `boolean`; \} | - | - |
 | `ledSettings.floodLed` | `boolean` | - | - |
 | `ledSettings.isEnabled` | `boolean` | - | - |
 | `ledSettings.welcomeLed` | `boolean` | - | - |
-| <a id="lenses"></a> `lenses` | \{ `id`: `number`; `video`: \{ `recordingEnd`: `Nullable`\<`number`\>; `recordingEndLQ`: `Nullable`\<`number`\>; `recordingStart`: `Nullable`\<`number`\>; `recordingStartLQ`: `Nullable`\<`number`\>; `timelapseEnd`: `Nullable`\<`number`\>; `timelapseEndLQ`: `Nullable`\<`number`\>; `timelapseStart`: `Nullable`\<`number`\>; `timelapseStartLQ`: `Nullable`\<`number`\>; \}; \}[] | - | - |
+| <a id="lenses"></a> `lenses` | \{ `id`: `number`; `video`: \{ `continuousStart`: `Nullable`\<`number`\>; `continuousStartLQ`: `Nullable`\<`number`\>; `recordingEnd`: `Nullable`\<`number`\>; `recordingEndLQ`: `Nullable`\<`number`\>; `recordingStart`: `Nullable`\<`number`\>; `recordingStartLQ`: `Nullable`\<`number`\>; `timelapseEnd`: `Nullable`\<`number`\>; `timelapseEndLQ`: `Nullable`\<`number`\>; `timelapseStart`: `Nullable`\<`number`\>; `timelapseStartLQ`: `Nullable`\<`number`\>; \}; \}[] | - | - |
+| <a id="location"></a> `location` | `ProtectKnownJsonValue` | - | - |
 | <a id="lowmemorydisabledprocesses"></a> `lowMemoryDisabledProcesses` | `Nullable`\<`string`[]\> | - | - |
-| <a id="lqbytesperday"></a> `lqBytesPerDay` | `number` | - | - |
+| <a id="lqbytesperday"></a> `lqBytesPerDay` | `Nullable`\<`number`\> | - | - |
 | <a id="mac"></a> `mac` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`mac`](ProtectDeviceBaseInterface.md#mac) |
-| <a id="marketname"></a> `marketName` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`marketName`](ProtectDeviceBaseInterface.md#marketname) |
+| <a id="marketname"></a> `marketName?` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`marketName`](ProtectDeviceBaseInterface.md#marketname) |
 | <a id="micvolume"></a> `micVolume` | `number` | - | - |
 | <a id="minfirmwareversion"></a> `minFirmwareVersion` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`minFirmwareVersion`](ProtectDeviceBaseInterface.md#minfirmwareversion) |
 | <a id="modelkey"></a> `modelKey` | `"camera"` | - | - |
@@ -387,10 +413,10 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="nfcsettings"></a> `nfcSettings` | \{ `enableNfc`: `boolean`; `supportThirdPartyCard`: `boolean`; \} | - | - |
 | `nfcSettings.enableNfc` | `boolean` | - | - |
 | `nfcSettings.supportThirdPartyCard` | `boolean` | - | - |
-| <a id="nfcstate"></a> `nfcState` | \{ `cardId`: `string`; `isUACard`: `boolean`; `lastSeen`: `number`; `mode`: `string`; \} | - | - |
-| `nfcState.cardId` | `string` | - | - |
+| <a id="nfcstate"></a> `nfcState` | \{ `cardId`: `Nullable`\<`string`\>; `isUACard`: `boolean`; `lastSeen`: `Nullable`\<`number`\>; `mode`: `string`; \} | - | - |
+| `nfcState.cardId` | `Nullable`\<`string`\> | - | - |
 | `nfcState.isUACard` | `boolean` | - | - |
-| `nfcState.lastSeen` | `number` | - | - |
+| `nfcState.lastSeen` | `Nullable`\<`number`\> | - | - |
 | `nfcState.mode` | `string` | - | - |
 | <a id="nvrmac"></a> `nvrMac` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`nvrMac`](ProtectDeviceBaseInterface.md#nvrmac) |
 | <a id="optimizeirsettings"></a> `optimizeIrSettings` | \{ `irZones`: `ProtectKnownJsonValue`[]; `mode`: `string`; \} | - | - |
@@ -402,12 +428,14 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `osdSettings.isLogoEnabled` | `boolean` | - | - |
 | `osdSettings.isNameEnabled` | `boolean` | - | - |
 | `osdSettings.overlayLocation` | `string` | - | - |
+| <a id="overlaysettings"></a> `overlaySettings` | [`ProtectOverlaySettingsInterface`](ProtectOverlaySettingsInterface.md) | - | - |
 | <a id="parentcameragroupid"></a> `parentCameraGroupId` | `Nullable`\<`string`\> | - | - |
-| <a id="phyrate"></a> `phyRate` | `number` | - | - |
+| <a id="phyrate"></a> `phyRate` | `Nullable`\<`number`\> | - | - |
 | <a id="pincodesettings"></a> `pinCodeSettings` | \{ `pinCodeLengthRange`: `string`; `pinCodeShuffle`: `boolean`; \} | - | - |
 | `pinCodeSettings.pinCodeLengthRange` | `string` | - | - |
 | `pinCodeSettings.pinCodeShuffle` | `boolean` | - | - |
 | <a id="platform"></a> `platform?` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`platform`](ProtectDeviceBaseInterface.md#platform) |
+| <a id="poeportnumber"></a> `poePortNumber` | `Nullable`\<`number`\> | - | - |
 | <a id="previousfirmwareurl"></a> `previousFirmwareUrl` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`previousFirmwareUrl`](ProtectDeviceBaseInterface.md#previousfirmwareurl) |
 | <a id="previousfirmwareversion"></a> `previousFirmwareVersion` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`previousFirmwareVersion`](ProtectDeviceBaseInterface.md#previousfirmwareversion) |
 | <a id="privacyzones"></a> `privacyZones` | `ProtectKnownJsonValue`[] | - | - |
@@ -417,13 +445,15 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `ptz.recentMoveAutoTrackResumeAtTs` | `Nullable`\<`number`\> | - | - |
 | `ptz.returnHomeAfterInactivityMs` | `Nullable`\<`number`\> | - | - |
 | <a id="ptzcontrolenabled"></a> `ptzControlEnabled` | `boolean` | - | - |
-| <a id="readersettings"></a> `readerSettings` | \{ `allowThirdPartyNfcCards`: `boolean`; `doorEntryMethod`: `string`; `doorId`: `Nullable`\<`string`\>; `doorName`: `Nullable`\<`string`\>; `language`: `string`; `screenOffTimeout`: `string`; `unlockDuration`: `number`; \} | - | - |
+| <a id="readersettings"></a> `readerSettings` | \{ `allowThirdPartyNfcCards`: `boolean`; `doorEntryMethod`: `string`; `doorId`: `Nullable`\<`string`\>; `doorName`: `Nullable`\<`string`\>; `language`: `string`; `screenOffTimeout`: `string`; `showUnlockSchedule`: `boolean`; `twoFactorAuth`: `Record`\<`string`, `ProtectKnownJsonValue`\>; `unlockDuration`: `number`; \} | - | - |
 | `readerSettings.allowThirdPartyNfcCards` | `boolean` | - | - |
 | `readerSettings.doorEntryMethod` | `string` | - | - |
 | `readerSettings.doorId` | `Nullable`\<`string`\> | - | - |
 | `readerSettings.doorName` | `Nullable`\<`string`\> | - | - |
 | `readerSettings.language` | `string` | - | - |
 | `readerSettings.screenOffTimeout` | `string` | - | - |
+| `readerSettings.showUnlockSchedule` | `boolean` | - | - |
+| `readerSettings.twoFactorAuth` | `Record`\<`string`, `ProtectKnownJsonValue`\> | - | - |
 | `readerSettings.unlockDuration` | `number` | - | - |
 | <a id="receivergroups"></a> `receiverGroups` | `ProtectKnownJsonValue`[] | - | - |
 | <a id="recordingpath"></a> `recordingPath` | `Nullable`\<`string`\> | - | - |
@@ -459,7 +489,7 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="shortcuts"></a> `shortcuts` | `ProtectKnownJsonValue`[] | - | - |
 | <a id="skipcameraupdatedecallistener"></a> `skipCameraUpdateDecalListener` | `boolean` | - | - |
 | <a id="smartdetectlines"></a> `smartDetectLines` | `ProtectKnownJsonValue`[] | - | - |
-| <a id="smartdetectloiterzones"></a> `smartDetectLoiterZones` | [`ProtectSmartZoneInterface`](ProtectSmartZoneInterface.md) & \{ `loiterTriggers`: \{ `loiterTriggerTime`: `number`; `objectType`: `string`; \}[]; `triggerAccessTypes`: `string`[]; \}[] | - | - |
+| <a id="smartdetectloiterzones"></a> `smartDetectLoiterZones` | ([`ProtectSmartZoneInterface`](ProtectSmartZoneInterface.md) & \{ `loiterTriggers`: \{ `loiterTriggerTime`: `number`; `objectType`: `string`; \}[]; `triggerAccessTypes`: `string`[]; \})[] | - | - |
 | <a id="smartdetectsettings"></a> `smartDetectSettings` | \{ `audioTypes`: `string`[]; `autoTrackingObjectTypes`: `string`[]; `autoTrackingTimeoutSec`: `number`; `autoTrackingWithZoom`: `boolean`; `detectionRange`: \{ `max`: `Nullable`\<`number`\>; `min`: `Nullable`\<`number`\>; \}; `enableTamperDetection`: `boolean`; `objectTypes`: `string`[]; \} | - | - |
 | `smartDetectSettings.audioTypes` | `string`[] | - | - |
 | `smartDetectSettings.autoTrackingObjectTypes` | `string`[] | - | - |
@@ -470,7 +500,8 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `smartDetectSettings.detectionRange.min` | `Nullable`\<`number`\> | - | - |
 | `smartDetectSettings.enableTamperDetection` | `boolean` | - | - |
 | `smartDetectSettings.objectTypes` | `string`[] | - | - |
-| <a id="smartdetectzones"></a> `smartDetectZones` | [`ProtectSmartZoneInterface`](ProtectSmartZoneInterface.md) & \{ `objectTypes`: `string`[]; \}[] | - | - |
+| <a id="smartdetectzones"></a> `smartDetectZones` | ([`ProtectSmartZoneInterface`](ProtectSmartZoneInterface.md) & \{ `enableAccessLPOnlyMode`: `boolean`; `objectTypes`: `string`[]; `source`: `string`; `triggerAccessTypes`: `ProtectKnownJsonValue`[]; \})[] | - | - |
+| <a id="spatialintelligencezones"></a> `spatialIntelligenceZones` | `ProtectKnownJsonValue`[] | - | - |
 | <a id="speakersettings"></a> `speakerSettings` | \{ `areSystemSoundsEnabled`: `boolean`; `isEnabled`: `boolean`; `repeatTimes`: `number`; `ringtoneId`: `Nullable`\<`string`\>; `ringVolume`: `number`; `speakerVolume`: `number`; `volume`: `number`; \} | - | - |
 | `speakerSettings.areSystemSoundsEnabled` | `boolean` | - | - |
 | `speakerSettings.isEnabled` | `boolean` | - | - |
@@ -480,9 +511,10 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `speakerSettings.speakerVolume` | `number` | - | - |
 | `speakerSettings.volume` | `number` | - | - |
 | <a id="state"></a> `state` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`state`](ProtectDeviceBaseInterface.md#state) |
-| <a id="stats"></a> `stats` | \{ `edgeRecording`: \{ `deviceMac`: `Nullable`\<`string`\>; `recordMode`: `string`; `recordStreamNumber`: `Nullable`\<`number`\>; \}; `sdCard`: \{ `health`: `Nullable`\<`string`\>; `healthStatus`: `string`; `hotPlugCapable`: `Nullable`\<`boolean`\>; `mounts`: `ProtectKnownJsonValue`[]; `sdRecordingSupported`: `Nullable`\<`boolean`\>; `serial`: `Nullable`\<`string`\>; `size`: `Nullable`\<`number`\>; `slotId`: `string`; `slotIdx`: `Nullable`\<`number`\>; `state`: `string`; `type`: `Nullable`\<`string`\>; `usedSize`: `number`; \}; `sdCardStorageCapacityMs`: `Nullable`\<`number`\>; `storage`: \{ `rate`: `number`; `used`: `number`; \}; `storageSlots`: `ProtectKnownJsonValue`[]; `totalStorageCapacityMs`: `Nullable`\<`number`\>; `video`: \{ `recordingEnd`: `number`; `recordingEndLQ`: `number`; `recordingStart`: `number`; `recordingStartLQ`: `number`; `timelapseEnd`: `number`; `timelapseEndLQ`: `number`; `timelapseStart`: `number`; `timelapseStartLQ`: `number`; \}; `wifi`: \{ `channel`: `Nullable`\<`number`\>; `frequency`: `Nullable`\<`number`\>; `linkSpeedMbps`: `Nullable`\<`number`\>; `signalQuality`: `number`; `signalStrength`: `number`; \}; `wifiQuality`: `number`; `wifiStrength`: `number`; \} | - | - |
-| `stats.edgeRecording` | \{ `deviceMac`: `Nullable`\<`string`\>; `recordMode`: `string`; `recordStreamNumber`: `Nullable`\<`number`\>; \} | - | - |
+| <a id="stats"></a> `stats` | \{ `edgeRecording`: \{ `deviceMac`: `Nullable`\<`string`\>; `operationMode`: `Nullable`\<`string`\>; `recordMode`: `string`; `recordStreamNumber`: `Nullable`\<`number`\>; \}; `sdCard`: \{ `health`: `Nullable`\<`string`\>; `healthStatus`: `string`; `hotPlugCapable`: `Nullable`\<`boolean`\>; `mounts`: `ProtectKnownJsonValue`[]; `sdRecordingSupported`: `Nullable`\<`boolean`\>; `serial`: `Nullable`\<`string`\>; `size`: `Nullable`\<`number`\>; `slotId`: `string`; `slotIdx`: `Nullable`\<`number`\>; `state`: `string`; `type`: `Nullable`\<`string`\>; `usedSize`: `number`; \}; `sdCardStorageCapacityMs`: `Nullable`\<`number`\>; `storage`: \{ `channelStorage`: `Record`\<`string`, \{ `rotating`: \{ `lockedRecordingsSizeBytes`: `number`; `recordingsSizeBytes`: `number`; \}; `timelapse`: \{ `lockedRecordingsSizeBytes`: `number`; `recordingsSizeBytes`: `number`; \}; \}\>; `rate`: `Nullable`\<`number`\>; `used`: `Nullable`\<`number`\>; \}; `storageSlots`: `ProtectKnownJsonValue`[]; `totalStorageCapacityMs`: `Nullable`\<`number`\>; `video`: \{ `continuousStart`: `Nullable`\<`number`\>; `continuousStartLQ`: `Nullable`\<`number`\>; `recordingEnd`: `Nullable`\<`number`\>; `recordingEndLQ`: `Nullable`\<`number`\>; `recordingStart`: `Nullable`\<`number`\>; `recordingStartLQ`: `Nullable`\<`number`\>; `timelapseEnd`: `Nullable`\<`number`\>; `timelapseEndLQ`: `Nullable`\<`number`\>; `timelapseStart`: `Nullable`\<`number`\>; `timelapseStartLQ`: `Nullable`\<`number`\>; \}; `wifi`: \{ `channel`: `Nullable`\<`number`\>; `frequency`: `Nullable`\<`number`\>; `linkSpeedMbps`: `Nullable`\<`number`\>; `signalQuality`: `number`; `signalStrength`: `number`; \}; `wifiQuality`: `number`; `wifiStrength`: `number`; \} | - | - |
+| `stats.edgeRecording` | \{ `deviceMac`: `Nullable`\<`string`\>; `operationMode`: `Nullable`\<`string`\>; `recordMode`: `string`; `recordStreamNumber`: `Nullable`\<`number`\>; \} | - | - |
 | `stats.edgeRecording.deviceMac` | `Nullable`\<`string`\> | - | - |
+| `stats.edgeRecording.operationMode` | `Nullable`\<`string`\> | - | - |
 | `stats.edgeRecording.recordMode` | `string` | - | - |
 | `stats.edgeRecording.recordStreamNumber` | `Nullable`\<`number`\> | - | - |
 | `stats.sdCard` | \{ `health`: `Nullable`\<`string`\>; `healthStatus`: `string`; `hotPlugCapable`: `Nullable`\<`boolean`\>; `mounts`: `ProtectKnownJsonValue`[]; `sdRecordingSupported`: `Nullable`\<`boolean`\>; `serial`: `Nullable`\<`string`\>; `size`: `Nullable`\<`number`\>; `slotId`: `string`; `slotIdx`: `Nullable`\<`number`\>; `state`: `string`; `type`: `Nullable`\<`string`\>; `usedSize`: `number`; \} | - | - |
@@ -499,20 +531,23 @@ A semi-complete description of the UniFi Protect camera JSON.
 | `stats.sdCard.type` | `Nullable`\<`string`\> | - | - |
 | `stats.sdCard.usedSize` | `number` | - | - |
 | `stats.sdCardStorageCapacityMs` | `Nullable`\<`number`\> | - | - |
-| `stats.storage` | \{ `rate`: `number`; `used`: `number`; \} | - | - |
-| `stats.storage.rate` | `number` | - | - |
-| `stats.storage.used` | `number` | - | - |
+| `stats.storage` | \{ `channelStorage`: `Record`\<`string`, \{ `rotating`: \{ `lockedRecordingsSizeBytes`: `number`; `recordingsSizeBytes`: `number`; \}; `timelapse`: \{ `lockedRecordingsSizeBytes`: `number`; `recordingsSizeBytes`: `number`; \}; \}\>; `rate`: `Nullable`\<`number`\>; `used`: `Nullable`\<`number`\>; \} | - | - |
+| `stats.storage.channelStorage` | `Record`\<`string`, \{ `rotating`: \{ `lockedRecordingsSizeBytes`: `number`; `recordingsSizeBytes`: `number`; \}; `timelapse`: \{ `lockedRecordingsSizeBytes`: `number`; `recordingsSizeBytes`: `number`; \}; \}\> | - | - |
+| `stats.storage.rate` | `Nullable`\<`number`\> | - | - |
+| `stats.storage.used` | `Nullable`\<`number`\> | - | - |
 | `stats.storageSlots` | `ProtectKnownJsonValue`[] | - | - |
 | `stats.totalStorageCapacityMs` | `Nullable`\<`number`\> | - | - |
-| `stats.video` | \{ `recordingEnd`: `number`; `recordingEndLQ`: `number`; `recordingStart`: `number`; `recordingStartLQ`: `number`; `timelapseEnd`: `number`; `timelapseEndLQ`: `number`; `timelapseStart`: `number`; `timelapseStartLQ`: `number`; \} | - | - |
-| `stats.video.recordingEnd` | `number` | - | - |
-| `stats.video.recordingEndLQ` | `number` | - | - |
-| `stats.video.recordingStart` | `number` | - | - |
-| `stats.video.recordingStartLQ` | `number` | - | - |
-| `stats.video.timelapseEnd` | `number` | - | - |
-| `stats.video.timelapseEndLQ` | `number` | - | - |
-| `stats.video.timelapseStart` | `number` | - | - |
-| `stats.video.timelapseStartLQ` | `number` | - | - |
+| `stats.video` | \{ `continuousStart`: `Nullable`\<`number`\>; `continuousStartLQ`: `Nullable`\<`number`\>; `recordingEnd`: `Nullable`\<`number`\>; `recordingEndLQ`: `Nullable`\<`number`\>; `recordingStart`: `Nullable`\<`number`\>; `recordingStartLQ`: `Nullable`\<`number`\>; `timelapseEnd`: `Nullable`\<`number`\>; `timelapseEndLQ`: `Nullable`\<`number`\>; `timelapseStart`: `Nullable`\<`number`\>; `timelapseStartLQ`: `Nullable`\<`number`\>; \} | - | - |
+| `stats.video.continuousStart` | `Nullable`\<`number`\> | - | - |
+| `stats.video.continuousStartLQ` | `Nullable`\<`number`\> | - | - |
+| `stats.video.recordingEnd` | `Nullable`\<`number`\> | - | - |
+| `stats.video.recordingEndLQ` | `Nullable`\<`number`\> | - | - |
+| `stats.video.recordingStart` | `Nullable`\<`number`\> | - | - |
+| `stats.video.recordingStartLQ` | `Nullable`\<`number`\> | - | - |
+| `stats.video.timelapseEnd` | `Nullable`\<`number`\> | - | - |
+| `stats.video.timelapseEndLQ` | `Nullable`\<`number`\> | - | - |
+| `stats.video.timelapseStart` | `Nullable`\<`number`\> | - | - |
+| `stats.video.timelapseStartLQ` | `Nullable`\<`number`\> | - | - |
 | `stats.wifi` | \{ `channel`: `Nullable`\<`number`\>; `frequency`: `Nullable`\<`number`\>; `linkSpeedMbps`: `Nullable`\<`number`\>; `signalQuality`: `number`; `signalStrength`: `number`; \} | - | - |
 | `stats.wifi.channel` | `Nullable`\<`number`\> | - | - |
 | `stats.wifi.frequency` | `Nullable`\<`number`\> | - | - |
@@ -542,30 +577,42 @@ A semi-complete description of the UniFi Protect camera JSON.
 | <a id="sysid"></a> `sysid` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`sysid`](ProtectDeviceBaseInterface.md#sysid) |
 | <a id="talkbacksettings"></a> `talkbackSettings` | [`ProtectCameraTalkbackConfigInterface`](ProtectCameraTalkbackConfigInterface.md) | - | - |
 | <a id="template"></a> `template` | `Nullable`\<`ProtectKnownJsonValue`\> | - | - |
-| <a id="thirdpartycamerainfo"></a> `thirdPartyCameraInfo` | \{ `enableRtspAudio`: `Nullable`\<`boolean`\>; `errors`: `ProtectKnownJsonValue`[]; `forceTcp`: `Nullable`\<`boolean`\>; `hasAudio`: `Nullable`\<`boolean`\>; `port`: `number`; `rtspUrl`: `string`; `rtspUrlLQ`: `string`; `snapshotUrl`: `string`; \} | - | - |
+| <a id="thirdpartycamerainfo"></a> `thirdPartyCameraInfo` | \{ `availableProfiles`: `Nullable`\<`ProtectKnownJsonValue`[]\>; `digitalInput`: `ProtectKnownJsonValue`; `digitalInputTokens`: `Nullable`\<`string`[]\>; `enableRtspAudio`: `Nullable`\<`boolean`\>; `errors`: `ProtectKnownJsonValue`[]; `forceTcp`: `Nullable`\<`boolean`\>; `hasAudio`: `Nullable`\<`boolean`\>; `imaging`: `ProtectKnownJsonValue`; `manualProfileOverride`: `boolean`; `mediaVersion`: `Nullable`\<`string`\>; `motionDetection`: `ProtectKnownJsonValue`; `port`: `Nullable`\<`number`\>; `profileToken`: `Nullable`\<`string`\>; `profileTokenLQ`: `Nullable`\<`string`\>; `relayOutput`: `ProtectKnownJsonValue`; `relayOutputTokens`: `Nullable`\<`string`[]\>; `rtspUrl`: `Nullable`\<`string`\>; `rtspUrlLQ`: `Nullable`\<`string`\>; `snapshotUrl`: `Nullable`\<`string`\>; \} | - | - |
+| `thirdPartyCameraInfo.availableProfiles` | `Nullable`\<`ProtectKnownJsonValue`[]\> | - | - |
+| `thirdPartyCameraInfo.digitalInput` | `ProtectKnownJsonValue` | - | - |
+| `thirdPartyCameraInfo.digitalInputTokens` | `Nullable`\<`string`[]\> | - | - |
 | `thirdPartyCameraInfo.enableRtspAudio` | `Nullable`\<`boolean`\> | - | - |
 | `thirdPartyCameraInfo.errors` | `ProtectKnownJsonValue`[] | - | - |
 | `thirdPartyCameraInfo.forceTcp` | `Nullable`\<`boolean`\> | - | - |
 | `thirdPartyCameraInfo.hasAudio` | `Nullable`\<`boolean`\> | - | - |
-| `thirdPartyCameraInfo.port` | `number` | - | - |
-| `thirdPartyCameraInfo.rtspUrl` | `string` | - | - |
-| `thirdPartyCameraInfo.rtspUrlLQ` | `string` | - | - |
-| `thirdPartyCameraInfo.snapshotUrl` | `string` | - | - |
+| `thirdPartyCameraInfo.imaging` | `ProtectKnownJsonValue` | - | - |
+| `thirdPartyCameraInfo.manualProfileOverride` | `boolean` | - | - |
+| `thirdPartyCameraInfo.mediaVersion` | `Nullable`\<`string`\> | - | - |
+| `thirdPartyCameraInfo.motionDetection` | `ProtectKnownJsonValue` | - | - |
+| `thirdPartyCameraInfo.port` | `Nullable`\<`number`\> | - | - |
+| `thirdPartyCameraInfo.profileToken` | `Nullable`\<`string`\> | - | - |
+| `thirdPartyCameraInfo.profileTokenLQ` | `Nullable`\<`string`\> | - | - |
+| `thirdPartyCameraInfo.relayOutput` | `ProtectKnownJsonValue` | - | - |
+| `thirdPartyCameraInfo.relayOutputTokens` | `Nullable`\<`string`[]\> | - | - |
+| `thirdPartyCameraInfo.rtspUrl` | `Nullable`\<`string`\> | - | - |
+| `thirdPartyCameraInfo.rtspUrlLQ` | `Nullable`\<`string`\> | - | - |
+| `thirdPartyCameraInfo.snapshotUrl` | `Nullable`\<`string`\> | - | - |
 | <a id="tiltlimitsofprivacyzones"></a> `tiltLimitsOfPrivacyZones` | \{ `limit`: `number`; `side`: `string`; \} | - | - |
 | `tiltLimitsOfPrivacyZones.limit` | `number` | - | - |
 | `tiltLimitsOfPrivacyZones.side` | `string` | - | - |
-| <a id="type"></a> `type` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`type`](ProtectDeviceBaseInterface.md#type) |
+| <a id="type"></a> `type?` | `string` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`type`](ProtectDeviceBaseInterface.md#type) |
 | <a id="uplinkdevice"></a> `uplinkDevice` | `Nullable`\<`string`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`uplinkDevice`](ProtectDeviceBaseInterface.md#uplinkdevice) |
 | <a id="upsince"></a> `upSince` | `number` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`upSince`](ProtectDeviceBaseInterface.md#upsince) |
-| <a id="uptime"></a> `uptime` | `number` | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`uptime`](ProtectDeviceBaseInterface.md#uptime) |
+| <a id="uptime"></a> `uptime` | `Nullable`\<`number`\> | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`uptime`](ProtectDeviceBaseInterface.md#uptime) |
+| <a id="useglobaloverlaysettings"></a> `useGlobalOverlaySettings` | `boolean` | - | - |
 | <a id="userconfiguredap"></a> `userConfiguredAp` | `boolean` | - | - |
 | <a id="videocodec"></a> `videoCodec` | `string` | - | - |
 | <a id="videocodeclastswitchat"></a> `videoCodecLastSwitchAt` | `Nullable`\<`number`\> | - | - |
 | <a id="videocodecstate"></a> `videoCodecState` | `number` | - | - |
-| <a id="videocodecswitchingsince"></a> `videoCodecSwitchingSince` | `number` | - | - |
+| <a id="videocodecswitchingsince"></a> `videoCodecSwitchingSince` | `Nullable`\<`number`\> | - | - |
 | <a id="videoinputmode"></a> `videoInputMode` | `Nullable`\<`string`\> | - | - |
 | <a id="videomode"></a> `videoMode` | `string` | - | - |
 | <a id="videoreconfigurationinprogress"></a> `videoReconfigurationInProgress` | `boolean` | - | - |
-| <a id="voltage"></a> `voltage` | `number` | - | - |
+| <a id="voltage"></a> `voltage` | `Nullable`\<`number`\> | - | - |
 | <a id="wificonnectionstate"></a> `wifiConnectionState` | [`ProtectWifiConnectionStateInterface`](ProtectWifiConnectionStateInterface.md) | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`wifiConnectionState`](ProtectDeviceBaseInterface.md#wificonnectionstate) |
 | <a id="wiredconnectionstate"></a> `wiredConnectionState` | [`ProtectWiredConnectionStateInterface`](ProtectWiredConnectionStateInterface.md) | - | [`ProtectDeviceBaseInterface`](ProtectDeviceBaseInterface.md).[`wiredConnectionState`](ProtectDeviceBaseInterface.md#wiredconnectionstate) |

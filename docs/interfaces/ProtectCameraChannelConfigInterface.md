@@ -30,10 +30,10 @@ A semi-complete description of the UniFi Protect camera channel JSON.
 | <a id="internalrtspalias"></a> `internalRtspAlias` | `Nullable`\<`string`\> |
 | <a id="isinternalrtspenabled"></a> `isInternalRtspEnabled` | `boolean` |
 | <a id="isrtspenabled"></a> `isRtspEnabled` | `boolean` |
-| <a id="maxbitrate"></a> `maxBitrate` | `number` |
-| <a id="minbitrate"></a> `minBitrate` | `number` |
-| <a id="minclientadaptivebitrate"></a> `minClientAdaptiveBitRate` | `number` |
-| <a id="minmotionadaptivebitrate"></a> `minMotionAdaptiveBitRate` | `number` |
+| <a id="maxbitrate"></a> `maxBitrate` | `Nullable`\<`number`\> |
+| <a id="minbitrate"></a> `minBitrate` | `Nullable`\<`number`\> |
+| <a id="minclientadaptivebitrate"></a> `minClientAdaptiveBitRate` | `Nullable`\<`number`\> |
+| <a id="minmotionadaptivebitrate"></a> `minMotionAdaptiveBitRate` | `Nullable`\<`number`\> |
 | <a id="name"></a> `name` | `string` |
 | <a id="rtspalias"></a> `rtspAlias` | `string` |
 | <a id="validbitraterangemargin"></a> `validBitrateRangeMargin` | `Nullable`\<`number`\> |

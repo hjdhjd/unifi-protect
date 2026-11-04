@@ -18,7 +18,7 @@ A description of threshold settings for environmental metrics (humidity, light, 
 
 | Property | Type |
 | ------ | ------ |
-| <a id="highthreshold"></a> `highThreshold` | `number` |
+| <a id="highthreshold"></a> `highThreshold` | `Nullable`\<`number`\> |
 | <a id="isenabled"></a> `isEnabled` | `boolean` |
-| <a id="lowthreshold"></a> `lowThreshold` | `number` |
+| <a id="lowthreshold"></a> `lowThreshold` | `Nullable`\<`number`\> |
 | <a id="margin"></a> `margin` | `number` |

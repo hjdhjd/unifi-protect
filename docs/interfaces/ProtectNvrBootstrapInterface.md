@@ -19,6 +19,7 @@ A semi-complete description of the UniFi Protect NVR bootstrap JSON.
 | Property | Type |
 | ------ | ------ |
 | <a id="accesskey"></a> `accessKey` | `string` |
+| <a id="agreements"></a> `agreements` | [`ProtectNvrAgreementsInterface`](ProtectNvrAgreementsInterface.md) |
 | <a id="aiports"></a> `aiports` | `ProtectKnownJsonValue`[] |
 | <a id="aiprocessors"></a> `aiprocessors` | `ProtectKnownJsonValue`[] |
 | <a id="authuserid"></a> `authUserId` | `string` |
@@ -39,7 +40,7 @@ A semi-complete description of the UniFi Protect NVR bootstrap JSON.
 | <a id="relays"></a> `relays` | [`ProtectRelayConfigInterface`](ProtectRelayConfigInterface.md)[] |
 | <a id="ringtones"></a> `ringtones` | [`ProtectRingtoneConfigInterface`](ProtectRingtoneConfigInterface.md)[] |
 | <a id="sensors"></a> `sensors` | [`ProtectSensorConfigInterface`](ProtectSensorConfigInterface.md)[] |
-| <a id="sirens"></a> `sirens` | `ProtectKnownJsonValue`[] |
+| <a id="sirens"></a> `sirens` | [`ProtectSirenConfigInterface`](ProtectSirenConfigInterface.md)[] |
 | <a id="speakers"></a> `speakers` | `ProtectKnownJsonValue`[] |
 | <a id="users"></a> `users` | [`ProtectNvrUserConfigInterface`](ProtectNvrUserConfigInterface.md)[] |
 | <a id="viewers"></a> `viewers` | [`ProtectViewerConfigInterface`](ProtectViewerConfigInterface.md)[] |

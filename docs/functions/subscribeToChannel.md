@@ -25,7 +25,7 @@ Passing a concrete channel types the handler's payload from that channel, so the
 
 | Type Parameter |
 | ------ |
-| `T` |
+| <a id="type-parameter-t"></a> `T` |
 
 ### Parameters
 

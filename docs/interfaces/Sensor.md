@@ -6,8 +6,8 @@
 
 # Interface: Sensor
 
-A sensor projection. Inherits the read-through getters, live `observe`, and write-through `update` from [DeviceProjection](DeviceProjection.md); sensor-specific behavior
-(sensitivity, mount type, thresholds) is expressed through `update` payloads.
+A sensor projection. Inherits the read-through getters, live `observe`, and write-through `update` / `reboot` from [DeviceProjection](DeviceProjection.md); sensor-specific
+behavior (sensitivity, mount type, thresholds) is expressed through `update` payloads.
 
 ## Extends
 
@@ -110,7 +110,7 @@ touch it. Pair it with the sync getters: getters for "what is it now", observe f
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -167,7 +167,7 @@ re-establishes the device; the projection reflects the cycle as the realtime str
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -198,7 +198,7 @@ is reflected once the realtime stream (or the next refresh) delivers it.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `payload` | `DeepPartial`\<`TConfig`\> | The partial configuration to apply. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

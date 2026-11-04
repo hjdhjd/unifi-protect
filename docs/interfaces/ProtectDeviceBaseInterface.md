@@ -16,6 +16,7 @@ The common properties shared by all UniFi Protect device configuration objects.
 - [`ProtectLightConfigInterface`](ProtectLightConfigInterface.md)
 - [`ProtectRelayConfigInterface`](ProtectRelayConfigInterface.md)
 - [`ProtectSensorConfigInterface`](ProtectSensorConfigInterface.md)
+- [`ProtectSirenConfigInterface`](ProtectSirenConfigInterface.md)
 - [`ProtectViewerConfigInterface`](ProtectViewerConfigInterface.md)
 
 ## Indexable
@@ -30,10 +31,10 @@ The common properties shared by all UniFi Protect device configuration objects.
 | ------ | ------ |
 | <a id="anonymousdeviceid"></a> `anonymousDeviceId` | `Nullable`\<`string`\> |
 | <a id="canadopt"></a> `canAdopt` | `boolean` |
-| <a id="connectedsince"></a> `connectedSince` | `number` |
+| <a id="connectedsince"></a> `connectedSince` | `Nullable`\<`number`\> |
 | <a id="connectionhost"></a> `connectionHost` | `Nullable`\<`string`\> |
 | <a id="displayname"></a> `displayName` | `string` |
-| <a id="firmwarebuild"></a> `firmwareBuild` | `string` |
+| <a id="firmwarebuild"></a> `firmwareBuild` | `Nullable`\<`string`\> |
 | <a id="firmwareversion"></a> `firmwareVersion` | `Nullable`\<`string`\> |
 | <a id="fwupdatestate"></a> `fwUpdateState` | `Nullable`\<`string`\> |
 | <a id="globalalarmmanagerscopenames"></a> `globalAlarmManagerScopeNames` | `string`[] |
@@ -57,9 +58,9 @@ The common properties shared by all UniFi Protect device configuration objects.
 | <a id="lastdisconnect"></a> `lastDisconnect` | `Nullable`\<`number`\> |
 | <a id="lastseen"></a> `lastSeen` | `number` |
 | <a id="latestfirmwaresizebytes"></a> `latestFirmwareSizeBytes` | `Nullable`\<`number`\> |
-| <a id="latestfirmwareversion"></a> `latestFirmwareVersion` | `string` |
+| <a id="latestfirmwareversion"></a> `latestFirmwareVersion` | `Nullable`\<`string`\> |
 | <a id="mac"></a> `mac` | `string` |
-| <a id="marketname"></a> `marketName` | `string` |
+| <a id="marketname"></a> `marketName?` | `string` |
 | <a id="minfirmwareversion"></a> `minFirmwareVersion` | `string` |
 | <a id="name"></a> `name?` | `string` |
 | <a id="nvrmac"></a> `nvrMac` | `string` |
@@ -72,9 +73,9 @@ The common properties shared by all UniFi Protect device configuration objects.
 | <a id="supportfilename"></a> `supportFileName` | `Nullable`\<`string`\> |
 | <a id="supportfilestate"></a> `supportFileState` | `Nullable`\<`string`\> |
 | <a id="sysid"></a> `sysid` | `Nullable`\<`string`\> |
-| <a id="type"></a> `type` | `string` |
+| <a id="type"></a> `type?` | `string` |
 | <a id="uplinkdevice"></a> `uplinkDevice` | `Nullable`\<`string`\> |
 | <a id="upsince"></a> `upSince` | `number` |
-| <a id="uptime"></a> `uptime` | `number` |
+| <a id="uptime"></a> `uptime` | `Nullable`\<`number`\> |
 | <a id="wificonnectionstate"></a> `wifiConnectionState` | [`ProtectWifiConnectionStateInterface`](ProtectWifiConnectionStateInterface.md) |
 | <a id="wiredconnectionstate"></a> `wiredConnectionState` | [`ProtectWiredConnectionStateInterface`](ProtectWiredConnectionStateInterface.md) |

@@ -7,8 +7,8 @@
 # Interface: Camera
 
 A camera projection. Inherits the read-through getters, live `observe`, and the write-through `update` and `reboot` commands from [DeviceProjection](DeviceProjection.md), and adds
-the commands specific to cameras: a JPEG snapshot and a pooled livestream subscription. Camera-specific *configuration* (RTSP enablement, recording settings, and so
-on) is expressed through `update` payloads rather than bespoke methods.
+the commands specific to cameras. Camera-specific *configuration* (RTSP enablement, recording settings, and so on) is expressed through `update` payloads rather
+than bespoke methods.
 
 ## Extends
 
@@ -118,7 +118,7 @@ dispose it (or abort its signal) to leave - the underlying session closes once t
 
 [`LivestreamSubscription`](LivestreamSubscription.md)
 
-A live subscription.
+The subscription: live, or already disposed when its signal had already aborted.
 
 ***
 
@@ -136,7 +136,7 @@ nothing for the reducer to fold it into, so it is a direct request rather than a
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -172,7 +172,7 @@ touch it. Pair it with the sync getters: getters for "what is it now", observe f
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -229,7 +229,7 @@ re-establishes the device; the projection reflects the cycle as the realtime str
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -258,7 +258,7 @@ Fetch a current JPEG snapshot from the camera.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`SnapshotOptions`](SnapshotOptions.md) | Snapshot sizing and an optional abort signal. |
+| `opts?` | [`SnapshotOptions`](SnapshotOptions.md) | Snapshot sizing and an optional abort signal. |
 
 #### Returns
 
@@ -294,7 +294,7 @@ projection holds no talkback state (a set-once "talkback active" flag on a live 
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal that cancels the connect and, once live, tears the session down. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal that cancels the connect and, once live, tears the session down. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -328,7 +328,7 @@ policy - the library exposes only the single primitive operation. Write-through:
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -363,7 +363,7 @@ there is no realtime acknowledgement to await.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -395,7 +395,7 @@ is reflected once the realtime stream (or the next refresh) delivers it.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `payload` | `DeepPartial`\<`TConfig`\> | The partial configuration to apply. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

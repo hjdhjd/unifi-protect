@@ -36,9 +36,7 @@ new ProtectAuthorizationError(message, options?): ProtectAuthorizationError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

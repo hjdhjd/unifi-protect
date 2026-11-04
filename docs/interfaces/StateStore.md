@@ -13,12 +13,18 @@ exception is [createStateStore](../functions/createStateStore.md), the test-cons
 
 - `AsyncDisposable`
 
+## Properties
+
+| Property | Modifier | Type | Description |
+| ------ | ------ | ------ | ------ |
+| <a id="selectors"></a> `selectors` | `readonly` | [`DeviceSelectors`](../type-aliases/DeviceSelectors.md) | This store's device-collection selector catalog: one quartet per collection key, `all`, `byId`, `online` and `adoptedIds`, built when the store is constructed so its memo slots see this store's states alone. Pass its selectors to [StateStore.observe](#observe) - `client.state.selectors.camera.adoptedIds` wakes only when a camera is adopted or removed - or call them over [StateStore.snapshot](#snapshot). |
+
 ## Methods
 
 ### \[asyncDispose\]()
 
 ```ts
-asyncDispose: Promise<void>;
+[asyncDispose](): Promise<void>;
 ```
 
 Stop the refresh failsafe and terminate every open observer. Safe to call more than once. After it resolves the store is inert: nothing dispatches, nothing is
@@ -30,9 +36,7 @@ notified, and a later observation completes immediately rather than registering.
 
 #### Implementation of
 
-```ts
-AsyncDisposable.[asyncDispose]
-```
+`AsyncDisposable.[asyncDispose]`
 
 ***
 
@@ -53,14 +57,14 @@ the observer. An already-aborted signal yields nothing, and so does an observati
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `T` | The selector's output type. |
+| <a id="type-parameter-t"></a> `T` | The selector's output type. |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `selector` | (`state`) => `T` | A pure function from state to the value of interest. Use the memoized selectors in `state/selectors.ts` so unchanged collections compare equal. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `selector` | (`state`) => `T` | A pure function from state to the value of interest. Use this store's [StateStore.selectors](#selectors) or the memoized selectors in `state/selectors.ts` so unchanged collections compare equal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

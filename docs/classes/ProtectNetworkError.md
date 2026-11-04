@@ -6,12 +6,17 @@
 
 # Class: ProtectNetworkError
 
-A connect, DNS, TLS, or socket-level failure reaching the controller. The originating Node `ErrnoException` is preserved on the `cause` chain (the shape undici
-raises as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching.
+A connect, DNS, TLS, or socket-level failure reaching the controller, or a response whose bytes did not match the range or length the request expected, which the
+transport classifies here because the controller was reached but no whole response arrived. The originating Node `ErrnoException` is preserved on the `cause`
+chain (the shape undici raises as `TypeError("fetch failed", { cause: errnoError })`); `code` lifts the errno string out for convenient branching.
 
 ## Extends
 
 - [`RecoverableError`](RecoverableError.md)
+
+## Extended by
+
+- [`ProtectCertificateError`](ProtectCertificateError.md)
 
 ## Constructors
 
@@ -36,9 +41,7 @@ new ProtectNetworkError(message, options?): ProtectNetworkError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`
 
 ## Properties
 

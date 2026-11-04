@@ -6,8 +6,8 @@
 
 # Class: ProtectRequestError
 
-The controller returned an error status the library does not classify more specifically (a 4xx other than 401/403, or any 5xx). The status, body, and headers are
-preserved so the caller can inspect the controller's own explanation.
+The controller returned a non-2xx status the library does not classify more specifically (a 3xx, a 4xx other than 401/403, or any 5xx). The status, body, and
+headers are preserved so the caller can inspect the controller's own explanation.
 
 ## Extends
 
@@ -38,9 +38,7 @@ new ProtectRequestError(message, options): ProtectRequestError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

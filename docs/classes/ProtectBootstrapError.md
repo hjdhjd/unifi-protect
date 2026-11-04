@@ -6,9 +6,13 @@
 
 # Class: ProtectBootstrapError
 
-The bootstrap sequence failed while fetching or parsing the controller bootstrap document. `stage` marks which - `"fetch"` when the bootstrap endpoint returns
-a non-2xx status or the transport fails reaching it, `"parse"` when the body cannot be decoded - so the caller and the diagnostics surface can report the precise point
-of failure rather than a generic "connect failed." A login or reachability failure is not wrapped here; it propagates as its own typed fatal.
+The bootstrap sequence failed while fetching, parsing or applying the controller bootstrap document. `stage` marks which - `"fetch"` when the bootstrap endpoint
+returns a non-2xx status, `"parse"` when the body cannot be decoded, `"apply"` when a decoded document cannot be folded into the state model - so the caller and the
+diagnostics surface can report the precise point of failure rather than a generic "connect failed." A login or reachability failure is not wrapped here: a
+transport-level failure reaching the endpoint propagates as its own typed error
+(`ProtectNetworkError`, `ProtectTimeoutError`, `ProtectThrottledError`, `ProtectAbortedError`), and a login failure as `ProtectAuthError` when the controller
+rejected the sign-in or as `ProtectRequestError` when it answered with a status that is no verdict on the credentials (a readiness answer in the transport's
+retried set, a rate limit, a 3xx, or a 5xx outside the retried set).
 
 ## Extends
 
@@ -37,9 +41,7 @@ new ProtectBootstrapError(message, options): ProtectBootstrapError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

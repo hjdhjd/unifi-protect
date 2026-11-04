@@ -6,11 +6,11 @@
 
 # Class: ProtectCodecChangeError
 
-A pooled livestream reconnected and the controller negotiated a different codec than the one in flight (H.264 to HEVC, or a channel reconfigured mid-stream). Fatal
-because no fixed-codec consumer can adapt in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as a
-terminal a recovering stream can raise - alongside [ProtectLivestreamUnavailableError](ProtectLivestreamUnavailableError.md) when the recovery policy gives up instead - after which the consumer
-re-subscribes for a fresh stream against the new codec. The `from` / `to` descriptors are the RFC 6381 codec strings the two init segments carried, so a consumer
-can log precisely what changed.
+A pooled livestream reconnected and the controller delivered a different stream than the one in flight: its codec label or its description differs (H.264 to HEVC,
+a channel reconfigured mid-stream, or a sample rate, channel count or dimensions that moved under the same label). Fatal because no fixed-format consumer can adapt
+in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as a terminal a recovering stream can raise -
+alongside [ProtectLivestreamUnavailableError](ProtectLivestreamUnavailableError.md) when the recovery policy gives up instead - after which the consumer re-subscribes for a fresh stream against
+the new format. `from` and `to` are the inits themselves, each with its codec label, its bytes and its description, so a consumer can log precisely what changed.
 
 ## Extends
 
@@ -29,10 +29,10 @@ new ProtectCodecChangeError(message, options): ProtectCodecChangeError;
 | Parameter | Type |
 | ------ | ------ |
 | `message` | `string` |
-| `options` | \{ `cause?`: `unknown`; `from`: `string`; `to`: `string`; \} |
+| `options` | \{ `cause?`: `unknown`; `from`: [`LivestreamInit`](../interfaces/LivestreamInit.md); `to`: [`LivestreamInit`](../interfaces/LivestreamInit.md); \} |
 | `options.cause?` | `unknown` |
-| `options.from` | `string` |
-| `options.to` | `string` |
+| `options.from` | [`LivestreamInit`](../interfaces/LivestreamInit.md) |
+| `options.to` | [`LivestreamInit`](../interfaces/LivestreamInit.md) |
 
 #### Returns
 
@@ -40,13 +40,11 @@ new ProtectCodecChangeError(message, options): ProtectCodecChangeError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 
 | Property | Modifier | Type | Description |
 | ------ | ------ | ------ | ------ |
-| <a id="from"></a> `from` | `readonly` | `string` | The RFC 6381 codec descriptor the stream began with, before the reconnect. |
-| <a id="to"></a> `to` | `readonly` | `string` | The RFC 6381 codec descriptor the reconnected stream negotiated. |
+| <a id="from"></a> `from` | `readonly` | [`LivestreamInit`](../interfaces/LivestreamInit.md) | The init the stream began with, before the reconnect: its codec label, bytes and description. |
+| <a id="to"></a> `to` | `readonly` | [`LivestreamInit`](../interfaces/LivestreamInit.md) | The init the reconnected stream delivered: its codec label, bytes and description. |

@@ -11,9 +11,11 @@ The lower-level [Transport.send](Transport.md#send) options. Each flag is a spec
 - `authRetry` controls the injected 401-relogin hook: the authenticated request path leaves it at its default of `true`, while the `AuthSession` login handshake
   passes `false` so its own 401 cannot recurse back into relogin.
 - `probe` marks a request as the connection-recovery reachability trial. It skips the open breaker's cooldown gate so the trial can dispatch at the
-  `ConnectionMonitor`'s cadence rather than waiting out the 300-second cooldown, while still booking its outcome through the normal path - so a successful probe
-  closes the breaker exactly as the autonomous half-open trial would. Only the monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`; the refresh
-  failsafe and device commands leave it `false` and stay gated, so the breaker still protects against operational hammering.
+  `ConnectionMonitor`'s cadence rather than waiting out the breaker's cooldown ([PROTECT\_API\_RETRY\_INTERVAL](../variables/PROTECT_API_RETRY_INTERVAL.md)), while its outcome still books through the normal
+  path - so a probe drawing the first answer `controllerServing` accepts closes the breaker exactly as the autonomous half-open trial would, and a probe its
+  caller cancels books nothing, like any cancelled request. The monitor's recovery hooks (`verify`, recovery `reBootstrap`) pass `true`, and so does the handshake
+  of a relogin a 401 on one of them triggers, so that relogin reaches the controller as the trial did; the refresh failsafe and device commands leave it `false` and
+  stay gated, as does a relogin one of them triggers, so the breaker still protects against operational hammering.
 
 ## Extends
 

@@ -7,7 +7,8 @@
 # Interface: ProtectWiredConnectionStateInterface
 
 A description of the UniFi Protect device wired connection state JSON. `phyRate` is nullable because a device with no wired link reports it as `null` (the relay, a
-LoRa device, carries `wiredConnectionState: { phyRate: null }`); a genuinely wired device reports the negotiated rate as a number.
+LoRa device, carries `wiredConnectionState: { phyRate: null }`); a connected device reports the negotiated rate, as a number on most device families and as a string
+on some (the siren and the air-quality sensor among them).
 
 ## Indexable
 
@@ -19,4 +20,4 @@ LoRa device, carries `wiredConnectionState: { phyRate: null }`); a genuinely wir
 
 | Property | Type |
 | ------ | ------ |
-| <a id="phyrate"></a> `phyRate` | `Nullable`\<`number`\> |
+| <a id="phyrate"></a> `phyRate` | `Nullable`\<`string` \| `number`\> |

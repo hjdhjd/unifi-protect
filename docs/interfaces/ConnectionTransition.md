@@ -7,7 +7,8 @@
 # Interface: ConnectionTransition
 
 One edge of the connection-state machine, yielded by [ConnectionMonitor.observe](ConnectionMonitor.md#observe) and carried on the `stateChanged` event. `reason` is present when a typed fault
-(a stall, a failed liveness probe) drove the edge.
+(a stall, a failed liveness probe) drove the edge, and it holds that failure's whole cause chain as [formatErrorChain](../functions/formatErrorChain.md) renders it, so the controller's own
+diagnosis reaches a consumer rather than the wrapper's sentence alone: the edge into `lost` renders its fault exactly as the lost line logs it.
 
 ## Properties
 

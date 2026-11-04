@@ -10,6 +10,9 @@ A description of the UniFi Protect device wireless (LoRa) connection state JSON.
 battery status, the bridge it is paired with and the bridges it can hear, the last function-button press time, and the radio signal state (SNR plus signal quality and
 strength). The candidates are modeled inline rather than as [ProtectBridgeCandidate](ProtectBridgeCandidate.md) because the relay's entries omit that type's required `modelKey`.
 
+The `signalState` members are nullable because a device with no live LoRa link reports them all as `null` while still carrying the shape (the UP Air Quality sensor
+and the UP Siren PoE do); a bridge-paired device reports the measured radio telemetry as numbers.
+
 ## Indexable
 
 ```ts
@@ -26,7 +29,7 @@ strength). The candidates are modeled inline rather than as [ProtectBridgeCandid
 | <a id="bridge"></a> `bridge` | `Nullable`\<`string`\> |
 | <a id="bridgecandidates"></a> `bridgeCandidates` | \{ `id`: `string`; `lastSeen`: `number`; `signalQuality`: `number`; \}[] |
 | <a id="functionbuttonpressedat"></a> `functionButtonPressedAt` | `Nullable`\<`number`\> |
-| <a id="signalstate"></a> `signalState` | \{ `signalNoiseRatio`: `number`; `signalQuality`: `number`; `signalStrength`: `number`; \} |
-| `signalState.signalNoiseRatio` | `number` |
-| `signalState.signalQuality` | `number` |
-| `signalState.signalStrength` | `number` |
+| <a id="signalstate"></a> `signalState` | \{ `signalNoiseRatio`: `Nullable`\<`number`\>; `signalQuality`: `Nullable`\<`number`\>; `signalStrength`: `Nullable`\<`number`\>; \} |
+| `signalState.signalNoiseRatio` | `Nullable`\<`number`\> |
+| `signalState.signalQuality` | `Nullable`\<`number`\> |
+| `signalState.signalStrength` | `Nullable`\<`number`\> |

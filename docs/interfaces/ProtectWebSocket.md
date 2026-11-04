@@ -14,6 +14,9 @@ a single definition and a test fake written against it drives any of them.
 The send-direction transport (the [TalkbackSession](TalkbackSession.md)) is write-only and reads nothing inbound, so it depends on the separate, equally minimal
 `ProtectWritableWebSocket` below rather than this one - the surface is split by direction so neither interface carries a method its consumers never call.
 
+Registration and removal are a matched pair because every socket detaches its own listeners: it hands back the very function it registered, so an implementation
+that keys its bookkeeping on listener identity is all the surface needs to be.
+
 ## Properties
 
 | Property | Type |
@@ -30,7 +33,8 @@ The send-direction transport (the [TalkbackSession](TalkbackSession.md)) is writ
 addEventListener(
    type, 
    listener, 
-   options?): void;
+   options?
+): void;
 ```
 
 ##### Parameters
@@ -51,7 +55,8 @@ addEventListener(
 addEventListener(
    type, 
    listener, 
-   options?): void;
+   options?
+): void;
 ```
 
 ##### Parameters
@@ -72,7 +77,8 @@ addEventListener(
 addEventListener(
    type, 
    listener, 
-   options?): void;
+   options?
+): void;
 ```
 
 ##### Parameters
@@ -93,7 +99,8 @@ addEventListener(
 addEventListener(
    type, 
    listener, 
-   options?): void;
+   options?
+): void;
 ```
 
 ##### Parameters
@@ -117,5 +124,77 @@ close(): void;
 ```
 
 #### Returns
+
+`void`
+
+***
+
+### removeEventListener()
+
+#### Call Signature
+
+```ts
+removeEventListener(type, listener): void;
+```
+
+##### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `type` | `"open"` |
+| `listener` | () => `void` |
+
+##### Returns
+
+`void`
+
+#### Call Signature
+
+```ts
+removeEventListener(type, listener): void;
+```
+
+##### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `type` | `"message"` |
+| `listener` | (`event`) => `void` |
+
+##### Returns
+
+`void`
+
+#### Call Signature
+
+```ts
+removeEventListener(type, listener): void;
+```
+
+##### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `type` | `"close"` |
+| `listener` | (`event`) => `void` |
+
+##### Returns
+
+`void`
+
+#### Call Signature
+
+```ts
+removeEventListener(type, listener): void;
+```
+
+##### Parameters
+
+| Parameter | Type |
+| ------ | ------ |
+| `type` | `"error"` |
+| `listener` | (`event`) => `void` |
+
+##### Returns
 
 `void`

@@ -22,8 +22,8 @@ A semi-complete description of the UniFi Protect talkback settings JSON.
 | <a id="bindport"></a> `bindPort` | `number` |
 | <a id="bitspersample"></a> `bitsPerSample` | `number` |
 | <a id="channels"></a> `channels` | `number` |
-| <a id="filteraddr"></a> `filterAddr` | `string` |
-| <a id="filterport"></a> `filterPort` | `number` |
+| <a id="filteraddr"></a> `filterAddr` | `Nullable`\<`string`\> |
+| <a id="filterport"></a> `filterPort` | `Nullable`\<`number`\> |
 | <a id="quality"></a> `quality` | `number` |
 | <a id="samplingrate"></a> `samplingRate` | `number` |
 | <a id="typefmt"></a> `typeFmt` | `string` |

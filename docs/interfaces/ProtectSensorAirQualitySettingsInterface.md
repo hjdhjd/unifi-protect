@@ -27,11 +27,12 @@ reading and alert intervals, the ring-LED display, the night-mode schedule, and 
 | <a id="nightmodeenabled"></a> `nightModeEnabled` | `boolean` |
 | <a id="nightmodeendtime"></a> `nightModeEndTime` | `string` |
 | <a id="nightmodestarttime"></a> `nightModeStartTime` | `string` |
+| <a id="noxsettings"></a> `noxSettings` | [`ProtectAirQualityThresholdSettingsInterface`](ProtectAirQualityThresholdSettingsInterface.md) |
 | <a id="pm10p0settings"></a> `pm10p0Settings` | [`ProtectAirQualityThresholdSettingsInterface`](ProtectAirQualityThresholdSettingsInterface.md) |
 | <a id="pm1p0settings"></a> `pm1p0Settings` | [`ProtectAirQualityThresholdSettingsInterface`](ProtectAirQualityThresholdSettingsInterface.md) |
 | <a id="pm2p5settings"></a> `pm2p5Settings` | [`ProtectAirQualityThresholdSettingsInterface`](ProtectAirQualityThresholdSettingsInterface.md) |
 | <a id="pm4p0settings"></a> `pm4p0Settings` | [`ProtectAirQualityThresholdSettingsInterface`](ProtectAirQualityThresholdSettingsInterface.md) |
-| <a id="readinginterval"></a> `readingInterval` | `number` |
+| <a id="readinginterval"></a> `readingInterval` | `Nullable`\<`number`\> |
 | <a id="ringledbrightness"></a> `ringLedBrightness` | `number` |
 | <a id="ringledmetric"></a> `ringLedMetric` | `number` |
 | <a id="temperaturesettings"></a> `temperatureSettings` | [`ProtectAirQualityThresholdSettingsInterface`](ProtectAirQualityThresholdSettingsInterface.md) |

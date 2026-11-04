@@ -18,7 +18,7 @@ every config patch. See `memoizeArrayByContent` for the content-vs-identity memo
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `T` | The collection's config record type. |
+| <a id="type-parameter-t"></a> `T` | The collection's config record type. |
 
 ## Properties
 

@@ -18,5 +18,5 @@ state-ordering guarantee. Consumers use it for protocol exploration and capture;
 
 | Property | Type |
 | ------ | ------ |
-| <a id="packet"></a> `packet` | \[[`TypedEvent`](../type-aliases/TypedEvent.md)\] |
-| <a id="rawpacket"></a> `rawPacket` | \[[`RawPacket`](RawPacket.md)\] |
+| <a id="packet"></a> `packet` | \[`event`: [`TypedEvent`](../type-aliases/TypedEvent.md)\] |
+| <a id="rawpacket"></a> `rawPacket` | \[`packet`: [`RawPacket`](RawPacket.md)\] |

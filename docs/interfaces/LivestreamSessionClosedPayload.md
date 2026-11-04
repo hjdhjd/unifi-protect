@@ -6,7 +6,8 @@
 
 # Interface: LivestreamSessionClosedPayload
 
-Payload published on [channels.livestreamSessionClosed](../variables/channels.md#property-livestreamsessionclosed).
+Payload published on [channels.livestreamSessionClosed](../variables/channels.md#property-livestreamsessionclosed). `reason` is a short description of what ended the stream, such as its last subscriber leaving, a codec
+change, or the recovery policy giving up.
 
 ## Properties
 

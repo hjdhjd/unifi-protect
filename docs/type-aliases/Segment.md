@@ -9,10 +9,8 @@
 ```ts
 type Segment = 
   | {
-  codec: string;
-  data: Buffer;
   type: "init";
-}
+} & LivestreamInit
   | {
   data: Buffer;
   discontinuity?: true;
@@ -25,7 +23,8 @@ type Segment =
 
 One segment of a livestream, in CMAF/DASH vocabulary: either the stream's initialization segment or a media segment. Each arm is a complete, decodable unit.
 
-- `init` carries the FTYP+MOOV initialization segment and its RFC 6381 codec descriptor - everything a decoder needs before the media flows.
+- `init` carries the FTYP+MOOV initialization segment as one [LivestreamInit](../interfaces/LivestreamInit.md): the controller's RFC 6381 codec label, the init bytes, and the stream's
+  description read from them - everything a decoder needs before the media flows.
 - `media` carries one complete fMP4 fragment. `moof` and `mdat` are **zero-copy `subarray` views** into `data` (no byte copy), for a consumer that wants the boxes
   at the lowest usable level; carrying a one-buffer-many-views model onto the single yielded item rather than re-emitting the same bytes on separate items.
   `timestamps` is present only when the consumer opted in via `LivestreamSpec`'s `timestamps` field; it is one decode timestamp per frame (faithful to the wire's

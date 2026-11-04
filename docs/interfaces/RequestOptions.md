@@ -7,7 +7,8 @@
 # Interface: RequestOptions
 
 Per-request options accepted by [Transport.request](Transport.md#request) and [Transport.send](Transport.md#send). The library composes the caller's `signal` with its own timeout deadline, so
-a caller can cancel independently of the timeout. `headers` here override the auth headers the transport stamps on automatically.
+a caller can cancel independently of the timeout, and a `signal` that has already aborted is answered with [ProtectAbortedError](../classes/ProtectAbortedError.md) without a request being sent.
+`headers` here override the auth headers the transport stamps on automatically.
 
 ## Extended by
 

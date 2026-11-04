@@ -36,9 +36,7 @@ new ProtectThrottledError(message, options): ProtectThrottledError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`
 
 ## Properties
 

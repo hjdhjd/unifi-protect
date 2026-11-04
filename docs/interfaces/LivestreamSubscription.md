@@ -10,8 +10,9 @@ A consumer's handle into a pooled livestream. It is an `AsyncIterable<Segment>` 
 subscription has its **own unbounded queue**: the pool pushes every segment to every subscriber, so one slow consumer cannot stall a fast one, and nothing is dropped.
 
 The stream is **resilient by default**: a recoverable stall or reconnect is invisible to the iterator - it pauses while the underlying session is re-established and
-resumes uninterrupted when segments flow again (a same-codec reconnect suppresses the redundant init). The iterator terminates only on these conditions: disposal (a
-clean `done`), a codec change across a reconnect (it throws [ProtectCodecChangeError](../classes/ProtectCodecChangeError.md)), and the recovery policy giving up (it throws [ProtectLivestreamUnavailableError](../classes/ProtectLivestreamUnavailableError.md)). A recoverable stall is *not* one of them.
+resumes uninterrupted when segments flow again (a reconnect to the same stream, whose init carries the same codec label and description, suppresses the redundant
+init). The iterator terminates only on these conditions: disposal (a clean `done`), a reconnect whose init differs in its codec label or its description (it throws
+[ProtectCodecChangeError](../classes/ProtectCodecChangeError.md)), and the recovery policy giving up (it throws [ProtectLivestreamUnavailableError](../classes/ProtectLivestreamUnavailableError.md)). A recoverable stall is *not* one of them.
 
 ## Implements
 
@@ -47,24 +48,16 @@ The negotiated RFC 6381 codec descriptor once the init segment has arrived, othe
 #### Get Signature
 
 ```ts
-get initSegment(): 
-  | {
-  codec: string;
-  data: Buffer;
-}
-  | null;
+get initSegment(): LivestreamInit | null;
 ```
 
-The cached initialization segment of the shared stream once it has arrived, otherwise `null`. Stable across same-codec reconnects (it is suppressed and the cache is
-retained), and replaced only on a codec change - which is itself terminal, so a consumer never observes the cached init mutate beneath it mid-stream.
+The cached initialization segment of the shared stream once it has arrived, otherwise `null`: its codec label, its bytes and its description. The first init sets
+it; a reconnect to the same stream, one whose init carries the same label and description, keeps it (the redundant re-init is suppressed and the cache is
+retained); any later init within the same session refreshes it. A reconnect whose label or description differs is terminal and never replaces it.
 
 ##### Returns
 
-  \| \{
-  `codec`: `string`;
-  `data`: `Buffer`;
-\}
-  \| `null`
+[`LivestreamInit`](LivestreamInit.md) \| `null`
 
 ***
 
@@ -103,11 +96,11 @@ The live delivery counters for this subscription. `queueDepth` / `peakQueueDepth
 ### \[asyncDispose\]()
 
 ```ts
-asyncDispose: Promise<void>;
+[asyncDispose](): Promise<void>;
 ```
 
-Dispose the subscription: detach it from its shared session (decrementing the reference count, which tears the session down if it was the last), end any in-flight
-iteration, and detach the consumer's abort listener. Safe to call more than once.
+Dispose the subscription: detach it from its shared session when it joined one (decrementing the reference count, which tears the session down if it was the
+last), end any in-flight iteration, and detach the consumer's abort listener. Safe to call more than once.
 
 #### Returns
 
@@ -115,16 +108,14 @@ iteration, and detach the consumer's abort listener. Safe to call more than once
 
 #### Implementation of
 
-```ts
-AsyncDisposable.[asyncDispose]
-```
+`AsyncDisposable.[asyncDispose]`
 
 ***
 
 ### \[asyncIterator\]()
 
 ```ts
-asyncIterator: AsyncIterator<Segment>;
+[asyncIterator](): AsyncIterator<Segment>;
 ```
 
 Iterate the segments of this subscription. The iterator yields every queued segment, then either ends (clean close / disposal) or throws the terminal error (codec
@@ -138,57 +129,7 @@ An async iterator of segments.
 
 #### Implementation of
 
-```ts
-AsyncIterable.[asyncIterator]
-```
-
-***
-
-### close()
-
-```ts
-close(): void;
-```
-
-#### Returns
-
-`void`
-
-***
-
-### fail()
-
-```ts
-fail(error): void;
-```
-
-#### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `error` | [`ProtectError`](../classes/ProtectError.md) |
-
-#### Returns
-
-`void`
-
-***
-
-### push()
-
-```ts
-push(segment): void;
-```
-
-#### Parameters
-
-| Parameter | Type |
-| ------ | ------ |
-| `segment` | [`Segment`](../type-aliases/Segment.md) |
-
-#### Returns
-
-`void`
+`AsyncIterable.[asyncIterator]`
 
 ***
 

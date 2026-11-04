@@ -53,7 +53,7 @@ Parse the body as JSON. Synchronous - the bytes are already in hand.
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `T` | The expected shape of the parsed document. |
+| <a id="type-parameter-t"></a> `T` | The expected shape of the parsed document. |
 
 #### Returns
 

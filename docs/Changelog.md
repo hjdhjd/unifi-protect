@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.4.0 (2026-11-03)
+  * Breaking change: init `Segment` records now require a `description`, and `ProtectCodecChangeError` and the `channels.livestreamCodecChanged` payload now carry `LivestreamInit` records in `from` and `to` rather than codec-label strings. If you only read segments, you're unaffected...if you construct an init segment yourself or read those two fields as strings, you'll need to update your code.
+  * Breaking change: `livestreamAudioSampleRate` is removed. Audio format - sample rate and channel count - now comes from the stream's own init description rather than a guess from the camera's type.
+  * Breaking change: `deviceSelectors` is no longer exported. Each client now carries its own selector catalog as `client.state.selectors`, typed `DeviceSelectors`, so one controller's `adoptedIds` set no longer changes reference because of another's updates. Replace `deviceSelectors.<category>` with `client.state.selectors.<category>`. Consumers using the `client.cameras` / `client.camera(id)` projections are unaffected.
+  * Breaking change: `Clock` gains `monotonic` and `schedule`, `wait` is renamed `delay`, and `setInterval` is removed. If you pass a custom clock to `ProtectClient.connect()` or `createStateStore()`, or call `wallClock.wait()` or `wallClock.setInterval()` directly, you'll need to update your code.
+  * New feature: track descriptions for livestream init segments. You now get the video codec, dimensions, profile, and level, and the audio codec, sample rate, and channel count. A reconnect that keeps the same codec label but changes any of these ends the stream with `ProtectCodecChangeError` instead of handing you frames your pipeline can't decode, and `ProtectClient.describeInitSegment()` describes init bytes of your own.
+  * New feature: `client.connection.isLost` and `client.connection.isRebooting`, so you can check whether the controller is lost or restarting after `reboot()` without listening for events.
+  * New feature: library helpers for your own code. Use `isControllerRefusal`, `isSignInRefusal`, and `PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS` for your connection retries, `formatErrorChain` and `maskAddressCredentials` for your error messages and logs, `isMacAddress` and `normalizeMacAddress` for hardware addresses, and `isPlainObject` for parsed JSON.
+  * Improvement: type updates for Protect 7.2.105 - new camera, NVR, sensor, and user fields, new event types, and new model keys - plus sirens, through `ProtectSirenConfig` and a `sirens` bootstrap collection. Members the controller reports as null are now nullable, and a device's `marketName` and `type` and a sensor's `bridge` are optional, so TypeScript may ask you to handle those cases.
+  * Improvement: unchanged nested objects now keep their references across a bootstrap, so an observer of an untouched part of a device fires only when that part changes.
+  * Improvement: `connect()` now checks the controller address up front and reports a clear `ProtectConfigurationError` for a missing host or an address it can't use, without echoing any credentials written into it. Bare IPv6 addresses now connect, and a trailing slash is accepted.
+  * Improvement: single-attempt sign-in, so a mistyped password counts once against the controller's lockout. Controllers that are starting up, limiting requests, or just rebooted are no longer reported as a wrong password.
+  * Improvement: gentler connection recovery. When the controller refuses a sign-in or limits requests, recovery backs off on a slower schedule (30 seconds out to 5 minutes) and honors a `Retry-After` up to that ceiling. The connection also reports `lost` in those cases, and `controllerLost` fires again if the cause of the loss changes during an outage.
+  * Improvement: timeouts on every connection attempt.
+  * Improvement: immediate cancellation of connection attempts, livestream negotiations, and talkback sends, and cancelled requests now surface as a typed aborted error that doesn't count against the request throttle. Aborting the signal passed to `connect()` after it succeeds no longer closes the live event stream.
+  * Improvement: clearer connection logging. Problems log at a level that matches how serious they are, error messages include their underlying causes, and shutting the client down no longer logs as an error.
+  * Improvement: `ProtectCertificateError` for a certificate that fails `verifyTls`, naming the controller and the reason. The library keeps retrying, so a newly installed certificate is picked up without a restart.
+  * Improvement: `ufp capture` bundles now include a few scrubbed examples of any modeled device reporting members this library doesn't declare, so a new device inside a known collection needs no separate bootstrap dump.
+  * Improvement: stricter `ufp` input handling. A bad flag value, an unexpected argument, or a device name matching nothing or several devices now exits as a usage error (exit code 2).
+  * Improvement: `ufp watch livestream` and `ufp doctor` now print each stream's tracks, and `ufp doctor` shows whether the connection is lost or rebooting.
+  * Fix: `connect()` now rejects with `ProtectBootstrapError` at a new `apply` stage on a bootstrap the library can't apply, and shuts down what it started. During recovery, the same error reaches `controllerLost` and recovery keeps trying.
+  * Fix: requests that outlast their retries on a status such as a 503 now fail as a `FatalError` - `ProtectRequestError` carrying that status - rather than a recoverable `ProtectNetworkError` saying the controller could not be reached.
+  * Fix: steadier long-running processes. An event listener that throws no longer stops reboot detection or recovery, a system clock change no longer disrupts timeouts, watchdogs, or recovery timing, and listeners no longer accumulate as connections open and close.
+  * Fix: devices now stay adopted when the controller spells the two addresses in a self-contradictory adoption record differently.
+  * Fix: passwords that begin or end with a space now work at the `ufp` credentials prompt.
+  * Housekeeping.
+
 ## 5.3.1 (2026-08-21)
   * Improvement: a `--scrub` option for the `ufp info` JSON views - `--json`, `--raw`, and `--bootstrap`.
   * Improvement: when the controller reports a device collection this library does not model at all, the `ufp capture` bundle now carries a few scrubbed example records of it - enough to show what the collection's records look like - together with a count of how many were set aside.

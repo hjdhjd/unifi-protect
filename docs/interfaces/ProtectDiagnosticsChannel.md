@@ -19,7 +19,7 @@ A payload-less channel is declared as `ProtectDiagnosticsChannel<void>`: it publ
 
 | Type Parameter |
 | ------ |
-| `T` |
+| <a id="type-parameter-t"></a> `T` |
 
 ## Properties
 

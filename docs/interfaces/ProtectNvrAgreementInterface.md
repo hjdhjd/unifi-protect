@@ -7,7 +7,7 @@
 # Interface: ProtectNvrAgreementInterface
 
 A description of a UniFi Protect NVR legal-agreement record: the contract identifier, its link, the contract version, and the acceptance status (`null` until the
-agreement is accepted).
+agreement is accepted). One record; [ProtectNvrAgreementsInterface](ProtectNvrAgreementsInterface.md) is the container that holds the controller's named agreements.
 
 ## Indexable
 

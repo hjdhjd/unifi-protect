@@ -16,7 +16,7 @@ The base pair of selectors every id-keyed collection exposes: the full array (me
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `T` | The collection's config record type. |
+| <a id="type-parameter-t"></a> `T` | The collection's config record type. |
 
 ## Properties
 

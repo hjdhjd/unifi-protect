@@ -35,7 +35,7 @@ The session's current lifecycle state, for diagnostics and tests.
 ### \[asyncDispose\]()
 
 ```ts
-asyncDispose: Promise<void>;
+[asyncDispose](): Promise<void>;
 ```
 
 Dispose the session. Delegates to [TalkbackSession.close](#close) so `await using session = ...` tears the socket down cleanly.
@@ -46,9 +46,7 @@ Dispose the session. Delegates to [TalkbackSession.close](#close) so `await usin
 
 #### Implementation of
 
-```ts
-AsyncDisposable.[asyncDispose]
-```
+`AsyncDisposable.[asyncDispose]`
 
 ***
 
@@ -58,7 +56,8 @@ AsyncDisposable.[asyncDispose]
 close(): Promise<void>;
 ```
 
-Close the session: request the WebSocket close, detach every listener, and destroy the owned agent. Safe to call more than once, and awaitable. An in-flight [TalkbackSession.send](#send) rejects.
+Close the session: detach every listener, request the WebSocket close, and release the connection the session owns. Safe to call more than once, and awaitable.
+An in-flight [TalkbackSession.send](#send) rejects.
 
 #### Returns
 
@@ -73,17 +72,20 @@ send(source, opts?): Promise<void>;
 ```
 
 Drain a consumer-supplied audio source to the camera speaker. The single write entry: it sends each `Uint8Array` and pulls the next as fast as the source yields it,
-so a real-time, producer-paced source streams at its own rate with no buffer growth. Resolves when the source is
-exhausted; rejects with a typed [ProtectError](../classes/ProtectError.md) if the socket errors or closes mid-drain, if the caller's `signal` aborts, or if the socket's send buffer
-crosses the `PROTECT_TALKBACK_MAX_BUFFERED_BYTES` safety ceiling (a non-real-time source the wire cannot keep up with). The bytes are opaque - whatever audio
-format the camera expects (read `camera.config.talkbackSettings`); the library neither inspects nor transcodes them.
+so a real-time, producer-paced source streams at its own rate with no buffer growth. Resolves when the source is exhausted; rejects with a typed
+[ProtectError](../classes/ProtectError.md) if the socket errors or closes mid-drain, if the caller's `signal` aborts, or if the socket's send buffer crosses the
+`PROTECT_TALKBACK_MAX_BUFFERED_BYTES` safety ceiling (a non-real-time source the wire cannot keep up with). On a socket fault, an abort, or the source's own error,
+the source's cleanup (its `return()`) is requested and not awaited, so the rejection arrives at once and a generator's `finally` runs once its parked pull settles.
+The bytes are opaque - whatever audio format the camera expects (read `camera.config.talkbackSettings`); the library neither inspects nor transcodes them.
+
+Await one drain before starting the next. Nothing serializes concurrent calls, so overlapping drains interleave their audio on the shared socket.
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `source` | `AsyncIterable`\<`Uint8Array`\<`ArrayBufferLike`\>\> | The audio source to drain. A Node `Readable` (e.g. `ffmpeg.stdout`) is an `AsyncIterable<Buffer>` and feeds in directly. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal that ends this drain. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | An optional abort signal that ends this drain. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

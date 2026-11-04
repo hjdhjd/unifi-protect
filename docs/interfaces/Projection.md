@@ -29,7 +29,7 @@ condition asks non-throwingly instead: `peek()` returns the config or `undefined
 
 | Type Parameter | Description |
 | ------ | ------ |
-| `TConfig` | The concrete config-record type this projection wraps. |
+| <a id="type-parameter-tconfig"></a> `TConfig` | The concrete config-record type this projection wraps. |
 
 ## Accessors
 
@@ -68,7 +68,7 @@ touch it. Pair it with the sync getters: getters for "what is it now", observe f
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns

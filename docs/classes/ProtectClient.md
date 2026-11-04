@@ -222,7 +222,8 @@ readonly [`Sensor`](../interfaces/Sensor.md)[]
 get state(): StateStore;
 ```
 
-The data layer: synchronous `snapshot()` and live `observe(selector)` over the reduced controller state.
+The data layer: synchronous `snapshot()` and live `observe(selector)` over the reduced controller state. Its `selectors` catalog, `client.state.selectors`, is the
+one reach to the device-collection selectors, built per store so each membership memo belongs to this client alone.
 
 ##### Returns
 
@@ -265,7 +266,7 @@ readonly [`Viewer`](../interfaces/Viewer.md)[]
 ### \[asyncDispose\]()
 
 ```ts
-asyncDispose: Promise<void>;
+[asyncDispose](): Promise<void>;
 ```
 
 Dispose the client: tear down the connection monitor (stopping recovery and closing the events stream), close every livestream session in the pool, stop the refresh
@@ -278,9 +279,7 @@ Safe to call more than once, and the canonical teardown via `await using client 
 
 #### Implementation of
 
-```ts
-AsyncDisposable.[asyncDispose]
-```
+`AsyncDisposable.[asyncDispose]`
 
 ***
 
@@ -338,7 +337,7 @@ loop observes the post-event state.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -364,7 +363,7 @@ blob; the reduced, observable model remains `client.state`. The return type is `
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -375,7 +374,8 @@ The raw bootstrap JSON as returned by the controller.
 
 #### Throws
 
-[ProtectBootstrapError](ProtectBootstrapError.md) when the bootstrap cannot be fetched or parsed, or a transport-level `ProtectError`.
+[ProtectBootstrapError](ProtectBootstrapError.md) when the bootstrap cannot be fetched or parsed, a transport-level `ProtectError`, or the failure of a relogin a 401 on the
+  fetch triggered, raw and unwrapped, such as the [ProtectRequestError](ProtectRequestError.md) a controller not ready to judge the sign-in answers with.
 
 ***
 
@@ -431,7 +431,7 @@ Subscribe to a client event. Returns a `Disposable`; prefer `using sub = client.
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`ProtectClientEvents`](../interfaces/ProtectClientEvents.md) |
+| <a id="type-parameter-k"></a> `K` *extends* keyof [`ProtectClientEvents`](../interfaces/ProtectClientEvents.md) |
 
 #### Parameters
 
@@ -460,14 +460,14 @@ Wait for the next emission of a client event.
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`ProtectClientEvents`](../interfaces/ProtectClientEvents.md) |
+| <a id="type-parameter-k-1"></a> `K` *extends* keyof [`ProtectClientEvents`](../interfaces/ProtectClientEvents.md) |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to await. |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -494,7 +494,7 @@ over `stream("rawPacket")` that unwraps the single-element argument tuple and sm
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that terminates the iteration. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -519,7 +519,7 @@ controller's new boot time - `controllerRebooted`.
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -584,14 +584,14 @@ Stream every subsequent emission of a client event until the signal aborts.
 
 | Type Parameter |
 | ------ |
-| `K` *extends* keyof [`ProtectClientEvents`](../interfaces/ProtectClientEvents.md) |
+| <a id="type-parameter-k-2"></a> `K` *extends* keyof [`ProtectClientEvents`](../interfaces/ProtectClientEvents.md) |
 
 #### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to stream. |
-| `opts` | [`StreamOptions`](../interfaces/StreamOptions.md) | Stream options, including the abort signal. |
+| `opts?` | [`StreamOptions`](../interfaces/StreamOptions.md) | Stream options, including the abort signal. |
 
 #### Returns
 
@@ -668,8 +668,9 @@ A fully-ready client.
 
 #### Throws
 
-[ProtectAuthError](ProtectAuthError.md) on bad credentials, [ProtectNetworkError](ProtectNetworkError.md) when the controller is unreachable, [ProtectBootstrapError](ProtectBootstrapError.md) when the
-  bootstrap cannot be fetched or parsed - and any other typed `FatalError` the login or fetch surfaces. No partial client escapes a failure.
+[ProtectConfigurationError](ProtectConfigurationError.md) when no URL can carry the controller address, [ProtectAuthError](ProtectAuthError.md) on bad credentials, [ProtectNetworkError](ProtectNetworkError.md)
+  when the controller is unreachable, [ProtectBootstrapError](ProtectBootstrapError.md) when the bootstrap cannot be fetched, parsed or applied - and any other typed `FatalError` the
+  login or fetch surfaces. No partial client escapes a failure.
 
 ***
 
@@ -698,6 +699,32 @@ The decoded raw packet.
 #### Throws
 
 [ProtectProtocolError](ProtectProtocolError.md) if the bytes are not a well-formed packet.
+
+***
+
+### describeInitSegment()
+
+```ts
+static describeInitSegment(data): LivestreamDescription;
+```
+
+Describe a livestream's fMP4 init segment: every track it carries, each with the format a decoder is configured from - the coded dimensions, profile and level
+of a video track, the sample rate and channel count of an audio track. A static, pure, connection-independent operation, and the one reader of init bytes the
+library has: every init a livestream subscription yields already carries this description, so a consumer calls it only for init bytes of its own, such as an
+init its own muxer produced, which then describe exactly as the controller's do. It never throws: a malformed init describes as the tracks that were readable,
+and a truncated one as the tracks it holds whole.
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `data` | `Uint8Array` | The init segment bytes (a `Buffer` included; read without copying). |
+
+#### Returns
+
+[`LivestreamDescription`](../interfaces/LivestreamDescription.md)
+
+The stream's description.
 
 ***
 

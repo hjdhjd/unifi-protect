@@ -36,6 +36,4 @@ new ProtectProtocolError(message, options?): ProtectProtocolError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`

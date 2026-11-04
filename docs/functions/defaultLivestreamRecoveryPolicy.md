@@ -22,7 +22,7 @@ The library's default, health-agnostic recovery policy. It is **phase-split**, b
   follows the curve.
 
 These are safe **ecosystem** defaults - conservative across the diverse hardware real users run, not tuned for a fast controller. A consumer that has measured its own
-controllers' latency (e.g. HBUP) injects a tighter policy; a consumer composing one may delegate here for the timing and override only the disposition, or replace it.
+controllers' latency may inject a tighter policy; a consumer composing one may delegate here for the timing and override only the disposition, or replace it.
 
 ## Parameters
 

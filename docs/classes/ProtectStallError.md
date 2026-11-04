@@ -39,9 +39,7 @@ new ProtectStallError(message, options): ProtectStallError;
 
 #### Overrides
 
-```ts
-RecoverableError.constructor
-```
+`RecoverableError.constructor`
 
 ## Properties
 

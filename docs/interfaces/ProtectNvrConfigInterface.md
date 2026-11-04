@@ -18,12 +18,14 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 
 | Property | Type |
 | ------ | ------ |
-| <a id="accessversion"></a> `accessVersion` | `string` |
-| <a id="agreements"></a> `agreements` | \{ `aiReportingAgreement`: [`ProtectNvrAgreementInterface`](ProtectNvrAgreementInterface.md); `smartDetectAgreement`: [`ProtectNvrAgreementInterface`](ProtectNvrAgreementInterface.md); \} |
-| `agreements.aiReportingAgreement` | [`ProtectNvrAgreementInterface`](ProtectNvrAgreementInterface.md) |
-| `agreements.smartDetectAgreement` | [`ProtectNvrAgreementInterface`](ProtectNvrAgreementInterface.md) |
-| <a id="aifeaturesettings"></a> `aiFeatureSettings` | \{ `aiSummarySettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `faceEnhanceSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `faceRecognitionSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `licensePlateRecognitionSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `recognizeAnythingSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `reverificationSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `speechToTextSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); \} |
+| <a id="accessmigratedat"></a> `accessMigratedAt` | `Nullable`\<`number`\> |
+| <a id="accessmigrationstatus"></a> `accessMigrationStatus` | `Nullable`\<`string`\> |
+| <a id="accessswitchbackstatus"></a> `accessSwitchBackStatus` | `Nullable`\<`string`\> |
+| <a id="accessversion"></a> `accessVersion` | `Nullable`\<`string`\> |
+| <a id="agreements"></a> `agreements` | [`ProtectNvrAgreementsInterface`](ProtectNvrAgreementsInterface.md) |
+| <a id="aifeaturesettings"></a> `aiFeatureSettings` | \{ `aiSummarySettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `deepUnderstandingSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md) & \{ `describe`: `ProtectKnownJsonValue`; `reidCutoffByCamera`: `ProtectKnownJsonValue`; `reidCutoffDefault`: `Nullable`\<`number`\>; \}; `faceEnhanceSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `faceRecognitionSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `licensePlateRecognitionSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `recognizeAnythingSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `reverificationSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); `speechToTextSettings`: [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md); \} |
 | `aiFeatureSettings.aiSummarySettings` | [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md) |
+| `aiFeatureSettings.deepUnderstandingSettings` | [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md) & \{ `describe`: `ProtectKnownJsonValue`; `reidCutoffByCamera`: `ProtectKnownJsonValue`; `reidCutoffDefault`: `Nullable`\<`number`\>; \} |
 | `aiFeatureSettings.faceEnhanceSettings` | [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md) |
 | `aiFeatureSettings.faceRecognitionSettings` | [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md) |
 | `aiFeatureSettings.licensePlateRecognitionSettings` | [`ProtectNvrAiFeatureToggleInterface`](ProtectNvrAiFeatureToggleInterface.md) |
@@ -48,6 +50,8 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `cameraCapacity.state` | `string` |
 | <a id="camerautilization"></a> `cameraUtilization` | `number` |
 | <a id="canautoupdate"></a> `canAutoUpdate` | `boolean` |
+| <a id="canmigrateaccessdevices"></a> `canMigrateAccessDevices` | `boolean` |
+| <a id="canswitchbacktoaccess"></a> `canSwitchBackToAccess` | `boolean` |
 | <a id="cefsettings"></a> `cefSettings` | \{ `enabledCategories`: `string`[]; `server`: \{ `host`: `string`; `port`: `number`; \}; `syslogMode`: `number`; \} |
 | `cefSettings.enabledCategories` | `string`[] |
 | `cefSettings.server` | \{ `host`: `string`; `port`: `number`; \} |
@@ -76,6 +80,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `doorbellSettings.customMessages` | `string`[] |
 | `doorbellSettings.defaultMessageResetTimeoutMs` | `number` |
 | `doorbellSettings.defaultMessageText` | `string` |
+| <a id="emergencymode"></a> `emergencyMode` | `string` |
 | <a id="enableautomaticbackups"></a> `enableAutomaticBackups` | `boolean` |
 | <a id="enablebridgeautoadoption"></a> `enableBridgeAutoAdoption` | `boolean` |
 | <a id="enablecrashreporting"></a> `enableCrashReporting` | `boolean` |
@@ -85,14 +90,54 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="estimatedlqretentiondays"></a> `estimatedLqRetentionDays` | `Nullable`\<`number`\> |
 | <a id="expansionunitretention"></a> `expansionUnitRetention` | `ProtectKnownJsonValue`[] |
 | <a id="expansionunits"></a> `expansionUnits` | `ProtectKnownJsonValue`[] |
-| <a id="featureflags"></a> `featureFlags` | \{ `beta`: `boolean`; `detectionLabels`: `boolean`; `dev`: `boolean`; `hasTwoWayAudioMediaStreams`: `boolean`; `homekitPaired`: `boolean`; `notificationsV2`: `boolean`; `ulpRoleManagement`: `boolean`; \} |
+| <a id="featureflags"></a> `featureFlags` | \{ `aiFeatureFlag`: \{ `supportAiSummary`: \{ `enabled`: `boolean`; \}; `supportFaceEnhancement`: \{ `enabled`: `boolean`; \}; `supportFaceRecognition`: \{ `enabled`: `boolean`; \}; `supportImageSearch`: \{ `enabled`: `boolean`; \}; `supportLicensePlateRecognition`: \{ `enabled`: `boolean`; \}; `supportMessageProxy`: \{ `enabled`: `boolean`; \}; `supportPersonReId`: \{ `enabled`: `boolean`; \}; `supportPoseEstimation`: \{ `enabled`: `boolean`; \}; `supportRecognizeAnything`: \{ `enabled`: `boolean`; \}; `supportRetroactiveProcessing`: \{ `enabled`: `boolean`; \}; `supportTts`: \{ `enabled`: `boolean`; \}; \}; `autoRetentionSupported`: `boolean`; `beta`: `boolean`; `detectionLabels`: `boolean`; `dev`: `boolean`; `externalAlarmManagerReady`: `boolean`; `hasSessionStats`: `boolean`; `hasTwoWayAudioMediaStreams`: `boolean`; `homekitPaired`: `boolean`; `isCasePresentationSupported`: `boolean`; `isRecordingContinuitySupported`: `boolean`; `isUnifiCloudStorageSupported`: `boolean`; `isVideoSigningSupported`: `boolean`; `lastMigratedEventId`: `Nullable`\<`string`\>; `msApixSupported`: `boolean`; `msIdSupport`: `boolean`; `notificationsV2`: `boolean`; `smartDoorAccess`: `boolean`; `stackedMigration`: `boolean`; `supportAccessAppRingEvent`: `boolean`; `supportAccessMigration`: `boolean`; `supportAccessPlayback`: `boolean`; `supportsExpansionUnits`: `boolean`; `ulpRoleManagement`: `boolean`; `useExternalAlarmManager`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag` | \{ `supportAiSummary`: \{ `enabled`: `boolean`; \}; `supportFaceEnhancement`: \{ `enabled`: `boolean`; \}; `supportFaceRecognition`: \{ `enabled`: `boolean`; \}; `supportImageSearch`: \{ `enabled`: `boolean`; \}; `supportLicensePlateRecognition`: \{ `enabled`: `boolean`; \}; `supportMessageProxy`: \{ `enabled`: `boolean`; \}; `supportPersonReId`: \{ `enabled`: `boolean`; \}; `supportPoseEstimation`: \{ `enabled`: `boolean`; \}; `supportRecognizeAnything`: \{ `enabled`: `boolean`; \}; `supportRetroactiveProcessing`: \{ `enabled`: `boolean`; \}; `supportTts`: \{ `enabled`: `boolean`; \}; \} |
+| `featureFlags.aiFeatureFlag.supportAiSummary` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportAiSummary.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportFaceEnhancement` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportFaceEnhancement.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportFaceRecognition` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportFaceRecognition.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportImageSearch` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportImageSearch.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportLicensePlateRecognition` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportLicensePlateRecognition.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportMessageProxy` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportMessageProxy.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportPersonReId` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportPersonReId.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportPoseEstimation` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportPoseEstimation.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportRecognizeAnything` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportRecognizeAnything.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportRetroactiveProcessing` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportRetroactiveProcessing.enabled` | `boolean` |
+| `featureFlags.aiFeatureFlag.supportTts` | \{ `enabled`: `boolean`; \} |
+| `featureFlags.aiFeatureFlag.supportTts.enabled` | `boolean` |
+| `featureFlags.autoRetentionSupported` | `boolean` |
 | `featureFlags.beta` | `boolean` |
 | `featureFlags.detectionLabels` | `boolean` |
 | `featureFlags.dev` | `boolean` |
+| `featureFlags.externalAlarmManagerReady` | `boolean` |
+| `featureFlags.hasSessionStats` | `boolean` |
 | `featureFlags.hasTwoWayAudioMediaStreams` | `boolean` |
 | `featureFlags.homekitPaired` | `boolean` |
+| `featureFlags.isCasePresentationSupported` | `boolean` |
+| `featureFlags.isRecordingContinuitySupported` | `boolean` |
+| `featureFlags.isUnifiCloudStorageSupported` | `boolean` |
+| `featureFlags.isVideoSigningSupported` | `boolean` |
+| `featureFlags.lastMigratedEventId` | `Nullable`\<`string`\> |
+| `featureFlags.msApixSupported` | `boolean` |
+| `featureFlags.msIdSupport` | `boolean` |
 | `featureFlags.notificationsV2` | `boolean` |
+| `featureFlags.smartDoorAccess` | `boolean` |
+| `featureFlags.stackedMigration` | `boolean` |
+| `featureFlags.supportAccessAppRingEvent` | `boolean` |
+| `featureFlags.supportAccessMigration` | `boolean` |
+| `featureFlags.supportAccessPlayback` | `boolean` |
+| `featureFlags.supportsExpansionUnits` | `boolean` |
 | `featureFlags.ulpRoleManagement` | `boolean` |
+| `featureFlags.useExternalAlarmManager` | `boolean` |
 | <a id="firmwareversion"></a> `firmwareVersion` | `string` |
 | <a id="foreignpgdumpconsolename"></a> `foreignPgDumpConsoleName` | `Nullable`\<`string`\> |
 | <a id="foreignpgdumpdetected"></a> `foreignPgDumpDetected` | `boolean` |
@@ -100,8 +145,12 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="harddrivestate"></a> `hardDriveState` | `string` |
 | <a id="hardwareid"></a> `hardwareId` | `string` |
 | <a id="hardwarerevision"></a> `hardwareRevision` | `string` |
+| <a id="hasaccessmigrationbackup"></a> `hasAccessMigrationBackup` | `boolean` |
 | <a id="hasbackportedretentionsettings"></a> `hasBackportedRetentionSettings` | `boolean` |
 | <a id="hasgateway"></a> `hasGateway` | `boolean` |
+| <a id="hasinternet"></a> `hasInternet` | `boolean` |
+| <a id="hasmigratableaccessdevices"></a> `hasMigratableAccessDevices` | `boolean` |
+| <a id="hasunsupportedaccessdevices"></a> `hasUnsupportedAccessDevices` | `boolean` |
 | <a id="homekiterror"></a> `homekitError` | `Nullable`\<`string`\> |
 | <a id="homekitsetupcode"></a> `homekitSetupCode` | `Nullable`\<`string`\> |
 | <a id="homekitsetuppayload"></a> `homekitSetupPayload` | `Nullable`\<`string`\> |
@@ -118,8 +167,10 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="isedgedevice"></a> `isEdgeDevice` | `boolean` |
 | <a id="isfullbackuppreparing"></a> `isFullBackupPreparing` | `boolean` |
 | <a id="isfullbackupready"></a> `isFullBackupReady` | `boolean` |
+| <a id="isgaprecoveryenabled"></a> `isGapRecoveryEnabled` | `boolean` |
 | <a id="ishomekitenabled"></a> `isHomekitEnabled` | `boolean` |
 | <a id="isinsightsenabled"></a> `isInsightsEnabled` | `boolean` |
+| <a id="isinternalowner"></a> `isInternalOwner` | `boolean` |
 | <a id="ismigrationfailed"></a> `isMigrationFailed` | `boolean` |
 | <a id="isnetworkinstalled"></a> `isNetworkInstalled` | `boolean` |
 | <a id="isprimary"></a> `isPrimary` | `boolean` |
@@ -137,6 +188,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="isucorestacked"></a> `isUCoreStacked` | `boolean` |
 | <a id="isucoreupdatable"></a> `isUcoreUpdatable` | `boolean` |
 | <a id="isupdating"></a> `isUpdating` | `boolean` |
+| <a id="isvideosigningenabled"></a> `isVideoSigningEnabled` | `boolean` |
 | <a id="iswirelessuplinkenabled"></a> `isWirelessUplinkEnabled` | `Nullable`\<`boolean`\> |
 | <a id="lastdevicefwupdatescheckedat"></a> `lastDeviceFWUpdatesCheckedAt` | `number` |
 | <a id="lastseen"></a> `lastSeen` | `number` |
@@ -159,21 +211,31 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `msrServiceMeta.reasons` | `ProtectKnownJsonValue`[] |
 | <a id="msrservicestate"></a> `msrServiceState` | `string` |
 | <a id="name"></a> `name?` | `string` |
+| <a id="offlineaccessdevices"></a> `offlineAccessDevices` | `ProtectKnownJsonValue`[] |
+| <a id="offlinemigratedaccessdevices"></a> `offlineMigratedAccessDevices` | `ProtectKnownJsonValue`[] |
+| <a id="overlaysettings"></a> `overlaySettings` | [`ProtectOverlaySettingsInterface`](ProtectOverlaySettingsInterface.md) |
 | <a id="pincodesettings"></a> `pinCodeSettings` | \{ `pinCodeLengthRange`: `string`; \} |
 | `pinCodeSettings.pinCodeLengthRange` | `string` |
-| <a id="ports"></a> `ports` | \{ `aiFeatureConsole`: `number`; `cameraEvents`: `number`; `cameraHttps`: `number`; `devicesWss`: `number`; `discoveryClient`: `number`; `emsCLI`: `number`; `emsJsonCLI`: `number`; `emsLiveFLV`: `number`; `http`: `number`; `https`: `number`; `liveWs`: `number`; `liveWss`: `number`; `playback`: `number`; `rtmp`: `number`; `rtsp`: `number`; `rtsps`: `number`; `stacking`: `number`; `tcpBridge`: `number`; `tcpStreams`: `number`; `ucore`: `number`; `ump`: `number`; \} |
+| <a id="ports"></a> `ports` | \{ `accessHttp`: `number`; `aiFeatureConsole`: `number`; `cameraEvents`: `number`; `cameraHttps`: `number`; `devicesWs`: `number`; `devicesWss`: `number`; `discoveryClient`: `number`; `dsWebServer`: `number`; `edgeCameraHttps`: `number`; `emsCLI`: `number`; `emsJsonCLI`: `number`; `emsLiveFLV`: `number`; `emsLiveFLVs`: `number`; `http`: `number`; `https`: `number`; `liveWs`: `number`; `liveWss`: `number`; `mspHttp`: `number`; `playApplication`: `number`; `playback`: `number`; `rtmp`: `number`; `rtsp`: `number`; `rtsps`: `number`; `stacking`: `number`; `tcpBridge`: `number`; `tcpStreams`: `number`; `ucore`: `number`; `ulp`: `number`; `ump`: `number`; `uosExternalAutomationManager`: `number`; `userAssets`: `number`; \} |
+| `ports.accessHttp` | `number` |
 | `ports.aiFeatureConsole` | `number` |
 | `ports.cameraEvents` | `number` |
 | `ports.cameraHttps` | `number` |
+| `ports.devicesWs` | `number` |
 | `ports.devicesWss` | `number` |
 | `ports.discoveryClient` | `number` |
+| `ports.dsWebServer` | `number` |
+| `ports.edgeCameraHttps` | `number` |
 | `ports.emsCLI` | `number` |
 | `ports.emsJsonCLI` | `number` |
 | `ports.emsLiveFLV` | `number` |
+| `ports.emsLiveFLVs` | `number` |
 | `ports.http` | `number` |
 | `ports.https` | `number` |
 | `ports.liveWs` | `number` |
 | `ports.liveWss` | `number` |
+| `ports.mspHttp` | `number` |
+| `ports.playApplication` | `number` |
 | `ports.playback` | `number` |
 | `ports.rtmp` | `number` |
 | `ports.rtsp` | `number` |
@@ -182,11 +244,17 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | `ports.tcpBridge` | `number` |
 | `ports.tcpStreams` | `number` |
 | `ports.ucore` | `number` |
+| `ports.ulp` | `number` |
 | `ports.ump` | `number` |
+| `ports.uosExternalAutomationManager` | `number` |
+| `ports.userAssets` | `number` |
 | <a id="portstatus"></a> `portStatus` | `ProtectKnownJsonValue`[] |
 | <a id="publicip"></a> `publicIp` | `string` |
 | <a id="recordingretentiondurationms"></a> `recordingRetentionDurationMs` | `Nullable`\<`string`\> |
+| <a id="registeredevidencekeyid"></a> `registeredEvidenceKeyId` | `Nullable`\<`string`\> |
+| <a id="registeredevidencekeyvaliduntilms"></a> `registeredEvidenceKeyValidUntilMs` | `Nullable`\<`number`\> |
 | <a id="releasechannel"></a> `releaseChannel` | `string` |
+| <a id="serialnumber"></a> `serialNumber` | `string` |
 | <a id="sessionsettings"></a> `sessionSettings` | \{ `doorbellTimeout`: `number`; `liveviewTimeout`: `number`; `supportedClients`: `string`[]; \} |
 | `sessionSettings.doorbellTimeout` | `number` |
 | `sessionSettings.liveviewTimeout` | `number` |
@@ -195,23 +263,46 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="smartdetectagreement"></a> `smartDetectAgreement` | \{ `lastUpdateAt`: `Nullable`\<`number`\>; `status`: `string`; \} |
 | `smartDetectAgreement.lastUpdateAt` | `Nullable`\<`number`\> |
 | `smartDetectAgreement.status` | `string` |
-| <a id="smartdetection"></a> `smartDetection` | \{ `enable`: `boolean`; `faceRecognition`: `boolean`; `licensePlateRecognition`: `boolean`; \} |
+| <a id="smartdetection"></a> `smartDetection` | \{ `enable`: `boolean`; `faceRecognition`: `boolean`; `licensePlateRecognition`: `boolean`; `precision`: `string`; \} |
 | `smartDetection.enable` | `boolean` |
 | `smartDetection.faceRecognition` | `boolean` |
 | `smartDetection.licensePlateRecognition` | `boolean` |
+| `smartDetection.precision` | `string` |
 | <a id="storageallocationhqpercent"></a> `storageAllocationHqPercent` | `number` |
 | <a id="storageallocationhqpercentbalanced"></a> `storageAllocationHqPercentBalanced` | `number` |
 | <a id="storageallocationhqpercentmaxretention"></a> `storageAllocationHqPercentMaxRetention` | `number` |
 | <a id="storageallocationmode"></a> `storageAllocationMode` | `string` |
 | <a id="storageconsolecameracounts"></a> `storageConsoleCameraCounts` | \{ `consoleIndex`: `number`; `offlineCameraCount`: `number`; `onlineCameraCount`: `number`; \}[] |
 | <a id="storageconsolefailoversettings"></a> `storageConsoleFailoverSettings` | `ProtectKnownJsonValue`[] |
-| <a id="storagestats"></a> `storageStats` | \{ `capacity`: `number`; `recordingSpace`: \{ `available`: `number`; `total`: `number`; `used`: `number`; \}; `remainingCapacity`: `number`; `storageDistribution`: \{ `recordingTypeDistributions`: \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[]; `resolutionDistributions`: \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[]; \}; `utilization`: `number`; \} |
+| <a id="storagestats"></a> `storageStats` | \{ `averageCapacity`: `number`; `capacity`: `number`; `recordingDistribution`: \{ `hq`: \{ `bytes`: `number`; `percentage`: `number`; \}; `lq`: \{ `bytes`: `number`; `percentage`: `number`; \}; `persistent`: \{ `bytes`: `number`; `percentage`: `number`; \}; `reserved`: \{ `bytes`: `number`; `percentage`: `number`; \}; `timelapse`: \{ `bytes`: `number`; `percentage`: `number`; \}; `unused`: \{ `bytes`: `number`; `percentage`: `number`; \}; \}; `recordingRate`: `number`; `recordingSpace`: \{ `available`: `number`; `total`: `number`; `used`: `number`; \}; `remainingCapacity`: `number`; `retentionRatioLQ`: `number`; `storageDistribution`: \{ `recordingTypeDistributions`: \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[]; `resolutionDistributions`: \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[]; \}; `utilization`: `number`; \} |
+| `storageStats.averageCapacity` | `number` |
 | `storageStats.capacity` | `number` |
+| `storageStats.recordingDistribution` | \{ `hq`: \{ `bytes`: `number`; `percentage`: `number`; \}; `lq`: \{ `bytes`: `number`; `percentage`: `number`; \}; `persistent`: \{ `bytes`: `number`; `percentage`: `number`; \}; `reserved`: \{ `bytes`: `number`; `percentage`: `number`; \}; `timelapse`: \{ `bytes`: `number`; `percentage`: `number`; \}; `unused`: \{ `bytes`: `number`; `percentage`: `number`; \}; \} |
+| `storageStats.recordingDistribution.hq` | \{ `bytes`: `number`; `percentage`: `number`; \} |
+| `storageStats.recordingDistribution.hq.bytes` | `number` |
+| `storageStats.recordingDistribution.hq.percentage` | `number` |
+| `storageStats.recordingDistribution.lq` | \{ `bytes`: `number`; `percentage`: `number`; \} |
+| `storageStats.recordingDistribution.lq.bytes` | `number` |
+| `storageStats.recordingDistribution.lq.percentage` | `number` |
+| `storageStats.recordingDistribution.persistent` | \{ `bytes`: `number`; `percentage`: `number`; \} |
+| `storageStats.recordingDistribution.persistent.bytes` | `number` |
+| `storageStats.recordingDistribution.persistent.percentage` | `number` |
+| `storageStats.recordingDistribution.reserved` | \{ `bytes`: `number`; `percentage`: `number`; \} |
+| `storageStats.recordingDistribution.reserved.bytes` | `number` |
+| `storageStats.recordingDistribution.reserved.percentage` | `number` |
+| `storageStats.recordingDistribution.timelapse` | \{ `bytes`: `number`; `percentage`: `number`; \} |
+| `storageStats.recordingDistribution.timelapse.bytes` | `number` |
+| `storageStats.recordingDistribution.timelapse.percentage` | `number` |
+| `storageStats.recordingDistribution.unused` | \{ `bytes`: `number`; `percentage`: `number`; \} |
+| `storageStats.recordingDistribution.unused.bytes` | `number` |
+| `storageStats.recordingDistribution.unused.percentage` | `number` |
+| `storageStats.recordingRate` | `number` |
 | `storageStats.recordingSpace` | \{ `available`: `number`; `total`: `number`; `used`: `number`; \} |
 | `storageStats.recordingSpace.available` | `number` |
 | `storageStats.recordingSpace.total` | `number` |
 | `storageStats.recordingSpace.used` | `number` |
 | `storageStats.remainingCapacity` | `number` |
+| `storageStats.retentionRatioLQ` | `number` |
 | `storageStats.storageDistribution` | \{ `recordingTypeDistributions`: \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[]; `resolutionDistributions`: \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[]; \} |
 | `storageStats.storageDistribution.recordingTypeDistributions` | \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[] |
 | `storageStats.storageDistribution.resolutionDistributions` | \{ `percentage`: `number`; `recordingType`: `string`; `size`: `number`; \}[] |
@@ -235,6 +326,7 @@ A semi-complete description of the UniFi Protect NVR configuration JSON.
 | <a id="ulpversion"></a> `ulpVersion` | `string` |
 | <a id="upsince"></a> `upSince` | `number` |
 | <a id="version"></a> `version` | `string` |
+| <a id="videosigningenabledat"></a> `videoSigningEnabledAt` | `Nullable`\<`number`\> |
 | <a id="voipforbidden"></a> `voipForbidden` | `boolean` |
 | <a id="wanip"></a> `wanIp` | `string` |
 | <a id="wanports"></a> `wanPorts` | `ProtectKnownJsonValue`[] |

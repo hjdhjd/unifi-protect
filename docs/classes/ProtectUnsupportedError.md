@@ -38,9 +38,7 @@ new ProtectUnsupportedError(message, options?): ProtectUnsupportedError;
 
 #### Overrides
 
-```ts
-FatalError.constructor
-```
+`FatalError.constructor`
 
 ## Properties
 

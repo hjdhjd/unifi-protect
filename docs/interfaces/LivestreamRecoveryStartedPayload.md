@@ -6,8 +6,9 @@
 
 # Interface: LivestreamRecoveryStartedPayload
 
-Payload published on [channels.livestreamRecoveryStarted](../variables/channels.md#property-livestreamrecoverystarted). `attempts` is 0 at the start of an episode; `sinceLastSegmentMs` is how long the stream had been
-silent when the fault was observed.
+Payload published on [channels.livestreamRecoveryStarted](../variables/channels.md#property-livestreamrecoverystarted). `attempts` is 0 at the start of an episode; `sinceLastSegmentMs` is the time since the last segment of
+any kind, init segments included, when the fault was observed. It is not a measure of media downtime: an episode started by the media-stall watchdog can report a
+small value while media has been absent for the whole detection threshold, because non-media frames kept arriving.
 
 ## Properties
 
