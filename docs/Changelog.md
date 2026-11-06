@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.4.1 (2026-11-05)
+  * Housekeeping.
+
 ## 5.4.0 (2026-11-03)
   * Breaking change: init `Segment` records now require a `description`, and `ProtectCodecChangeError` and the `channels.livestreamCodecChanged` payload now carry `LivestreamInit` records in `from` and `to` rather than codec-label strings. If you only read segments, you're unaffected...if you construct an init segment yourself or read those two fields as strings, you'll need to update your code.
   * Breaking change: `livestreamAudioSampleRate` is removed. Audio format - sample rate and channel count - now comes from the stream's own init description rather than a guess from the camera's type.
