@@ -445,6 +445,41 @@ function isBase64Wrapper(value: Record<string, unknown>): boolean {
   return (value["encoding"] === "base64") && (typeof value["bytes"] === "string");
 }
 
+// Replace a string by its own shape, or answer undefined when no shape rule matches it. Shape decides for every string the catalogs do not, a value under a key no
+// catalog names and every object key alike. This is what covers fields on device classes the library has never seen, which is the whole reason a capture is worth
+// collecting and the reason novelty evidence is safe to include.
+//
+// Hostnames and checksums have no shape rule here, and that is a decision rather than a gap. A hostname is a word, and a checksum is a run of hexadecimal
+// digits: a guard for either would also match ordinary text and the public digests a bundle is full of. So the key catalogs are the whole boundary for both, and
+// a hostname or a checksum under a member no catalog names is left exactly as it stands. Guessing in either direction costs something a reader cannot get back -
+// guess too widely and evidence is destroyed, guess too narrowly and identity survives - and the person reading a bundle is the one who can tell which it was.
+function scrubShape(context: ScrubContext, text: string): string | undefined {
+
+  if(isMacAddress(text)) {
+
+    return scrubMac(context, text);
+  }
+
+  const address = scrubAddress(context, text);
+
+  if(address !== undefined) {
+
+    return address;
+  }
+
+  if(UUID_PATTERN.test(text)) {
+
+    return scrubUuid(context, text);
+  }
+
+  if(EMAIL_PATTERN.test(text)) {
+
+    return scrubEmail(context, text);
+  }
+
+  return undefined;
+}
+
 // Replace one string, key first and shape second.
 function scrubString(context: ScrubContext, value: string, key: string | undefined): string {
 
@@ -499,60 +534,16 @@ function scrubString(context: ScrubContext, value: string, key: string | undefin
   // A URL's authority is scrubbed wherever its text survives, so the shape rules below read what is left of it.
   const text = scrubUrl(context, value);
 
-  // Shape decides for everything the catalogs above do not name. This is what covers fields on device classes the library has never seen, which is the whole reason a
-  // capture is worth collecting and the reason novelty evidence is safe to include.
-  //
-  // Two of the catalogs have no shape rule beneath them, and that is a decision rather than a gap. A hostname is a word, and a checksum is a run of hexadecimal
-  // digits: a guard for either would also match ordinary text and the public digests a bundle is full of. So the key catalogs are the whole boundary for both, and
-  // a hostname or a checksum under a member no catalog names is left exactly as it stands. Guessing in either direction costs something a reader cannot get back -
-  // guess too widely and evidence is destroyed, guess too narrowly and identity survives - and the person reading a bundle is the one who can tell which it was.
-  if(isMacAddress(text)) {
-
-    return scrubMac(context, text);
-  }
-
-  const address = scrubAddress(context, text);
-
-  if(address !== undefined) {
-
-    return address;
-  }
-
-  if(UUID_PATTERN.test(text)) {
-
-    return scrubUuid(context, text);
-  }
-
-  if(EMAIL_PATTERN.test(text)) {
-
-    return scrubEmail(context, text);
-  }
-
-  return text;
+  return scrubShape(context, text) ?? text;
 }
 
-// Replace an object key that is itself identifying. Some controller maps are keyed by raw MAC or UUID, so a scrub that only touched values would leave the identifiers
-// sitting in the key positions, and a key that is a URL takes the same scrub a URL value does.
+// Replace an object key that is itself identifying. A key is identity as much as a value is, and some controller maps are keyed by a raw MAC or UUID, so a key takes
+// the URL scrub and then the shape rules a value under an uncataloged key takes, through the same memory, and agrees with the stand-in that value receives.
 function scrubKey(context: ScrubContext, key: string): string {
 
-  if(isMacAddress(key)) {
+  const stripped = scrubUrl(context, key);
 
-    return scrubMac(context, key);
-  }
-
-  if(UUID_PATTERN.test(key)) {
-
-    return scrubUuid(context, key);
-  }
-
-  const address = scrubAddress(context, key);
-
-  if(address !== undefined) {
-
-    return address;
-  }
-
-  return scrubUrl(context, key);
+  return scrubShape(context, stripped) ?? stripped;
 }
 
 /**
@@ -600,14 +591,10 @@ function clearSecrets(context: ScrubContext, value: unknown): unknown {
 
   if(isPlainObject(value)) {
 
-    const cleared: Record<string, unknown> = {};
-
-    for(const [ name, inner ] of Object.entries(value)) {
-
-      cleared[scrubKey(context, name)] = clearSecrets(context, inner);
-    }
-
-    return cleared;
+    // This copy and the object walk in `scrubValue` are built from entries rather than assigned key by key, so every key a document carries lands as an own entry
+    // of the copy. A parsed document gives a key named `__proto__` as an own member, and an assignment would hand it to the inherited setter...a string value would
+    // be dropped, and an object value would become the copy's prototype and vanish from the bundle.
+    return Object.fromEntries(Object.entries(value).map(([ name, inner ]) => [ scrubKey(context, name), clearSecrets(context, inner) ]));
   }
 
   return value;
@@ -649,20 +636,17 @@ function scrubValue(value: unknown, context: ScrubContext, key: string | undefin
   if(isPlainObject(value)) {
 
     const wrapped = isBase64Wrapper(value);
-    const scrubbed: Record<string, unknown> = {};
 
     /* The wire wraps an event frame's display values in a `{ text }` envelope, so the envelope's own key is the semantic subject and the text member inherits it - the
      * same inheritance an array element takes from its array's key. That is what lets the key catalogs judge a `sensorName` envelope as a name, while an id or a
      * mount-type envelope passes through on its own merits. A top-level `text` arrives under no wrapper key, so it keeps its own.
      */
-    for(const [ name, inner ] of Object.entries(value)) {
+    return Object.fromEntries(Object.entries(value).map(([ name, inner ]) => {
 
       const memberKey = ((name === "text") && (typeof inner === "string") && (key !== undefined)) ? key : name;
 
-      scrubbed[scrubKey(context, name)] = (wrapped && (name === "bytes")) ? inner : scrubValue(inner, context, memberKey);
-    }
-
-    return scrubbed;
+      return [ scrubKey(context, name), (wrapped && (name === "bytes")) ? inner : scrubValue(inner, context, memberKey) ];
+    }));
   }
 
   return value;

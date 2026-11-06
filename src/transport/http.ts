@@ -251,7 +251,8 @@ export function retryUnlessHinted(error: Error, { opts, state }: RetryHandler.Re
 
 /**
  * Flatten undici's `IncomingHttpHeaders` (whose values are `string | string[] | undefined`) to a plain `Record<string, string>` for {@link ProtectRequestError}. A
- * multi-value header is joined with ", " and an absent value is dropped.
+ * multi-value header is joined with ", " and an absent value is dropped. The record is built from its entries rather than assigned key by key, because undici
+ * defines a header named `__proto__` as an own property, and an assignment would hand that key to the inherited setter.
  *
  * @param headers - The response headers as undici delivers them.
  *
@@ -259,19 +260,8 @@ export function retryUnlessHinted(error: Error, { opts, state }: RetryHandler.Re
  */
 function flattenHeaders(headers: IncomingHttpHeaders): Record<string, string> {
 
-  const result: Record<string, string> = {};
-
-  for(const [ key, value ] of Object.entries(headers)) {
-
-    if(value === undefined) {
-
-      continue;
-    }
-
-    result[key] = Array.isArray(value) ? value.join(", ") : value;
-  }
-
-  return result;
+  return Object.fromEntries(Object.entries(headers).filter((entry): entry is [ string, string | string[] ] => entry[1] !== undefined)
+    .map(([ key, value ]) => [ key, Array.isArray(value) ? value.join(", ") : value ]));
 }
 
 /**

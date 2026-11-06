@@ -239,6 +239,54 @@ describe("Transport", () => {
       assert.equal(thrown.headers?.["x-trace"], "abc");
     });
 
+    test("a header named __proto__ is an own entry of the error's headers, which keep the ordinary prototype", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      // The headers are parsed rather than written as a literal, because a literal "__proto__" key sets the object's prototype where a parsed one is an own entry.
+      pool.intercept({ method: "GET", path: "/p" }).reply(500, "boom", { headers: JSON.parse("{\"__proto__\":\"x\",\"x-trace\":\"abc\"}") as Record<string, string> });
+
+      const response = await transport.send(url(host, "/p"));
+
+      let thrown: unknown;
+
+      try {
+
+        response.ensureOk();
+      } catch(error) {
+
+        thrown = error;
+      }
+
+      assert.ok(thrown instanceof ProtectRequestError);
+      assert.ok((thrown.headers !== undefined) && Object.hasOwn(thrown.headers, "__proto__"), "a header named __proto__ is an own entry");
+      assert.equal(thrown.headers["__proto__"], "x");
+      assert.equal(thrown.headers["x-trace"], "abc");
+      assert.equal(Object.getPrototypeOf(thrown.headers), Object.prototype, "the header record keeps the ordinary prototype");
+    });
+
+    test("a header the controller repeats is one entry of the error's headers, its values joined with a comma and a space", async () => {
+
+      const { host, pool, transport } = makeMockTransport();
+
+      pool.intercept({ method: "GET", path: "/r" }).reply(500, "boom", { headers: { "set-cookie": [ "a=1", "b=2" ] } });
+
+      const response = await transport.send(url(host, "/r"));
+
+      let thrown: unknown;
+
+      try {
+
+        response.ensureOk();
+      } catch(error) {
+
+        thrown = error;
+      }
+
+      assert.ok(thrown instanceof ProtectRequestError);
+      assert.equal(thrown.headers?.["set-cookie"], "a=1, b=2");
+    });
+
     test("a non-2xx with an empty body classifies as ProtectRequestError carrying no body", async () => {
 
       const { host, pool, transport } = makeMockTransport();

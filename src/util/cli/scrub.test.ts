@@ -490,6 +490,41 @@ describe("scrub", () => {
     assert.match(Object.keys(result.byAddress)[0] ?? "", /^192\.0\.2\.\d+$/);
   });
 
+  test("an email address used as an object key takes the stand-in the same address takes as a value", () => {
+
+    // A key takes the shape rules a value under an uncataloged key takes, through the same memory, so the map and the field naming one person still agree.
+    const context = createScrubContext();
+    const result = scrub({ owners: { "jane@acme.example": true }, vocSensorContact: "jane@acme.example" }, context) as {
+
+      owners: Record<string, unknown>;
+      vocSensorContact: string;
+    };
+    const key = Object.keys(result.owners)[0] ?? "";
+
+    assert.match(key, /^user-\d+@example\.com$/, "an email-shaped key takes an email stand-in");
+    assert.notEqual(key, "jane@acme.example");
+    assert.equal(key, result.vocSensorContact, "the key and the value resolve to one stand-in");
+  });
+
+  test("a key named __proto__ is an own entry of the scrubbed copy, which keeps the ordinary prototype", () => {
+
+    // A captured document is parsed JSON, where a "__proto__" key is an own entry, so the input is parsed here too: a literal "__proto__" key would set the prototype.
+    const result = scrubbed(JSON.parse("{\"__proto__\":{\"host\":\"10.0.0.5\"}}")) as Record<string, { host: string }>;
+
+    assert.ok(Object.hasOwn(result, "__proto__"), "a key named __proto__ is an own entry");
+    assert.equal(result["__proto__"]?.host, "192.0.2.1", "the value beneath it is scrubbed");
+    assert.equal(Object.getPrototypeOf(result), Object.prototype, "the copy keeps the ordinary prototype");
+  });
+
+  test("a key named __proto__ beneath a secret container is an own entry, and its string is cleared", () => {
+
+    const result = scrubbed(JSON.parse("{\"password\":{\"__proto__\":\"hunter2\"}}")) as { password: Record<string, string> };
+
+    assert.ok(Object.hasOwn(result.password, "__proto__"), "a key named __proto__ is an own entry");
+    assert.equal(result.password["__proto__"], "REDACTE", "its string is cleared to a token stand-in of its own length");
+    assert.equal(Object.getPrototypeOf(result.password), Object.prototype, "the cleared copy keeps the ordinary prototype");
+  });
+
   test("an address under a key no catalog names is caught by its shape", () => {
 
     // The fallback that reaches novelty evidence: a new device class can carry an address under any field name at all, and the shape is what catches it.
