@@ -212,16 +212,17 @@ export interface LivestreamSubscribeOptions {
 
 /**
  * Construction options for {@link LivestreamPool}. `resolveUrl` is the transport-backed negotiation hook (build it with {@link livestreamUrlResolver}, the shared {@link
- * wsEndpointResolver}'s livestream specialization); `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s and threaded down to each session;
- * `recoveryPolicy` is the per-stream recovery decision authority, defaulting to {@link defaultLivestreamRecoveryPolicy}; `verifyTls` is the strict-TLS opt-in threaded
- * down to each session's owned connection, defaulting to `false` for the controller's self-signed certificate; `clock` is the time source, defaulting to the wall clock
- * and replaceable for tests; `log` is the logger, defaulting to a no-op.
+ * wsEndpointResolver}'s livestream specialization); `getAuthHeaders` is the auth hook threaded down to each session's owned connection; `webSocket` is the injected I/O
+ * dependency, shared with {@link EventStream}'s and threaded down to each session; `recoveryPolicy` is the per-stream recovery decision authority, defaulting to {@link
+ * defaultLivestreamRecoveryPolicy}; `verifyTls` is the strict-TLS opt-in threaded down to each session's owned connection, defaulting to `false` for the controller's
+ * self-signed certificate; `clock` is the time source, defaulting to the wall clock and replaceable for tests; `log` is the logger, defaulting to a no-op.
  *
  * @category Client
  */
 export interface LivestreamPoolOptions {
 
   clock?: Clock;
+  getAuthHeaders?: () => Record<string, string>;
   log?: ProtectLogging;
   recoveryPolicy?: RecoveryPolicy;
   resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
@@ -1328,6 +1329,7 @@ class ManagedSession implements SubscriptionHost {
 export class LivestreamPool implements AsyncDisposable {
 
   readonly #clock: Clock;
+  readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #log: ProtectLogging;
   readonly #recoveryPolicy: RecoveryPolicy;
   readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
@@ -1340,6 +1342,7 @@ export class LivestreamPool implements AsyncDisposable {
   constructor(options: LivestreamPoolOptions) {
 
     this.#clock = options.clock ?? wallClock;
+    this.#getAuthHeaders = options.getAuthHeaders;
     this.#log = options.log ?? noopLog;
     this.#recoveryPolicy = options.recoveryPolicy ?? defaultLivestreamRecoveryPolicy;
     this.#resolveUrl = options.resolveUrl;
@@ -1388,6 +1391,7 @@ export class LivestreamPool implements AsyncDisposable {
       const createSession = (signal: AbortSignal): LivestreamSession => new LivestreamSession({
 
         clock: this.#clock,
+        ...((this.#getAuthHeaders !== undefined) && { getAuthHeaders: this.#getAuthHeaders }),
         log: this.#log,
         resolveUrl: this.#resolveUrl,
         signal,

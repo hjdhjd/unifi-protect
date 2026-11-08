@@ -64,8 +64,11 @@ export type TalkbackState = "closed" | "closing" | "connecting" | "live";
  * - `clock` is the time source a connection attempt that times out is measured on; it defaults to the wall clock, and tests inject a fake. It is read only for that
  *   measure, never on the write path.
  * - `log` receives the session's diagnostics logging; it defaults to a no-op logger.
- * - `resolveUrl` is the negotiation hook, identical in type to {@link LivestreamSession}'s: given the request params it returns the controller-minted, host-rewritten
- *   WebSocket URL. The composition root wires it to a transport-backed GET (see `talkbackUrlResolver`); tests pass a one-line fake.
+ * - `resolveUrl` is the negotiation hook, identical in type to {@link LivestreamSession}'s: given the request params it returns the WebSocket URL on the controller
+ *   authority. The composition root wires it to a transport-backed GET (see `talkbackUrlResolver`); tests pass a one-line fake.
+ * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses). The session
+ *   reads it when it builds its socket, after its negotiation, so a relogin the negotiation triggered reaches the upgrade; an injected `webSocket` factory receives
+ *   the URL alone.
  * - `webSocket` is the injected I/O dependency - the write-direction `ProtectWritableWebSocket`, distinct from the receive-direction interface {@link EventStream} /
  *   {@link LivestreamSession} share; omit it for the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts, the session tears down and an in-flight `send` rejects.
@@ -78,6 +81,7 @@ export interface TalkbackSessionOptions {
 
   cameraId: string;
   clock?: Clock;
+  getAuthHeaders?: () => Record<string, string>;
   log?: ProtectLogging;
   resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   signal?: AbortSignal;
@@ -102,6 +106,7 @@ export class TalkbackSession implements AsyncDisposable {
   // A promise that only ever rejects, when the socket faults (error or unsolicited close) or the session is torn down. An in-flight send() races it so a socket death
   // interrupts even a parked source pull; outside a send it carries a no-op rejection handler so a fault with no send in flight raises no unhandled-rejection warning.
   readonly #fault: { promise: Promise<never>; reject: (reason: ProtectError) => void };
+  readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #log: ProtectLogging;
   readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   readonly #verifyTls: boolean;
@@ -150,6 +155,7 @@ export class TalkbackSession implements AsyncDisposable {
     this.#callerSignal = options.signal;
     this.#cameraId = options.cameraId;
     this.#clock = options.clock ?? wallClock;
+    this.#getAuthHeaders = options.getAuthHeaders;
     this.#log = options.log ?? noopLog;
     this.#resolveUrl = options.resolveUrl;
     this.#verifyTls = options.verifyTls ?? false;
@@ -355,8 +361,8 @@ export class TalkbackSession implements AsyncDisposable {
 
   // Negotiate the URL and open the socket. This is the connecting phase: a negotiation (4xx/5xx) or network failure tears down as a fault, whose teardown settles the
   // open handshake as a rejection, and a caller-signal abort does too but as the typed ProtectAbortedError the teardown stores as the session's failure. Either way
-  // connect() throws for the whole connect attempt, with no half-open session. The negotiated URL carries its own authorization token, so - like the livestream - no
-  // auth headers are stamped on the upgrade.
+  // connect() throws for the whole connect attempt, with no half-open session. The upgrade carries the session's auth headers, read after the negotiation as the
+  // livestream reads its own, because UniFi OS's proxy refuses a media upgrade without the session even when the minted token is valid.
   async #connect(signal?: AbortSignal): Promise<void> {
 
     // An already-aborted caller signal tears us down in the constructor before this runs; bail without touching state so we never negotiate or build a socket.
@@ -411,7 +417,7 @@ export class TalkbackSession implements AsyncDisposable {
       const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
 
       this.#owned = { connector, dispatcher: agent };
-      this.#ws = new WebSocket(url, { dispatcher: agent });
+      this.#ws = new WebSocket(url, { dispatcher: agent, headers: this.#getAuthHeaders?.() ?? {} });
     }
 
     // The socket's handlers register with no `signal` option, since the teardown removes each itself. open / close / error are `once` - a socket reports each terminal

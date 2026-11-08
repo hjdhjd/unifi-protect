@@ -1,10 +1,18 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * url-host.ts: The controller address as a URL carries it - the published mask over the userinfo an address can carry, the bracket-aware host formatter and the
- * one derivation of the controller's URL authority, with each refusal that names the address quoting it through that mask.
+ * one derivation of the controller's URL authority, with each refusal that names the address quoting it through that mask, and the Protect proxy prefix every
+ * Protect path on that authority opens with.
  */
 import { ProtectConfigurationError } from "../errors.ts";
 import { isIP } from "node:net";
+
+/**
+ * The path under which UniFi OS serves the Protect application on the controller's URL authority. Every Protect URL the library composes opens with it after the
+ * scheme and the authority, while UniFi OS's own paths, the sign-in and the root fetch among them, carry none. It is a fact of the controller's wire rather than a
+ * tunable, so it sits beside the authority it extends rather than among the library's settings.
+ */
+export const PROTECT_PROXY_PATH = "/proxy/protect";
 
 /**
  * Mask the userinfo a controller address can carry, for a message or a log line that names the address: an address carrying no `@` is returned as given, and

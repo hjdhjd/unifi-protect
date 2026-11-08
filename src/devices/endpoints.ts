@@ -3,6 +3,7 @@
  * endpoints.ts: The single source of truth for Protect device REST endpoint URLs.
  */
 import type { DeviceModelKey } from "../protocol/events.ts";
+import { PROTECT_PROXY_PATH } from "../transport/url-host.ts";
 
 // The Protect application REST path segment for each device model key. Declared once here so a path typo is impossible at the call site and a future controller path
 // change is a single edit. The NVR singleton lives at the bare `nvr` collection (no id suffix); every other device is addressed by id under its plural collection.
@@ -19,8 +20,8 @@ const DEVICE_API_PATH: Record<DeviceModelKey, string> = {
 };
 
 /**
- * Build the REST endpoint URL for a device collection or a specific device. The Protect application API is reached through the controller's `/proxy/protect/api/`
- * prefix; the device's model key selects the collection and the optional id addresses one device within it.
+ * Build the REST endpoint URL for a device collection or a specific device. The Protect application API is reached through the Protect proxy prefix and its `/api/`
+ * path; the device's model key selects the collection and the optional id addresses one device within it.
  *
  * @param host     - The controller's URL authority: the address without a scheme, an IPv6 literal bracketed and any port kept.
  * @param modelKey - The device category whose collection to address.
@@ -32,7 +33,7 @@ const DEVICE_API_PATH: Record<DeviceModelKey, string> = {
  */
 export function deviceEndpoint(host: string, modelKey: DeviceModelKey, id?: string): string {
 
-  const base = "https://" + host + "/proxy/protect/api/" + DEVICE_API_PATH[modelKey];
+  const base = "https://" + host + PROTECT_PROXY_PATH + "/api/" + DEVICE_API_PATH[modelKey];
 
   return (id === undefined) ? base : base + "/" + id;
 }

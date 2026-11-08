@@ -21,6 +21,7 @@
  *
  * @module ProtectClient
  */
+import { PROTECT_PROXY_PATH, controllerAuthority } from "../transport/url-host.ts";
 import type { ProtectNvrBootstrap, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "../types/index.ts";
 import { classifyPacket, eventSubjects } from "../protocol/events.ts";
 import { livestreamUrlResolver, talkbackUrlResolver } from "../transport/ws-endpoint.ts";
@@ -53,7 +54,6 @@ import { TalkbackSession } from "../transport/talkback-session.ts";
 import { Transport } from "../transport/http.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import type { Viewer } from "../devices/viewer.ts";
-import { controllerAuthority } from "../transport/url-host.ts";
 import { decodePacket } from "../protocol/packet.ts";
 import { describeInitSegment } from "../protocol/init-segment.ts";
 import { noopLog } from "../logging.ts";
@@ -148,7 +148,7 @@ interface ProtectClientParts {
 // never address different endpoints.
 function bootstrapUrl(host: string): string {
 
-  return "https://" + host + "/proxy/protect/api/bootstrap";
+  return "https://" + host + PROTECT_PROXY_PATH + "/api/bootstrap";
 }
 
 // Probe the controller's liveness with a GET against the bootstrap endpoint - the ConnectionMonitor's verify() hook. We use GET, not HEAD: the controller does not answer
@@ -294,15 +294,17 @@ export class ProtectClient implements AsyncDisposable {
     // The transport alone also takes the address as configured, because its diagnostics payloads report the controller as the consumer named it.
     const authority = controllerAuthority(opts.host);
 
-    // Wire the transport's auth hooks to the session through a late-binding closure: the arrows below run only when a request is dispatched, which is strictly after
-    // `auth` is assigned, so there is no temporal-dead-zone hazard. This is what lets the transport stamp auth headers and trigger relogin without importing upward. The
-    // `let` is required (not the single-assignment `const` prefer-const wants) precisely because those closures capture `auth` before it is assigned.
+    // Wire the auth hooks to the session through late-binding closures: the shared `getAuthHeaders` below runs only when a request is dispatched or a socket is built,
+    // and the transport's inline `onUnauthorized` only when a request meets a 401, each strictly after `auth` is assigned, so there is no temporal-dead-zone hazard.
+    // This is what lets the transport and every owned socket stamp auth headers, and the transport trigger relogin, without importing upward. The `let` is required
+    // (not the single-assignment `const` prefer-const wants) precisely because those closures capture `auth` before it is assigned.
     // eslint-disable-next-line prefer-const
     let auth: AuthSession;
+    const getAuthHeaders = (): Record<string, string> => auth.authHeaders();
     const transport = new Transport({
 
       clock,
-      getAuthHeaders: (): Record<string, string> => auth.authHeaders(),
+      getAuthHeaders,
       host: opts.host,
       log,
       onUnauthorized: (relogin): Promise<boolean> => auth.reauthenticate(relogin),
@@ -360,11 +362,11 @@ export class ProtectClient implements AsyncDisposable {
     // Stage 4: build the events-channel hooks the ConnectionMonitor drives. The factory is the single events-stream construction path - used for the initial stream and
     // every recovery relaunch; its optional signal is bound only to the initial connect. `reBootstrap` reuses the shared bootstrap fetch and the store's single dispatch
     // chokepoint, returning the fresh `lastUpdateId` to seed a relaunch. `verify` is the GET liveness probe (a HEAD probe stalls against this controller - see
-    // `probeBootstrap`). The auth-header hook mirrors the transport's.
+    // `probeBootstrap`). The auth-header hook is the shared `getAuthHeaders` closure the transport stamps its requests from.
     const eventStreamFactory = (lastUpdateId: string, signal?: AbortSignal): EventStream => new EventStream({
 
       clock,
-      getAuthHeaders: (): Record<string, string> => auth.authHeaders(),
+      getAuthHeaders,
       host: authority,
       lastUpdateId,
       log,
@@ -386,11 +388,12 @@ export class ProtectClient implements AsyncDisposable {
 
     const verify = (signal?: AbortSignal): Promise<void> => probeBootstrap(transport, authority, signal);
 
-    // The livestream pool, composed with the transport-backed URL resolver and the shared WebSocket factory. It owns no transport itself - it negotiates through the
-    // injected resolver - and lazily opens an underlying session only when a camera is first subscribed.
+    // The livestream pool, composed with the transport-backed URL resolver, the shared auth hook and the shared WebSocket factory. It owns no transport itself - it
+    // negotiates through the injected resolver - and lazily opens an underlying session only when a camera is first subscribed.
     const livestreamPool = new LivestreamPool({
 
       clock,
+      getAuthHeaders,
       log,
       ...((opts.recoveryPolicy !== undefined) && { recoveryPolicy: opts.recoveryPolicy }),
       resolveUrl: livestreamUrlResolver(transport, authority),
@@ -400,15 +403,16 @@ export class ProtectClient implements AsyncDisposable {
 
     // The talkback factory, bound to the transport-backed talkback URL resolver. Unlike the livestream pool, talkback is exclusive and per-call, so this mints an
     // independent atomic TalkbackSession per invocation rather than fanning out a shared one; the projection passes only its camera id and an optional signal, and the
-    // WebSocket wire knowledge (negotiation path, the agent and its certificate posture) stays here in Layer 2. The resolver is built once and closed over. The
-    // talkback session uses its own default (writable) WebSocket factory: the `opts.webSocket` ConnectOptions hook is the receive-direction socket factory
-    // (ProtectWebSocket, for the events stream and livestream pool) and does not fit the write-direction ProtectWritableWebSocket talkback needs, so it is deliberately
-    // not threaded here - the send socket is faked at the TalkbackSession level, not through the full client.
+    // WebSocket wire knowledge (negotiation path, the auth headers, the agent and its certificate posture) stays here in Layer 2. The resolver is built once and
+    // closed over. The talkback session uses its own default (writable) WebSocket factory: the `opts.webSocket` ConnectOptions hook is the receive-direction socket
+    // factory (ProtectWebSocket, for the events stream and livestream pool) and does not fit the write-direction ProtectWritableWebSocket talkback needs, so it is
+    // deliberately not threaded here - the send socket is faked at the TalkbackSession level, not through the full client.
     const resolveTalkbackUrl = talkbackUrlResolver(transport, authority);
     const talkback = (params: { cameraId: string }, callOpts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> => TalkbackSession.connect({
 
       cameraId: params.cameraId,
       clock,
+      getAuthHeaders,
       log,
       resolveUrl: resolveTalkbackUrl,
       ...((callOpts.signal !== undefined) && { signal: callOpts.signal }),

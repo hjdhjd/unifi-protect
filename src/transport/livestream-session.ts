@@ -14,7 +14,7 @@
  * URL is minted on demand by the controller over authenticated HTTP and must be fetched first. That fetch is the injected `resolveUrl` hook (dependency inversion,
  * exactly like the {@link Transport}'s `getAuthHeaders` and the {@link StateStore}'s `refresh`): the session owns the *whole* connect attempt - negotiate the URL, open
  * the socket, receive the first init segment - so every failure flows through one error rail, while the session never imports `Transport`. The composition root wires
- * `resolveUrl` to a transport-backed GET that returns the controller-minted, host-rewritten URL.
+ * `resolveUrl` to a transport-backed GET that returns the WebSocket URL on the controller authority.
  *
  * **The session is the single source of truth for the livestream wire protocol** - both the request params it builds from its {@link LivestreamSpec} and the binary
  * frame decode (a 1-byte frame type + 3-byte big-endian length per frame, reassembled across WebSocket messages, accumulated into a segment between `beginSegment` and
@@ -190,8 +190,11 @@ export interface LivestreamSessionEvents {
  * Construction options for {@link LivestreamSession}.
  *
  * - `spec` describes the stream; the session resolves its defaults and builds the negotiation params from it.
- * - `resolveUrl` is the negotiation hook: given the request params, it returns the controller-minted, host-rewritten WebSocket URL. The composition root wires it to a
+ * - `resolveUrl` is the negotiation hook: given the request params, it returns the WebSocket URL on the controller authority. The composition root wires it to a
  *   transport-backed GET; tests pass a one-line fake.
+ * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses). The session
+ *   reads it when it builds its socket, after its negotiation, so a relogin the negotiation triggered reaches the upgrade; an injected `webSocket` factory receives
+ *   the URL alone.
  * - `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s; omit it for the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts at any point, the session tears down.
  * - `clock` is the watchdog's time source; it defaults to the wall clock, and tests inject a fake to drive the silence watchdog deterministically.
@@ -204,6 +207,7 @@ export interface LivestreamSessionEvents {
 export interface LivestreamSessionOptions {
 
   clock?: Clock;
+  getAuthHeaders?: () => Record<string, string>;
   log?: ProtectLogging;
   resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   signal?: AbortSignal;
@@ -306,6 +310,7 @@ export class LivestreamSession implements AsyncDisposable {
   // One AbortController governs the watchdog loop, so a single abort() ends it, as EventStream's ends its own. The socket's listeners and the binding to the caller's
   // signal are not among what it governs: the session holds them and removes them itself in its teardown.
   readonly #controller = new AbortController();
+  readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #log: ProtectLogging;
   readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
   readonly #spec: ResolvedLivestreamSpec;
@@ -359,6 +364,7 @@ export class LivestreamSession implements AsyncDisposable {
 
     this.#callerSignal = options.signal;
     this.#clock = options.clock ?? wallClock;
+    this.#getAuthHeaders = options.getAuthHeaders;
     this.#log = options.log ?? noopLog;
     this.#bus = new EventBus<LivestreamSessionEvents>(this.#log);
     this.#resolveUrl = options.resolveUrl;
@@ -509,8 +515,9 @@ export class LivestreamSession implements AsyncDisposable {
 
     /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its
      * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. HTTP/2 is off and pipelining disabled
-     * because a WebSocket upgrade can use neither, and `allowH2` reaches the connector and the agent alike. The negotiated URL already carries its own authorization
-     * token, so - unlike EventStream - no auth headers are stamped on the upgrade. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it
+     * because a WebSocket upgrade can use neither, and `allowH2` reaches the connector and the agent alike. The upgrade carries the session's auth headers, as
+     * EventStream's does, because UniFi OS's proxy refuses a media upgrade without the session even when the minted token is valid; they are read here, after the
+     * negotiation, so a relogin the negotiation triggered reaches the upgrade. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it
      * assigns directly. Building the socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of it. The
      * address is parsed without a throw, because an injected factory may be handed a URL undici would refuse, and this runs detached.
      */
@@ -527,7 +534,7 @@ export class LivestreamSession implements AsyncDisposable {
       const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
 
       this.#owned = { connector, dispatcher: agent };
-      this.#ws = new WebSocket(url, { dispatcher: agent });
+      this.#ws = new WebSocket(url, { dispatcher: agent, headers: this.#getAuthHeaders?.() ?? {} });
     }
 
     this.#ws.binaryType = "arraybuffer";

@@ -882,7 +882,8 @@ describe("ProtectClient.connect", () => {
       pool.intercept({ method: "GET", path: (path) => path.startsWith("/proxy/protect/api/ws/livestream?") })
         .reply(200, { url: "wss://internal-host:7442/ws/livestream?token=t" });
 
-      // The talkback negotiation is refused, so the row ends there: connect injects no talkback socket, and a minted URL the session could dial would reach the network.
+      // The talkback negotiation is refused, so the row ends there: connect injects no talkback socket, and a negotiated URL the session could dial would reach the
+      // network.
       pool.intercept({ method: "GET", path: "/proxy/protect/api/ws/talkback?camera=c1" }).reply(403, {});
 
       await using client = await connectBare(agent, { dialed });
@@ -894,7 +895,7 @@ describe("ProtectClient.connect", () => {
       await using subscription = camera.livestream({ source: { channel: 0, type: "channel" } });
 
       await expectAt(() => dialed.length === 2);
-      assert.equal(dialed[1]?.url, "wss://" + AUTHORITY + ":7442/ws/livestream?token=t", "the livestream negotiates on the authority and dials its hostname");
+      assert.equal(dialed[1]?.url, "wss://" + AUTHORITY + "/proxy/protect/ws/livestream?token=t", "the livestream dials the authority under the proxy prefix");
 
       // A forbidden answer classified as the authorization error is the negotiation having reached the bracketed origin, where a bare literal fails before any status
       // exists.

@@ -498,10 +498,10 @@ export async function createLoopbackTlsProxyPeer({ ipv6 = false }: LoopbackPeerO
  * Build a loopback TLS peer that speaks just enough of the WebSocket protocol for a session to connect to it: it completes the RFC 6455 upgrade by hand and then holds
  * the connection, sending no frames of its own.
  *
- * Holding rather than conversing is the whole point. Every WebSocket URL this library connects to is `wss://` - the events URL by construction, and the negotiated
- * livestream and talkback URLs as the controller mints them - so reaching a session's own socket path takes a real TLS peer, and what these tests ask is whether the
- * handshake completes at all - which the client's `open` event answers on its own - and whether a teardown ends the connection, which a peer that never answers the
- * close frame leaves to the client alone. The frame protocol above the socket is the injected-fake suites' subject, not this peer's.
+ * Holding rather than conversing is the whole point. Every WebSocket URL this library connects to is `wss://` by construction, the events URL and the negotiated
+ * livestream and talkback URLs alike, so reaching a session's own socket path takes a real TLS peer, and what these tests ask is whether the handshake completes at
+ * all - which the client's `open` event answers on its own - and whether a teardown ends the connection, which a peer that never answers the close frame leaves to
+ * the client alone. The frame protocol above the socket is the injected-fake suites' subject, not this peer's.
  *
  * A peer built with `resetUpgrade` answers no upgrade: it resets each connection once the request has arrived, so the client's TLS handshake completes and its
  * WebSocket never opens, the one stage at which a dropped connection is neither a failed dial nor the loss of an open socket.

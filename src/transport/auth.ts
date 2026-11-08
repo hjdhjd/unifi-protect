@@ -76,10 +76,11 @@ function rejectedSignIn(statusCode: number): boolean {
  * relogin used when a request comes back 401.
  *
  * The session composes {@link Transport} - it sends its handshake requests through the transport (so login traffic is pooled, timed, throttle-aware, and observable
- * like any other request) using `authRetry: false` so a handshake 401 cannot recurse back into relogin. It exposes the hooks the transport wires in at the
- * composition root: {@link AuthSession.authHeaders} (the cookie + CSRF headers stamped onto every authenticated request) and {@link AuthSession.reauthenticate} (the
- * `onUnauthorized` hook, told whether the request that met the 401 was the recovery probe). Because those hooks are plain methods the transport invokes through
- * injected function references, `Transport` never imports `AuthSession`: the dependency flows in one direction only.
+ * like any other request) using `authRetry: false` so a handshake 401 cannot recurse back into relogin. It exposes the hooks the composition root wires in:
+ * {@link AuthSession.authHeaders} (the cookie and CSRF headers stamped onto every authenticated request and every owned socket's upgrade) and
+ * {@link AuthSession.reauthenticate} (the transport's `onUnauthorized` hook, told whether the request that met the 401 was the recovery probe). Because those hooks
+ * are plain methods the transport and the sockets invoke through injected function references, neither `Transport` nor any socket imports `AuthSession`: the
+ * dependency flows in one direction only.
  *
  * State is invalid-by-default: {@link AuthSession.isAuthenticated} is true only once every session-defining credential the controller requires is in hand.
  * There is no `Nullable` return on the surface - {@link AuthSession.login} resolves on success and throws {@link ProtectAuthError} on credential failure.
@@ -115,8 +116,8 @@ export class AuthSession {
   }
 
   /**
-   * The headers to stamp on every authenticated request: the session cookie and the CSRF token, each included only when held. Wired into the transport as its
-   * `getAuthHeaders` hook.
+   * The headers to stamp on every authenticated request: the session cookie and the CSRF token, each included only when held. Wired into the transport and every
+   * owned socket as their `getAuthHeaders` hook.
    *
    * @returns The auth headers, possibly empty before login completes.
    */

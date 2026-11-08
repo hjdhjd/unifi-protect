@@ -1,8 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * ws-endpoint.test.ts: Tests for the shared WebSocket-endpoint negotiator - the parse-{url}-and-host-rewrite core, exercised through both the livestream and talkback
- * specializations (each over GET), the hostname rewrite from an authority carrying a port, the shared no-URL / non-2xx failure paths, and forwarding the caller's abort
- * signal to the transport, driven through an undici MockAgent so no live controller is needed.
+ * ws-endpoint.test.ts: Tests for the shared WebSocket-endpoint negotiator - the core that parses the minted `{ url }` and composes the dialed URL on the controller
+ * authority under the proxy prefix, exercised through the livestream and talkback specializations (each over GET), the composition on an authority carrying a port,
+ * the shared no-URL / non-2xx failure paths, and forwarding the caller's abort signal to the transport, driven through an undici MockAgent so no live controller is
+ * needed.
  */
 import { ProtectAbortedError, ProtectAuthorizationError, ProtectProtocolError } from "../errors.ts";
 import { describe, test } from "node:test";
@@ -14,7 +15,7 @@ describe("wsEndpointResolver", () => {
 
   describe("livestream specialization", () => {
 
-    test("negotiates the livestream endpoint and rewrites the host while keeping the controller's port and token", async () => {
+    test("negotiates the livestream endpoint and composes the URL on the authority under the proxy prefix, keeping the minted path and token", async () => {
 
       const { agent, host, pool, transport } = makeMockTransport();
 
@@ -24,7 +25,7 @@ describe("wsEndpointResolver", () => {
       const resolve = livestreamUrlResolver(transport, host);
       const resolved = await resolve(new URLSearchParams({ camera: "cam1" }), {});
 
-      assert.equal(resolved, "wss://" + host + ":7443/ws/livestream?token=abc123");
+      assert.equal(resolved, "wss://" + host + "/proxy/protect/ws/livestream?token=abc123");
 
       await agent.close();
     });
@@ -32,7 +33,7 @@ describe("wsEndpointResolver", () => {
 
   describe("talkback specialization", () => {
 
-    test("negotiates the talkback endpoint over GET with the camera param and rewrites the host", async () => {
+    test("negotiates the talkback endpoint over GET with the camera param and composes the URL on the authority under the proxy prefix", async () => {
 
       const { agent, host, pool, transport } = makeMockTransport();
 
@@ -43,15 +44,15 @@ describe("wsEndpointResolver", () => {
       const resolve = talkbackUrlResolver(transport, host);
       const resolved = await resolve(new URLSearchParams({ camera: "cam1" }), {});
 
-      assert.equal(resolved, "wss://" + host + ":7443/ws/talkback?token=xyz789");
+      assert.equal(resolved, "wss://" + host + "/proxy/protect/ws/talkback?token=xyz789");
 
       await agent.close();
     });
   });
 
-  describe("hostname rewrite", () => {
+  describe("authority composition", () => {
 
-    test("a configured address carrying a port rewrites the hostname alone, keeping the controller's port", async () => {
+    test("a configured address carrying a port composes the URL on that port, dropping the minted one", async () => {
 
       const { agent, host, pool, transport } = makeMockTransport({ host: "nvr.local:8443" });
 
@@ -60,12 +61,12 @@ describe("wsEndpointResolver", () => {
 
       const resolved = await livestreamUrlResolver(transport, host)(new URLSearchParams({ camera: "cam1" }), {});
 
-      assert.equal(resolved, "wss://nvr.local:7443/ws/livestream?token=abc123", "the minted port survives and the configured one is neither added nor substituted");
+      assert.equal(resolved, "wss://nvr.local:8443/proxy/protect/ws/livestream?token=abc123", "the configured port is kept and the minted one dropped");
 
       await agent.close();
     });
 
-    test("a bracketed IPv6 authority carrying a port rewrites the hostname to the bracketed literal, keeping the controller's port", async () => {
+    test("a bracketed IPv6 authority carrying a port composes the URL on the bracketed literal and its port", async () => {
 
       const { agent, host, pool, transport } = makeMockTransport({ host: "[::1]:8443" });
 
@@ -74,7 +75,7 @@ describe("wsEndpointResolver", () => {
 
       const resolved = await talkbackUrlResolver(transport, host)(new URLSearchParams({ camera: "cam1" }), {});
 
-      assert.equal(resolved, "wss://[::1]:7443/ws/talkback?token=xyz789", "the literal keeps its brackets and the minted port survives");
+      assert.equal(resolved, "wss://[::1]:8443/proxy/protect/ws/talkback?token=xyz789", "the literal keeps its brackets");
 
       await agent.close();
     });

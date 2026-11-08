@@ -39,6 +39,7 @@ import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { OwnedDispatcher } from "./connector.ts";
 import { PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
+import { PROTECT_PROXY_PATH } from "./url-host.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { RawPacket } from "../protocol/packet.ts";
 import type { StreamOptions } from "../event-bus.ts";
@@ -176,7 +177,7 @@ export class EventStream implements AsyncDisposable {
     this.#bus = new EventBus<EventStreamEvents>(this.#log);
     this.#lastMessageAt = this.#clock.monotonic();
 
-    const url = "wss://" + options.host + "/proxy/protect/ws/updates?" + new URLSearchParams({ lastUpdateId: options.lastUpdateId }).toString();
+    const url = "wss://" + options.host + PROTECT_PROXY_PATH + "/ws/updates?" + new URLSearchParams({ lastUpdateId: options.lastUpdateId }).toString();
 
     this.#address = URL.parse(url)?.host ?? url;
 

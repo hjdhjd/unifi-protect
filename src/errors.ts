@@ -132,8 +132,8 @@ export class ProtectNetworkError extends RecoverableError {
 export class ProtectCertificateError extends ProtectNetworkError {
 
   /**
-   * The address that was dialed, exactly as the transport or the socket dialed it: the host and port of the request path's origin, or of the socket's URL, which for
-   * a media socket is the port the controller minted for it.
+   * The address that was dialed, exactly as the transport or the socket dialed it: the host and port of the request path's origin, or of the socket's URL, each the
+   * controller authority the consumer configured.
    */
   readonly host: string;
 
