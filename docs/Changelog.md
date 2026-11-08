@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.4.2 (2026-11-08)
+  * Fix: livestreams and talkback now connect through UniFi OS at the controller address you configured, port included, so they pass `verifyTls` with the certificate you've installed and work wherever that address does.
+  * Housekeeping.
+
 ## 5.4.1 (2026-11-05)
   * Housekeeping.
 

@@ -47,4 +47,4 @@ new ProtectCertificateError(options): ProtectCertificateError;
 | Property | Modifier | Type | Description | Inherited from |
 | ------ | ------ | ------ | ------ | ------ |
 | <a id="code"></a> `code` | `readonly` | `string` \| `undefined` | The Node errno string (e.g., `"ECONNREFUSED"`, `"ETIMEDOUT"`), when one could be resolved from the cause chain. | [`ProtectNetworkError`](ProtectNetworkError.md).[`code`](ProtectNetworkError.md#code) |
-| <a id="host"></a> `host` | `readonly` | `string` | The address that was dialed, exactly as the transport or the socket dialed it: the host and port of the request path's origin, or of the socket's URL, which for a media socket is the port the controller minted for it. | - |
+| <a id="host"></a> `host` | `readonly` | `string` | The address that was dialed, exactly as the transport or the socket dialed it: the host and port of the request path's origin, or of the socket's URL, each the controller authority the consumer configured. | - |
