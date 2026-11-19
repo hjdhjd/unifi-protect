@@ -187,7 +187,7 @@ const watchLivestreamHandler: CommandHandler = async (ctx) => {
   let bytes = 0;
   let codec = "";
 
-  for await (const segment of segments) {
+  for await(const segment of segments) {
 
     count += 1;
     bytes += segment.data.length;

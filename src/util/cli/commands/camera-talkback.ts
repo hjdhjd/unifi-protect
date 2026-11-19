@@ -75,7 +75,7 @@ const cameraTalkbackHandler: CommandHandler = async (ctx) => {
   let bytes = 0;
   const metered = async function *(): AsyncGenerator<Uint8Array> {
 
-    for await (const chunk of source) {
+    for await(const chunk of source) {
 
       bytes += (chunk as Uint8Array).length;
 

@@ -642,7 +642,7 @@ export function matchesRawPacket(filter: RawFilter, packet: RawPacket, resolveNa
  */
 export async function *filterStream<T>(source: AsyncIterable<T>, predicate: (item: T) => boolean): AsyncGenerator<T> {
 
-  for await (const item of source) {
+  for await(const item of source) {
 
     if(predicate(item)) {
 
@@ -674,7 +674,7 @@ export async function *take<T>(source: AsyncIterable<T>, count: number): AsyncGe
 
   let taken = 0;
 
-  for await (const value of source) {
+  for await(const value of source) {
 
     yield value;
 

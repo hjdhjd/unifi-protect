@@ -282,7 +282,7 @@ describe("LivestreamPool", () => {
 
       let delivered = 0;
 
-      for await (const _segment of fast) {
+      for await(const _segment of fast) {
 
         if(++delivered === total) {
 

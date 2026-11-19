@@ -24,7 +24,7 @@ function collect<T>(iterable: AsyncIterable<T>): { done: Promise<void>; values: 
   const values: T[] = [];
   const done = (async (): Promise<void> => {
 
-    for await (const value of iterable) {
+    for await(const value of iterable) {
 
       values.push(value);
     }

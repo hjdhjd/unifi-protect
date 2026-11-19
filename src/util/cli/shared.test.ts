@@ -409,7 +409,7 @@ describe("filterStream", () => {
 
     const collected: number[] = [];
 
-    for await (const value of filterStream(streamOf([ 5, 2, 7, 8, 4, 1 ]), (item) => (item % 2) === 0)) {
+    for await(const value of filterStream(streamOf([ 5, 2, 7, 8, 4, 1 ]), (item) => (item % 2) === 0)) {
 
       collected.push(value);
     }
@@ -443,7 +443,7 @@ describe("filterStream", () => {
       }
     };
 
-    for await (const value of filterStream(source(), (item) => (item % 2) === 0)) {
+    for await(const value of filterStream(source(), (item) => (item % 2) === 0)) {
 
       assert.equal(value, 0);
 
@@ -460,7 +460,7 @@ describe("take", () => {
 
     const collected: number[] = [];
 
-    for await (const value of take(naturals(), 3)) {
+    for await(const value of take(naturals(), 3)) {
 
       collected.push(value);
     }
@@ -472,7 +472,7 @@ describe("take", () => {
 
     const collected: number[] = [];
 
-    for await (const value of take(naturals(), 0)) {
+    for await(const value of take(naturals(), 0)) {
 
       collected.push(value);
     }
@@ -499,7 +499,7 @@ describe("take", () => {
 
     const collected: number[] = [];
 
-    for await (const value of take(source(), 2)) {
+    for await(const value of take(source(), 2)) {
 
       collected.push(value);
     }

@@ -384,7 +384,7 @@ describe("EventStream", () => {
       const collected: TypedEvent[] = [];
       const task = (async (): Promise<void> => {
 
-        for await (const [event] of stream.stream("packet", { signal: controller.signal })) {
+        for await(const [event] of stream.stream("packet", { signal: controller.signal })) {
 
           collected.push(event);
         }
@@ -424,7 +424,7 @@ describe("EventStream", () => {
       const collected: TypedEvent[] = [];
       const task = (async (): Promise<void> => {
 
-        for await (const event of stream.packets({ signal: controller.signal })) {
+        for await(const event of stream.packets({ signal: controller.signal })) {
 
           collected.push(event);
         }
@@ -561,7 +561,7 @@ describe("EventStream", () => {
       const collected: TypedEvent[] = [];
       const task = (async (): Promise<void> => {
 
-        for await (const event of stream.packets({ signal: controller.signal })) {
+        for await(const event of stream.packets({ signal: controller.signal })) {
 
           collected.push(event);
         }

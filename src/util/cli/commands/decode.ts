@@ -38,7 +38,7 @@ async function readStdin(): Promise<Buffer> {
 
   const chunks: Buffer[] = [];
 
-  for await (const chunk of process.stdin) {
+  for await(const chunk of process.stdin) {
 
     chunks.push(chunk as Buffer);
   }

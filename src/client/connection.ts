@@ -542,7 +542,7 @@ export class ConnectionMonitor {
 
     try {
 
-      for await (const [transition] of this.#bus.stream("stateChanged", opts)) {
+      for await(const [transition] of this.#bus.stream("stateChanged", opts)) {
 
         yield transition;
       }
@@ -935,7 +935,7 @@ export class ConnectionMonitor {
 
     try {
 
-      for await (const upSince of this.#store.observe(selectControllerUpSince, { signal: this.#controller.signal })) {
+      for await(const upSince of this.#store.observe(selectControllerUpSince, { signal: this.#controller.signal })) {
 
         const previousUpSince = this.#lastUpSince;
 

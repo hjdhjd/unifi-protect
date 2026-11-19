@@ -155,7 +155,7 @@ describe("EventBus", () => {
 
         try {
 
-          for await (const [count] of iterable) {
+          for await(const [count] of iterable) {
 
             received.push(count);
 
@@ -203,7 +203,7 @@ describe("EventBus", () => {
 
         try {
 
-          for await (const [value] of iterable) {
+          for await(const [value] of iterable) {
 
             received.push(value);
 

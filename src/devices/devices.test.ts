@@ -131,7 +131,7 @@ describe("device projections", () => {
       const received: Camera[] = [];
       const done = (async (): Promise<void> => {
 
-        for await (const updated of camera.observe({ signal: ac.signal })) {
+        for await(const updated of camera.observe({ signal: ac.signal })) {
 
           received.push(updated);
         }
@@ -795,7 +795,7 @@ describe("Nvr projection", () => {
     const received: Nvr[] = [];
     const done = (async (): Promise<void> => {
 
-      for await (const updated of nvr.observe({ signal: ac.signal })) {
+      for await(const updated of nvr.observe({ signal: ac.signal })) {
 
         received.push(updated);
       }

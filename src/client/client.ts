@@ -722,7 +722,7 @@ export class ProtectClient implements AsyncDisposable {
     // (const event of client.events({ signal }))` ends quietly on Ctrl-C. Any other error still propagates.
     try {
 
-      for await (const [event] of this.#bus.stream("packet", opts)) {
+      for await(const [event] of this.#bus.stream("packet", opts)) {
 
         yield event;
       }
@@ -753,7 +753,7 @@ export class ProtectClient implements AsyncDisposable {
     // Same clean-abort handling as the typed firehose: the caller's own signal ends the loop quietly, any other error propagates.
     try {
 
-      for await (const [packet] of this.#bus.stream("rawPacket", opts)) {
+      for await(const [packet] of this.#bus.stream("rawPacket", opts)) {
 
         yield packet;
       }

@@ -2231,7 +2231,7 @@ describe("ConnectionMonitor", () => {
 
       const consumer = (async (): Promise<void> => {
 
-        for await (const transition of monitor.observe({ signal: controller.signal })) {
+        for await(const transition of monitor.observe({ signal: controller.signal })) {
 
           seen.push(transition.to);
         }
@@ -2275,7 +2275,7 @@ describe("ConnectionMonitor", () => {
 
         try {
 
-          for await (const [transition] of monitor.stream("stateChanged", { signal: controller.signal })) {
+          for await(const [transition] of monitor.stream("stateChanged", { signal: controller.signal })) {
 
             seen.push(transition.to);
           }

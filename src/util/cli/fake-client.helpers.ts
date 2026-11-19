@@ -296,7 +296,7 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
 
         let bytes = 0;
 
-        for await (const chunk of audioSource) {
+        for await(const chunk of audioSource) {
 
           bytes += chunk.length;
         }

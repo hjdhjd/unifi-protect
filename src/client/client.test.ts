@@ -373,7 +373,7 @@ describe("ProtectClient.connect", () => {
 
       try {
 
-        for await (const value of client.stream("packet", { signal: streamAc.signal })) {
+        for await(const value of client.stream("packet", { signal: streamAc.signal })) {
 
           received.push(value);
         }
@@ -464,7 +464,7 @@ describe("ProtectClient.connect", () => {
       const collected: TypedEvent[] = [];
       const task = (async (): Promise<void> => {
 
-        for await (const event of client.events({ signal: controller.signal })) {
+        for await(const event of client.events({ signal: controller.signal })) {
 
           collected.push(event);
         }
@@ -495,7 +495,7 @@ describe("ProtectClient.connect", () => {
       const raw: RawPacket[] = [];
       const task = (async (): Promise<void> => {
 
-        for await (const packet of client.rawPackets({ signal: controller.signal })) {
+        for await(const packet of client.rawPackets({ signal: controller.signal })) {
 
           raw.push(packet);
         }

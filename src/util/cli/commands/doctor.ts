@@ -73,7 +73,7 @@ async function firstEvent(client: ProtectClient, signal: AbortSignal): Promise<s
 
   const deadline = AbortSignal.any([ signal, AbortSignal.timeout(EVENT_WAIT_MS) ]);
 
-  for await (const event of client.events({ signal: deadline })) {
+  for await(const event of client.events({ signal: deadline })) {
 
     return event.kind;
   }
@@ -94,7 +94,7 @@ async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ c
   let media = false;
   let tracks = "";
 
-  for await (const segment of sub) {
+  for await(const segment of sub) {
 
     if(segment.type === "init") {
 

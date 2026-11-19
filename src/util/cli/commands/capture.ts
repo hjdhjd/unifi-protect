@@ -209,7 +209,7 @@ function tallyCadence(window: Window, id: string, payload: unknown): void {
  */
 async function consumeRaw(source: AsyncIterable<RawPacket>, window: Window, manifest: SchemaManifest, device: CompiledAxis | undefined): Promise<void> {
 
-  for await (const packet of source) {
+  for await(const packet of source) {
 
     const { action, id, modelKey } = packet.header;
 
@@ -269,7 +269,7 @@ async function consumeRaw(source: AsyncIterable<RawPacket>, window: Window, mani
 // one writer between them and a frame is judged against the map as of the moment it arrived.
 async function consumeEvents(source: AsyncIterable<TypedEvent>, window: Window): Promise<void> {
 
-  for await (const event of source) {
+  for await(const event of source) {
 
     window.occurrencesSeen += 1;
 

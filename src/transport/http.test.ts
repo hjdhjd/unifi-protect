@@ -2131,7 +2131,7 @@ describe("Transport", () => {
 
         try {
 
-          for await (const _entered of transport.stream("throttleEntered", { signal: controller.signal })) {
+          for await(const _entered of transport.stream("throttleEntered", { signal: controller.signal })) {
 
             received++;
             controller.abort();

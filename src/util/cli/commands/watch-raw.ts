@@ -165,7 +165,7 @@ const watchRawHandler: CommandHandler = async (ctx) => {
   const source = filterStream(client.rawPackets({ signal: boundedSignal(ctx.signal, durationMs) }), (packet) => matchesRawPacket(filter, packet, resolveName));
   const limited = (limit !== undefined) ? take(source, limit) : source;
 
-  for await (const packet of limited) {
+  for await(const packet of limited) {
 
     if(values.json === true) {
 

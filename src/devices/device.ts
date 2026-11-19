@@ -91,7 +91,7 @@ export abstract class Projection<TConfig> {
 
     // The store dedups on the config reference (this record's selector output); we map every distinct config to this same live projection handle, which the consumer
     // re-reads through its getters. As an async-generator method, `this` is bound to the instance for the life of the iteration.
-    for await (const _config of this.ctx.store.observe(this.#select, opts)) {
+    for await(const _config of this.ctx.store.observe(this.#select, opts)) {
 
       yield this;
     }

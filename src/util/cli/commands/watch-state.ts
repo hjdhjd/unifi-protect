@@ -139,7 +139,7 @@ async function *watchTarget(client: ProtectClient, target: string, online: boole
     const { key, label } = CATEGORIES[target];
     const views: CategoryViews = client.state.selectors[key];
 
-    for await (const records of client.state.observe(online ? views.online : views.all, { signal })) {
+    for await(const records of client.state.observe(online ? views.online : views.all, { signal })) {
 
       yield categoryChange(target, label, records);
     }
@@ -153,7 +153,7 @@ async function *watchTarget(client: ProtectClient, target: string, online: boole
 
   if(fact !== undefined) {
 
-    for await (const value of client.state.observe(fact, { signal })) {
+    for await(const value of client.state.observe(fact, { signal })) {
 
       yield factChange(target, value);
     }
@@ -163,7 +163,7 @@ async function *watchTarget(client: ProtectClient, target: string, online: boole
 
   const device = findDevice(client, target);
 
-  for await (const updated of device.observe({ signal })) {
+  for await(const updated of device.observe({ signal })) {
 
     yield deviceChange(updated.name, updated.config);
   }
@@ -203,7 +203,7 @@ const watchStateHandler: CommandHandler = async (ctx) => {
   const changes = watchTarget(client, target, values.online === true, boundedSignal(ctx.signal, durationMs));
   const limited = (limit !== undefined) ? take(changes, limit) : changes;
 
-  for await (const change of limited) {
+  for await(const change of limited) {
 
     if(values.json === true) {
 

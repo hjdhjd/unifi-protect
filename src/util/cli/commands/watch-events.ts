@@ -229,7 +229,7 @@ const watchEventsHandler: CommandHandler = async (ctx) => {
   const source = filterStream(client.events({ signal: boundedSignal(ctx.signal, durationMs) }), (event) => matchesEvent(filter, event, resolveName));
   const limited = (limit !== undefined) ? take(source, limit) : source;
 
-  for await (const event of limited) {
+  for await(const event of limited) {
 
     if(values.json === true) {
 
