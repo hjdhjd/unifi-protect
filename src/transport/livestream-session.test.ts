@@ -10,7 +10,7 @@ import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackSilentPeer, creat
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
 import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
 import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
-import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, silentLog } from "../testing.helpers.ts";
+import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
 import { buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
 import { describe, test } from "node:test";
@@ -1384,6 +1384,54 @@ describe("LivestreamSession", () => {
       // Each begin-segment frame starts a fresh accumulator, so each segment carries its own boxes and none of the one before it.
       assert.deepEqual(segments.map((segment) => segment.data.toString()), [ "aA", "bB" ]);
     });
+
+    /* Each way an open session tears down ends what its events handed out, whatever started the teardown: a stream opened without a signal ends once it has
+     * delivered the `closed` emission the teardown made, and a pending wait rejects with the session's close, whose cause is the closure's cause - the fault the
+     * teardown put on the error rail, or nothing for a close the client asked for or one the peer started.
+     */
+    const endings: { cause: (errors: ProtectError[]) => unknown; faults: number; name: string; run: (stage: { session: LivestreamSession; ws: FakeWebSocket }) =>
+      Promise<void> | void; }[] = [
+
+      { cause: (): undefined => undefined, faults: 0, name: "close()", run: async ({ session }): Promise<void> => session.close() },
+      { cause: (): undefined => undefined, faults: 0, name: "a peer close", run: ({ ws }): void => ws.emitClose(1001, "going away") },
+      { cause: ([fault]): unknown => fault, faults: 1, name: "a socket error", run: ({ ws }): void => ws.emitError(new Error("socket reset")) }
+    ];
+
+    for(const { cause, faults, name, run } of endings) {
+
+      test("after " + name + " of an open session, a stream opened without a signal ends and a pending wait rejects with the session's close", async () => {
+
+        const { session, ws } = await openSession();
+        const errors = collectErrors(session);
+        const closed: unknown[] = [];
+        const streamed = (async (): Promise<void> => {
+
+          for await(const info of session.stream("closed")) {
+
+            closed.push(info);
+          }
+        })();
+        const wait = session.once("segment");
+        const ended = settlement(streamed);
+        const settled = settlement(wait);
+
+        await run({ session, ws });
+
+        await expectAt(ended, { message: "the stream opened without a signal ended at the teardown" });
+        await expectAt(settled, { message: "the pending wait settled at the teardown" });
+        await streamed;
+        assert.equal(closed.length, 1, "the stream delivered the closed emission the teardown made before it ended");
+        assert.equal(errors.length, faults, "only a fault reaches the error rail");
+        await assert.rejects(wait, (error: unknown) => {
+
+          assert.ok(error instanceof ProtectAbortedError);
+          assert.equal(error.message, "The UniFi Protect livestream session closed.");
+          assert.equal(error.cause, cause(errors), "the close carries the closure's cause, if any, as its cause");
+
+          return true;
+        });
+      });
+    }
   });
 
   /* Every listener the session registers, on its socket and on the caller's signal, comes off in its teardown by the identity it was registered under, as the

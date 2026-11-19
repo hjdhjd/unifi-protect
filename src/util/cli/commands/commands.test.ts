@@ -7,6 +7,7 @@ import { ProtectAbortedError, ProtectAuthError, ProtectNetworkError, ProtectProt
   channels } from "../../../index.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../../protocol/packet.helpers.ts";
 import { describe, test } from "node:test";
+import { expectAt, settlement } from "../../../testing.helpers.ts";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { CliError } from "../shared.ts";
@@ -675,6 +676,32 @@ describe("watch events", () => {
     assert.match(out, /modelKey=camera/);
     assert.match(out, /deviceRemoved/);
     assert.match(out, /modelKey=light/);
+  });
+
+  test("a held-open events() rail with a live signal ends when the fake is disposed", async () => {
+
+    const { client } = makeFakeClient({ events: [motion], eventsHoldOpen: true });
+    const controller = new AbortController();
+    const received: TypedEvent[] = [];
+    const drained = (async (): Promise<void> => {
+
+      for await(const event of client.events({ signal: controller.signal })) {
+
+        received.push(event);
+      }
+    })();
+    const ended = settlement(drained);
+
+    // The script runs out while the signal stays live, so the rail holds open as a controller with nothing more to say would, and only the fake's disposal ends
+    // it, as the real client's rails end at its disposal.
+    await expectAt(() => received.length === 1, { message: "the rail delivered its script" });
+    assert.equal(ended(), false, "the rail holds open past its script while the signal is live");
+
+    await client[Symbol.asyncDispose]();
+
+    await expectAt(ended, { message: "the held-open rail ended at the fake's disposal" });
+    await drained;
+    assert.equal(controller.signal.aborted, false, "the signal stayed live, so the disposal alone ended the rail");
   });
 });
 

@@ -93,12 +93,12 @@ export interface FakeClientHandle {
   client: ProtectClient;
 }
 
-// Wait for a signal and nothing else. A rail that holds open models a controller with nothing more to say: the stream stays live until the window closes, which is what
-// lets a test tell a truncated run apart from one that merely reached the end of its script. With no signal there is nothing to wait for, so the wait is over at once
-// rather than hanging a test forever.
-function holdUntilAborted(signal?: AbortSignal): Promise<void> {
+// Wait for the caller's signal, or for the fake's disposal when the wait is handed it. A rail that holds open models a controller with nothing more to say: the stream
+// stays live until the window closes or the client is disposed, as the real client's rails end at its disposal, which is what lets a test tell a truncated run apart
+// from one that merely reached the end of its script. With no signal there is nothing to wait for, so the wait is over at once rather than hanging a test forever.
+function holdUntilAborted(signal?: AbortSignal, disposed?: AbortSignal): Promise<void> {
 
-  if((signal === undefined) || signal.aborted) {
+  if((signal === undefined) || signal.aborted || (disposed?.aborted === true)) {
 
     return Promise.resolve();
   }
@@ -106,13 +106,14 @@ function holdUntilAborted(signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
 
     signal.addEventListener("abort", () => resolve(), { once: true });
+    disposed?.addEventListener("abort", () => resolve(), { once: true });
   });
 }
 
 // Drive one scripted rail: yield its elements while the caller's signal is unaborted, then do whatever the rail was configured to do once the script runs out - end,
-// fail with the injected error, or hold open until the window closes. Checking the signal between yields is what makes an aborted run observably shorter than its
-// script, so a truncation test proves truncation rather than natural exhaustion.
-async function *driveRail<T>(elements: readonly T[], opts: { error?: Error; holdOpen?: boolean; signal?: AbortSignal }): AsyncGenerator<T> {
+// fail with the injected error, or hold open until the window closes or the fake is disposed. Checking the signal between yields is what makes an aborted run
+// observably shorter than its script, so a truncation test proves truncation rather than natural exhaustion.
+async function *driveRail<T>(elements: readonly T[], opts: { disposed: AbortSignal; error?: Error; holdOpen?: boolean; signal?: AbortSignal }): AsyncGenerator<T> {
 
   for(const element of elements) {
 
@@ -131,7 +132,7 @@ async function *driveRail<T>(elements: readonly T[], opts: { error?: Error; hold
 
   if(opts.holdOpen === true) {
 
-    await holdUntilAborted(opts.signal);
+    await holdUntilAborted(opts.signal, opts.disposed);
   }
 }
 
@@ -336,6 +337,9 @@ export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandl
     disposed: 0, flashlights: [], livestreams: [], playBuzzers: [], playSpeakers: [], reboots: [], talkback: [], toggles: [], unlocks: [], updates: []
   };
 
+  // The fake's lifetime, which its disposal ends, releasing every rail still holding open.
+  const lifetime = new AbortController();
+
   // How many times each fake observe (state.observe and every device.observe) yields before ending. Default 0 keeps observe a no-op.
   const observations = options.observations ?? 0;
   const cameras = (options.cameras ?? []).map((spec) => makeCamera(spec, calls, observations));
@@ -393,6 +397,7 @@ export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandl
     controllerName: (options.controllerName === undefined) ? "Fake NVR" : options.controllerName,
     events: (opts?: { signal?: AbortSignal }): AsyncGenerator<TypedEvent> => driveRail(events, {
 
+      disposed: lifetime.signal,
       ...((options.eventsError !== undefined) && { error: options.eventsError }),
       ...((options.eventsHoldOpen !== undefined) && { holdOpen: options.eventsHoldOpen }),
       ...((opts?.signal !== undefined) && { signal: opts.signal })
@@ -423,6 +428,7 @@ export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandl
     lights,
     rawPackets: (opts?: { signal?: AbortSignal }): AsyncGenerator<RawPacket> => driveRail(rawPackets, {
 
+      disposed: lifetime.signal,
       ...((options.rawPacketsError !== undefined) && { error: options.rawPacketsError }),
       ...((options.rawPacketsHoldOpen !== undefined) && { holdOpen: options.rawPacketsHoldOpen }),
       ...((opts?.signal !== undefined) && { signal: opts.signal })
@@ -467,6 +473,7 @@ export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandl
     [Symbol.asyncDispose]: (): Promise<void> => {
 
       calls.disposed += 1;
+      lifetime.abort();
 
       return Promise.resolve();
     }

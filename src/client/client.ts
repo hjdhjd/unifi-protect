@@ -22,6 +22,7 @@
  * @module ProtectClient
  */
 import { PROTECT_PROXY_PATH, controllerAuthority } from "../transport/url-host.ts";
+import { ProtectAbortedError, ProtectBootstrapError } from "../errors.ts";
 import type { ProtectNvrBootstrap, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "../types/index.ts";
 import { classifyPacket, eventSubjects } from "../protocol/events.ts";
 import { livestreamUrlResolver, talkbackUrlResolver } from "../transport/ws-endpoint.ts";
@@ -41,7 +42,6 @@ import type { Light } from "../devices/light.ts";
 import type { LivestreamDescription } from "../protocol/init-segment.ts";
 import { LivestreamPool } from "./livestream-pool.ts";
 import type { Nvr } from "../devices/nvr.ts";
-import { ProtectBootstrapError } from "../errors.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWebSocket } from "../transport/ws.ts";
 import type { RawPacket } from "../protocol/packet.ts";
@@ -682,10 +682,11 @@ export class ProtectClient implements AsyncDisposable {
   }
 
   /**
-   * Wait for the next emission of a client event.
+   * Wait for the next emission of a client event. A wait still pending when the client is disposed rejects with a {@link ProtectAbortedError}, so a wait that is
+   * never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to await.
-   * @param opts  - Optional abort signal.
+   * @param opts  - Optional abort signal that cancels the wait.
    *
    * @returns A promise resolving to the event's argument tuple.
    */
@@ -695,7 +696,8 @@ export class ProtectClient implements AsyncDisposable {
   }
 
   /**
-   * Stream every subsequent emission of a client event until the signal aborts.
+   * Stream every subsequent emission of a client event until the signal aborts or the client is disposed. The disposal ends the iteration cleanly once every emission
+   * made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to stream.
    * @param opts  - Stream options, including the abort signal.
@@ -718,8 +720,8 @@ export class ProtectClient implements AsyncDisposable {
    */
   async *events(opts: { signal?: AbortSignal } = {}): AsyncGenerator<TypedEvent> {
 
-    // The raw `stream` rail rejects with the abort reason when its signal fires; the firehose sugar smooths the caller's own abort into a clean return, so a `for await
-    // (const event of client.events({ signal }))` ends quietly on Ctrl-C. Any other error still propagates.
+    // The raw `stream` rail rejects with an `AbortError` when its signal fires and ends cleanly when the client is disposed; the firehose sugar smooths the caller's
+    // own abort into a clean return, so a `for await(const event of client.events({ signal }))` ends quietly on Ctrl-C. Any other error still propagates.
     try {
 
       for await(const [event] of this.#bus.stream("packet", opts)) {
@@ -816,8 +818,9 @@ export class ProtectClient implements AsyncDisposable {
 
   /**
    * Dispose the client: tear down the connection monitor (stopping recovery and closing the events stream), close every livestream session in the pool, stop the refresh
-   * failsafe and terminate observers, end the session, and destroy the connection pool - in that order, so ingestion stops before the state and transport it feeds.
-   * Safe to call more than once, and the canonical teardown via `await using client = await ProtectClient.connect(...)`.
+   * failsafe and terminate observers, end the session, and destroy the connection pool - in that order, so ingestion stops before the state and transport it feeds -
+   * and then end every stream and pending wait on the client's events, `events()` and `rawPackets()` among them. Safe to call more than once, and the canonical
+   * teardown via `await using client = await ProtectClient.connect(...)`.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
@@ -826,5 +829,8 @@ export class ProtectClient implements AsyncDisposable {
     await this.#store[Symbol.asyncDispose]();
     this.#auth.logout();
     await this.#transport[Symbol.asyncDispose]();
+
+    // The client emits only through the sinks the monitor's teardown has already detached, so the bus closes after every emission the client makes.
+    this.#bus.close(new ProtectAbortedError("The UniFi Protect client was disposed."));
   }
 }

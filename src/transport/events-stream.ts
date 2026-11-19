@@ -300,10 +300,11 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * Wait for the next emission of a stream event.
+   * Wait for the next emission of a stream event. A wait still pending when the stream tears down, for any reason, rejects with a {@link ProtectAbortedError}, so a
+   * wait that is never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to await.
-   * @param opts  - Optional abort signal.
+   * @param opts  - Optional abort signal that cancels the wait.
    *
    * @returns A promise resolving to the event's argument tuple.
    */
@@ -313,7 +314,8 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * Stream every subsequent emission of a stream event until the signal aborts.
+   * Stream every subsequent emission of a stream event until the signal aborts or the stream tears down, for any reason. The teardown ends the iteration cleanly once
+   * every emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to stream.
    * @param opts  - Stream options, including the abort signal.
@@ -326,8 +328,8 @@ export class EventStream implements AsyncDisposable {
   }
 
   /**
-   * The realtime event firehose: every decoded {@link TypedEvent}, until the caller's signal aborts. Closing the stream does not end the iteration, so a consumer ties
-   * the signal to the stream's lifetime. Sugar over `stream("packet")` that unwraps the single-element argument tuple to the event itself.
+   * The realtime event firehose: every decoded {@link TypedEvent}, until the caller's signal aborts or the stream tears down, for any reason. Sugar over
+   * `stream("packet")` that unwraps the single-element argument tuple to the event itself.
    *
    * @param opts - Optional abort signal that terminates the iteration.
    *
@@ -335,9 +337,9 @@ export class EventStream implements AsyncDisposable {
    */
   async *packets(opts: { signal?: AbortSignal } = {}): AsyncGenerator<TypedEvent> {
 
-    // The underlying `stream` rail rejects with the abort reason when its signal fires (node:events' `on` contract). For the firehose sugar we smooth that into a clean
-    // return on the caller's own abort - a `for await` over the firehose ends quietly on Ctrl-C rather than forcing every consumer to wrap it in try/catch. Any other
-    // error still propagates.
+    // The underlying `stream` rail rejects with an `AbortError` when its signal fires (node:events' `on` contract), and ends cleanly when the stream tears down. For
+    // the firehose sugar we smooth the abort into a clean return on the caller's own abort - a `for await` over the firehose ends quietly on Ctrl-C rather than
+    // forcing every consumer to wrap it in try/catch. Any other error still propagates.
     try {
 
       for await(const [event] of this.#bus.stream("packet", opts)) {
@@ -472,7 +474,8 @@ export class EventStream implements AsyncDisposable {
    * which a peer that never answers the close frame would otherwise hold open, and one still in its handshake.
    *
    * The reports then run in one order: the handshake's rejection for a stream that never opened or the rail fault for one that did, the line a fault carries, the
-   * close line, `closed` and the closed diagnostic.
+   * close line, `closed` and the closed diagnostic. The stream never reconnects, so the last of them is its last emission, and the bus closes after it, carrying the
+   * failure the teardown reported, if any, as the cause of its reason.
    */
   #onClose(teardown: SocketTeardown): void {
 
@@ -488,17 +491,20 @@ export class EventStream implements AsyncDisposable {
     this.#controller.abort();
     this.#released = (this.#owned === null) ? Promise.resolve() : releaseOwned(this.#owned);
 
+    let failure: ProtectError | null;
+
     if(this.#live) {
 
-      const fault = this.#railFault(teardown);
+      failure = this.#railFault(teardown);
 
-      if(fault !== null) {
+      if(failure !== null) {
 
-        this.#bus.emit("error", fault);
+        this.#bus.emit("error", failure);
       }
     } else {
 
-      this.#rejectOpen(this.#preOpenFailure(teardown));
+      failure = this.#preOpenFailure(teardown);
+      this.#rejectOpen(failure);
     }
 
     if((teardown.kind === "fault") && (teardown.line !== null)) {
@@ -513,6 +519,8 @@ export class EventStream implements AsyncDisposable {
 
       channels.eventsClosed.publish({ code, reason } satisfies EventsClosedPayload);
     }
+
+    this.#bus.close(new ProtectAbortedError("The UniFi Protect realtime events stream closed.", { ...((failure !== null) && { cause: failure }) }));
   }
 
   /* What a handshake that never completed rejects with. A fault is handed over as itself, so the rejection's type says exactly what went wrong; the caller's own

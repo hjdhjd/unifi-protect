@@ -10,7 +10,7 @@ import { PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
   PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectError,
   ProtectNetworkError, ProtectRequestError } from "../errors.ts";
-import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, silentLog } from "../testing.helpers.ts";
+import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, advanceThroughSchedule, errnoError, present } from "homebridge-plugin-utils/testing";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
@@ -2269,7 +2269,7 @@ describe("ConnectionMonitor", () => {
       const controller = new AbortController();
       const seen: ConnectionState[] = [];
 
-      // The raw stream rail rejects with the abort reason when its signal fires (the node:events `on` contract that observe() wraps and smooths); a direct consumer
+      // The raw stream rail rejects with an `AbortError` when its signal fires (the node:events `on` contract that observe() wraps and smooths); a direct consumer
       // catches it.
       const consumer = (async (): Promise<void> => {
 
@@ -2281,7 +2281,7 @@ describe("ConnectionMonitor", () => {
           }
         } catch {
 
-          // The abort reason ends the iteration.
+          // The `AbortError` ends the iteration.
         }
       })();
 
@@ -2536,7 +2536,13 @@ describe("ConnectionMonitor", () => {
 
     test("disposal closes the events stream and detaches every subscription", async () => {
 
-      const { events, monitor, store, streams, throttle } = harness({ initialUpSince: 1000 });
+      const { monitor, store, streams, throttle } = harness({ initialUpSince: 1000 });
+      const transitions: { from: string; to: string }[] = [];
+      const reboots: { newUpSince: number; previousUpSince: number }[] = [];
+
+      // The disposal closes the monitor's bus, so silence after it is read on the diagnostics channels published beside each emission, which no close detaches.
+      using transitionSubscription = subscribeToChannel(channels.connectionTransition, (payload) => void transitions.push(payload));
+      using rebootSubscription = subscribeToChannel(channels.connectionRebootDetected, (payload) => void reboots.push(payload));
 
       await monitor.opened;
       await settle();
@@ -2546,8 +2552,8 @@ describe("ConnectionMonitor", () => {
       // The live socket was asked to close.
       assert.equal(streams[0]?.closeRequested, true);
 
-      const transitionsBefore = events.transitions.length;
-      const rebootsBefore = events.rebooted.length;
+      const transitionsBefore = transitions.length;
+      const rebootsBefore = reboots.length;
 
       // After disposal the throttle subscription is gone (no further transitions) and the reboot-observation loop has ended (no further reboot events).
       throttle.set(true);
@@ -2555,8 +2561,44 @@ describe("ConnectionMonitor", () => {
 
       await settle();
 
-      assert.equal(events.transitions.length, transitionsBefore, "no transitions are emitted after disposal");
-      assert.equal(events.rebooted.length, rebootsBefore, "the reboot loop ended at disposal");
+      assert.equal(transitions.length, transitionsBefore, "no transitions are emitted after disposal");
+      assert.equal(reboots.length, rebootsBefore, "the reboot loop ended at disposal");
+    });
+
+    test("disposal ends a stream opened without a signal and rejects a pending wait, and a reboot it lands on reaches no line, event or diagnostic", async () => {
+
+      const log = capturingLog();
+      const { monitor, store } = harness({ initialUpSince: 1000, log });
+      const reboots: { newUpSince: number; previousUpSince: number }[] = [];
+
+      using rebootSubscription = subscribeToChannel(channels.connectionRebootDetected, (payload) => void reboots.push(payload));
+
+      await monitor.opened;
+      await settle();
+
+      const transitions: ConnectionTransition[] = [];
+      const streamed = (async (): Promise<void> => {
+
+        for await(const [transition] of monitor.stream("stateChanged")) {
+
+          transitions.push(transition);
+        }
+      })();
+      const wait = monitor.once("controllerRebooted");
+      const ended = settlement(streamed);
+      const settled = settlement(wait);
+
+      // The reboot reaches the watcher in the same turn as the disposal, so the watcher drains it after the lifetime signal has fired.
+      store.dispatch({ data: makeBootstrap({ nvr: makeNvr({ upSince: 100000 }) }), kind: "bootstrapLoaded" });
+      await monitor[Symbol.asyncDispose]();
+
+      await expectAt(ended, { message: "the stream opened without a signal ended at disposal" });
+      await expectAt(settled, { message: "the pending wait settled at disposal" });
+      await streamed;
+      await assert.rejects(wait, { constructor: ProtectAbortedError, message: "The UniFi Protect connection monitor was disposed." });
+      assert.deepEqual(transitions, [], "nothing changed state before the disposal");
+      assert.deepEqual(reboots, [], "the reboot the disposal landed on published no diagnostic");
+      assert.equal(log.entries.filter((entry) => entry.message === "The UniFi Protect controller restarted.").length, 0, "and logged no restart line");
     });
   });
 });

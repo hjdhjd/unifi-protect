@@ -364,7 +364,7 @@ describe("ProtectClient.connect", () => {
       onceAc.abort();
       await assert.rejects(pending, { name: "AbortError" });
 
-      // stream() is the async-iterable rail: aborting its signal rejects the pending iteration with the abort reason - the raw rail's contract, unlike the smoothed
+      // stream() is the async-iterable rail: aborting its signal rejects the pending iteration with an `AbortError` - the raw rail's contract, unlike the smoothed
       // events()/rawPackets() sugar - delivering no emissions.
       const streamAc = new AbortController();
       const received: unknown[] = [];
@@ -399,6 +399,52 @@ describe("ProtectClient.connect", () => {
       await client[Symbol.asyncDispose]();
       await client[Symbol.asyncDispose]();
       assert.equal(ws.closeRequested, true, "disposal closed the events WebSocket");
+    });
+
+    test("disposal ends events() and rawPackets() once they have delivered what came before it, and rejects a pending wait", async () => {
+
+      const { agent, pool } = mockController();
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ cameras: [makeCamera({ id: "c1" })] }));
+
+      const { client, ws } = await connectCapturing(agent);
+      const events: TypedEvent[] = [];
+      const raw: RawPacket[] = [];
+
+      // Neither firehose is handed a signal, so only the disposal can end them.
+      const eventsLoop = (async (): Promise<void> => {
+
+        for await(const event of client.events()) {
+
+          events.push(event);
+        }
+      })();
+      const rawLoop = (async (): Promise<void> => {
+
+        for await(const packet of client.rawPackets()) {
+
+          raw.push(packet);
+        }
+      })();
+
+      // One frame reaches each firehose before the disposal, and the wait begins after it, so only the disposal can settle the wait.
+      ws.emitMessage(encode({ action: "update", id: "c1", modelKey: "camera" }, { name: "Renamed" }));
+
+      const wait = client.once("packet");
+      const eventsEnded = settlement(eventsLoop);
+      const rawEnded = settlement(rawLoop);
+      const settled = settlement(wait);
+
+      await client[Symbol.asyncDispose]();
+
+      await expectAt(eventsEnded, { message: "events() ended at the disposal" });
+      await expectAt(rawEnded, { message: "rawPackets() ended at the disposal" });
+      await expectAt(settled, { message: "the pending wait settled at the disposal" });
+      await Promise.all([ eventsLoop, rawLoop ]);
+      assert.deepEqual(events.map(({ kind }) => kind), ["devicePatched"], "events() delivered the frame that came before the disposal");
+      assert.equal(raw.length, 1, "and so did rawPackets()");
+      await assert.rejects(wait, { constructor: ProtectAbortedError, message: "The UniFi Protect client was disposed." });
     });
   });
 

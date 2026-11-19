@@ -426,10 +426,11 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   /**
-   * Wait for the next emission of a session event.
+   * Wait for the next emission of a session event. A wait still pending when the session tears down, for any reason, rejects with a {@link ProtectAbortedError}, so a
+   * wait that is never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to await.
-   * @param opts  - Optional abort signal.
+   * @param opts  - Optional abort signal that cancels the wait.
    *
    * @returns A promise resolving to the event's argument tuple.
    */
@@ -439,7 +440,8 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   /**
-   * Stream every subsequent emission of a session event until the signal aborts.
+   * Stream every subsequent emission of a session event until the signal aborts or the session tears down, for any reason. The teardown ends the iteration cleanly
+   * once every emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to stream.
    * @param opts  - Stream options, including the abort signal.
@@ -816,7 +818,8 @@ export class LivestreamSession implements AsyncDisposable {
    *
    * The reports then run in one order: the closure's cause recorded, a fault put on the error rail whether or not the socket had opened (the pool acts on a stall
    * alone, which only an open socket raises), the line a fault carries, the close line and `closed`. A peer's close puts nothing on the rail, so the pool recovers
-   * from `closed` alone.
+   * from `closed` alone. The session never reconnects, so `closed` is its last emission, and the bus closes after it, carrying the closure's cause, if any, as the
+   * cause of its reason.
    */
   #onClose(teardown: SocketTeardown): void {
 
@@ -846,6 +849,7 @@ export class LivestreamSession implements AsyncDisposable {
 
     this.#log.debug("The UniFi Protect livestream API connection closed.", { code, reason });
     this.#bus.emit("closed", { ...((this.#closeCause !== null) && { cause: this.#closeCause }), code, reason });
+    this.#bus.close(new ProtectAbortedError("The UniFi Protect livestream session closed.", { ...((this.#closeCause !== null) && { cause: this.#closeCause }) }));
   }
 
   // What the closure records as its cause: the typed abort for the caller's cancel, the fault's own error, and nothing for an explicit close or a peer's close.

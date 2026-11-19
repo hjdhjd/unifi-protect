@@ -1,9 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * event-bus.test.ts: Unit tests for the three-rail EventBus facade - Disposable callbacks, the once promise, the stream async-iterable, signal cancellation on both,
- * the single-emit fan-out to every active callback subscriber, and the containment of a listener's throw.
+ * the single-emit fan-out to every active callback subscriber, the containment of a listener's throw, and the terminal close.
  */
-import { capturingLog, silentLog } from "./testing.helpers.ts";
+import { capturingLog, expectAt, settlement, silentLog } from "./testing.helpers.ts";
 import { describe, test } from "node:test";
 import { EventBus } from "./event-bus.ts";
 import assert from "node:assert/strict";
@@ -179,6 +179,147 @@ describe("EventBus", () => {
       await collector;
 
       assert.deepEqual(received, [ 1, 2 ], "the stream should surface buffered emissions and terminate cleanly on abort");
+    });
+  });
+
+  // A close is terminal: every rail ends, and nothing opened afterwards stays open. Each row reads a settlement within a bound, so a close that ended nothing fails
+  // as an assertion rather than leaving a loop parked until the test times out.
+  describe("close", () => {
+
+    test("an open stream delivers what was emitted before the close, then ends", async () => {
+
+      const bus = new EventBus<TestEvents>(silentLog());
+      const iterable = bus.stream("ping");
+      const received: number[] = [];
+
+      bus.emit("ping", 1);
+      bus.emit("ping", 2);
+
+      const drained = (async (): Promise<void> => {
+
+        for await(const [count] of iterable) {
+
+          received.push(count);
+        }
+      })();
+
+      bus.close(new Error("closed"));
+
+      await expectAt(settlement(drained), { message: "the stream ended at the close" });
+      await drained;
+      assert.deepEqual(received, [ 1, 2 ], "the emissions made before the close were delivered before the stream ended");
+    });
+
+    test("a pending wait rejects with the reason the bus closed with", async () => {
+
+      const bus = new EventBus<TestEvents>(silentLog());
+      const reason = new Error("closed");
+      const wait = bus.once("ping");
+      const settled = settlement(wait);
+
+      bus.close(reason);
+
+      await expectAt(settled, { message: "the pending wait settled at the close" });
+      await assert.rejects(wait, (error: unknown) => {
+
+        assert.equal(error, reason, "the wait rejects with the close's own reason");
+
+        return true;
+      });
+    });
+
+    test("a handler registered before the close and one registered after never fire, and an emit finds no listener", () => {
+
+      const bus = new EventBus<TestEvents>(silentLog());
+      const received: string[] = [];
+
+      using before = bus.on("ping", (count) => void received.push("before " + count.toString()));
+
+      bus.close(new Error("closed"));
+
+      using after = bus.on("ping", (count) => void received.push("after " + count.toString()));
+
+      assert.equal(bus.emit("ping", 1), false, "an emit on a closed bus finds no listener");
+      assert.deepEqual(received, [], "neither handler ran");
+    });
+
+    test("a stream begun on a closed bus ends at once, and a wait begun on it rejects with the same reason", async () => {
+
+      const bus = new EventBus<TestEvents>(silentLog());
+      const reason = new Error("closed");
+
+      bus.close(reason);
+
+      const received: number[] = [];
+      const drained = (async (): Promise<void> => {
+
+        for await(const [count] of bus.stream("ping")) {
+
+          received.push(count);
+        }
+      })();
+
+      await expectAt(settlement(drained), { message: "the stream begun on a closed bus ended" });
+      await drained;
+      assert.deepEqual(received, []);
+      assert.equal(bus.emit("ping", 1), false, "neither the stream nor anything else registered on the closed bus");
+      await assert.rejects(bus.once("ping"), (error: unknown) => {
+
+        assert.equal(error, reason, "the wait rejects with the close's own reason");
+
+        return true;
+      });
+    });
+
+    test("a signal that has already aborted keeps its meaning on a closed bus", async () => {
+
+      const bus = new EventBus<TestEvents>(silentLog());
+      const controller = new AbortController();
+
+      bus.close(new Error("closed"));
+      controller.abort();
+
+      assert.throws(() => bus.stream("ping", { signal: controller.signal }), { name: "AbortError" }, "the stream throws the abort, as it does on an open bus");
+      await assert.rejects(bus.once("ping", { signal: controller.signal }), { name: "AbortError" }, "the wait rejects with the abort, not the close's reason");
+    });
+
+    test("a second close keeps the first reason", async () => {
+
+      const bus = new EventBus<TestEvents>(silentLog());
+      const first = new Error("first");
+
+      bus.close(first);
+      bus.close(new Error("second"));
+
+      await assert.rejects(bus.once("ping"), (error: unknown) => {
+
+        assert.equal(error, first, "the first close's reason stands");
+
+        return true;
+      });
+    });
+
+    test("a stream registers when it is created, so an emission made before its first step is delivered", async () => {
+
+      const bus = new EventBus<TestEvents>(silentLog());
+      const iterable = bus.stream("ping");
+
+      assert.equal(bus.emit("ping", 7), true, "the stream's listener was in place before anything iterated it");
+
+      const received: number[] = [];
+      const drained = (async (): Promise<void> => {
+
+        for await(const [count] of iterable) {
+
+          received.push(count);
+        }
+      })();
+
+      bus.close(new Error("closed"));
+
+      await expectAt(settlement(drained), { message: "the stream ended at the close" });
+      await drained;
+      assert.deepEqual(received, [7], "the emission made before the first step was buffered, not lost");
     });
   });
 

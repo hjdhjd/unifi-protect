@@ -1001,6 +1001,77 @@ describe("EventStream", () => {
 
       await stream.close();
     });
+
+    /* Each way an open stream tears down ends what its events handed out, whatever started the teardown: a stream opened without a signal ends once it has delivered
+     * the `closed` emission the teardown made, and a pending wait rejects with the stream's close, whose cause is the failure the teardown reported on the error rail,
+     * or nothing for a close the client asked for.
+     */
+    const endings: { cause: (errors: EventStreamEvents["error"][]) => unknown; name: string; run: (stage: { stream: EventStream; ws: FakeWebSocket }) =>
+      Promise<void> | void; }[] = [
+
+      { cause: (): undefined => undefined, name: "close()", run: async ({ stream }): Promise<void> => stream.close() },
+      { cause: (errors): unknown => first(errors)[0], name: "a peer close", run: ({ ws }): void => ws.emitClose(1001, "going away") },
+      { cause: (errors): unknown => first(errors)[0], name: "a socket error", run: ({ ws }): void => ws.emitError(new Error("socket reset")) }
+    ];
+
+    for(const { cause, name, run } of endings) {
+
+      test("after " + name + " of an open stream, a stream opened without a signal ends and a pending wait rejects with the stream's close", async () => {
+
+        const { stream, ws } = await openStream();
+        const errors = collect(stream, "error");
+        const closed: EventStreamEvents["closed"][] = [];
+        const streamed = (async (): Promise<void> => {
+
+          for await(const info of stream.stream("closed")) {
+
+            closed.push(info);
+          }
+        })();
+        const wait = stream.once("packet");
+        const ended = settlement(streamed);
+        const settled = settlement(wait);
+
+        await run({ stream, ws });
+
+        await expectAt(ended, { message: "the stream opened without a signal ended at the teardown" });
+        await expectAt(settled, { message: "the pending wait settled at the teardown" });
+        await streamed;
+        assert.equal(closed.length, 1, "the stream delivered the closed emission the teardown made before it ended");
+        await assert.rejects(wait, (error: unknown) => {
+
+          assert.ok(error instanceof ProtectAbortedError);
+          assert.equal(error.message, "The UniFi Protect realtime events stream closed.");
+          assert.equal(error.cause, cause(errors), "the close carries the failure the teardown reported, if any, as its cause");
+
+          return true;
+        });
+      });
+    }
+
+    test("a stream that fails before it opens rejects a pending wait with its close, whose cause is the failure the handshake rejected with", async () => {
+
+      const ws = new FakeWebSocket({ autoOpen: false });
+      const stream = new EventStream({ clock: new TestClock(), host: HOST, lastUpdateId: "u0", log: silentLog(), webSocket: (): FakeWebSocket => ws });
+      const wait = stream.once("packet");
+      const settled = settlement(wait);
+
+      ws.emitError(new Error("socket reset"));
+
+      await expectAt(settled, { message: "the pending wait settled at the teardown" });
+
+      const failure = await stream.opened.then(() => assert.fail("The stream opened."), (error: unknown) => error);
+
+      assert.ok(failure instanceof ProtectNetworkError, "the handshake rejected with the socket's classified failure");
+      await assert.rejects(wait, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectAbortedError);
+        assert.equal(error.message, "The UniFi Protect realtime events stream closed.");
+        assert.equal(error.cause, failure, "the close carries the failure the handshake rejected with as its cause");
+
+        return true;
+      });
+    });
   });
 
   /* Every listener the stream registers, on its socket and on the caller's signal, comes off in its teardown by the identity it was registered under. The fake

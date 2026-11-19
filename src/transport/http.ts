@@ -425,6 +425,10 @@ export class Transport implements AsyncDisposable {
   #pool: OwnedDispatcher | { readonly connector: null; readonly dispatcher: Dispatcher };
   #throttledSince: number | null = null;
 
+  // The error a disposed transport answers every later request with, null until disposal, which is the transport's whole terminal state: from then on a send
+  // rejects with it before dispatching, and neither the breaker nor reset() does anything.
+  #disposed: ProtectAbortedError | null = null;
+
   constructor(options: TransportOptions) {
 
     this.#clock = options.clock ?? wallClock;
@@ -454,9 +458,9 @@ export class Transport implements AsyncDisposable {
   }
 
   /**
-   * Send a request and return the {@link ProtectResponse} for any HTTP status. Throttle-gates before dispatching, answers a caller that has already aborted without
-   * sending a request, composes the caller's signal with the timeout deadline, classifies transport failures into typed errors, books the breaker outcome unless the
-   * caller cancelled the request, and runs the 401-relogin retry (once) when a hook is wired.
+   * Send a request and return the {@link ProtectResponse} for any HTTP status. Refuses a request once the transport is disposed, throttle-gates before dispatching,
+   * answers a caller that has already aborted without sending a request, composes the caller's signal with the timeout deadline, classifies transport failures into
+   * typed errors, books the breaker outcome unless the caller cancelled the request, and runs the 401-relogin retry (once) when a hook is wired.
    *
    * This is the transport primitive. Callers that want the ergonomic "throw on non-2xx and parse JSON" path use {@link Transport.request}; callers that need raw
    * status, headers, or bytes (the auth handshake, snapshots) use `send` directly.
@@ -466,13 +470,16 @@ export class Transport implements AsyncDisposable {
    *
    * @returns The response.
    *
-   * @throws {@link ProtectThrottledError} while the breaker is open and cooling; {@link ProtectTimeoutError}, {@link ProtectAbortedError}, or
-   *   {@link ProtectNetworkError} on transport-level failures; and whatever the relogin hook rejects with, when the handshake of a 401's relogin throws, the status
-   *   error that handshake was answered with among them.
+   * @throws {@link ProtectAbortedError} once the transport is disposed; {@link ProtectThrottledError} while the breaker is open and cooling;
+   *   {@link ProtectTimeoutError}, {@link ProtectAbortedError}, or {@link ProtectNetworkError} on transport-level failures; and whatever the relogin hook rejects
+   *   with, when the handshake of a 401's relogin throws, the status error that handshake was answered with among them.
    */
   async send(url: string, opts: SendOptions = {}): Promise<ProtectResponse> {
 
-    // Gate first: if the breaker is open and still inside its cooldown window, refuse locally without touching the network. Once the cooldown has elapsed we fall
+    // A disposed transport is terminal, so a request sent to it rejects before the breaker or the network ever sees it: it books nothing and reaches no pool.
+    this.#throwIfDisposed();
+
+    // Then the gate: if the breaker is open and still inside its cooldown window, refuse locally without touching the network. Once the cooldown has elapsed we fall
     // through and let this request act as the half-open recovery probe; `book` will close or re-arm the breaker based on its outcome, and a probe its caller cancels
     // books nothing and leaves the breaker half-open. A `probe` request - the ConnectionMonitor's recovery trial, or the handshake of a relogin a 401 on that trial
     // triggers - skips this gate entirely: the monitor's backoff curve is the rate limiter while it is recovering, so its probe dispatches at the monitor's cadence
@@ -496,6 +503,10 @@ export class Transport implements AsyncDisposable {
     let allowAuthRetry = opts.authRetry ?? true;
 
     for(;;) {
+
+      // A disposal can land while a 401's relogin hook is pending, so every attempt reads the terminal state again before it dispatches, and the retry the hook
+      // allows rejects with the disposal's error as any later request does. The entry check above answers the first attempt ahead of the breaker gate.
+      this.#throwIfDisposed();
 
       // A caller that has already aborted is answered before anything is dispatched. No request is issued, so none is published and none is booked: the
       // controller was never asked, and an abort or a deadline that fired before the request began says nothing about it.
@@ -561,13 +572,14 @@ export class Transport implements AsyncDisposable {
    * Rebuild the owned connection pool, dropping every keepalive connection to the controller. Called when the breaker trips so the next attempt starts from a clean
    * pool rather than reusing sockets to a degraded controller. A request in flight, over HTTP/2 or HTTP/1.1, fails as the pool-reset interruption, and a connection
    * attempt still in flight is released along with the keepalive connections, so a request waiting on one fails at once the same way rather than running on to
-   * undici's own connect timer. A no-op when the dispatcher was injected - that lifecycle belongs to the injector.
+   * undici's own connect timer. A no-op when the dispatcher was injected - that lifecycle belongs to the injector - and once the transport is disposed, since a pool
+   * built then would have nothing left to release it.
    */
   reset(): void {
 
     const pool = this.#pool;
 
-    if(pool.connector === null) {
+    if((this.#disposed !== null) || (pool.connector === null)) {
 
       return;
     }
@@ -593,10 +605,11 @@ export class Transport implements AsyncDisposable {
   }
 
   /**
-   * Wait for the next emission of a transport event.
+   * Wait for the next emission of a transport event. A wait still pending when the transport is disposed rejects with a {@link ProtectAbortedError}, so a wait that
+   * is never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to await.
-   * @param opts  - Optional abort signal.
+   * @param opts  - Optional abort signal that cancels the wait.
    *
    * @returns A promise resolving to the event's argument tuple.
    */
@@ -606,7 +619,8 @@ export class Transport implements AsyncDisposable {
   }
 
   /**
-   * Stream every subsequent emission of a transport event until the signal aborts.
+   * Stream every subsequent emission of a transport event until the signal aborts or the transport is disposed. The disposal ends the iteration cleanly once every
+   * emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to stream.
    * @param opts  - Stream options, including the abort signal.
@@ -619,16 +633,33 @@ export class Transport implements AsyncDisposable {
   }
 
   /**
-   * Dispose the transport, destroying the owned pool. A connection attempt still in flight is severed before the pool's own teardown is awaited. A no-op on an
-   * injected dispatcher.
+   * Dispose the transport for good: every later request is refused, the breaker and {@link Transport.reset} do nothing, the owned pool is destroyed, and every stream
+   * and pending wait on the transport's events ends. A connection attempt still in flight is severed before the pool's own teardown is awaited, and an injected
+   * dispatcher is left to its injector. Safe to call more than once.
    */
   async [Symbol.asyncDispose](): Promise<void> {
+
+    // The transport turns terminal before its pool is released, so a request in flight that fails on the released pool books nothing, which would otherwise trip the
+    // breaker and rebuild a pool nothing releases. The bus closes last, once nothing can emit.
+    this.#disposed ??= new ProtectAbortedError("The UniFi Protect transport was disposed.");
 
     const pool = this.#pool;
 
     if(pool.connector !== null) {
 
       await releaseOwned(pool);
+    }
+
+    this.#bus.close(this.#disposed);
+  }
+
+  // Throw the disposal's error once the transport is disposed. It is a method rather than an inline test because the compiler narrows the field to null past
+  // the first test in `send` and would read a second one as dead, though a disposal can land at any await between them.
+  #throwIfDisposed(): void {
+
+    if(this.#disposed !== null) {
+
+      throw this.#disposed;
     }
   }
 
@@ -730,8 +761,14 @@ export class Transport implements AsyncDisposable {
   }
 
   // Book one breaker outcome. The first answer `controllerServing` accepts closes the breaker (and announces recovery only on the closing edge, so `throttleExited`
-  // never flaps); a failure either trips the breaker once the threshold is crossed, or re-arms the cooldown if a half-open probe just failed.
+  // never flaps); a failure either trips the breaker once the threshold is crossed, or re-arms the cooldown if a half-open probe just failed. A disposed transport
+  // books nothing, since a request still in flight at the disposal settles after it, and its outcome says nothing a terminal transport acts on.
   #book(ok: boolean): void {
+
+    if(this.#disposed !== null) {
+
+      return;
+    }
 
     if(ok) {
 

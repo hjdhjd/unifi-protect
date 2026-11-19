@@ -31,7 +31,8 @@
 import type { ConnectionRebootDetectedPayload, EventsReconnectingPayload } from "../diagnostics.ts";
 import { PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
   PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
-import { ProtectError, ProtectNetworkError, ProtectRequestError, formatErrorChain, isControllerRefusal, isSignInRefusal, unwrapBootstrapError } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectRequestError, formatErrorChain, isControllerRefusal, isSignInRefusal,
+  unwrapBootstrapError } from "../errors.ts";
 import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
@@ -505,10 +506,11 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Wait for the next emission of a connection event.
+   * Wait for the next emission of a connection event. A wait still pending when the monitor is disposed rejects with a {@link ProtectAbortedError}, so a wait that is
+   * never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to await.
-   * @param opts  - Optional abort signal.
+   * @param opts  - Optional abort signal that cancels the wait.
    *
    * @returns A promise resolving to the event's argument tuple.
    */
@@ -518,7 +520,8 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Stream every subsequent emission of a connection event until the signal aborts.
+   * Stream every subsequent emission of a connection event until the signal aborts or the monitor is disposed. The disposal ends the iteration cleanly once every
+   * emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
    *
    * @param event - The event to stream.
    * @param opts  - Stream options, including the abort signal.
@@ -531,8 +534,8 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Observe the connection-state machine: every {@link ConnectionTransition} until the signal aborts. Sugar over `stream("stateChanged")` that unwraps the single-element
-   * argument tuple and ends quietly on the caller's own abort.
+   * Observe the connection-state machine: every {@link ConnectionTransition} until the signal aborts or the monitor is disposed. Sugar over `stream("stateChanged")`
+   * that unwraps the single-element argument tuple and ends quietly on the caller's own abort.
    *
    * @param opts - Optional abort signal that terminates the iteration.
    *
@@ -586,7 +589,8 @@ export class ConnectionMonitor {
   }
 
   /**
-   * Dispose the monitor: end the reboot-observation loop and any recovery wait, detach the throttle subscriptions, and tear the events stream down. A no-op on repeat.
+   * Dispose the monitor: end the reboot-observation loop and any recovery wait, detach the throttle subscriptions, tear the events stream down, and end every stream
+   * and pending wait on the monitor's events. A no-op on repeat.
    */
   async [Symbol.asyncDispose](): Promise<void> {
 
@@ -598,6 +602,9 @@ export class ConnectionMonitor {
     }
 
     await this.#managed[Symbol.asyncDispose]();
+
+    // The bus closes last, after the events stream's teardown has settled, so the close follows every emission the monitor makes.
+    this.#bus.close(new ProtectAbortedError("The UniFi Protect connection monitor was disposed."));
   }
 
   // The single derivation of the observable state. `throttled` is surfaced only when the breaker is the sole fault - the recovery phase is `healthy` - so it reads
@@ -936,6 +943,13 @@ export class ConnectionMonitor {
     try {
 
       for await(const upSince of this.#store.observe(selectControllerUpSince, { signal: this.#controller.signal })) {
+
+        // The observer drains a value it queued before the abort, so a disposal that lands between a boot-time change and its delivery still reaches this loop with
+        // a value. The lifetime signal is read first, so a disposed monitor ends detection with no further line, event or diagnostic.
+        if(this.#controller.signal.aborted) {
+
+          return;
+        }
 
         const previousUpSince = this.#lastUpSince;
 
