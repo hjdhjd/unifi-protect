@@ -1365,6 +1365,47 @@ describe("Transport", () => {
       assert.equal(transport.isThrottled, false, "the breaker stays closed");
       assert.equal(entered, 0, "no trip reached a listener registered before the disposal");
     });
+
+    test("a request in flight on an owned HTTP/2 pool at disposal books nothing, though its failure lands before the release settles", async () => {
+
+      await using peer = await createLoopbackHungHttpsPeer();
+
+      const clock = new TestClock();
+      const transport = new Transport({ clock, host: peer.host, log: silentLog(), origin: "https://" + peer.host });
+      let entered = 0;
+
+      using enteredSubscription = transport.on("throttleEntered", () => entered++);
+
+      // Each request times out on the injected clock and books one failure, and a PATCH is never retried, so each send books exactly one. Each failure books before
+      // the next request goes out, so the sends run one at a time.
+      for(let index = 0; index < (PROTECT_API_ERROR_LIMIT - 1); index++) {
+
+        const failing = assert.rejects(transport.send(url(peer.host, "/f"), { method: "PATCH" }));
+
+        // eslint-disable-next-line no-await-in-loop
+        await peer.request(index);
+        clock.advance(PROTECT_API_TIMEOUT);
+        // eslint-disable-next-line no-await-in-loop
+        await failing;
+      }
+
+      assert.equal(transport.isThrottled, false, "the breaker sits one failure short of its threshold");
+
+      /* One more failure would cross the threshold. The release fails an HTTP/2 stream in flight while the release itself is still pending, so this row tells a
+       * terminal state set before the release from one set after it: set after, this failure books, trips the breaker and announces the trip.
+       */
+      const failing = assert.rejects(transport.send(url(peer.host, "/f"), { method: "PATCH" }));
+
+      await peer.request(PROTECT_API_ERROR_LIMIT - 1);
+
+      assert.equal(await peer.protocol(0), "h2", "the request is in flight on an HTTP/2 connection");
+
+      await transport[Symbol.asyncDispose]();
+      await failing;
+
+      assert.equal(transport.isThrottled, false, "the breaker stays closed");
+      assert.equal(entered, 0, "no trip was announced");
+    });
   });
 
   describe("diagnostics channels", () => {

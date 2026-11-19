@@ -182,8 +182,8 @@ describe("EventBus", () => {
     });
   });
 
-  // A close is terminal: every rail ends, and nothing opened afterwards stays open. Each row reads a settlement within a bound, so a close that ended nothing fails
-  // as an assertion rather than leaving a loop parked until the test times out.
+  // A close is terminal: every rail ends, and nothing opened afterwards stays open. Each row that iterates a stream, or holds a wait pending across the close,
+  // reads its settlement within a bound, so a close that ended nothing fails as an assertion rather than leaving a loop parked until the test times out.
   describe("close", () => {
 
     test("an open stream delivers what was emitted before the close, then ends", async () => {
