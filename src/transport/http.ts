@@ -741,7 +741,7 @@ export class Transport implements AsyncDisposable {
 
         this.#throttledSince = null;
 
-        this.#log.info("Resumed communication with the UniFi Protect controller after the throttle cooldown elapsed.");
+        this.#log.info("Resumed communication with the UniFi Protect controller, and the throttle breaker has closed.");
 
         this.#bus.emit("throttleExited");
 
