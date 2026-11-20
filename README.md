@@ -103,9 +103,36 @@ for await (const segment of live) {
 }
 ```
 
+## Testing
+
+`unifi-protect/testing` lets your own suite run the real talkback session over a socket double, so your tests drive the connection with no controller in sight.
+
+```ts
+import { TestTalkbackFactory } from "unifi-protect/testing";
+import assert from "node:assert/strict";
+
+const factory = new TestTalkbackFactory();
+
+// The suite's stand-in camera answers talkback() with a real session over a TestTalkbackSocket - factory.connect() takes talkback()'s own arguments.
+const camera = { talkback: async (opts?: { signal?: AbortSignal }) => factory.connect(opts) };
+
+await using session = await camera.talkback();
+const [ call ] = factory.connectCalls;
+
+assert.ok(call);
+
+const socket = await call.socket;
+
+await session.send(audio);
+
+// Every chunk the session wrote, in order...then the controller drops the line.
+console.log(socket.sent);
+socket.emitClose(1006, "");
+```
+
 ## Documentation
 
-- **[API reference](https://github.com/hjdhjd/unifi-protect/blob/main/docs/README.md)** - the complete rendered API documentation: every class, function, type, and variable in the public surface.
+- **[API reference](https://github.com/hjdhjd/unifi-protect/blob/main/docs/README.md)** - the complete rendered API documentation of the root `unifi-protect` entry: every class, function, type, and variable it publishes.
 - **[Diagnostics channels](https://github.com/hjdhjd/unifi-protect/blob/main/docs/variables/channels.md)** - the `node:diagnostics_channel` observability surface: every named channel and its payload shape.
 - **[Migrating from v4](https://github.com/hjdhjd/unifi-protect/blob/main/docs/Changelog.md#500-2026-07-08)** - the 5.0.0 changelog entry enumerates every breaking change and what to do instead.
 

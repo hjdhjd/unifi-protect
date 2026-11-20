@@ -13,11 +13,11 @@ import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from 
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
-import { FakeWritableWebSocket } from "./talkback-session.helpers.ts";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
 import { Readable } from "node:stream";
 import { TalkbackSession } from "./talkback-session.ts";
+import { TestTalkbackSocket } from "./talkback-session-double.ts";
 import assert from "node:assert/strict";
 import { constants } from "node:os";
 import { getEventListeners } from "node:events";
@@ -43,19 +43,19 @@ const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
 // Connect a session over a fake socket that auto-opens, returning the live session, the fake socket the test drives, and the URL the session handed its socket
 // factory. The factory assigns `url` and `ws` synchronously before returning, so each is set by the time the auto-open microtask fires and `connect()` resolves.
 async function openSession(options: { cameraId?: string; log?: ProtectLogging; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
-  signal?: AbortSignal; } = {}): Promise<{ session: TalkbackSession; url: string; ws: FakeWritableWebSocket }> {
+  signal?: AbortSignal; } = {}): Promise<{ session: TalkbackSession; url: string; ws: TestTalkbackSocket }> {
 
   let url!: string;
-  let ws!: FakeWritableWebSocket;
+  let ws!: TestTalkbackSocket;
   const session = await TalkbackSession.connect({
 
     cameraId: options.cameraId ?? "cam1",
     log: options.log ?? silentLog(),
     resolveUrl: options.resolveUrl ?? fixedUrl,
-    webSocket: (socketUrl: string): FakeWritableWebSocket => {
+    webSocket: (socketUrl: string): TestTalkbackSocket => {
 
       url = socketUrl;
-      ws = new FakeWritableWebSocket({ autoOpen: true });
+      ws = new TestTalkbackSocket({ autoOpen: true });
 
       return ws;
     },
@@ -108,7 +108,7 @@ function lateCleanupSource(chunks: readonly Uint8Array[]): { cleaned: () => bool
 }
 
 // Render the bytes a fake socket received as strings, for order-preserving assertions.
-function sentText(ws: FakeWritableWebSocket): string[] {
+function sentText(ws: TestTalkbackSocket): string[] {
 
   return ws.sent.map((chunk) => Buffer.from(chunk).toString());
 }
@@ -153,7 +153,7 @@ describe("TalkbackSession", () => {
 
           built = true;
 
-          return new FakeWritableWebSocket({ autoOpen: false });
+          return new TestTalkbackSocket({ autoOpen: false });
         }
       }), ProtectRequestError);
 
@@ -174,7 +174,7 @@ describe("TalkbackSession", () => {
 
           built = true;
 
-          return new FakeWritableWebSocket({ autoOpen: false });
+          return new TestTalkbackSocket({ autoOpen: false });
         }
       }), ProtectNetworkError);
 
@@ -183,7 +183,7 @@ describe("TalkbackSession", () => {
 
     test("a socket failure before open rejects connect with a ProtectNetworkError (atomic, no half-open)", async () => {
 
-      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const { promise, resolve } = Promise.withResolvers<TestTalkbackSocket>();
       const connecting = TalkbackSession.connect({
 
         cameraId: "cam1",
@@ -191,7 +191,7 @@ describe("TalkbackSession", () => {
         resolveUrl: fixedUrl,
         webSocket: () => {
 
-          const ws = new FakeWritableWebSocket({ autoOpen: false });
+          const ws = new TestTalkbackSocket({ autoOpen: false });
 
           resolve(ws);
 
@@ -208,7 +208,7 @@ describe("TalkbackSession", () => {
 
     test("a socket close before open rejects connect with a ProtectNetworkError saying it closed before connecting", async () => {
 
-      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const { promise, resolve } = Promise.withResolvers<TestTalkbackSocket>();
       const connecting = TalkbackSession.connect({
 
         cameraId: "cam1",
@@ -216,7 +216,7 @@ describe("TalkbackSession", () => {
         resolveUrl: fixedUrl,
         webSocket: () => {
 
-          const ws = new FakeWritableWebSocket({ autoOpen: false });
+          const ws = new TestTalkbackSocket({ autoOpen: false });
 
           resolve(ws);
 
@@ -235,10 +235,10 @@ describe("TalkbackSession", () => {
 
     test("a peer close before the open rejects connect naming its frame, with no string cause", async () => {
 
-      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const { promise, resolve } = Promise.withResolvers<TestTalkbackSocket>();
       const connecting = TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveUrl: fixedUrl, webSocket: () => {
 
-        const ws = new FakeWritableWebSocket({ autoOpen: false });
+        const ws = new TestTalkbackSocket({ autoOpen: false });
 
         resolve(ws);
 
@@ -261,7 +261,7 @@ describe("TalkbackSession", () => {
     test("a backward step of the time of day during a connection attempt leaves the elapsed time its timeout reports the time that passed", async () => {
 
       const clock = new TestClock();
-      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const { promise, resolve } = Promise.withResolvers<TestTalkbackSocket>();
       const connecting = TalkbackSession.connect({
 
         cameraId: "cam1",
@@ -270,7 +270,7 @@ describe("TalkbackSession", () => {
         resolveUrl: fixedUrl,
         webSocket: () => {
 
-          const ws = new FakeWritableWebSocket({ autoOpen: false });
+          const ws = new TestTalkbackSocket({ autoOpen: false });
 
           resolve(ws);
 
@@ -303,10 +303,10 @@ describe("TalkbackSession", () => {
           throw new Error("the logger refused the connected line");
         }
       } };
-      const { promise, resolve } = Promise.withResolvers<FakeWritableWebSocket>();
+      const { promise, resolve } = Promise.withResolvers<TestTalkbackSocket>();
       const connecting = TalkbackSession.connect({ cameraId: "cam-open", log, resolveUrl: fixedUrl, webSocket: () => {
 
-        const ws = new FakeWritableWebSocket({ autoOpen: false });
+        const ws = new TestTalkbackSocket({ autoOpen: false });
 
         resolve(ws);
 
@@ -847,7 +847,7 @@ describe("TalkbackSession", () => {
 
           built = true;
 
-          return new FakeWritableWebSocket({ autoOpen: false });
+          return new TestTalkbackSocket({ autoOpen: false });
         }
       }), ProtectAbortedError);
 
@@ -867,7 +867,7 @@ describe("TalkbackSession", () => {
         log: silentLog(),
         resolveUrl: () => new Promise<string>(() => undefined),
         signal: controller.signal,
-        webSocket: () => new FakeWritableWebSocket({ autoOpen: false })
+        webSocket: () => new TestTalkbackSocket({ autoOpen: false })
       });
 
       await settle();
@@ -894,7 +894,7 @@ describe("TalkbackSession", () => {
 
           built = true;
 
-          return new FakeWritableWebSocket({ autoOpen: false });
+          return new TestTalkbackSocket({ autoOpen: false });
         }
       });
 
@@ -932,13 +932,13 @@ describe("TalkbackSession", () => {
 
     test("close() swallows a socket close() fault and still tears down cleanly", async () => {
 
-      let ws!: FakeWritableWebSocket;
+      let ws!: TestTalkbackSocket;
       const session = await TalkbackSession.connect({
 
         cameraId: "cam1",
         log: silentLog(),
         resolveUrl: fixedUrl,
-        webSocket: () => (ws = new FakeWritableWebSocket({ autoOpen: true, closeFault: true }))
+        webSocket: () => (ws = new TestTalkbackSocket({ autoOpen: true, closeFault: true }))
       });
 
       // The disposal contract is that close() (and [Symbol.asyncDispose]) never throw, even when the underlying socket's own close() faults: #shutdown swallows the fault
@@ -1042,10 +1042,10 @@ describe("TalkbackSession", () => {
     }
 
     // Connect over the given fake on the given caller signal, resolving once the socket is built and its listeners attached, with the connect handed back pending.
-    async function connecting(ws: FakeWritableWebSocket, signal: AbortSignal, { cameraId = "cam1", log = silentLog() }: ConnectingOptions = {}): Promise<PendingConnect> {
+    async function connecting(ws: TestTalkbackSocket, signal: AbortSignal, { cameraId = "cam1", log = silentLog() }: ConnectingOptions = {}): Promise<PendingConnect> {
 
       const built = Promise.withResolvers<undefined>();
-      const connected = TalkbackSession.connect({ cameraId, log, resolveUrl: fixedUrl, signal, webSocket: (): FakeWritableWebSocket => {
+      const connected = TalkbackSession.connect({ cameraId, log, resolveUrl: fixedUrl, signal, webSocket: (): TestTalkbackSocket => {
 
         built.resolve(undefined);
 
@@ -1066,7 +1066,7 @@ describe("TalkbackSession", () => {
 
       using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed, (payload) => void payloads.push(payload));
 
-      const ws = new FakeWritableWebSocket({ autoOpen: false, failsOnClose: true });
+      const ws = new TestTalkbackSocket({ autoOpen: false, failsOnClose: true });
       const { connected } = await connecting(ws, controller.signal, { cameraId: "cam-fails-on-close", log });
       const reason = "the talkback session was aborted by the caller's signal";
 
@@ -1084,7 +1084,7 @@ describe("TalkbackSession", () => {
 
       controller: AbortController;
       session: TalkbackSession;
-      ws: FakeWritableWebSocket;
+      ws: TestTalkbackSocket;
     }
 
     const liveTeardowns: { name: string; run: (stage: Stage) => Promise<void> | void }[] = [
@@ -1122,7 +1122,7 @@ describe("TalkbackSession", () => {
       test("after " + name + " before the open the socket holds no listener and the caller's signal no binding", async () => {
 
         const controller = new AbortController();
-        const ws = new FakeWritableWebSocket({ autoOpen: false });
+        const ws = new TestTalkbackSocket({ autoOpen: false });
         const { connected } = await connecting(ws, controller.signal);
 
         run({ controller, ws });
