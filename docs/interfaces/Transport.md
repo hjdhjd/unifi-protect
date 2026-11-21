@@ -56,8 +56,9 @@ Whether the throttle breaker is currently open (refusing or probing). Reads the 
 [asyncDispose](): Promise<void>;
 ```
 
-Dispose the transport, destroying the owned pool. A connection attempt still in flight is severed before the pool's own teardown is awaited. A no-op on an
-injected dispatcher.
+Dispose the transport for good: every later request is refused, the breaker and [Transport.reset](#reset) do nothing, the owned pool is destroyed, and every stream
+and pending wait on the transport's events ends. A connection attempt still in flight is severed before the pool's own teardown is awaited, and an injected
+dispatcher is left to its injector. Safe to call more than once.
 
 #### Returns
 
@@ -104,7 +105,8 @@ A `Disposable` that removes the listener when disposed.
 once<K>(event, opts?): Promise<TransportEvents[K]>;
 ```
 
-Wait for the next emission of a transport event.
+Wait for the next emission of a transport event. A wait still pending when the transport is disposed rejects with a [ProtectAbortedError](../classes/ProtectAbortedError.md), so a wait that
+is never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 
@@ -117,7 +119,7 @@ Wait for the next emission of a transport event.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to await. |
-| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that cancels the wait. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -170,7 +172,8 @@ reset(): void;
 Rebuild the owned connection pool, dropping every keepalive connection to the controller. Called when the breaker trips so the next attempt starts from a clean
 pool rather than reusing sockets to a degraded controller. A request in flight, over HTTP/2 or HTTP/1.1, fails as the pool-reset interruption, and a connection
 attempt still in flight is released along with the keepalive connections, so a request waiting on one fails at once the same way rather than running on to
-undici's own connect timer. A no-op when the dispatcher was injected - that lifecycle belongs to the injector.
+undici's own connect timer. A no-op when the dispatcher was injected - that lifecycle belongs to the injector - and once the transport is disposed, since a pool
+built then would have nothing left to release it.
 
 #### Returns
 
@@ -184,9 +187,9 @@ undici's own connect timer. A no-op when the dispatcher was injected - that life
 send(url, opts?): Promise<ProtectResponse>;
 ```
 
-Send a request and return the [ProtectResponse](ProtectResponse.md) for any HTTP status. Throttle-gates before dispatching, answers a caller that has already aborted without
-sending a request, composes the caller's signal with the timeout deadline, classifies transport failures into typed errors, books the breaker outcome unless the
-caller cancelled the request, and runs the 401-relogin retry (once) when a hook is wired.
+Send a request and return the [ProtectResponse](ProtectResponse.md) for any HTTP status. Refuses a request once the transport is disposed, throttle-gates before dispatching,
+answers a caller that has already aborted without sending a request, composes the caller's signal with the timeout deadline, classifies transport failures into
+typed errors, books the breaker outcome unless the caller cancelled the request, and runs the 401-relogin retry (once) when a hook is wired.
 
 This is the transport primitive. Callers that want the ergonomic "throw on non-2xx and parse JSON" path use [Transport.request](#request); callers that need raw
 status, headers, or bytes (the auth handshake, snapshots) use `send` directly.
@@ -206,9 +209,9 @@ The response.
 
 #### Throws
 
-[ProtectThrottledError](../classes/ProtectThrottledError.md) while the breaker is open and cooling; [ProtectTimeoutError](../classes/ProtectTimeoutError.md), [ProtectAbortedError](../classes/ProtectAbortedError.md), or
-  [ProtectNetworkError](../classes/ProtectNetworkError.md) on transport-level failures; and whatever the relogin hook rejects with, when the handshake of a 401's relogin throws, the status
-  error that handshake was answered with among them.
+[ProtectAbortedError](../classes/ProtectAbortedError.md) once the transport is disposed; [ProtectThrottledError](../classes/ProtectThrottledError.md) while the breaker is open and cooling;
+  [ProtectTimeoutError](../classes/ProtectTimeoutError.md), [ProtectAbortedError](../classes/ProtectAbortedError.md), or [ProtectNetworkError](../classes/ProtectNetworkError.md) on transport-level failures; and whatever the relogin hook rejects
+  with, when the handshake of a 401's relogin throws, the status error that handshake was answered with among them.
 
 ***
 
@@ -218,7 +221,8 @@ The response.
 stream<K>(event, opts?): AsyncIterable<TransportEvents[K]>;
 ```
 
-Stream every subsequent emission of a transport event until the signal aborts.
+Stream every subsequent emission of a transport event until the signal aborts or the transport is disposed. The disposal ends the iteration cleanly once every
+emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 

@@ -270,8 +270,9 @@ readonly [`Viewer`](../interfaces/Viewer.md)[]
 ```
 
 Dispose the client: tear down the connection monitor (stopping recovery and closing the events stream), close every livestream session in the pool, stop the refresh
-failsafe and terminate observers, end the session, and destroy the connection pool - in that order, so ingestion stops before the state and transport it feeds.
-Safe to call more than once, and the canonical teardown via `await using client = await ProtectClient.connect(...)`.
+failsafe and terminate observers, end the session, and destroy the connection pool - in that order, so ingestion stops before the state and transport it feeds -
+and then end every stream and pending wait on the client's events, `events()` and `rawPackets()` among them. Safe to call more than once, and the canonical
+teardown via `await using client = await ProtectClient.connect(...)`.
 
 #### Returns
 
@@ -454,7 +455,8 @@ A `Disposable` that removes the listener when disposed.
 once<K>(event, opts?): Promise<ProtectClientEvents[K]>;
 ```
 
-Wait for the next emission of a client event.
+Wait for the next emission of a client event. A wait still pending when the client is disposed rejects with a [ProtectAbortedError](ProtectAbortedError.md), so a wait that is
+never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 
@@ -467,7 +469,7 @@ Wait for the next emission of a client event.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to await. |
-| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that cancels the wait. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -578,7 +580,8 @@ Look up a sensor by id, or `undefined` when absent.
 stream<K>(event, opts?): AsyncIterable<ProtectClientEvents[K]>;
 ```
 
-Stream every subsequent emission of a client event until the signal aborts.
+Stream every subsequent emission of a client event until the signal aborts or the client is disposed. The disposal ends the iteration cleanly once every emission
+made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 

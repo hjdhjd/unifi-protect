@@ -130,7 +130,8 @@ The current connection state. Derived live from the recovery phase and the trans
 [asyncDispose](): Promise<void>;
 ```
 
-Dispose the monitor: end the reboot-observation loop and any recovery wait, detach the throttle subscriptions, and tear the events stream down. A no-op on repeat.
+Dispose the monitor: end the reboot-observation loop and any recovery wait, detach the throttle subscriptions, tear the events stream down, and end every stream
+and pending wait on the monitor's events. A no-op on repeat.
 
 #### Returns
 
@@ -165,8 +166,8 @@ much-later unrelated fault into the known track, and a fault after the window co
 observe(opts?): AsyncGenerator<ConnectionTransition>;
 ```
 
-Observe the connection-state machine: every [ConnectionTransition](ConnectionTransition.md) until the signal aborts. Sugar over `stream("stateChanged")` that unwraps the single-element
-argument tuple and ends quietly on the caller's own abort.
+Observe the connection-state machine: every [ConnectionTransition](ConnectionTransition.md) until the signal aborts or the monitor is disposed. Sugar over `stream("stateChanged")`
+that unwraps the single-element argument tuple and ends quietly on the caller's own abort.
 
 #### Parameters
 
@@ -218,7 +219,8 @@ A `Disposable` that removes the listener when disposed.
 once<K>(event, opts?): Promise<ConnectionEvents[K]>;
 ```
 
-Wait for the next emission of a connection event.
+Wait for the next emission of a connection event. A wait still pending when the monitor is disposed rejects with a [ProtectAbortedError](../classes/ProtectAbortedError.md), so a wait that is
+never awaited needs a rejection handler; an abort of the signal rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 
@@ -231,7 +233,7 @@ Wait for the next emission of a connection event.
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
 | `event` | `K` | The event to await. |
-| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal. |
+| `opts?` | \{ `signal?`: `AbortSignal`; \} | Optional abort signal that cancels the wait. |
 | `opts.signal?` | `AbortSignal` | - |
 
 #### Returns
@@ -248,7 +250,8 @@ A promise resolving to the event's argument tuple.
 stream<K>(event, opts?): AsyncIterable<ConnectionEvents[K]>;
 ```
 
-Stream every subsequent emission of a connection event until the signal aborts.
+Stream every subsequent emission of a connection event until the signal aborts or the monitor is disposed. The disposal ends the iteration cleanly once every
+emission made before it has been delivered; an abort rejects it with an `AbortError` whose `cause` is the signal's reason.
 
 #### Type Parameters
 

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.4.3 (2026-11-20)
+  * New feature: `unifi-protect/testing` lets your own tests run a real talkback session with only the controller connection faked. `TestTalkbackFactory` answers `camera.talkback()` for you, and `TestTalkbackSocket` lets you open, fail or close the connection and read every chunk sent.
+  * Fix: event streams now end when you dispose of the client, so a `for await` over `events()`, `rawPackets()`, or `stream()` finishes on its own instead of waiting forever. Any `once()` still pending at that point rejects with `ProtectAbortedError`.
+  * Housekeeping.
+
 ## 5.4.2 (2026-11-08)
   * Fix: livestreams and talkback now connect through UniFi OS at the controller address you configured, port included, so they pass `verifyTls` with the certificate you've installed and work wherever that address does.
   * Housekeeping.
