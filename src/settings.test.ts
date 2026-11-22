@@ -2,14 +2,15 @@
  *
  * settings.test.ts: Unit tests for the project-wide constants in settings.ts. The constants are externally observable behavior - the error limit and retry interval
  * govern how aggressively the client retries against a controller, the API timeout bounds each request, the bootstrap refresh interval is the failsafe cadence, the
- * events watchdog timeout governs degraded-connection detection, and the heartbeat timeout governs livestream watchdog timing. Asserting each value keeps an
- * accidental edit (a misplaced zero, a unit confusion) from silently changing behavior on every consumer.
+ * events watchdog timeout governs degraded-connection detection, the occurrence limit bounds the open events an events stream remembers, and the heartbeat timeout
+ * governs livestream watchdog timing. Asserting each value keeps an accidental edit (a misplaced zero, a unit confusion) from silently changing behavior on every
+ * consumer.
  */
 import * as settings from "./settings.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_CAPTURE_DEFAULT_DURATION,
-  PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, PROTECT_CLI_DURATION_MAX_MS, PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT,
-  PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
-  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
+  PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, PROTECT_CLI_DURATION_MAX_MS, PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_EVENTS_WATCHDOG_TIMEOUT,
+  PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS,
+  PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -47,6 +48,12 @@ describe("settings", () => {
   test("PROTECT_EVENTS_WATCHDOG_TIMEOUT is 300000 ms", () => {
 
     assert.equal(PROTECT_EVENTS_WATCHDOG_TIMEOUT, 300000, "events watchdog must trip at the documented 300-second silence threshold");
+  });
+
+  // The occurrence limit bounds the open events a stream's classifier remembers, so an event whose end never arrives cannot grow that memory for the stream's life.
+  test("PROTECT_EVENTS_OCCURRENCE_LIMIT is 256", () => {
+
+    assert.equal(PROTECT_EVENTS_OCCURRENCE_LIMIT, 256, "an events stream must remember at most 256 open events");
   });
 
   test("PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT is 10000 ms", () => {

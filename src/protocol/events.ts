@@ -1,14 +1,17 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events.ts: The typed-event taxonomy and the pure classifier that lifts a RawPacket into it.
+ * events.ts: The typed-event taxonomy, the pure classifier that lifts a RawPacket into it, and the stream classifier that carries an open event's camera and start to
+ * its later frames.
  */
 
 /**
- * The typed-event taxonomy for the UniFi Protect realtime stream, the pure {@link classifyPacket} that lifts a {@link RawPacket} into it, and the bootstrap-dimension
+ * The typed-event taxonomy for the UniFi Protect realtime stream, the pure {@link classifyPacket} that lifts a {@link RawPacket} into it, the {@link StreamClassifier}
+ * that lifts a stream's frames through it while carrying each open event's camera and start to the event's later frames, and the bootstrap-dimension
  * {@link findUnmodeledDeviceCollections} that lifts an applied bootstrap into the device collections the reducer does not model.
  *
  * This module is Layer 1: it reads the codec's output shape and the domain types by type alone, value-imports only the error module's `assertNever` and the
- * plain-object predicate `isPlainObject`, performs no I/O, and holds no state. It is the second half of the protocol contract -
+ * plain-object predicate `isPlainObject`, performs no I/O, and holds no state at module scope; a `StreamClassifier` instance holds its own stream's open events, and
+ * the bound on them is its caller's to hand in. It is the second half of the protocol contract -
  * {@link ../protocol/packet | packet.ts} turns bytes into a `RawPacket`; this turns a `RawPacket` into a {@link TypedEvent}. Because it owns
  * the modelKey vocabulary ({@link DEVICE_MODEL_KEYS} / {@link KNOWN_MODEL_KEYS}), it also hosts the bootstrap-dimension classifier: where `classifyPacket` catches
  * an unmodeled class that *emits a realtime packet*, `findUnmodeledDeviceCollections` catches one that merely *lives in the bootstrap* - the standing twin the realtime
@@ -115,7 +118,8 @@ export type AuthMethod = "fingerprint" | "nfc";
  * `event` model key (the only place an occurrence carries identity and metadata), flow only to the `client.events()` firehose, and are no-ops in the reducer:
  *
  * - `motionDetected` - raw motion began on a camera.
- * - `smartDetect` - a smart object class was detected (`objectTypes` carries the classes).
+ * - `smartDetect` - a smart object class was detected (`objectTypes` carries the classes). A detection's first event can carry an empty `objectTypes`: an audio
+ *   detection opens before the controller names its class, and the class follows on a later event with the same `eventId`.
  * - `tamperDetected` - a camera reported tampering (the controller's `smartDetectTamper` occurrence). A one-way signal with no paired clear and no camera-state field,
  *   unlike motion's `lastMotion` - so the occurrence is its single source of truth. It is a sibling of `motionDetected`, not a `smartDetect` variant: tamper is not a
  *   smart object class and carries no `objectTypes`.
@@ -212,6 +216,10 @@ export const KNOWN_EVENT_TYPES: readonly string[] = [ ACCESS_EVENT_TYPE, ADMIN_A
  * as a `devicePatched`; it is never re-synthesized into an activity signal, which would require remembering the previous value and thus break purity. "Did motion
  * happen?" has exactly one home (the occurrence); "what is the camera's current `lastMotion`?" has exactly one home (the state).
  *
+ * Being single-packet, it cannot attribute a frame that omits its camera. The controller names an event's camera and start on the event's `add` alone, so a later
+ * `update` that names neither, an audio detection's classed update above all, classifies as `null` here. The live rail lifts its frames through a
+ * {@link StreamClassifier}, which remembers each open event's camera and start and carries them to such a frame.
+ *
  * @param raw - A structurally valid packet from {@link ../protocol/packet | decodePacket}.
  *
  * @returns The classified {@link TypedEvent}, or `null` for a valid-but-unmodeled packet.
@@ -236,6 +244,118 @@ export function classifyPacket(raw: RawPacket): TypedEvent | null {
   }
 
   return null;
+}
+
+// An open event's identity: the camera it happened on and when it started, which the controller names on the event's `add` and never changes after it.
+interface OpenEvent {
+
+  readonly at: number;
+  readonly cameraId: string;
+}
+
+/**
+ * The classifier a realtime stream lifts its frames through: {@link classifyPacket}, with each open event's camera and start carried to the event's later frames.
+ *
+ * The controller names an event's camera and start on its `add` and sends what it learns later as partial `update`s that name neither - an audio detection's class
+ * above all, since the controller saves every audio event with no class and names the class in a frame of its own. So this remembers each open event's camera and
+ * start under its id and supplies them to a later frame that omits them, while what was detected is still read from the frame that says it alone. An entry opens on
+ * an `add` that names its own camera and carries no `end`, and closes on the frame that carries an `end` or on the event's `remove`, because what the controller
+ * sends after an end restates the event, a visual detection's classes among it, and lifting that would deliver a detection for an event already over. The frame
+ * that carries the `end` is lifted with the entry before the entry goes.
+ *
+ * One instance serves one stream for that stream's life, so a new connection starts with no open events. Its memory is bounded by the capacity its owner hands in,
+ * at which the oldest entry is evicted to admit a new one, the bound for an event whose end never arrives. A frame of any other model key costs nothing beyond
+ * `classifyPacket`, and an `event` frame costs one map read, with a write only at an event's `add`, its end or its `remove`.
+ *
+ * @internal
+ */
+export class StreamClassifier {
+
+  readonly #capacity: number;
+  readonly #open = new Map<string, OpenEvent>();
+
+  /**
+   * @param options          - The classifier's options.
+   * @param options.capacity - The most open events remembered at once, the oldest evicted to admit a new one at this bound.
+   */
+  constructor({ capacity }: { capacity: number }) {
+
+    this.#capacity = capacity;
+  }
+
+  /**
+   * Classify one frame of the stream, remembering or forgetting its event as the frame opens or ends it.
+   *
+   * @param raw - A structurally valid packet from {@link ../protocol/packet | decodePacket}.
+   *
+   * @returns The classified {@link TypedEvent}, or `null` for a valid-but-unmodeled packet.
+   */
+  classify(raw: RawPacket): TypedEvent | null {
+
+    const { action, id, modelKey } = raw.header;
+    const { payload } = raw;
+
+    // Only an `event` frame can name, need or end an open event, so a frame of any other model key is the single-packet lift alone.
+    if(modelKey !== "event") {
+
+      return classifyPacket(raw);
+    }
+
+    // A removal ends its event whatever its payload carries, so it is read from the header alone. Its frame is the end of the event rather than a detection, so it
+    // takes nothing from the entry it closes.
+    if(action === "remove") {
+
+      this.#open.delete(id);
+
+      return classifyPacket(raw);
+    }
+
+    // A frame with no record to read names nothing and ends nothing.
+    if(!isPlainObject(payload)) {
+
+      return classifyPacket(raw);
+    }
+
+    const remembered = this.#open.get(id);
+    const event = classifyActivity(id, payload, remembered);
+
+    // The frame that ends the event is lifted with its entry above, and the entry goes after it. An `add` that already carries its `end` opens nothing.
+    if(numberField(payload, "end") !== undefined) {
+
+      this.#open.delete(id);
+
+      return event;
+    }
+
+    if(action !== "add") {
+
+      return event;
+    }
+
+    // An `add` that names no camera of its own leaves nothing a later frame could inherit, so it opens nothing.
+    const own = ownIdentity(payload);
+
+    if(own.cameraId === undefined) {
+
+      return event;
+    }
+
+    // A repeated `add` for an event already open replaces its entry in place, so only a new event evicts, and a map iterates in insertion order, which makes its
+    // first key the oldest entry.
+    if((remembered === undefined) && (this.#open.size >= this.#capacity)) {
+
+      for(const oldest of this.#open.keys()) {
+
+        this.#open.delete(oldest);
+
+        break;
+      }
+    }
+
+    this.#open.set(id, { at: own.at ?? 0, cameraId: own.cameraId });
+
+    return event;
+  }
 }
 
 /**
@@ -393,18 +513,20 @@ function classifyStateTransition(action: string, modelKey: StateModelKey, id: st
 }
 
 // Map an `event`-model-key packet to an activity signal. The packet must self-describe: an `add` always carries the full event object (with `type`), while a
-// finalizing `update` is classified only when its partial still carries the distinguishing fields. The header id is the occurrence identity, shared across the add
-// and any finalizing update so a consumer can correlate them.
-function classifyActivity(eventId: string, payload: unknown): TypedEvent | null {
+// later `update` is classified only when its partial still carries the distinguishing fields. The header id is the occurrence identity, shared across the add
+// and every later update so a consumer can correlate them. `remembered` is the open event's camera and start a stream classifier holds from the event's `add`,
+// absent for a single-packet lift: it supplies what a later update omits, since the controller names neither on one, and never what was detected.
+function classifyActivity(eventId: string, payload: unknown, remembered?: OpenEvent): TypedEvent | null {
 
   if(!isPlainObject(payload)) {
 
     return null;
   }
 
-  // The occurrence timestamp comes from `start` (most occurrences) or `detectedAt` (the rest), falling back to `0` when a finalizing partial carries neither.
-  const at = numberField(payload, "start") ?? numberField(payload, "detectedAt") ?? 0;
-  const cameraId = stringField(payload, "cameraId") ?? stringField(payload, "camera");
+  // The frame's own camera and start win, the open event's stand in for one the frame omits, and the start falls back to `0` when neither names one.
+  const own = ownIdentity(payload);
+  const at = own.at ?? remembered?.at ?? 0;
+  const cameraId = own.cameraId ?? remembered?.cameraId;
   const metadata = recordField(payload, "metadata");
   const type = stringField(payload, "type");
 
@@ -572,6 +694,13 @@ function stringArrayField(record: Record<string, unknown>, key: string): readonl
   const value = record[key];
 
   return Array.isArray(value) ? value.filter((element): element is string => typeof element === "string") : [];
+}
+
+// Read the camera and start an `event` payload names of its own, the one reading of each field: the camera from `cameraId` or the `camera` field, and the start
+// from `start` (most occurrences) or `detectedAt` (the rest). Each is undefined when the payload names none, as an event's later update does.
+function ownIdentity(payload: Record<string, unknown>): { at: number | undefined; cameraId: string | undefined } {
+
+  return { at: numberField(payload, "start") ?? numberField(payload, "detectedAt"), cameraId: stringField(payload, "cameraId") ?? stringField(payload, "camera") };
 }
 
 // Read the `.text` of a `{ text: string }`-shaped property - the shape the access metadata's `deviceId` field and the button-press metadata's `sensorId`, `button`,

@@ -1,14 +1,16 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * events.test.ts: Unit tests for the pure packet classifier and the model-key vocabulary and event-attribution helpers built around it. These pin the
+ * events.test.ts: Unit tests for the pure packet classifier and the model-key vocabulary and event-attribution helpers built around it. These hold the
  * two-category taxonomy (state transitions vs. activity signals), the single-source rule (activity signals come only from the `event` model key), the
  * stateless self-description rule, and the `null` contract for valid-but-unmodeled packets. The event identity is always the header id, shared across an
- * occurrence's add and finalizing update. Alongside the classifier, these tests cover isKnownModelKey and isDeviceModelKey, the wire-vocabulary and
- * device-vocabulary guards; eventSubjects, which resolves a classified event to the record ids it concerns; and findUnmodeledDeviceCollections, which
- * flags device-shaped bootstrap collections that fall outside the modeled device set.
+ * occurrence's add and its later updates. The stream classifier's rows cover how an open event's camera and start reach its later frames and no further: from
+ * the add that opens the event to the frame that ends it or its remove, within the classifier's capacity, and in that classifier alone. Alongside the
+ * classifiers, these tests cover isKnownModelKey and isDeviceModelKey, the wire-vocabulary and device-vocabulary guards; eventSubjects, which resolves a
+ * classified event to the record ids it concerns; and findUnmodeledDeviceCollections, which flags device-shaped bootstrap collections that fall outside the
+ * modeled device set.
  */
 import type { ProtectNvrBootstrap, ProtectSirenConfig } from "../types/index.ts";
-import { classifyPacket, eventSubjects, findUnmodeledDeviceCollections, isDeviceModelKey, isKnownModelKey } from "./events.ts";
+import { StreamClassifier, classifyPacket, eventSubjects, findUnmodeledDeviceCollections, isDeviceModelKey, isKnownModelKey } from "./events.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeFob } from "../fixtures.helpers.ts";
 import { ProtectProtocolError } from "../errors.ts";
@@ -409,6 +411,221 @@ describe("classifyPacket - activity signals (event model key only)", () => {
   test("an event whose type is unmodeled and which carries no object types classifies as null", () => {
 
     assert.equal(classifyPacket(pkt({ modelKey: "event", payload: { cameraId: "c1", type: "somethingNew" } })), null);
+  });
+});
+
+describe("StreamClassifier", () => {
+
+  // An audio detection's add as the controller sends it: it names the camera and the start, and no class yet.
+  function audioAdd(id: string): RawPacket {
+
+    return pkt({ action: "add", id, modelKey: "event", payload: { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } });
+  }
+
+  // The later update that names the detection's classes and neither the camera nor the start.
+  function classedUpdate(id: string, objectTypes: readonly string[]): RawPacket {
+
+    return pkt({ action: "update", id, modelKey: "event", payload: { smartDetectTypes: objectTypes } });
+  }
+
+  test("a classless add then a classed update that names no camera lifts as smartDetect with the add's camera and start and the update's classes", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    classifier.classify(audioAdd("event-1"));
+
+    const result = classifier.classify(classedUpdate("event-1", ["smoke"]));
+
+    assert.equal(result?.kind, "smartDetect");
+    assert.equal(result.cameraId, "camera-1", "the camera is the one the add named");
+    assert.equal(result.at, 1000, "the start is the one the add named");
+    assert.equal(result.eventId, "event-1");
+    assert.deepEqual(result.objectTypes, ["smoke"], "the classes are the ones the update named");
+  });
+
+  test("the same classed update through classifyPacket alone classifies as null, even after classifyPacket has seen the event's add", () => {
+
+    // The single-packet lift is handed the add first, so a lift that kept anything of it would name the camera here.
+    assert.equal(classifyPacket(audioAdd("event-1"))?.kind, "smartDetect");
+    assert.equal(classifyPacket(classedUpdate("event-1", ["smoke"])), null, "a frame read on its own cannot name the camera its event opened on");
+  });
+
+  test("a classed update that names no camera is null for an event never opened", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    classifier.classify(audioAdd("event-1"));
+
+    assert.equal(classifier.classify(classedUpdate("event-2", ["smoke"])), null, "an open event lends its camera to its own frames alone");
+  });
+
+  test("the frame carrying a numeric end lifts with the open event's camera, and a classed update after it is null", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    classifier.classify(audioAdd("event-1"));
+
+    const ending = classifier.classify(pkt({ action: "update", id: "event-1", modelKey: "event", payload: { end: 2000, smartDetectTypes: ["smoke"] } }));
+
+    assert.equal(ending?.kind, "smartDetect", "the frame that carries the end is lifted with the entry before the entry goes");
+    assert.equal(ending.cameraId, "camera-1");
+    assert.equal(classifier.classify(classedUpdate("event-1", ["smoke"])), null, "what the controller sends after an end restates an event already over");
+  });
+
+  test("an add that already carries its end, or names no camera, opens nothing", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    classifier.classify(pkt({ action: "add", id: "event-1", modelKey: "event",
+      payload: { camera: "camera-1", end: 2000, smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } }));
+
+    assert.equal(classifier.classify(classedUpdate("event-1", ["smoke"])), null);
+
+    // An update that names its own camera lifts whether or not its event is open, so its start is what shows whether the camera-less add before it opened the event.
+    classifier.classify(pkt({ action: "add", id: "event-2", modelKey: "event", payload: { smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } }));
+
+    const unopened = classifier.classify(pkt({ action: "update", id: "event-2", modelKey: "event", payload: { cameraId: "camera-1", smartDetectTypes: ["smoke"] } }));
+
+    assert.equal(unopened?.kind, "smartDetect");
+    assert.equal(unopened.at, 0, "an add that names no camera opened nothing, so its start reaches no later frame");
+  });
+
+  test("only an add opens an event, and an add whose end is null is still open", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    // An update that names its own camera lifts, and leaves nothing behind for a later frame to inherit.
+    classifier.classify(pkt({ action: "update", id: "event-1", modelKey: "event", payload: { camera: "camera-1", smartDetectTypes: ["smoke"], start: 1000 } }));
+
+    assert.equal(classifier.classify(classedUpdate("event-1", ["smoke"])), null, "an update opened nothing");
+
+    // An end is a number. An add that carries the field with no value in it has not ended.
+    classifier.classify(pkt({ action: "add", id: "event-2", modelKey: "event",
+      payload: { camera: "camera-1", end: null, smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } }));
+
+    const opened = classifier.classify(classedUpdate("event-2", ["smoke"]));
+
+    assert.equal(opened?.kind, "smartDetect", "an add whose end is null opened the event");
+    assert.equal(opened.cameraId, "camera-1");
+  });
+
+  test("a remove closes the open event whatever its payload carries, and inherits nothing from it", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    classifier.classify(audioAdd("event-1"));
+
+    assert.equal(classifier.classify(classedUpdate("event-1", ["smoke"]))?.kind, "smartDetect", "the event is open before its remove");
+
+    classifier.classify(pkt({ action: "remove", id: "event-1", modelKey: "event" }));
+
+    assert.equal(classifier.classify(classedUpdate("event-1", ["smoke"])), null, "the remove closed the event");
+
+    // A removal is read from the header alone, so one whose payload is no record closes its event as well.
+    classifier.classify(audioAdd("event-2"));
+    classifier.classify(pkt({ action: "remove", id: "event-2", modelKey: "event", payload: null }));
+
+    assert.equal(classifier.classify(classedUpdate("event-2", ["smoke"])), null, "a remove with no record to read closed the event");
+
+    // The removal's own frame is the end of the event rather than a detection, so it lifts as it would on its own.
+    classifier.classify(audioAdd("event-3"));
+
+    assert.equal(classifier.classify(pkt({ action: "remove", id: "event-3", modelKey: "event", payload: { smartDetectTypes: ["smoke"] } })), null,
+      "a remove takes no camera from the event it ends");
+  });
+
+  test("at capacity the oldest open event is evicted, the newest still lifts, and a repeated add of an open event evicts nothing", () => {
+
+    const classifier = new StreamClassifier({ capacity: 2 });
+
+    classifier.classify(audioAdd("event-1"));
+    classifier.classify(audioAdd("event-2"));
+    classifier.classify(audioAdd("event-2"));
+
+    assert.equal(classifier.classify(classedUpdate("event-1", ["smoke"]))?.kind, "smartDetect", "a repeated add of an open event replaces its entry in place");
+
+    classifier.classify(audioAdd("event-3"));
+
+    const newest = classifier.classify(classedUpdate("event-3", ["smoke"]));
+
+    assert.equal(classifier.classify(classedUpdate("event-1", ["smoke"])), null, "the oldest entry was evicted to admit the newest");
+    assert.equal(classifier.classify(classedUpdate("event-2", ["smoke"]))?.kind, "smartDetect", "only the oldest entry was evicted");
+    assert.equal(newest?.kind, "smartDetect");
+    assert.equal(newest.cameraId, "camera-1");
+  });
+
+  test("a frame's own camera and start win over the open event's", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    classifier.classify(audioAdd("event-1"));
+
+    const result = classifier.classify(pkt({ action: "update", id: "event-1", modelKey: "event",
+      payload: { cameraId: "camera-2", smartDetectTypes: ["smoke"], start: 3000 } }));
+
+    assert.equal(result?.kind, "smartDetect");
+    assert.equal(result.cameraId, "camera-2");
+    assert.equal(result.at, 3000);
+  });
+
+  test("an open event's update that names no class is null, and a motion add's camera-less end lifts no second motionDetected", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    classifier.classify(audioAdd("event-1"));
+
+    assert.equal(classifier.classify(pkt({ action: "update", id: "event-1", modelKey: "event", payload: { score: 50 } })), null,
+      "the open event supplies the camera, never what was detected");
+
+    const motion = classifier.classify(pkt({ action: "add", id: "event-2", modelKey: "event", payload: { camera: "camera-1", start: 1000, type: "motion" } }));
+
+    assert.equal(motion?.kind, "motionDetected");
+    assert.equal(classifier.classify(pkt({ action: "update", id: "event-2", modelKey: "event", payload: { end: 2000 } })), null,
+      "an end that restates no type lifts nothing");
+  });
+
+  test("a second class joining an open event lifts with every class its update names", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+
+    classifier.classify(audioAdd("event-1"));
+
+    const firstClass = classifier.classify(classedUpdate("event-1", ["smoke"]));
+    const bothClasses = classifier.classify(classedUpdate("event-1", [ "smoke", "siren" ]));
+
+    assert.equal(firstClass?.kind, "smartDetect");
+    assert.deepEqual(firstClass.objectTypes, ["smoke"]);
+    assert.equal(bothClasses?.kind, "smartDetect");
+    assert.deepEqual(bothClasses.objectTypes, [ "smoke", "siren" ]);
+    assert.equal(bothClasses.cameraId, "camera-1");
+  });
+
+  test("a second classifier remembers nothing of the first", () => {
+
+    const first = new StreamClassifier({ capacity: 4 });
+    const second = new StreamClassifier({ capacity: 4 });
+
+    first.classify(audioAdd("event-1"));
+
+    assert.equal(second.classify(classedUpdate("event-1", ["smoke"])), null, "each classifier holds its own stream's open events");
+    assert.equal(first.classify(classedUpdate("event-1", ["smoke"]))?.kind, "smartDetect", "the first still holds its own");
+  });
+
+  test("the classless add itself lifts as an empty smartDetect, and every other frame lifts exactly as classifyPacket lifts it", () => {
+
+    const classifier = new StreamClassifier({ capacity: 4 });
+    const added = classifier.classify(audioAdd("event-1"));
+
+    assert.equal(added?.kind, "smartDetect");
+    assert.deepEqual(added.objectTypes, [], "a detection's first event can name no class");
+    assert.equal(added.cameraId, "camera-1");
+    assert.equal(added.at, 1000);
+
+    const device = pkt({ action: "update", id: "camera-1", modelKey: "camera", payload: { lastMotion: 1000 } });
+    const nonRecord = pkt({ action: "update", id: "event-1", modelKey: "event", payload: null });
+
+    assert.deepEqual(classifier.classify(device), classifyPacket(device), "a device frame lifts as the single-packet lift lifts it");
+    assert.equal(classifier.classify(nonRecord), classifyPacket(nonRecord), "an event frame with no record to read lifts as the single-packet lift lifts it");
   });
 });
 

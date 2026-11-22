@@ -14,10 +14,11 @@ const USAGE = [
   "",
   "Decode a captured realtime packet from a file (or - for stdin) and print the raw frame and its classification.",
   "Offline: no controller connection or credentials are needed - it runs the library's codec over the bytes you provide,",
-  "the same decode + classify the live firehose performs, so it is the way to inspect a frame you captured elsewhere.",
+  "decoding and classifying the frame on its own, so it is the way to inspect a frame you captured elsewhere.",
   "",
   "Output: a JSON object { event, raw } where `raw` is the decoded { header, payload } and `event` is the TypedEvent the",
-  "        library would emit for this frame - or null for a valid-but-unmodeled frame (which `raw` still shows in full).",
+  "        frame lifts to on its own - or null for a valid-but-unmodeled frame (which `raw` still shows in full). An event's",
+  "        later update that names no camera lifts only on the live firehose, which carries the camera from the event's add.",
   "",
   "Options:",
   "  -h, --help  Show this help.",
@@ -48,8 +49,10 @@ async function readStdin(): Promise<Buffer> {
 
 /**
  * `ufp decode`. Reads a captured packet's bytes from a file or stdin and prints the decoded raw frame alongside the library's classification of it. It runs entirely
- * offline through the static codec (`ProtectClient.decodePacket` then `ProtectClient.classifyPacket`) - the same two stages the live firehose applies, reached without a
- * connection - so it never opens a client. A malformed frame surfaces as the codec's typed `ProtectProtocolError`, which the entry point renders as a calm one-liner.
+ * offline through the static codec (`ProtectClient.decodePacket` then `ProtectClient.classifyPacket`) - the single-packet decode and lift the live firehose is built
+ * on, reached without a connection - so it never opens a client. A frame is read on its own here, so an event's later update that names neither the event's camera
+ * nor its start classifies as null, where the live firehose carries the camera and start from the add that opened the event. A malformed frame surfaces as the
+ * codec's typed `ProtectProtocolError`, which the entry point renders as a calm one-liner.
  *
  * @category CLI
  */
@@ -82,8 +85,9 @@ const decodeHandler: CommandHandler = async (ctx) => {
     throw new CliError("Unable to read packet bytes from " + ((source === "-") ? "stdin" : ("\"" + source + "\"")) + ".", { cause: error });
   }
 
-  // Decode then classify through the static codec - the offline twin of the rawPackets() / events() rails. Decode throws ProtectProtocolError on malformed bytes;
-  // classify returns null for a valid-but-unmodeled frame, in which case `raw` is still the full decoded frame, which is the point of decoding offline.
+  // Decode then classify through the static codec, one frame on its own: the rawPackets() rail's decode, and the events() rail's lift without the camera and start
+  // the live rail carries to an open event's later frames. Decode throws ProtectProtocolError on malformed bytes; classify returns null for a valid-but-unmodeled
+  // frame, in which case `raw` is still the full decoded frame, which is the point of decoding offline.
   const raw = ProtectClient.decodePacket(bytes);
   const event = ProtectClient.classifyPacket(raw);
 

@@ -5,8 +5,12 @@
 
 /**
  * `EventStream` owns the controller's realtime events WebSocket and is the single decode site for the realtime packet stream: every frame is decoded
- * ({@link decodePacket}) and classified ({@link classifyPacket}) here, and the one resulting {@link TypedEvent} is emitted on the `packet` rail. The composition root
- * wires exactly one bridge subscription that fans that event into both the state store and the client firehose - there is never a second decode path.
+ * ({@link decodePacket}) and classified here, and the one resulting {@link TypedEvent} is emitted on the `packet` rail. The composition root wires exactly one bridge
+ * subscription that fans that event into both the state store and the client firehose - there is never a second decode path.
+ *
+ * Classification goes through the stream's own {@link StreamClassifier}, which carries an open event's camera and start to the event's later frames, since the
+ * controller names neither on an `update`. The stream holds one classifier for its whole life and hands it {@link PROTECT_EVENTS_OCCURRENCE_LIMIT} as the bound
+ * on what it remembers, so a reconnect, which builds a new stream, starts with no open events.
  *
  * The surface is the three-rail model (see {@link EventBus}): an internal `EventBus<EventStreamEvents>` backs `on` / `once` / `stream`. The library composes
  * `node:events.EventEmitter`; it does not extend it.
@@ -29,16 +33,16 @@
  */
 import { Agent, WebSocket } from "undici";
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
+import { PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
 import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, assertNever } from "../errors.ts";
 import type { ProtectWebSocket, ProtectWebSocketCloseEvent, ProtectWebSocketErrorEvent, ProtectWebSocketMessageEvent, SocketFaultLine, SocketTeardown } from "./ws.ts";
-import { classifyPacket, isKnownModelKey } from "../protocol/events.ts";
+import { StreamClassifier, isKnownModelKey } from "../protocol/events.ts";
 import { closeFrameText, socketFault, teardownCode, toBuffer } from "./ws.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
 import type { OwnedDispatcher } from "./connector.ts";
-import { PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
 import { PROTECT_PROXY_PATH } from "./url-host.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { RawPacket } from "../protocol/packet.ts";
@@ -115,6 +119,9 @@ export class EventStream implements AsyncDisposable {
   // The address this stream dials, read from the URL the socket opens, which is what a certificate refusal reports the peer as.
   readonly #address: string;
   readonly #bus: EventBus<EventStreamEvents>;
+  // The classifier every frame lifts through, one per stream: the open events it remembers belong to this connection alone, so a reconnect, which builds a new
+  // stream, starts with none.
+  readonly #classifier = new StreamClassifier({ capacity: PROTECT_EVENTS_OCCURRENCE_LIMIT });
   readonly #clock: Clock;
   // When the connection attempt began, as the injected clock's monotonic reading, which is what a connection attempt that times out measures its elapsed time from.
   // It is a stamp of its own rather than the watchdog's liveness stamp, which every frame moves.
@@ -391,8 +398,9 @@ export class EventStream implements AsyncDisposable {
   }
 
   // A frame arrived. Stamp liveness first (any byte from the controller proves the channel is alive, decodable or not), then decode and classify at the one site that
-  // does so. A decode failure surfaces on the error rail but does not tear the channel down - WebSocket frames are independently delimited, so one bad frame does not
-  // desync the next. A classifier null is either genuine schema drift (an unmodeled model key, surfaced once per model-key/action on the diagnostics channel) or a
+  // does so, through the stream's own classifier, which lives as long as the stream and carries an open event's camera and start to the event's later frames. A
+  // decode failure surfaces on the error rail but does not tear the channel down - WebSocket frames are independently delimited, so one bad frame does not desync the
+  // next. A classifier null is either genuine schema drift (an unmodeled model key, surfaced once per model-key/action on the diagnostics channel) or a
   // modeled-but-not-lifted packet (a non-self-describing event, an unhandled action), which we leave at debug.
   #onMessage(data: unknown): void {
 
@@ -417,7 +425,7 @@ export class EventStream implements AsyncDisposable {
       // drops to null below. This is a second fan-out of the single decode, not a second decode; it is pure observability and is never dispatched into state.
       this.#bus.emit("rawPacket", raw);
 
-      event = classifyPacket(raw);
+      event = this.#classifier.classify(raw);
 
       if(event === null) {
 

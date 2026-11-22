@@ -40,6 +40,14 @@ export const PROTECT_BOOTSTRAP_REFRESH_INTERVAL = 120000;
 export const PROTECT_EVENTS_WATCHDOG_TIMEOUT = 300000;
 
 /**
+ * The most open events an events stream's classifier remembers. The classifier holds each open event's camera and start from the event's `add` until the frame that
+ * ends it or its `remove`, so an event whose end never arrives would otherwise stay remembered for the life of the stream; at this many, the oldest entry is evicted
+ * to admit the next. The bound is generous on purpose: it exists for an event whose end was lost, and an entry evicted while its event is still under way costs
+ * that event the camera and start its later frames would have inherited.
+ */
+export const PROTECT_EVENTS_OCCURRENCE_LIMIT = 256;
+
+/**
  * Connection-recovery backoff, in milliseconds, for the known-reboot track. The ConnectionMonitor enters this track only when a fault follows a self-initiated controller
  * reboot (the one case where the cause is certain). It is a return-time-anticipating curve: a controller takes 5-7 minutes to come back, so probing earlier is wasted
  * effort that risks hammering a fragile fresh controller. The stages are the delays *before* successive probes - wait 5 minutes, probe, then +2 minutes, probe - after

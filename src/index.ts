@@ -54,10 +54,11 @@ export { wallClock } from "./clock.ts";
 export type { Clock } from "./clock.ts";
 
 // Protocol - the realtime event taxonomy a consumer reads off the firehose. The pure codec/classifier/reducer functions stay internal; the static `ProtectClient`
-// .decodePacket() / .classifyPacket() methods are the consumer-facing codec entries (the offline counterpart of the rawPackets()/events() rails), so a second
-// free-function path would be the divergence the architecture forbids. `RawPacket` is the element type of the raw firehose (`client.rawPackets()`) and the
-// input/output of those codec statics: the decoded-but-unclassified frame, header plus payload, including ones the classifier drops. `ProtectEventHeader` is the
-// type of that frame's own `header` field, so it travels on the public surface alongside `RawPacket`.
+// .decodePacket() / .classifyPacket() methods are the consumer-facing codec entries (the single-packet decode and lift the rawPackets()/events() rails are built on,
+// the events() rail also carrying an open event's camera and start to its later frames), so a second free-function path would be the divergence the architecture
+// forbids. `RawPacket` is the element type of the raw firehose (`client.rawPackets()`) and the input/output of those codec statics: the decoded-but-unclassified
+// frame, header plus payload, including ones the classifier drops. `ProtectEventHeader` is the type of that frame's own `header` field, so it travels on the public
+// surface alongside `RawPacket`.
 export type { ProtectEventHeader, RawPacket } from "./protocol/packet.ts";
 export type { LivestreamSource, Segment } from "./transport/livestream-session.ts";
 // The livestream init a `Segment`'s init arm, a subscription's cached init and a codec change all carry, and the description read from its bytes. The free reader

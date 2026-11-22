@@ -1,8 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * events-stream.test.ts: Tests for EventStream - the connection handshake (open, pre-open close, and caller-signal abort before open), the single decode site,
- * the three-rail fan-out, schema-drift surfacing, decode-failure resilience, the silence watchdog, and teardown. Driven through an injected fake WebSocket and a
- * `TestClock`, so the realtime stream is exercised deterministically without a live controller.
+ * the three-rail fan-out with an open event's camera carried to its later frames, schema-drift surfacing, decode-failure resilience, the silence watchdog, and
+ * teardown. Driven through an injected fake WebSocket and a `TestClock`, so the realtime stream is exercised deterministically without a live controller.
  */
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
@@ -295,6 +295,21 @@ describe("EventStream", () => {
 
       assert.equal(packets.length, 1);
       assert.equal(first(packets)[0].kind, "motionDetected");
+
+      await stream.close();
+    });
+
+    test("an event's classed update that names no camera lifts on the packet rail with the camera and start its add named", async () => {
+
+      const { stream, ws } = await openStream();
+      const packets = collect(stream, "packet");
+
+      // The add names the camera and the start and no class; the update names the class alone, so only the stream's memory of the open event can attribute it.
+      ws.emitMessage(encode({ action: "add", id: "event-1", modelKey: "event" }, { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" }));
+      ws.emitMessage(encode({ action: "update", id: "event-1", modelKey: "event" }, { smartDetectTypes: ["smoke"] }));
+
+      assert.equal(packets.length, 2, "the add and the classed update each reached the packet rail");
+      assert.deepEqual(packets[1]?.[0], { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", metadata: undefined, objectTypes: ["smoke"] });
 
       await stream.close();
     });

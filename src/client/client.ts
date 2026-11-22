@@ -458,7 +458,8 @@ export class ProtectClient implements AsyncDisposable {
    * Decode a raw realtime packet's bytes into a {@link RawPacket} - the validated wire header plus the data-frame payload, *before* classification. A static, pure,
    * connection-independent operation: it is the offline counterpart of the {@link ProtectClient.rawPackets} rail (which is this same decode applied to the live socket),
    * and it is a `static` rather than an instance method precisely because decoding needs no client - it reads no connection state. Pair it with {@link
-   * ProtectClient.classifyPacket} to reproduce the live pipeline (`classifyPacket(decodePacket(bytes))`) over captured bytes.
+   * ProtectClient.classifyPacket} to lift captured bytes one frame at a time (`classifyPacket(decodePacket(bytes))`), the single-packet lift the live pipeline is
+   * built on; the live pipeline also carries an open event's camera and start to the event's later frames, which name neither.
    *
    * @param buf - The raw packet bytes (a `Buffer` included; read without copying).
    *
@@ -489,9 +490,10 @@ export class ProtectClient implements AsyncDisposable {
 
   /**
    * Classify a decoded {@link RawPacket} into a {@link TypedEvent}, or `null` when the packet is valid but describes something the library does not model. The static,
-   * pure, connection-independent counterpart of the {@link ProtectClient.events} rail (which is this same classification applied to the live socket). Takes the output of
-   * {@link ProtectClient.decodePacket}, so the two compose to turn captured bytes into a typed event exactly as the realtime path does - one decode/classify
-   * implementation, reached the same way live and offline.
+   * pure, connection-independent single-packet lift the {@link ProtectClient.events} rail is built on: it reads the frame's own fields alone, while the live rail also
+   * carries an open event's camera and start to the event's later frames. The controller names neither on an event's later `update`, so such a frame, an audio
+   * detection's classed update above all, lifts on the live rail and classifies as `null` here. Takes the output of {@link ProtectClient.decodePacket}, so the two
+   * compose to turn captured bytes into a typed event through the one decode and classify implementation the live rail runs.
    *
    * @param packet - The decoded raw packet.
    *
