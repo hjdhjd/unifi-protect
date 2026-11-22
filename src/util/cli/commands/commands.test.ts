@@ -13,7 +13,7 @@ import { describe, test } from "node:test";
 import { expectAt, settlement, withTempDir } from "../../../testing.helpers.ts";
 import { makeAudioDetectAdd, makeAudioDetectUpdate } from "../../../fixtures.helpers.ts";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { CliError } from "../shared.ts";
 import type { CommandSpec } from "../shared.ts";
 import assert from "node:assert/strict";
@@ -37,7 +37,6 @@ import { reboot } from "./reboot.ts";
 import { relay } from "./relay.ts";
 import { relayToggle } from "./relay-toggle.ts";
 import { serializeJson } from "../output/format.ts";
-import { tmpdir } from "node:os";
 import { update } from "./update.ts";
 import { watch } from "./watch.ts";
 import { watchEvents } from "./watch-events.ts";
@@ -979,9 +978,7 @@ describe("camera snapshot", () => {
 
   test("writes the JPEG to a file and reports it", async () => {
 
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-snap-"));
-
-    try {
+    await withTempDir(async (dir) => {
 
       const out = path.join(dir, "snap.jpg");
       const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door", snapshot: Buffer.from([ 0xFF, 0xD8, 0x42, 0xFF, 0xD9 ]) }] });
@@ -993,10 +990,7 @@ describe("camera snapshot", () => {
 
       assert.deepEqual([...bytes], [ 0xFF, 0xD8, 0x42, 0xFF, 0xD9 ]);
       assert.match(stdout(), /Wrote Front Door snapshot/);
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("a missing camera target is a usage error", async () => {
@@ -1059,9 +1053,7 @@ describe("camera talkback", () => {
 
   test("streams a file's audio bytes to the camera and reports them", async () => {
 
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-talk-"));
-
-    try {
+    await withTempDir(async (dir) => {
 
       const audio = path.join(dir, "clip.aac");
 
@@ -1074,10 +1066,7 @@ describe("camera talkback", () => {
 
       assert.deepEqual(calls.talkback, [{ bytes: 1500, camera: "c1" }]);
       assert.match(stdout(), /Streamed .* of talkback audio to Front Door/);
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("requires a camera target", async () => {
@@ -1160,9 +1149,7 @@ describe("watch livestream", () => {
 
   test("writes the concatenated segments to a file and reports the total", async () => {
 
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-live-"));
-
-    try {
+    await withTempDir(async (dir) => {
 
       const out = path.join(dir, "stream.mp4");
       const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door", segments: [
@@ -1179,10 +1166,7 @@ describe("watch livestream", () => {
       assert.deepEqual([...bytes], [ 1, 2, 3, 4, 5, 6 ]);
       assert.match(stdout(), /Received 2 segment\(s\)/);
       assert.match(stdout(), /codec avc1/);
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("--diagnostics subscribes to the livestream channels and routes them to stderr, leaving stdout clean", async () => {
