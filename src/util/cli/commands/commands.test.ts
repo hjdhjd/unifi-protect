@@ -2,7 +2,7 @@
  *
  * commands.test.ts: Per-command unit tests driving each CLI command through the injected openClient hook - parse, render, dispatch, and error paths. The offline
  * decode command runs over files and stdin in each of its modes: one frame's bytes lifted on their own, and a recording of the raw firehose replayed line by
- * line through one classifier.
+ * line through one classifier. On stdin, each mode ends quietly when the command's signal aborts.
  */
 import type { LivestreamDescription, LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment, TypedEvent } from "../../../index.ts";
 import { PassThrough, Readable } from "node:stream";
@@ -11,6 +11,7 @@ import { ProtectAbortedError, ProtectAuthError, ProtectNetworkError, ProtectProt
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../../protocol/packet.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, settlement, withTempDir } from "../../../testing.helpers.ts";
+import { makeAudioDetectAdd, makeAudioDetectUpdate } from "../../../fixtures.helpers.ts";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { CliError } from "../shared.ts";
@@ -28,6 +29,7 @@ import { chimePlaySpeaker } from "./chime-play-speaker.ts";
 import { decode } from "./decode.ts";
 import { diagnostics } from "./diagnostics.ts";
 import { doctor } from "./doctor.ts";
+import { getEventListeners } from "node:events";
 import { info } from "./info.ts";
 import path from "node:path";
 import { present } from "homebridge-plugin-utils/testing";
@@ -49,16 +51,32 @@ function encodeFrame(header: Partial<{ action: string; id: string; modelKey: str
   return buildPacket(jsonActionFrame(makeActionHeader(header)), jsonDataFrame(payload));
 }
 
-// The frames a replayed recording carries: an audio detection's add naming its camera and start and no class, and the later update naming its class alone, which
-// lifts only through a classifier that saw the add.
-const recordedAdd: RawPacket = { header: makeActionHeader({ action: "add", id: "event-1", modelKey: "event" }),
-  payload: { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } };
-const recordedUpdate: RawPacket = { header: makeActionHeader({ action: "update", id: "event-1", modelKey: "event" }), payload: { smartDetectTypes: ["smoke"] } };
-
 // What `ufp decode --replay` printed, each { event, raw } line parsed back from its JSON.
 function replayed(stdout: string): { event: unknown; raw: unknown }[] {
 
   return stdout.split("\n").filter((line) => line.length > 0).map((line) => JSON.parse(line) as { event: unknown; raw: unknown });
+}
+
+// Run with a stream standing in for stdin. process.stdin is a getter-only property, so the stream is defined over it for the run and the original descriptor is
+// restored afterwards. The stream is destroyed as the run ends, so an input a row holds open ends with the row.
+async function withStdin<T extends Readable>(input: T, fn: (input: T) => Promise<void>): Promise<void> {
+
+  const descriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+
+  try {
+
+    Object.defineProperty(process, "stdin", { configurable: true, value: input });
+
+    await fn(input);
+  } finally {
+
+    input.destroy();
+
+    if(descriptor !== undefined) {
+
+      Object.defineProperty(process, "stdin", descriptor);
+    }
+  }
 }
 
 // Two scripted raw packets for the watch-raw tests: a modeled camera update and an unmodeled "garage" add (a modelKey the classifier drops but the raw firehose keeps).
@@ -407,9 +425,7 @@ describe("decode", () => {
 
   test("decodes a captured frame from a file, printing the raw frame and its classification", async () => {
 
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-decode-"));
-
-    try {
+    await withTempDir(async (dir) => {
 
       const file = path.join(dir, "frame.bin");
 
@@ -424,17 +440,12 @@ describe("decode", () => {
 
       assert.equal(parsed.raw.header.modelKey, "camera");
       assert.equal(parsed.event?.kind, "deviceAdded");
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("classifies an unmodeled frame as null while still showing the decoded raw frame", async () => {
 
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-decode-"));
-
-    try {
+    await withTempDir(async (dir) => {
 
       const file = path.join(dir, "frame.bin");
 
@@ -449,17 +460,12 @@ describe("decode", () => {
 
       assert.equal(parsed.event, null);
       assert.equal(parsed.raw.header.modelKey, "garage");
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("a malformed frame throws the codec's typed protocol error", async () => {
 
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-decode-"));
-
-    try {
+    await withTempDir(async (dir) => {
 
       const file = path.join(dir, "frame.bin");
 
@@ -469,10 +475,7 @@ describe("decode", () => {
       const { ctx } = makeCommandContext({ args: [file], client });
 
       await assert.rejects(decode.run(ctx), ProtectProtocolError);
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("a missing source argument is a usage error", async () => {
@@ -489,12 +492,7 @@ describe("decode", () => {
     const { client } = makeFakeClient();
     const { ctx, stdout } = makeCommandContext({ args: ["-"], client });
 
-    // process.stdin is a getter-only property, so we replace it with a one-shot Readable for the duration of the run and restore the original descriptor afterwards.
-    const descriptor = Object.getOwnPropertyDescriptor(process, "stdin");
-
-    try {
-
-      Object.defineProperty(process, "stdin", { configurable: true, value: Readable.from([frame]) });
+    await withStdin(Readable.from([frame]), async () => {
 
       await decode.run(ctx);
 
@@ -502,13 +500,7 @@ describe("decode", () => {
 
       assert.equal(parsed.raw.header.modelKey, "camera");
       assert.equal(parsed.event?.kind, "deviceAdded");
-    } finally {
-
-      if(descriptor !== undefined) {
-
-        Object.defineProperty(process, "stdin", descriptor);
-      }
-    }
+    });
   });
 
   test("an unreadable file surfaces as a CliError naming the read failure", async () => {
@@ -524,7 +516,7 @@ describe("decode", () => {
     await withTempDir(async (dir) => {
 
       const file = path.join(dir, "frames.ndjson");
-      const frames = [ recordedAdd, recordedUpdate ];
+      const frames = [ makeAudioDetectAdd(), makeAudioDetectUpdate() ];
 
       await writeFile(file, frames.map((frame) => serializeJson(frame) + "\n").join(""));
 
@@ -543,19 +535,14 @@ describe("decode", () => {
 
   test("--replay - reads the recording from stdin as it arrives", async () => {
 
-    const recording = serializeJson(recordedAdd) + "\n" + serializeJson(recordedUpdate) + "\n";
+    const recording = serializeJson(makeAudioDetectAdd()) + "\n" + serializeJson(makeAudioDetectUpdate()) + "\n";
     const { client } = makeFakeClient();
     const { ctx, stdout } = makeCommandContext({ args: [ "--replay", "-" ], client });
 
-    // process.stdin is a getter-only property, so we replace it with a one-shot Readable for the duration of the run and restore the original descriptor afterwards.
     // The recording arrives in chunks split inside its second frame, so a line that arrives in pieces is read whole.
-    const descriptor = Object.getOwnPropertyDescriptor(process, "stdin");
     const split = recording.length - 10;
 
-    try {
-
-      Object.defineProperty(process, "stdin", { configurable: true,
-        value: Readable.from([ Buffer.from(recording.slice(0, split)), Buffer.from(recording.slice(split)) ]) });
+    await withStdin(Readable.from([ Buffer.from(recording.slice(0, split)), Buffer.from(recording.slice(split)) ]), async () => {
 
       await decode.run(ctx);
 
@@ -563,13 +550,7 @@ describe("decode", () => {
 
       assert.equal(lines.length, 2);
       assert.deepEqual(lines[1]?.event, { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", objectTypes: ["smoke"] });
-    } finally {
-
-      if(descriptor !== undefined) {
-
-        Object.defineProperty(process, "stdin", descriptor);
-      }
-    }
+    });
   });
 
   test("--replay - prints a frame's line while stdin is still open", async () => {
@@ -577,16 +558,11 @@ describe("decode", () => {
     const { client } = makeFakeClient();
     const { ctx, stdout } = makeCommandContext({ args: [ "--replay", "-" ], client });
 
-    // process.stdin is a getter-only property, so we replace it with a stream the row holds open and restore the original descriptor afterwards. The first frame
-    // arrives with the input still open, so its line printing before the input ends is what shows a line is lifted as it arrives rather than once stdin is read whole.
-    const descriptor = Object.getOwnPropertyDescriptor(process, "stdin");
-    const input = new PassThrough();
+    // The row holds stdin open. The first frame arrives with the input still open, so its line printing before the input ends is what shows a line is lifted as it
+    // arrives rather than once stdin is read whole.
+    await withStdin(new PassThrough(), async (input) => {
 
-    try {
-
-      Object.defineProperty(process, "stdin", { configurable: true, value: input });
-
-      input.write(serializeJson(recordedAdd) + "\n");
+      input.write(serializeJson(makeAudioDetectAdd()) + "\n");
 
       const run = decode.run(ctx);
       const ended = settlement(run);
@@ -595,20 +571,12 @@ describe("decode", () => {
 
       assert.equal(ended(), false, "the replay is still reading the open input");
 
-      input.end(serializeJson(recordedUpdate) + "\n");
+      input.end(serializeJson(makeAudioDetectUpdate()) + "\n");
 
       await run;
 
       assert.equal(replayed(stdout()).length, 2, "the frame that arrived last printed once the input ended");
-    } finally {
-
-      input.destroy();
-
-      if(descriptor !== undefined) {
-
-        Object.defineProperty(process, "stdin", descriptor);
-      }
-    }
+    });
   });
 
   test("--replay skips blank lines", async () => {
@@ -617,7 +585,7 @@ describe("decode", () => {
 
       const file = path.join(dir, "frames.ndjson");
 
-      await writeFile(file, "\n" + serializeJson(recordedAdd) + "\n\n   \n" + serializeJson(recordedUpdate) + "\n\n");
+      await writeFile(file, "\n" + serializeJson(makeAudioDetectAdd()) + "\n\n   \n" + serializeJson(makeAudioDetectUpdate()) + "\n\n");
 
       const { client } = makeFakeClient();
       const { ctx, stdout } = makeCommandContext({ args: [ "--replay", file ], client });
@@ -639,8 +607,8 @@ describe("decode", () => {
 
       // The third line's header names no newUpdateId, which the decoder's header rule refuses. The blank line before it still counts, so the number is the one an
       // editor shows.
-      await writeFile(file, serializeJson(recordedAdd) + "\n\n" + serializeJson({ header: { action: "update", id: "event-1", modelKey: "event" }, payload: {} }) +
-        "\n" + serializeJson(recordedUpdate) + "\n");
+      await writeFile(file, serializeJson(makeAudioDetectAdd()) + "\n\n" +
+        serializeJson({ header: { action: "update", id: "event-1", modelKey: "event" }, payload: {} }) + "\n" + serializeJson(makeAudioDetectUpdate()) + "\n");
 
       const { client } = makeFakeClient();
       const { ctx, stdout } = makeCommandContext({ args: [ "--replay", file ], client });
@@ -663,14 +631,8 @@ describe("decode", () => {
     const { client } = makeFakeClient();
     const { ctx } = makeCommandContext({ args: [ "--replay", "-" ], client });
 
-    // process.stdin is a getter-only property, so we replace it with a stream the row holds open and restore the original descriptor afterwards. The refusal comes
-    // while the input is still open, as on a live pipe, where an input left flowing holds the process until the pipe ends.
-    const descriptor = Object.getOwnPropertyDescriptor(process, "stdin");
-    const input = new PassThrough();
-
-    try {
-
-      Object.defineProperty(process, "stdin", { configurable: true, value: input });
+    // The row holds stdin open. The refusal comes while the input is still open, as on a live pipe, where an input left flowing holds the process until the pipe ends.
+    await withStdin(new PassThrough(), async (input) => {
 
       input.write("{not-json,\n");
 
@@ -681,15 +643,105 @@ describe("decode", () => {
 
       assert.equal(input.readableFlowing, false, "the replay paused the input it read");
       assert.equal(input.destroyed, false, "stdin is the process's own, so the replay leaves it open");
-    } finally {
+    });
+  });
 
-      input.destroy();
+  test("--replay - ends quietly when the signal aborts while stdin is still open, having printed the frames it lifted", async () => {
 
-      if(descriptor !== undefined) {
+    const controller = new AbortController();
+    const { client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: [ "--replay", "-" ], client, signal: controller.signal });
 
-        Object.defineProperty(process, "stdin", descriptor);
-      }
-    }
+    // The abort comes while the input is still open, as Ctrl-C does on an interactive stdin, which only its end would otherwise finish.
+    await withStdin(new PassThrough(), async (input) => {
+
+      input.write(serializeJson(makeAudioDetectAdd()) + "\n");
+
+      const run = decode.run(ctx);
+      const ended = settlement(run);
+
+      await expectAt(() => replayed(stdout()).length === 1, { message: "the first frame printed while stdin was still open" });
+
+      assert.equal(ended(), false, "the replay is still reading the open input");
+
+      controller.abort();
+
+      await expectAt(ended, { message: "the abort ended the replay while stdin was still open" });
+      await run;
+
+      assert.equal(replayed(stdout()).length, 1, "the replay's output is the frame it lifted before the abort");
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0, "the replay left no listener on the signal");
+      assert.equal(input.readableFlowing, false, "the replay paused the input it read");
+      assert.equal(input.destroyed, false, "stdin is the process's own, so the replay leaves it open");
+    });
+  });
+
+  test("- ends quietly, printing nothing, when the signal aborts while stdin is still open", async () => {
+
+    const controller = new AbortController();
+    const { client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: ["-"], client, signal: controller.signal });
+
+    // A whole frame arrives with the input still open, so the read holds bytes it could decode, and only the input's end would finish it.
+    await withStdin(new PassThrough(), async (input) => {
+
+      input.write(encodeFrame({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1", name: "Front" }));
+
+      const run = decode.run(ctx);
+      const ended = settlement(run);
+
+      await expectAt(() => input.readableLength === 0, { message: "the read took the bytes stdin held" });
+
+      assert.equal(ended(), false, "the read is still waiting on the open input");
+
+      controller.abort();
+
+      await expectAt(ended, { message: "the abort ended the read while stdin was still open" });
+      await run;
+
+      assert.equal(stdout(), "", "an aborted read prints nothing");
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0, "the read left no listener on the signal");
+      assert.equal(input.readableFlowing, false, "the read paused the input it took");
+      assert.equal(input.destroyed, false, "stdin is the process's own, so the read leaves it open");
+    });
+  });
+
+  test("- ends at once, printing nothing, when the signal is aborted before the run", async () => {
+
+    const { client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: ["-"], client, signal: AbortSignal.abort() });
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      input.write(encodeFrame({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1", name: "Front" }));
+
+      const run = decode.run(ctx);
+
+      await expectAt(settlement(run), { message: "the aborted signal ended the read while stdin was still open" });
+      await run;
+
+      assert.equal(stdout(), "", "an aborted read prints nothing");
+      assert.equal(getEventListeners(ctx.signal, "abort").length, 0, "the read left no listener on the signal");
+    });
+  });
+
+  test("--replay - ends at once, printing nothing, when the signal is aborted before the run", async () => {
+
+    const { client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: [ "--replay", "-" ], client, signal: AbortSignal.abort() });
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      input.write(serializeJson(makeAudioDetectAdd()) + "\n");
+
+      const run = decode.run(ctx);
+
+      await expectAt(settlement(run), { message: "the aborted signal ended the replay while stdin was still open" });
+      await run;
+
+      assert.equal(stdout(), "", "an aborted replay prints nothing");
+      assert.equal(getEventListeners(ctx.signal, "abort").length, 0, "the replay left no listener on the signal");
+    });
   });
 
   test("--replay restores a Buffer payload written through the CLI's serializer, so a device frame carrying one lifts as null", async () => {

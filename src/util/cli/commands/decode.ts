@@ -9,6 +9,7 @@ import { ProtectClient } from "../../../index.ts";
 import type { RawPacket } from "../../../index.ts";
 import { createInterface } from "node:readline";
 import { createReadStream } from "node:fs";
+import { on } from "node:events";
 import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 
@@ -55,29 +56,63 @@ function sourceName(source: string): string {
   return (source === "-") ? "stdin" : ("\"" + source + "\"");
 }
 
-// Read every byte from stdin as one Buffer, using the stream's async iterator - the modern, backpressure-aware way to drain a readable. Used when the source is "-".
-async function readStdin(): Promise<Buffer> {
+/* Read every byte from stdin as one Buffer, or nothing when the signal aborts first. Used when the source is "-". The read iterates the stream's data events to its
+ * end rather than the stream's own iterator, because returning an iteration of events ends it at once, where the stream's iterator would first finish the read it
+ * is waiting on; the abort returns it, so Ctrl-C ends a read whose input never ends. stdin is the process's own, so it is paused rather than destroyed, which lets
+ * the process exit while a live pipe stays open, and a signal already aborted ends the read before stdin is touched.
+ */
+async function readStdin(signal: AbortSignal): Promise<Buffer | undefined> {
 
-  const chunks: Buffer[] = [];
+  if(signal.aborted) {
 
-  for await(const chunk of process.stdin) {
-
-    chunks.push(chunk as Buffer);
+    return undefined;
   }
 
-  return Buffer.concat(chunks);
+  const chunks: Buffer[] = [];
+  const reading = on(process.stdin, "data", { close: ["end"] });
+  const stop = (): void => void reading.return?.();
+
+  signal.addEventListener("abort", stop);
+
+  try {
+
+    for await(const [chunk] of reading) {
+
+      chunks.push(chunk as Buffer);
+    }
+  } finally {
+
+    signal.removeEventListener("abort", stop);
+    process.stdin.pause();
+  }
+
+  // The iteration ends with the input's end or with the abort's return, so an input that has not ended is a read the abort cut short.
+  return process.stdin.readableEnded ? Buffer.concat(chunks) : undefined;
 }
 
 /* Yield a recording's lines as they arrive, each with its line number in the source, so a refusal names the line an editor shows. A read failure (a missing file,
  * unreadable stdin) is an expected user error, so it surfaces as a CliError, as the single-packet mode's does. readline sets its input flowing and keeps it so
  * until the interface closes, so the interface is closed whenever the reading ends, early on a refusal included. Closing it pauses stdin, which is the process's
- * own and stays open, so a live pipe lets the process exit once the replay ends; a file's stream is destroyed besides.
+ * own and stays open, so a live pipe lets the process exit once the replay ends; a file's stream is destroyed besides. On stdin the signal's abort closes the
+ * interface as well, which ends the reading quietly once the lines already read are yielded, so Ctrl-C ends a replay whose input never ends; a file is read to its
+ * end. An interface closed before its reading begins leaves that reading waiting for good, so a signal already aborted ends a stdin reading before any is made.
  */
-async function *recordingLines(source: string): AsyncGenerator<{ line: string; lineNumber: number }> {
+async function *recordingLines(source: string, signal: AbortSignal): AsyncGenerator<{ line: string; lineNumber: number }> {
+
+  if((source === "-") && signal.aborted) {
+
+    return;
+  }
 
   const file = (source === "-") ? undefined : createReadStream(source);
   const lines = createInterface({ crlfDelay: Infinity, input: file ?? process.stdin });
+  const close = (): void => lines.close();
   let lineNumber = 0;
+
+  if(file === undefined) {
+
+    signal.addEventListener("abort", close);
+  }
 
   try {
 
@@ -92,6 +127,7 @@ async function *recordingLines(source: string): AsyncGenerator<{ line: string; l
     throw new CliError("Unable to read the recording from " + sourceName(source) + ".", { cause: error });
   } finally {
 
+    signal.removeEventListener("abort", close);
     lines.close();
     file?.destroy();
   }
@@ -115,7 +151,7 @@ async function replayRecording(ctx: CommandContext, source: string): Promise<voi
 
   const classifier = ProtectClient.createClassifier();
 
-  for await(const { line, lineNumber } of recordingLines(source)) {
+  for await(const { line, lineNumber } of recordingLines(source, ctx.signal)) {
 
     if(line.trim().length === 0) {
 
@@ -139,6 +175,9 @@ async function replayRecording(ctx: CommandContext, source: string): Promise<voi
  * `ProtectClient.parsePacket` and every frame is lifted, in order, through one classifier from `ProtectClient.createClassifier`, built as the live firehose's is,
  * so in a recording of one connection, taken unfiltered from its start, such an update lifts as it did live; each frame prints as one compact `{ event, raw }`
  * line. A line the codec refuses surfaces as a `CliError` naming the line, the codec's refusal its cause. The command holds no rule of its own about what a frame is.
+ *
+ * Reading stdin, each mode ends quietly when the command's signal aborts, so Ctrl-C ends a read whose input never ends: the replay keeps what it printed, and the
+ * single-packet mode prints nothing. A file is read to its end.
  *
  * @category CLI
  */
@@ -168,14 +207,20 @@ const decodeHandler: CommandHandler = async (ctx) => {
   }
 
   // Read the raw bytes. A read failure (missing file, unreadable stdin) is an expected user error, so we render it as a clean CliError rather than an uncaught stack.
-  let bytes: Buffer;
+  let bytes: Buffer | undefined;
 
   try {
 
-    bytes = (source === "-") ? await readStdin() : await readFile(source);
+    bytes = (source === "-") ? await readStdin(ctx.signal) : await readFile(source);
   } catch(error) {
 
     throw new CliError("Unable to read packet bytes from " + sourceName(source) + ".", { cause: error });
+  }
+
+  // An abort leaves a read of stdin with no frame to decode, so the command ends quietly, as a watch does on Ctrl-C.
+  if(bytes === undefined) {
+
+    return;
   }
 
   // Without --replay the source is one frame's bytes, decoded then classified through the static codec on its own: the rawPackets() rail's decode, and the events()

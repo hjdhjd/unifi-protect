@@ -1,12 +1,14 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * fixtures.helpers.ts: Test-only factories for synthetic Protect device and bootstrap records. Tests build the exact records they need from these factories, so a
- * test expresses only the fields that matter to it and the noise of the full device interface stays out of the assertion. The full interfaces carry well over a
- * hundred fields the reducer never inspects (it merges and compares structurally), so the factories populate a small, realistic core and let each test override what
- * it cares about. The `as unknown as` casts needed to build these partial device and bootstrap records are confined here.
+ * fixtures.helpers.ts: Test-only factories for synthetic Protect device and bootstrap records, and for the realtime frames suites across the regions lift. Tests
+ * build the exact records they need from these factories, so a test expresses only the fields that matter to it and the noise of the full device interface stays out
+ * of the assertion. The full interfaces carry well over a hundred fields the reducer never inspects (it merges and compares structurally), so the factories populate
+ * a small, realistic core and let each test override what it cares about. The `as unknown as` casts needed to build these partial device and bootstrap records are
+ * confined here.
  */
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrBootstrap, ProtectNvrConfig, ProtectNvrLiveviewConfig,
   ProtectNvrUserConfig, ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectViewerConfig } from "./types/index.ts";
+import type { RawPacket } from "./protocol/packet.ts";
 
 // A camera with a nested object (`featureFlags`) and an array (`channels`) so tests can exercise deep merges, array-wholesale-replacement, and structural sharing
 // against realistic shapes rather than flat scalars.
@@ -154,4 +156,18 @@ export function makeBootstrap(overrides: {
     users: overrides.users ?? [],
     viewers: overrides.viewers ?? []
   } as unknown as ProtectNvrBootstrap;
+}
+
+// An audio detection's add as the controller sends it: it names the camera and the start, and no class yet. The audio detection frames are decoded packets, so each
+// suite derives the form it reads from them, the bytes the codec encodes or the line a recording holds.
+export function makeAudioDetectAdd(id = "event-1"): RawPacket {
+
+  return { header: { action: "add", id, modelKey: "event", newUpdateId: "update-1" },
+    payload: { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } };
+}
+
+// The audio detection's later update, which names its classes and neither the camera nor the start, so it lifts only through a classifier that saw the add.
+export function makeAudioDetectUpdate(id = "event-1", objectTypes: readonly string[] = ["smoke"]): RawPacket {
+
+  return { header: { action: "update", id, modelKey: "event", newUpdateId: "update-1" }, payload: { smartDetectTypes: objectTypes } };
 }

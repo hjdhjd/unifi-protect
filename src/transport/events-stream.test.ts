@@ -17,6 +17,7 @@ import { TestClock, errnoError, freePort, present, settle } from "homebridge-plu
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
+import { makeAudioDetectAdd, makeAudioDetectUpdate } from "../fixtures.helpers.ts";
 import { EventStream } from "./events-stream.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
@@ -25,6 +26,7 @@ import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { constants } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
+import { encodePacket } from "../protocol/packet.ts";
 import { getEventListeners } from "node:events";
 import tls from "node:tls";
 
@@ -306,8 +308,8 @@ describe("EventStream", () => {
       const packets = collect(stream, "packet");
 
       // The add names the camera and the start and no class; the update names the class alone, so only the stream's memory of the open event can attribute it.
-      ws.emitMessage(encode({ action: "add", id: "event-1", modelKey: "event" }, { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" }));
-      ws.emitMessage(encode({ action: "update", id: "event-1", modelKey: "event" }, { smartDetectTypes: ["smoke"] }));
+      ws.emitMessage(encodePacket(makeAudioDetectAdd("event-1")));
+      ws.emitMessage(encodePacket(makeAudioDetectUpdate("event-1")));
 
       assert.equal(packets.length, 2, "the add and the classed update each reached the packet rail");
       assert.deepEqual(packets[1]?.[0], { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", metadata: undefined, objectTypes: ["smoke"] });
@@ -319,23 +321,20 @@ describe("EventStream", () => {
 
       const { stream, ws } = await openStream();
       const packets = collect(stream, "packet");
-      const add = (id: string): Buffer => encode({ action: "add", id, modelKey: "event" },
-        { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" });
-      const classedUpdate = (id: string): Buffer => encode({ action: "update", id, modelKey: "event" }, { smartDetectTypes: ["smoke"] });
 
       for(const id of Array.from({ length: PROTECT_EVENTS_OCCURRENCE_LIMIT }, (_, index) => "event-" + String(index))) {
 
-        ws.emitMessage(add(id));
+        ws.emitMessage(encodePacket(makeAudioDetectAdd(id)));
       }
 
-      ws.emitMessage(classedUpdate("event-0"));
+      ws.emitMessage(encodePacket(makeAudioDetectUpdate("event-0")));
 
       assert.equal(packets.length, PROTECT_EVENTS_OCCURRENCE_LIMIT + 1, "the limit's worth of open events is held whole, so the oldest one's update lifted");
 
       // One more open event evicts the oldest, so its next update lifts nothing, while the next oldest still lends its camera.
-      ws.emitMessage(add("event-newest"));
-      ws.emitMessage(classedUpdate("event-0"));
-      ws.emitMessage(classedUpdate("event-1"));
+      ws.emitMessage(encodePacket(makeAudioDetectAdd("event-newest")));
+      ws.emitMessage(encodePacket(makeAudioDetectUpdate("event-0")));
+      ws.emitMessage(encodePacket(makeAudioDetectUpdate("event-1")));
 
       assert.equal(packets.length, PROTECT_EVENTS_OCCURRENCE_LIMIT + 3, "the evicted event's update reached no rail");
       assert.deepEqual(packets.at(-1)?.[0], { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", metadata: undefined, objectTypes: ["smoke"] });

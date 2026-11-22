@@ -15,8 +15,8 @@ import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from ".
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
 import { expectAt, settlement, silentLog } from "../testing.helpers.ts";
-import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
-  makeViewer } from "../fixtures.helpers.ts";
+import { makeAudioDetectAdd, makeAudioDetectUpdate, makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone,
+  makeSensor, makeUser, makeViewer } from "../fixtures.helpers.ts";
 import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import type { Interceptable } from "undici";
@@ -78,19 +78,6 @@ async function connectCapturing(agent: MockAgent, options: { signal?: AbortSigna
 function encode(header: Partial<{ action: string; id: string; modelKey: string }>, payload: object): Buffer {
 
   return buildPacket(jsonActionFrame(makeActionHeader(header)), jsonDataFrame(payload));
-}
-
-// An audio detection's add as the controller sends it, naming the camera and the start and no class.
-function audioAdd(id: string): RawPacket {
-
-  return { header: makeActionHeader({ action: "add", id, modelKey: "event" }),
-    payload: { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } };
-}
-
-// The later update that names the detection's class and neither the camera nor the start.
-function classedUpdate(id: string): RawPacket {
-
-  return { header: makeActionHeader({ action: "update", id, modelKey: "event" }), payload: { smartDetectTypes: ["smoke"] } };
 }
 
 describe("ProtectClient.connect", () => {
@@ -634,11 +621,11 @@ describe("ProtectClient.connect", () => {
 
       assert.ok(classifier instanceof StreamClassifier, "the factory builds the class the events stream lifts through");
 
-      classifier.classify(audioAdd("event-1"));
+      classifier.classify(makeAudioDetectAdd("event-1"));
 
-      assert.deepEqual(classifier.classify(classedUpdate("event-1")),
+      assert.deepEqual(classifier.classify(makeAudioDetectUpdate("event-1")),
         { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", metadata: undefined, objectTypes: ["smoke"] });
-      assert.equal(ProtectClient.classifyPacket(classedUpdate("event-1")), null, "the single-packet lift reads the update on its own");
+      assert.equal(ProtectClient.classifyPacket(makeAudioDetectUpdate("event-1")), null, "the single-packet lift reads the update on its own");
     });
 
     test("a second classifier from the factory holds none of the first's open events", () => {
@@ -646,10 +633,10 @@ describe("ProtectClient.connect", () => {
       const first = ProtectClient.createClassifier();
       const second = ProtectClient.createClassifier();
 
-      first.classify(audioAdd("event-1"));
+      first.classify(makeAudioDetectAdd("event-1"));
 
-      assert.equal(second.classify(classedUpdate("event-1")), null, "each classifier holds the open events of the frames it lifted");
-      assert.equal(first.classify(classedUpdate("event-1"))?.kind, "smartDetect", "the first still holds its own");
+      assert.equal(second.classify(makeAudioDetectUpdate("event-1")), null, "each classifier holds the open events of the frames it lifted");
+      assert.equal(first.classify(makeAudioDetectUpdate("event-1"))?.kind, "smartDetect", "the first still holds its own");
     });
 
     test("a classifier from the factory evicts its oldest open event at the events stream's occurrence limit", () => {
@@ -658,16 +645,16 @@ describe("ProtectClient.connect", () => {
 
       for(const id of Array.from({ length: PROTECT_EVENTS_OCCURRENCE_LIMIT }, (_, index) => "event-" + String(index))) {
 
-        classifier.classify(audioAdd(id));
+        classifier.classify(makeAudioDetectAdd(id));
       }
 
-      assert.equal(classifier.classify(classedUpdate("event-0"))?.kind, "smartDetect", "the limit's worth of open events is held whole");
+      assert.equal(classifier.classify(makeAudioDetectUpdate("event-0"))?.kind, "smartDetect", "the limit's worth of open events is held whole");
 
-      classifier.classify(audioAdd("event-newest"));
+      classifier.classify(makeAudioDetectAdd("event-newest"));
 
-      assert.equal(classifier.classify(classedUpdate("event-0")), null, "one more open event evicts the oldest");
-      assert.equal(classifier.classify(classedUpdate("event-1"))?.kind, "smartDetect", "only the oldest open event is evicted");
-      assert.equal(classifier.classify(classedUpdate("event-newest"))?.kind, "smartDetect", "the newest open event is held");
+      assert.equal(classifier.classify(makeAudioDetectUpdate("event-0")), null, "one more open event evicts the oldest");
+      assert.equal(classifier.classify(makeAudioDetectUpdate("event-1"))?.kind, "smartDetect", "only the oldest open event is evicted");
+      assert.equal(classifier.classify(makeAudioDetectUpdate("event-newest"))?.kind, "smartDetect", "the newest open event is held");
     });
 
     test("the static recorded-packet reader reads a recorded line exactly as the codec's reader does, refusals included", () => {
