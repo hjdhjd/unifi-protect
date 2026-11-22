@@ -54,11 +54,13 @@ export { wallClock } from "./clock.ts";
 export type { Clock } from "./clock.ts";
 
 // Protocol - the realtime event taxonomy a consumer reads off the firehose. The pure codec/classifier/reducer functions stay internal; the static `ProtectClient`
-// .decodePacket() / .classifyPacket() methods are the consumer-facing codec entries (the single-packet decode and lift the rawPackets()/events() rails are built on,
-// the events() rail also carrying an open event's camera and start to its later frames), so a second free-function path would be the divergence the architecture
-// forbids. `RawPacket` is the element type of the raw firehose (`client.rawPackets()`) and the input/output of those codec statics: the decoded-but-unclassified
-// frame, header plus payload, including ones the classifier drops. `ProtectEventHeader` is the type of that frame's own `header` field, so it travels on the public
-// surface alongside `RawPacket`.
+// .decodePacket() / .parsePacket() / .classifyPacket() / .createClassifier() methods are the consumer-facing codec entries: the single-packet decode and lift the
+// rawPackets()/events() rails are built on, the reader of a packet recorded off the raw rail, and a classifier built as the events() rail's is, which carries an
+// open event's camera and start to its later frames. A second free-function path would be the divergence the architecture forbids. `StreamClassifier` is a
+// type-only export: a consumer receives one from createClassifier(), at the events stream's own bound, and the barrel exports no value to build one from.
+// `RawPacket` is the element type of the raw firehose (`client.rawPackets()`) and the input/output of those codec statics: the decoded-but-unclassified frame,
+// header plus payload, including ones the classifier drops. `ProtectEventHeader` is the type of that frame's own `header` field, so it travels on the public surface
+// alongside `RawPacket`.
 export type { ProtectEventHeader, RawPacket } from "./protocol/packet.ts";
 export type { LivestreamSource, Segment } from "./transport/livestream-session.ts";
 // The livestream init a `Segment`'s init arm, a subscription's cached init and a codec change all carry, and the description read from its bytes. The free reader
@@ -67,7 +69,7 @@ export type { LivestreamDescription, LivestreamInit, LivestreamTrack } from "./p
 // The id-keyed device-collection vocabulary - the category key set the selector catalog and every per-category consumer iterate over. A value export (a consumer iterates
 // the runtime array to reach a category's selectors) plus its type; `DeviceModelKey` stays internal, since the collection vocabulary is the consumer-facing surface.
 export { DEVICE_COLLECTION_KEYS } from "./protocol/events.ts";
-export type { AuthMethod, DeviceCollectionKey, SmartDetectType, StateModelKey, TypedEvent } from "./protocol/events.ts";
+export type { AuthMethod, DeviceCollectionKey, SmartDetectType, StateModelKey, StreamClassifier, TypedEvent } from "./protocol/events.ts";
 // The hardware-address vocabulary - the test for whether a value is a device address at all, and the fold that spells one address one way. Value exports: a
 // consumer calls both as free functions. A consumer keys its own devices by the folded spelling because the controller varies the case of one device's address
 // from one record to the next, so a map keyed on the text as it arrived splits a single device in two the first time the case changes.

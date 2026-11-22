@@ -9,8 +9,8 @@
  * subscription that fans that event into both the state store and the client firehose - there is never a second decode path.
  *
  * Classification goes through the stream's own {@link StreamClassifier}, which carries an open event's camera and start to the event's later frames, since the
- * controller names neither on an `update`. The stream holds one classifier for its whole life and hands it {@link PROTECT_EVENTS_OCCURRENCE_LIMIT} as the bound
- * on what it remembers, so a reconnect, which builds a new stream, starts with no open events.
+ * controller names neither on an `update`. The stream holds one classifier for its whole life, built by {@link EventStream.createClassifier} at
+ * {@link PROTECT_EVENTS_OCCURRENCE_LIMIT}, the bound on what it remembers, so a reconnect, which builds a new stream, starts with no open events.
  *
  * The surface is the three-rail model (see {@link EventBus}): an internal `EventBus<EventStreamEvents>` backs `on` / `once` / `stream`. The library composes
  * `node:events.EventEmitter`; it does not extend it.
@@ -121,7 +121,7 @@ export class EventStream implements AsyncDisposable {
   readonly #bus: EventBus<EventStreamEvents>;
   // The classifier every frame lifts through, one per stream: the open events it remembers belong to this connection alone, so a reconnect, which builds a new
   // stream, starts with none.
-  readonly #classifier = new StreamClassifier({ capacity: PROTECT_EVENTS_OCCURRENCE_LIMIT });
+  readonly #classifier = EventStream.createClassifier();
   readonly #clock: Clock;
   // When the connection attempt began, as the injected clock's monotonic reading, which is what a connection attempt that times out measures its elapsed time from.
   // It is a stamp of its own rather than the watchdog's liveness stamp, which every frame moves.
@@ -269,6 +269,17 @@ export class EventStream implements AsyncDisposable {
     await stream.opened;
 
     return stream;
+  }
+
+  /**
+   * Build a classifier at {@link PROTECT_EVENTS_OCCURRENCE_LIMIT}, the bound on the open events it remembers. This is the one place a classifier is built: each
+   * stream's own comes from here, and so does the one {@link ProtectClient.createClassifier} hands a consumer, so the two cannot disagree about the bound.
+   *
+   * @returns A classifier holding no open events.
+   */
+  static createClassifier(): StreamClassifier {
+
+    return new StreamClassifier({ capacity: PROTECT_EVENTS_OCCURRENCE_LIMIT });
   }
 
   /**

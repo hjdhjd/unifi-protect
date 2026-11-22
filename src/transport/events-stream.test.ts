@@ -1,14 +1,16 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * events-stream.test.ts: Tests for EventStream - the connection handshake (open, pre-open close, and caller-signal abort before open), the single decode site,
- * the three-rail fan-out with an open event's camera carried to its later frames, schema-drift surfacing, decode-failure resilience, the silence watchdog, and
- * teardown. Driven through an injected fake WebSocket and a `TestClock`, so the realtime stream is exercised deterministically without a live controller.
+ * the three-rail fan-out with an open event's camera carried to its later frames within the occurrence limit, schema-drift surfacing, decode-failure resilience,
+ * the silence watchdog, and teardown. Driven through an injected fake WebSocket and a `TestClock`, so the realtime stream is exercised deterministically without a
+ * live controller.
  */
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackAlpnPeer, createLoopbackSilentPeer, createLoopbackWebSocketPeer,
   elapsedSince } from "./tls-peer.helpers.ts";
 import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
+import { PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
 import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
 import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
@@ -18,7 +20,6 @@ import { describe, test } from "node:test";
 import { EventStream } from "./events-stream.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
-import { PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
@@ -310,6 +311,34 @@ describe("EventStream", () => {
 
       assert.equal(packets.length, 2, "the add and the classed update each reached the packet rail");
       assert.deepEqual(packets[1]?.[0], { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", metadata: undefined, objectTypes: ["smoke"] });
+
+      await stream.close();
+    });
+
+    test("the stream's classifier evicts its oldest open event at the occurrence limit", async () => {
+
+      const { stream, ws } = await openStream();
+      const packets = collect(stream, "packet");
+      const add = (id: string): Buffer => encode({ action: "add", id, modelKey: "event" },
+        { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" });
+      const classedUpdate = (id: string): Buffer => encode({ action: "update", id, modelKey: "event" }, { smartDetectTypes: ["smoke"] });
+
+      for(const id of Array.from({ length: PROTECT_EVENTS_OCCURRENCE_LIMIT }, (_, index) => "event-" + String(index))) {
+
+        ws.emitMessage(add(id));
+      }
+
+      ws.emitMessage(classedUpdate("event-0"));
+
+      assert.equal(packets.length, PROTECT_EVENTS_OCCURRENCE_LIMIT + 1, "the limit's worth of open events is held whole, so the oldest one's update lifted");
+
+      // One more open event evicts the oldest, so its next update lifts nothing, while the next oldest still lends its camera.
+      ws.emitMessage(add("event-newest"));
+      ws.emitMessage(classedUpdate("event-0"));
+      ws.emitMessage(classedUpdate("event-1"));
+
+      assert.equal(packets.length, PROTECT_EVENTS_OCCURRENCE_LIMIT + 3, "the evicted event's update reached no rail");
+      assert.deepEqual(packets.at(-1)?.[0], { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", metadata: undefined, objectTypes: ["smoke"] });
 
       await stream.close();
     });

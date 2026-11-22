@@ -2,10 +2,12 @@
  *
  * client.test.ts: Integration tests for ProtectClient.connect() - the atomic login+bootstrap factory, the projection surface over a real bootstrap, the typed-error
  * mapping for each failure stage, the Disposable event subscription, clean teardown, and the controller's URL authority at every URL the client composes. Driven
- * against an undici MockAgent, and against a loopback peer where a row reads the pool the client builds for itself.
+ * against an undici MockAgent, and against a loopback peer where a row reads the pool the client builds for itself. The connection-free codec statics are held
+ * here too: the single-packet decode and lift, the recorded-packet reader, and the classifier factory, held to the class and the occurrence limit the events
+ * stream lifts through.
  */
 import type { ConnectionTransitionPayload, HttpRequestStartPayload } from "../diagnostics.ts";
-import { PROTECT_API_ERROR_LIMIT, PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectConfigurationError, ProtectNetworkError,
   ProtectProtocolError } from "../errors.ts";
 import { TestClock, errnoError, present, settle } from "homebridge-plugin-utils/testing";
@@ -21,12 +23,14 @@ import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
 import { ProtectClient } from "./client.ts";
 import type { RawPacket } from "../protocol/packet.ts";
+import { StreamClassifier } from "../protocol/events.ts";
 import { Transport } from "../transport/http.ts";
 import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { createLoopbackHttpsPeer } from "../transport/tls-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { describeInitSegment } from "../protocol/init-segment.ts";
+import { parsePacket } from "../protocol/packet.ts";
 
 const HOST = "10.0.0.1";
 const LOGIN_PATH = "/api/auth/login";
@@ -74,6 +78,19 @@ async function connectCapturing(agent: MockAgent, options: { signal?: AbortSigna
 function encode(header: Partial<{ action: string; id: string; modelKey: string }>, payload: object): Buffer {
 
   return buildPacket(jsonActionFrame(makeActionHeader(header)), jsonDataFrame(payload));
+}
+
+// An audio detection's add as the controller sends it, naming the camera and the start and no class.
+function audioAdd(id: string): RawPacket {
+
+  return { header: makeActionHeader({ action: "add", id, modelKey: "event" }),
+    payload: { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } };
+}
+
+// The later update that names the detection's class and neither the camera nor the start.
+function classedUpdate(id: string): RawPacket {
+
+  return { header: makeActionHeader({ action: "update", id, modelKey: "event" }), payload: { smartDetectTypes: ["smoke"] } };
 }
 
 describe("ProtectClient.connect", () => {
@@ -590,8 +607,9 @@ describe("ProtectClient.connect", () => {
 
     test("the static codec decodes to a raw packet, classifies it, returns null for unmodeled, and throws on malformed - all without a connection", () => {
 
-      // The codec is static and connection-free (the offline twin of the rawPackets()/events() rails), so this constructs no client. decodePacket yields the raw frame;
-      // classifyPacket lifts it to a TypedEvent, or null for a valid-but-unmodeled modelKey - in which case the raw frame is still fully decoded, the point of the split.
+      // The codec is static and connection-free (the single-packet decode and lift the rawPackets()/events() rails are built on), so this constructs no client.
+      // decodePacket yields the raw frame; classifyPacket lifts it to a TypedEvent, or null for a valid-but-unmodeled modelKey - in which case the raw frame is still
+      // fully decoded, the point of the split.
       const raw = ProtectClient.decodePacket(encode({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1" }));
 
       assert.equal(raw.header.modelKey, "camera");
@@ -608,6 +626,62 @@ describe("ProtectClient.connect", () => {
       assert.equal(ProtectClient.classifyPacket(unmodeled), null);
 
       assert.throws(() => ProtectClient.decodePacket(Buffer.from([ 1, 2, 3 ])), ProtectProtocolError);
+    });
+
+    test("a classifier from the factory lifts a classless add then a classed update that names no camera as smartDetect with the add's camera and start", () => {
+
+      const classifier = ProtectClient.createClassifier();
+
+      assert.ok(classifier instanceof StreamClassifier, "the factory builds the class the events stream lifts through");
+
+      classifier.classify(audioAdd("event-1"));
+
+      assert.deepEqual(classifier.classify(classedUpdate("event-1")),
+        { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", metadata: undefined, objectTypes: ["smoke"] });
+      assert.equal(ProtectClient.classifyPacket(classedUpdate("event-1")), null, "the single-packet lift reads the update on its own");
+    });
+
+    test("a second classifier from the factory holds none of the first's open events", () => {
+
+      const first = ProtectClient.createClassifier();
+      const second = ProtectClient.createClassifier();
+
+      first.classify(audioAdd("event-1"));
+
+      assert.equal(second.classify(classedUpdate("event-1")), null, "each classifier holds the open events of the frames it lifted");
+      assert.equal(first.classify(classedUpdate("event-1"))?.kind, "smartDetect", "the first still holds its own");
+    });
+
+    test("a classifier from the factory evicts its oldest open event at the events stream's occurrence limit", () => {
+
+      const classifier = ProtectClient.createClassifier();
+
+      for(const id of Array.from({ length: PROTECT_EVENTS_OCCURRENCE_LIMIT }, (_, index) => "event-" + String(index))) {
+
+        classifier.classify(audioAdd(id));
+      }
+
+      assert.equal(classifier.classify(classedUpdate("event-0"))?.kind, "smartDetect", "the limit's worth of open events is held whole");
+
+      classifier.classify(audioAdd("event-newest"));
+
+      assert.equal(classifier.classify(classedUpdate("event-0")), null, "one more open event evicts the oldest");
+      assert.equal(classifier.classify(classedUpdate("event-1"))?.kind, "smartDetect", "only the oldest open event is evicted");
+      assert.equal(classifier.classify(classedUpdate("event-newest"))?.kind, "smartDetect", "the newest open event is held");
+    });
+
+    test("the static recorded-packet reader reads a recorded line exactly as the codec's reader does, refusals included", () => {
+
+      const recorded = JSON.stringify(ProtectClient.decodePacket(encode({ action: "add", id: "c1", modelKey: "camera" }, { id: "c1" })));
+      const buffered = JSON.stringify({ header: makeActionHeader(), payload: Buffer.from([ 1, 2, 3 ]) });
+
+      for(const text of [ recorded, buffered ]) {
+
+        assert.deepEqual(ProtectClient.parsePacket(text), parsePacket(text));
+      }
+
+      assert.ok(Buffer.isBuffer(ProtectClient.parsePacket(buffered).payload), "a recorded Buffer payload reads back as a Buffer");
+      assert.throws(() => ProtectClient.parsePacket(JSON.stringify({ header: { action: "add" }, payload: {} })), ProtectProtocolError);
     });
 
     test("the static init reader describes init bytes exactly as the free reader does, without a connection", () => {

@@ -2,11 +2,13 @@
  *
  * packet.test.ts: Unit tests for the binary 4-frame realtime events codec. Decode coverage spans every payload format the protocol allows (uncompressed JSON,
  * deflated JSON, UTF-8 string, raw buffer), the boundary cases (empty and large payloads), and the malformed-input guards - which throw ProtectProtocolError
- * rather than returning null, since a codec either yields a structurally valid packet or it does not. Encode coverage proves the inverse round-trips.
+ * rather than returning null, since a codec either yields a structurally valid packet or it does not. Encode coverage proves the inverse round-trips. The
+ * recorded-packet reader's rows hold that a packet the decoder returned reads back from its JSON text as that packet, a `Buffer` payload restored from its exact JSON
+ * form, and that the reader refuses what the decoder's header rule refuses.
  */
 import { HEADER_SIZE, PACKET_TYPE_ACTION, PACKET_TYPE_DATA, PAYLOAD_FORMAT_BUFFER, PAYLOAD_FORMAT_JSON, PAYLOAD_FORMAT_STRING, bufferDataFrame, buildFrame, buildPacket,
   jsonActionFrame, jsonDataFrame, makeActionHeader, stringDataFrame } from "./packet.helpers.ts";
-import { decodePacket, encodePacket } from "./packet.ts";
+import { decodePacket, encodePacket, parsePacket } from "./packet.ts";
 import { describe, test } from "node:test";
 import { ProtectProtocolError } from "../errors.ts";
 import type { RawPacket } from "./packet.ts";
@@ -345,5 +347,68 @@ describe("encodePacket - round-trips through decodePacket", () => {
 
     assert.equal(decoded.header["region"], "us");
     assert.equal(decoded.header["revision"], 7);
+  });
+});
+
+describe("parsePacket", () => {
+
+  test("a packet the decoder returned reads back from its JSON text as that packet, for a JSON payload and a string payload", () => {
+
+    const header = { ...makeActionHeader({ action: "update", id: "camera-1", modelKey: "camera" }), revision: 7 };
+
+    // A JSON null payload is a payload all the same, so it reads back as null rather than as a packet missing its payload.
+    const nullData = buildFrame({ packetType: PACKET_TYPE_DATA, payload: Buffer.from("null"), payloadFormat: PAYLOAD_FORMAT_JSON });
+    const packets = [ decodePacket(buildPacket(jsonActionFrame(header), jsonDataFrame({ lastMotion: 1000, name: "Front" }))),
+      decodePacket(buildPacket(jsonActionFrame(header), nullData)), decodePacket(buildPacket(jsonActionFrame(header), stringDataFrame("a plain string payload"))) ];
+
+    for(const packet of packets) {
+
+      assert.deepEqual(parsePacket(JSON.stringify(packet)), packet);
+    }
+  });
+
+  test("a Buffer payload reads back as a Buffer with the same bytes", () => {
+
+    for(const bytes of [ Buffer.from([ 0xde, 0xad, 0xbe, 0xef ]), Buffer.alloc(0) ]) {
+
+      const packet = decodePacket(buildPacket(jsonActionFrame(makeActionHeader()), bufferDataFrame(bytes)));
+      const parsed = parsePacket(JSON.stringify(packet));
+
+      assert.ok(Buffer.isBuffer(parsed.payload), "the payload's JSON form is restored to a Buffer");
+      assert.deepEqual(parsed.payload, bytes);
+    }
+  });
+
+  test("a record that carries the Buffer form's keys beside another field, a data field that is no array, or a type other than Buffer, stays a record", () => {
+
+    for(const payload of [ { data: [ 1, 2, 3 ], name: "Front", type: "Buffer" }, { data: "text", type: "Buffer" }, { data: [ 1, 2, 3 ], type: "Other" } ]) {
+
+      assert.deepEqual(parsePacket(JSON.stringify({ header: makeActionHeader(), payload })).payload, payload, "only the exact form a Buffer serializes to is restored");
+    }
+  });
+
+  test("text that is not a packet's JSON, or that carries a header the decoder refuses, throws ProtectProtocolError", () => {
+
+    const header = makeActionHeader();
+
+    assert.throws(() => parsePacket("{not-json,"), { constructor: ProtectProtocolError, message: /not valid JSON/ });
+
+    for(const value of [ 5, null, "text", [ header, {} ], { header }, { payload: {} } ]) {
+
+      assert.throws(() => parsePacket(JSON.stringify(value)), { constructor: ProtectProtocolError, message: /not an object carrying a header and a payload/ },
+        JSON.stringify(value) + " is no packet");
+    }
+
+    // Each required header field, absent and then present with a value that is no string, fails the decoder's own header rule.
+    for(const field of [ "action", "id", "modelKey", "newUpdateId" ]) {
+
+      const absent = Object.fromEntries(Object.entries(header).filter(([key]) => key !== field));
+
+      for(const refused of [ absent, { ...header, [field]: 42 } ]) {
+
+        assert.throws(() => parsePacket(JSON.stringify({ header: refused, payload: {} })),
+          { constructor: ProtectProtocolError, message: /missing one or more required header fields/ }, "a header without a string " + field + " is refused");
+      }
+    }
   });
 });

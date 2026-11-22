@@ -35,10 +35,15 @@
  * The action frame describes what changed (`action`, `id`, `modelKey`, `newUpdateId`); the data frame carries the change itself. In practice every payload observed
  * on the wire is JSON, though the protocol permits UTF-8 strings and raw buffers and the codec handles all three.
  *
+ * {@link parsePacket} is the decoder's counterpart for a recorded packet. A recording of the raw firehose holds the packets the decoder returned, as the JSON text a
+ * {@link RawPacket} serializes to, rather than the bytes they arrived as, so reading one back applies the decoder's own header rule and restores a `Buffer` payload
+ * from its JSON form. The header rule has one spelling whether a packet arrives as bytes or as a recorded line.
+ *
  * @module ProtectPacket
  */
 import { ProtectProtocolError } from "../errors.ts";
 import { inflateSync } from "node:zlib";
+import { isPlainObject } from "./plain-object.ts";
 
 // Header frame size, in bytes. Two of these prefix every packet - one before the action payload, one before the data payload.
 const HEADER_SIZE = 8;
@@ -169,6 +174,42 @@ export function encodePacket(packet: RawPacket): Buffer {
   return Buffer.concat([ actionFrame, dataFrame ]);
 }
 
+/**
+ * Read a packet back from the JSON text a {@link RawPacket} serializes to: the decoder's counterpart for a recorded packet.
+ *
+ * A recording of the raw firehose holds packets rather than bytes, one a line as `JSON.stringify` writes it, so this reads a line back by the decoder's own rules.
+ * The header passes the check an action frame's does, and a `Buffer` payload, which JSON carries in its `{ type: "Buffer", data }` form, is restored to the bytes
+ * it holds; every other payload is returned as parsed. The form is matched exactly, `type` and `data` with no other key, because a JSON payload that carries them
+ * beside a field of its own is a record the controller sent. Like {@link decodePacket}, it returns a structurally valid `RawPacket` or throws.
+ *
+ * @param json - The JSON text of one packet.
+ *
+ * @returns The packet, with a `Buffer` payload restored from its JSON form.
+ *
+ * @throws {@link ProtectProtocolError} if the text is not JSON, is not an object carrying a `header` and a `payload`, or carries a header missing one of the
+ *   required string fields.
+ *
+ * @category Codec
+ */
+export function parsePacket(json: string): RawPacket {
+
+  const value = parseJson(json, "Recorded realtime events packet is not valid JSON.");
+
+  if(!isPlainObject(value) || !Object.hasOwn(value, "header") || !Object.hasOwn(value, "payload")) {
+
+    throw new ProtectProtocolError("Recorded realtime events packet is not an object carrying a header and a payload.");
+  }
+
+  const { header, payload } = value;
+
+  if(!isProtectEventHeader(header)) {
+
+    throw new ProtectProtocolError("Recorded realtime events packet header is missing one or more required header fields.");
+  }
+
+  return { header, payload: restoreBuffer(payload) };
+}
+
 // Decode the action frame: inflate if needed, require JSON, and validate the documented header shape. Anything else is a malformed action frame.
 function decodeActionFrame(frame: Buffer): ProtectEventHeader {
 
@@ -272,16 +313,30 @@ function inflateIfNeeded(frame: Buffer): Buffer {
   }
 }
 
-// Parse a JSON body, normalizing a parse failure into a ProtectProtocolError.
-function parseJson(body: Buffer): unknown {
+// Parse a JSON body, normalizing a parse failure into a ProtectProtocolError that carries the sentence naming what failed to parse.
+function parseJson(body: Buffer | string, sentence = "Realtime events packet payload is not valid JSON."): unknown {
 
   try {
 
     return JSON.parse(body.toString());
   } catch(error) {
 
-    throw new ProtectProtocolError("Realtime events packet payload is not valid JSON.", { cause: error });
+    throw new ProtectProtocolError(sentence, { cause: error });
   }
+}
+
+// Restore a recorded `Buffer` payload from the `{ type: "Buffer", data }` form a Buffer's own `toJSON` gives it, and return every other payload as it was parsed. The
+// cheap reads come first, so a record that is no Buffer's form is told apart without counting its keys.
+function restoreBuffer(payload: unknown): unknown {
+
+  if(!isPlainObject(payload) || (payload["type"] !== "Buffer")) {
+
+    return payload;
+  }
+
+  const data = payload["data"];
+
+  return (Array.isArray(data) && (Object.keys(payload).length === 2)) ? Buffer.from(data) : payload;
 }
 
 // Validate the documented action-frame rules: a non-null object whose four required fields are all strings. A controller bug or corrupted frame surfaces here

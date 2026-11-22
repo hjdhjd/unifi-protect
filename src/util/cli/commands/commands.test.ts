@@ -1,18 +1,20 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * commands.test.ts: Per-command unit tests driving each CLI command through the injected openClient hook - parse, render, dispatch, and error paths.
+ * commands.test.ts: Per-command unit tests driving each CLI command through the injected openClient hook - parse, render, dispatch, and error paths. The offline
+ * decode command runs over files and stdin in each of its modes: one frame's bytes lifted on their own, and a recording of the raw firehose replayed line by
+ * line through one classifier.
  */
 import type { LivestreamDescription, LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment, TypedEvent } from "../../../index.ts";
+import { PassThrough, Readable } from "node:stream";
 import { ProtectAbortedError, ProtectAuthError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectUnsupportedError,
   channels } from "../../../index.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../../protocol/packet.helpers.ts";
 import { describe, test } from "node:test";
-import { expectAt, settlement } from "../../../testing.helpers.ts";
+import { expectAt, settlement, withTempDir } from "../../../testing.helpers.ts";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { CliError } from "../shared.ts";
 import type { CommandSpec } from "../shared.ts";
-import { Readable } from "node:stream";
 import assert from "node:assert/strict";
 import { camera } from "./camera.ts";
 import { cameraFlashlight } from "./camera-flashlight.ts";
@@ -32,6 +34,7 @@ import { present } from "homebridge-plugin-utils/testing";
 import { reboot } from "./reboot.ts";
 import { relay } from "./relay.ts";
 import { relayToggle } from "./relay-toggle.ts";
+import { serializeJson } from "../output/format.ts";
 import { tmpdir } from "node:os";
 import { update } from "./update.ts";
 import { watch } from "./watch.ts";
@@ -44,6 +47,18 @@ import { watchState } from "./watch-state.ts";
 function encodeFrame(header: Partial<{ action: string; id: string; modelKey: string }>, payload: object): Buffer {
 
   return buildPacket(jsonActionFrame(makeActionHeader(header)), jsonDataFrame(payload));
+}
+
+// The frames a replayed recording carries: an audio detection's add naming its camera and start and no class, and the later update naming its class alone, which
+// lifts only through a classifier that saw the add.
+const recordedAdd: RawPacket = { header: makeActionHeader({ action: "add", id: "event-1", modelKey: "event" }),
+  payload: { camera: "camera-1", smartDetectTypes: [], start: 1000, type: "smartAudioDetect" } };
+const recordedUpdate: RawPacket = { header: makeActionHeader({ action: "update", id: "event-1", modelKey: "event" }), payload: { smartDetectTypes: ["smoke"] } };
+
+// What `ufp decode --replay` printed, each { event, raw } line parsed back from its JSON.
+function replayed(stdout: string): { event: unknown; raw: unknown }[] {
+
+  return stdout.split("\n").filter((line) => line.length > 0).map((line) => JSON.parse(line) as { event: unknown; raw: unknown });
 }
 
 // Two scripted raw packets for the watch-raw tests: a modeled camera update and an unmodeled "garage" add (a modelKey the classifier drops but the raw firehose keeps).
@@ -502,6 +517,209 @@ describe("decode", () => {
     const { ctx } = makeCommandContext({ args: ["/no/such/file.bin"], client });
 
     await assert.rejects(decode.run(ctx), { constructor: CliError, message: /Unable to read packet bytes/ });
+  });
+
+  test("--replay lifts a recording file's frames in order through one classifier, printing one { event, raw } line a frame", async () => {
+
+    await withTempDir(async (dir) => {
+
+      const file = path.join(dir, "frames.ndjson");
+      const frames = [ recordedAdd, recordedUpdate ];
+
+      await writeFile(file, frames.map((frame) => serializeJson(frame) + "\n").join(""));
+
+      const { client } = makeFakeClient();
+      const { ctx, stdout } = makeCommandContext({ args: [ "--replay", file ], client });
+
+      await decode.run(ctx);
+
+      const lines = replayed(stdout());
+
+      assert.deepEqual(lines.map((line) => line.raw), frames.map((frame) => JSON.parse(serializeJson(frame)) as unknown), "one line for each frame, in order");
+      assert.deepEqual(lines[1]?.event, { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", objectTypes: ["smoke"] },
+        "the classed update that names no camera lifts with the camera and start its add named");
+    });
+  });
+
+  test("--replay - reads the recording from stdin as it arrives", async () => {
+
+    const recording = serializeJson(recordedAdd) + "\n" + serializeJson(recordedUpdate) + "\n";
+    const { client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: [ "--replay", "-" ], client });
+
+    // process.stdin is a getter-only property, so we replace it with a one-shot Readable for the duration of the run and restore the original descriptor afterwards.
+    // The recording arrives in chunks split inside its second frame, so a line that arrives in pieces is read whole.
+    const descriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+    const split = recording.length - 10;
+
+    try {
+
+      Object.defineProperty(process, "stdin", { configurable: true,
+        value: Readable.from([ Buffer.from(recording.slice(0, split)), Buffer.from(recording.slice(split)) ]) });
+
+      await decode.run(ctx);
+
+      const lines = replayed(stdout());
+
+      assert.equal(lines.length, 2);
+      assert.deepEqual(lines[1]?.event, { at: 1000, cameraId: "camera-1", eventId: "event-1", kind: "smartDetect", objectTypes: ["smoke"] });
+    } finally {
+
+      if(descriptor !== undefined) {
+
+        Object.defineProperty(process, "stdin", descriptor);
+      }
+    }
+  });
+
+  test("--replay - prints a frame's line while stdin is still open", async () => {
+
+    const { client } = makeFakeClient();
+    const { ctx, stdout } = makeCommandContext({ args: [ "--replay", "-" ], client });
+
+    // process.stdin is a getter-only property, so we replace it with a stream the row holds open and restore the original descriptor afterwards. The first frame
+    // arrives with the input still open, so its line printing before the input ends is what shows a line is lifted as it arrives rather than once stdin is read whole.
+    const descriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+    const input = new PassThrough();
+
+    try {
+
+      Object.defineProperty(process, "stdin", { configurable: true, value: input });
+
+      input.write(serializeJson(recordedAdd) + "\n");
+
+      const run = decode.run(ctx);
+      const ended = settlement(run);
+
+      await expectAt(() => replayed(stdout()).length === 1, { message: "the first frame printed while stdin was still open" });
+
+      assert.equal(ended(), false, "the replay is still reading the open input");
+
+      input.end(serializeJson(recordedUpdate) + "\n");
+
+      await run;
+
+      assert.equal(replayed(stdout()).length, 2, "the frame that arrived last printed once the input ended");
+    } finally {
+
+      input.destroy();
+
+      if(descriptor !== undefined) {
+
+        Object.defineProperty(process, "stdin", descriptor);
+      }
+    }
+  });
+
+  test("--replay skips blank lines", async () => {
+
+    await withTempDir(async (dir) => {
+
+      const file = path.join(dir, "frames.ndjson");
+
+      await writeFile(file, "\n" + serializeJson(recordedAdd) + "\n\n   \n" + serializeJson(recordedUpdate) + "\n\n");
+
+      const { client } = makeFakeClient();
+      const { ctx, stdout } = makeCommandContext({ args: [ "--replay", file ], client });
+
+      await decode.run(ctx);
+
+      const lines = replayed(stdout());
+
+      assert.equal(lines.length, 2, "a blank line holds no frame");
+      assert.equal((lines[1]?.event as { kind: string } | null)?.kind, "smartDetect");
+    });
+  });
+
+  test("--replay rejects a line the codec refuses with a CliError naming its line number, the codec's refusal its cause", async () => {
+
+    await withTempDir(async (dir) => {
+
+      const file = path.join(dir, "frames.ndjson");
+
+      // The third line's header names no newUpdateId, which the decoder's header rule refuses. The blank line before it still counts, so the number is the one an
+      // editor shows.
+      await writeFile(file, serializeJson(recordedAdd) + "\n\n" + serializeJson({ header: { action: "update", id: "event-1", modelKey: "event" }, payload: {} }) +
+        "\n" + serializeJson(recordedUpdate) + "\n");
+
+      const { client } = makeFakeClient();
+      const { ctx, stdout } = makeCommandContext({ args: [ "--replay", file ], client });
+
+      await assert.rejects(decode.run(ctx), (error: unknown) => {
+
+        assert.ok(error instanceof CliError);
+        assert.match(error.message, /^Line 3 of the recording /);
+        assert.ok(error.cause instanceof ProtectProtocolError, "the codec's refusal is the cause");
+
+        return true;
+      });
+
+      assert.equal(replayed(stdout()).length, 1, "the frame before the refused line printed as it arrived");
+    });
+  });
+
+  test("--replay - pauses stdin and leaves it open when a refused line ends the replay before the input ends", async () => {
+
+    const { client } = makeFakeClient();
+    const { ctx } = makeCommandContext({ args: [ "--replay", "-" ], client });
+
+    // process.stdin is a getter-only property, so we replace it with a stream the row holds open and restore the original descriptor afterwards. The refusal comes
+    // while the input is still open, as on a live pipe, where an input left flowing holds the process until the pipe ends.
+    const descriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+    const input = new PassThrough();
+
+    try {
+
+      Object.defineProperty(process, "stdin", { configurable: true, value: input });
+
+      input.write("{not-json,\n");
+
+      const run = decode.run(ctx);
+
+      await expectAt(settlement(run), { message: "the refused line ended the replay while stdin was still open" });
+      await assert.rejects(run, { constructor: CliError, message: /^Line 1 of the recording / });
+
+      assert.equal(input.readableFlowing, false, "the replay paused the input it read");
+      assert.equal(input.destroyed, false, "stdin is the process's own, so the replay leaves it open");
+    } finally {
+
+      input.destroy();
+
+      if(descriptor !== undefined) {
+
+        Object.defineProperty(process, "stdin", descriptor);
+      }
+    }
+  });
+
+  test("--replay restores a Buffer payload written through the CLI's serializer, so a device frame carrying one lifts as null", async () => {
+
+    await withTempDir(async (dir) => {
+
+      const file = path.join(dir, "frames.ndjson");
+      const frame: RawPacket = { header: makeActionHeader({ action: "update", id: "camera-1", modelKey: "camera" }), payload: Buffer.from([ 1, 2, 3 ]) };
+
+      await writeFile(file, serializeJson(frame) + "\n");
+
+      const { client } = makeFakeClient();
+      const { ctx, stdout } = makeCommandContext({ args: [ "--replay", file ], client });
+
+      await decode.run(ctx);
+
+      const [line] = replayed(stdout());
+
+      // A record payload would lift as a patch of the camera, so a null event is what shows the payload was a Buffer again when it was lifted.
+      assert.equal(line?.event, null, "a device frame whose payload is a Buffer carries no record to patch");
+      assert.deepEqual(line.raw, JSON.parse(serializeJson(frame)) as unknown, "the restored payload prints in the form it was recorded in");
+    });
+  });
+
+  test("--replay rejects an unreadable recording with a CliError naming the read failure", async () => {
+
+    const { client } = makeFakeClient();
+    const { ctx } = makeCommandContext({ args: [ "--replay", "/no/such/frames.ndjson" ], client });
+
+    await assert.rejects(decode.run(ctx), { constructor: CliError, message: /Unable to read the recording/ });
   });
 });
 

@@ -216,9 +216,9 @@ export const KNOWN_EVENT_TYPES: readonly string[] = [ ACCESS_EVENT_TYPE, ADMIN_A
  * as a `devicePatched`; it is never re-synthesized into an activity signal, which would require remembering the previous value and thus break purity. "Did motion
  * happen?" has exactly one home (the occurrence); "what is the camera's current `lastMotion`?" has exactly one home (the state).
  *
- * Being single-packet, it cannot attribute a frame that omits its camera. The controller names an event's camera and start on the event's `add` alone, so a later
- * `update` that names neither, an audio detection's classed update above all, classifies as `null` here. The live rail lifts its frames through a
- * {@link StreamClassifier}, which remembers each open event's camera and start and carries them to such a frame.
+ * Being single-packet, it cannot attribute a frame that omits its camera. The controller names an event's camera and start on the event's `add` alone, so a
+ * camera-attributed event's later `update` that names neither, an audio detection's classed update above all, classifies as `null` here. The live rail lifts its
+ * frames through a {@link StreamClassifier}, which remembers each open event's camera and start and carries them to such a frame.
  *
  * @param raw - A structurally valid packet from {@link ../protocol/packet | decodePacket}.
  *
@@ -254,20 +254,25 @@ interface OpenEvent {
 }
 
 /**
- * The classifier a realtime stream lifts its frames through: {@link classifyPacket}, with each open event's camera and start carried to the event's later frames.
+ * The classifier a realtime stream lifts its frames through: {@link ProtectClient.classifyPacket}, with each open event's camera and start carried to the event's
+ * later frames.
  *
  * The controller names an event's camera and start on its `add` and sends what it learns later as partial `update`s that name neither - an audio detection's class
  * above all, since the controller saves every audio event with no class and names the class in a frame of its own. So this remembers each open event's camera and
  * start under its id and supplies them to a later frame that omits them, while what was detected is still read from the frame that says it alone. An entry opens on
  * an `add` that names its own camera and carries no `end`, and closes on the frame that carries an `end` or on the event's `remove`, because what the controller
  * sends after an end restates the event, a visual detection's classes among it, and lifting that would deliver a detection for an event already over. The frame
- * that carries the `end` is lifted with the entry before the entry goes.
+ * that carries the `end` is lifted with the entry before the entry goes, while a `remove` is read from the header whatever its payload carries, and its own frame
+ * takes nothing from the entry it closes.
  *
  * One instance serves one stream for that stream's life, so a new connection starts with no open events. Its memory is bounded by the capacity its owner hands in,
  * at which the oldest entry is evicted to admit a new one, the bound for an event whose end never arrives. A frame of any other model key costs nothing beyond
- * `classifyPacket`, and an `event` frame costs one map read, with a write only at an event's `add`, its end or its `remove`.
+ * `classifyPacket`, and an `event` frame costs at most one map read, with a write only at an event's `add`, its end or its `remove`.
  *
- * @internal
+ * A consumer reaches one through {@link ProtectClient.createClassifier}, built as the events stream builds its own, at the same bound, so a recording of one
+ * connection, taken unfiltered from its start and lifted in order through one classifier, reads as the live rail read it.
+ *
+ * @category Events
  */
 export class StreamClassifier {
 
@@ -277,6 +282,8 @@ export class StreamClassifier {
   /**
    * @param options          - The classifier's options.
    * @param options.capacity - The most open events remembered at once, the oldest evicted to admit a new one at this bound.
+   *
+   * @internal
    */
   constructor({ capacity }: { capacity: number }) {
 
@@ -286,7 +293,7 @@ export class StreamClassifier {
   /**
    * Classify one frame of the stream, remembering or forgetting its event as the frame opens or ends it.
    *
-   * @param raw - A structurally valid packet from {@link ../protocol/packet | decodePacket}.
+   * @param raw - A structurally valid packet from {@link ProtectClient.decodePacket}.
    *
    * @returns The classified {@link TypedEvent}, or `null` for a valid-but-unmodeled packet.
    */
@@ -614,7 +621,7 @@ function classifyActivity(eventId: string, payload: unknown, remembered?: OpenEv
     return { at, cameraId, eventId, kind: "tamperDetected", metadata };
   }
 
-  // A recognized smart `type`, or a finalizing update that omits `type` but still carries a populated `smartDetectTypes`, both classify as a smart detection.
+  // A recognized smart `type`, or a later update that omits `type` but still carries a populated `smartDetectTypes`, both classify as a smart detection.
   if(((type !== undefined) && SMART_EVENT_TYPES.includes(type)) || (objectTypes.length > 0)) {
 
     return { at, cameraId, eventId, kind: "smartDetect", metadata, objectTypes };

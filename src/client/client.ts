@@ -24,7 +24,9 @@
 import { PROTECT_PROXY_PATH, controllerAuthority } from "../transport/url-host.ts";
 import { ProtectAbortedError, ProtectBootstrapError } from "../errors.ts";
 import type { ProtectNvrBootstrap, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "../types/index.ts";
+import type { StreamClassifier, TypedEvent } from "../protocol/events.ts";
 import { classifyPacket, eventSubjects } from "../protocol/events.ts";
+import { decodePacket, parsePacket } from "../protocol/packet.ts";
 import { livestreamUrlResolver, talkbackUrlResolver } from "../transport/ws-endpoint.ts";
 import { selectControllerName, selectIsAdmin, selectLiveviews, selectRingtones } from "../state/selectors.ts";
 import { AuthSession } from "../transport/auth.ts";
@@ -52,9 +54,7 @@ import { StateStore } from "../state/store.ts";
 import type { StreamOptions } from "../event-bus.ts";
 import { TalkbackSession } from "../transport/talkback-session.ts";
 import { Transport } from "../transport/http.ts";
-import type { TypedEvent } from "../protocol/events.ts";
 import type { Viewer } from "../devices/viewer.ts";
-import { decodePacket } from "../protocol/packet.ts";
 import { describeInitSegment } from "../protocol/init-segment.ts";
 import { noopLog } from "../logging.ts";
 import { wallClock } from "../clock.ts";
@@ -458,8 +458,10 @@ export class ProtectClient implements AsyncDisposable {
    * Decode a raw realtime packet's bytes into a {@link RawPacket} - the validated wire header plus the data-frame payload, *before* classification. A static, pure,
    * connection-independent operation: it is the offline counterpart of the {@link ProtectClient.rawPackets} rail (which is this same decode applied to the live socket),
    * and it is a `static` rather than an instance method precisely because decoding needs no client - it reads no connection state. Pair it with {@link
-   * ProtectClient.classifyPacket} to lift captured bytes one frame at a time (`classifyPacket(decodePacket(bytes))`), the single-packet lift the live pipeline is
-   * built on; the live pipeline also carries an open event's camera and start to the event's later frames, which name neither.
+   * ProtectClient.classifyPacket} to lift one captured frame on its own (`classifyPacket(decodePacket(bytes))`), the single-packet lift the live pipeline is built on.
+   * A recording of the raw rail holds packets rather than bytes, and one of a single connection, taken unfiltered from its start, replays as the live rail read it
+   * when each line is read back through {@link ProtectClient.parsePacket} and every packet is lifted, in order, through one classifier from {@link
+   * ProtectClient.createClassifier}, built as the {@link ProtectClient.events} rail's own is.
    *
    * @param buf - The raw packet bytes (a `Buffer` included; read without copying).
    *
@@ -470,6 +472,24 @@ export class ProtectClient implements AsyncDisposable {
   static decodePacket(buf: Uint8Array): RawPacket {
 
     return decodePacket(buf);
+  }
+
+  /**
+   * Read a recorded packet back from the JSON text a {@link RawPacket} serializes to: the counterpart of {@link ProtectClient.decodePacket} for a packet recorded
+   * off the {@link ProtectClient.rawPackets} rail, which yields packets rather than bytes. A static, pure, connection-independent operation that reads the header
+   * by the decoder's own rule and restores a `Buffer` payload from its JSON form, so a recorded packet reads back as the packet the rail yielded. A recording of
+   * one connection, taken unfiltered from its start, replays as the live rail read it when each line is read through this and every packet is lifted, in order,
+   * through one classifier from {@link ProtectClient.createClassifier}.
+   *
+   * @param json - The JSON text of one packet, as `JSON.stringify` writes a {@link RawPacket}.
+   *
+   * @returns The recorded packet.
+   *
+   * @throws {@link ProtectProtocolError} if the text is not a packet's JSON or carries a header the decoder would refuse.
+   */
+  static parsePacket(json: string): RawPacket {
+
+    return parsePacket(json);
   }
 
   /**
@@ -491,9 +511,12 @@ export class ProtectClient implements AsyncDisposable {
   /**
    * Classify a decoded {@link RawPacket} into a {@link TypedEvent}, or `null` when the packet is valid but describes something the library does not model. The static,
    * pure, connection-independent single-packet lift the {@link ProtectClient.events} rail is built on: it reads the frame's own fields alone, while the live rail also
-   * carries an open event's camera and start to the event's later frames. The controller names neither on an event's later `update`, so such a frame, an audio
-   * detection's classed update above all, lifts on the live rail and classifies as `null` here. Takes the output of {@link ProtectClient.decodePacket}, so the two
-   * compose to turn captured bytes into a typed event through the one decode and classify implementation the live rail runs.
+   * carries an open event's camera and start to the event's later frames. The controller names neither on a camera-attributed event's later `update`, so such a
+   * frame, an audio detection's classed update above all, lifts on the live rail and classifies as `null` here. Takes the output of {@link
+   * ProtectClient.decodePacket}, so the two compose to turn one captured frame into a typed event through the one decode and classify implementation the live rail
+   * runs. A recording of one connection, taken unfiltered from its start, replays as the live rail read it through a classifier from {@link
+   * ProtectClient.createClassifier} instead, each line read back through {@link ProtectClient.parsePacket} and every packet lifted, in order, through that one
+   * classifier.
    *
    * @param packet - The decoded raw packet.
    *
@@ -502,6 +525,22 @@ export class ProtectClient implements AsyncDisposable {
   static classifyPacket(packet: RawPacket): TypedEvent | null {
 
     return classifyPacket(packet);
+  }
+
+  /**
+   * Create a classifier built as the one the {@link ProtectClient.events} rail lifts its frames through, for a consumer lifting a recording of its own. A {@link
+   * StreamClassifier} carries an open event's camera and start to the event's later frames, which {@link ProtectClient.classifyPacket} reads on their own, and
+   * this builds one where the events stream builds its own, at the same bound, so a recording of one connection, taken unfiltered from its start, read back
+   * through {@link ProtectClient.parsePacket} and lifted, in order, through one classifier reads as the live rail read it. A recording that spans a reconnect,
+   * was filtered, or starts inside an event can read otherwise, because each connection starts with no open events and an event's camera comes from its `add`.
+   * A static, connection-independent operation: each classifier holds the open events of the frames it has lifted and no others, so one serves one recording,
+   * and a second starts with none, as a reconnect's stream does.
+   *
+   * @returns A classifier holding no open events.
+   */
+  static createClassifier(): StreamClassifier {
+
+    return EventStream.createClassifier();
   }
 
   /**
