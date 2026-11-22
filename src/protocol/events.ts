@@ -185,7 +185,7 @@ const SENSOR_CLOSED_EVENT_TYPE = "sensorClosed";
 const SENSOR_MOTION_EVENT_TYPE = "sensorMotion";
 const SENSOR_OPENED_EVENT_TYPE = "sensorOpened";
 const SENSOR_SMOKE_TEST_EVENT_TYPE = "sensorSmokeTest";
-const SMART_EVENT_TYPES: readonly string[] = [ "smartAudioDetect", "smartDetectLine", "smartDetectZone" ];
+const SMART_EVENT_TYPES: readonly string[] = [ "smartAudioDetect", "smartDetectLine", "smartDetectLoiterZone", "smartDetectZone" ];
 const TAMPER_EVENT_TYPE = "smartDetectTamper";
 
 /**

@@ -186,7 +186,7 @@ describe("classifyPacket - activity signals (event model key only)", () => {
 
     // The object-type fallback classifies a packet with a populated list as smartDetect even under a type the classifier does not recognize, so each type is also
     // read bare: only a packet naming no object types shows that the type itself is recognized.
-    for(const type of [ "smartDetectZone", "smartDetectLine", "smartAudioDetect" ]) {
+    for(const type of [ "smartDetectZone", "smartDetectLine", "smartDetectLoiterZone", "smartAudioDetect" ]) {
 
       const bare = classifyPacket(pkt({ action: "add", modelKey: "event", payload: { cameraId: "camera-1", type } }));
       const typed = classifyPacket(pkt({ action: "add", modelKey: "event", payload: { cameraId: "camera-1", smartDetectTypes: [ "person", "vehicle" ], type } }));
