@@ -1,7 +1,7 @@
 {
   "name": "unifi-protect",
   "type": "module",
-  "version": "5.4.3",
+  "version": "5.5.0",
   "displayName": "UniFi Protect API",
   "description": "A complete implementation of the UniFi Protect API.",
   "author": {

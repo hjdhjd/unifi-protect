@@ -99,7 +99,8 @@ It splits into two categories by relationship to state:
 `event` model key (the only place an occurrence carries identity and metadata), flow only to the `client.events()` firehose, and are no-ops in the reducer:
 
 - `motionDetected` - raw motion began on a camera.
-- `smartDetect` - a smart object class was detected (`objectTypes` carries the classes).
+- `smartDetect` - a smart object class was detected (`objectTypes` carries the classes). A detection's first event can carry an empty `objectTypes`: an audio
+  detection opens before the controller names its class, and the class follows on a later event with the same `eventId`.
 - `tamperDetected` - a camera reported tampering (the controller's `smartDetectTamper` occurrence). A one-way signal with no paired clear and no camera-state field,
   unlike motion's `lastMotion` - so the occurrence is its single source of truth. It is a sibling of `motionDetected`, not a `smartDetect` variant: tamper is not a
   smart object class and carries no `objectTypes`.

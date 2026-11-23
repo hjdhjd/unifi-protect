@@ -173,6 +173,7 @@ The UniFi Protect API is undocumented and implementing a library like this one i
 
 | Name | Description |
 | ------ | ------ |
+| [StreamClassifier](interfaces/StreamClassifier.md) | The classifier a realtime stream lifts its frames through: [ProtectClient.classifyPacket](classes/ProtectClient.md#classifypacket), with each open event's camera and start carried to the event's later frames. |
 | [StreamOptions](interfaces/StreamOptions.md) | Options accepted by the event-bus `stream` rail: the abort signal that terminates the iteration. The queue is unbounded, matching the livestream-subscription rule (a subscriber receives every emission until it aborts, stops iterating, or the owner of the events closes). |
 | [TypedEvent](type-aliases/TypedEvent.md) | The discriminated union of every realtime event the library models, exposed on the firehose ([ProtectClient.events](classes/ProtectClient.md#events)) and by [ProtectClient.classifyPacket](classes/ProtectClient.md#classifypacket). It splits into two categories by relationship to state: |
 

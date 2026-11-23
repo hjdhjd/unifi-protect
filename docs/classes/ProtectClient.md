@@ -631,9 +631,11 @@ static classifyPacket(packet): TypedEvent | null;
 ```
 
 Classify a decoded [RawPacket](../interfaces/RawPacket.md) into a [TypedEvent](../type-aliases/TypedEvent.md), or `null` when the packet is valid but describes something the library does not model. The static,
-pure, connection-independent counterpart of the [ProtectClient.events](#events) rail (which is this same classification applied to the live socket). Takes the output of
-[ProtectClient.decodePacket](#decodepacket), so the two compose to turn captured bytes into a typed event exactly as the realtime path does - one decode/classify
-implementation, reached the same way live and offline.
+pure, connection-independent single-packet lift the [ProtectClient.events](#events) rail is built on: it reads the frame's own fields alone, while the live rail also
+carries an open event's camera and start to the event's later frames. The controller names neither on a camera-attributed event's later `update`, so such a
+frame, an audio detection's classed update above all, lifts on the live rail and classifies as `null` here. Takes the output of [ProtectClient.decodePacket](#decodepacket), so the two compose to turn one captured frame into a typed event through the one decode and classify implementation the live rail
+runs. A recording of one connection, taken unfiltered from its start, replays as the live rail read it through a classifier from [ProtectClient.createClassifier](#createclassifier) instead, each line read back through [ProtectClient.parsePacket](#parsepacket) and every packet lifted, in order, through that one
+classifier.
 
 #### Parameters
 
@@ -677,6 +679,27 @@ A fully-ready client.
 
 ***
 
+### createClassifier()
+
+```ts
+static createClassifier(): StreamClassifier;
+```
+
+Create a classifier built as the one the [ProtectClient.events](#events) rail lifts its frames through, for a consumer lifting a recording of its own. A [StreamClassifier](../interfaces/StreamClassifier.md) carries an open event's camera and start to the event's later frames, which [ProtectClient.classifyPacket](#classifypacket) reads on their own, and
+this builds one where the events stream builds its own, at the same bound, so a recording of one connection, taken unfiltered from its start, read back
+through [ProtectClient.parsePacket](#parsepacket) and lifted, in order, through one classifier reads as the live rail read it. A recording that spans a reconnect,
+was filtered, or starts inside an event can read otherwise, because each connection starts with no open events and an event's camera comes from its `add`.
+A static, connection-independent operation: each classifier holds the open events of the frames it has lifted and no others, so one serves one recording,
+and a second starts with none, as a reconnect's stream does.
+
+#### Returns
+
+[`StreamClassifier`](../interfaces/StreamClassifier.md)
+
+A classifier holding no open events.
+
+***
+
 ### decodePacket()
 
 ```ts
@@ -685,7 +708,9 @@ static decodePacket(buf): RawPacket;
 
 Decode a raw realtime packet's bytes into a [RawPacket](../interfaces/RawPacket.md) - the validated wire header plus the data-frame payload, *before* classification. A static, pure,
 connection-independent operation: it is the offline counterpart of the [ProtectClient.rawPackets](#rawpackets) rail (which is this same decode applied to the live socket),
-and it is a `static` rather than an instance method precisely because decoding needs no client - it reads no connection state. Pair it with [ProtectClient.classifyPacket](#classifypacket) to reproduce the live pipeline (`classifyPacket(decodePacket(bytes))`) over captured bytes.
+and it is a `static` rather than an instance method precisely because decoding needs no client - it reads no connection state. Pair it with [ProtectClient.classifyPacket](#classifypacket) to lift one captured frame on its own (`classifyPacket(decodePacket(bytes))`), the single-packet lift the live pipeline is built on.
+A recording of the raw rail holds packets rather than bytes, and one of a single connection, taken unfiltered from its start, replays as the live rail read it
+when each line is read back through [ProtectClient.parsePacket](#parsepacket) and every packet is lifted, in order, through one classifier from [ProtectClient.createClassifier](#createclassifier), built as the [ProtectClient.events](#events) rail's own is.
 
 #### Parameters
 
@@ -753,3 +778,33 @@ like [ProtectClient.classifyPacket](#classifypacket). Total and exhaustive: it c
 readonly `string`[]
 
 The subject record id(s), possibly empty.
+
+***
+
+### parsePacket()
+
+```ts
+static parsePacket(json): RawPacket;
+```
+
+Read a recorded packet back from the JSON text a [RawPacket](../interfaces/RawPacket.md) serializes to: the counterpart of [ProtectClient.decodePacket](#decodepacket) for a packet recorded
+off the [ProtectClient.rawPackets](#rawpackets) rail, which yields packets rather than bytes. A static, pure, connection-independent operation that reads the header
+by the decoder's own rule and restores a `Buffer` payload from its JSON form, so a recorded packet reads back as the packet the rail yielded. A recording of
+one connection, taken unfiltered from its start, replays as the live rail read it when each line is read through this and every packet is lifted, in order,
+through one classifier from [ProtectClient.createClassifier](#createclassifier).
+
+#### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `json` | `string` | The JSON text of one packet, as `JSON.stringify` writes a [RawPacket](../interfaces/RawPacket.md). |
+
+#### Returns
+
+[`RawPacket`](../interfaces/RawPacket.md)
+
+The recorded packet.
+
+#### Throws
+
+[ProtectProtocolError](ProtectProtocolError.md) if the text is not a packet's JSON or carries a header the decoder would refuse.

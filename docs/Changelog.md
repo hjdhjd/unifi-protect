@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.5.0 (2026-11-22)
+  * New feature: recording replay. `ProtectClient.parsePacket()` reads back a packet you recorded from `rawPackets()`, and `ProtectClient.createClassifier()` turns a recorded connection's packets into the same events `events()` gave you live. `ufp decode --replay` does this from the command line, from a file or straight from `ufp watch raw --json`.
+  * Fix: audio smart detections now reach `events()` with the sound that was detected, so a smoke alarm or speech detection arrives as a `smartDetect` naming its camera and the sound in `objectTypes`, not just the empty detection that opened it.
+  * Fix: loitering detections now reach `events()` as `smartDetect` events from the moment they begin, as zone and line crossing detections do.
+  * Housekeeping.
+
 ## 5.4.3 (2026-11-20)
   * New feature: `unifi-protect/testing` lets your own tests run a real talkback session with only the controller connection faked. `TestTalkbackFactory` answers `camera.talkback()` for you, and `TestTalkbackSocket` lets you open, fail or close the connection and read every chunk sent.
   * Fix: event streams now end when you dispose of the client, so a `for await` over `events()`, `rawPackets()`, or `stream()` finishes on its own instead of waiting forever. Any `once()` still pending at that point rejects with `ProtectAbortedError`.
