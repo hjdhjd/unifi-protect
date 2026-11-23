@@ -7,12 +7,12 @@ import type { NoveltyFinding, SchemaManifest } from "./manifest.ts";
 import { describe, test } from "node:test";
 import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, parseSchemaManifest, snapshotUndeclared,
   snapshotUnmodeled } from "./manifest.ts";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { CliError } from "./shared.ts";
 import type { RawPacket } from "../../index.ts";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { tmpdir } from "node:os";
+import { withTempDir } from "../../testing.helpers.ts";
+import { writeFile } from "node:fs/promises";
 
 /* A miniature manifest standing in for the generated one: described collections, the irregular nvr singleton with a keyed map, an opaque collection, a scalar member,
  * and a vocabulary small enough to read at a glance. The generator's own output is asserted against the real type tier in its own test; what these tests need is a
@@ -63,20 +63,6 @@ const FIXTURE: SchemaManifest = {
 function fixtureWith(overrides: Record<string, unknown>): string {
 
   return JSON.stringify({ ...FIXTURE, ...overrides });
-}
-
-// Run a test body with a throwaway directory, so a manifest file written for the loader never lands anywhere the developer would notice.
-async function withDir(body: (dir: string) => Promise<void>): Promise<void> {
-
-  const dir = await mkdtemp(path.join(tmpdir(), "ufp-manifest-"));
-
-  try {
-
-    await body(dir);
-  } finally {
-
-    await rm(dir, { force: true, recursive: true });
-  }
 }
 
 // Build a raw packet around a payload, for the event-type reader.
@@ -447,7 +433,7 @@ describe("loadSchemaManifest", () => {
 
   test("loads and validates a well-formed manifest from an explicit path", async () => {
 
-    await withDir(async (dir) => {
+    await withTempDir(async (dir) => {
 
       const file = path.join(dir, "schema-manifest.json");
 
@@ -460,7 +446,7 @@ describe("loadSchemaManifest", () => {
 
   test("a missing manifest names the build step that produces it", async () => {
 
-    await withDir(async (dir) => {
+    await withTempDir(async (dir) => {
 
       await assert.rejects(() => loadSchemaManifest(path.join(dir, "absent.json")), { constructor: CliError, message: /Run "npm run build"/ });
     });
@@ -470,7 +456,7 @@ describe("loadSchemaManifest", () => {
 
     // Pointing at a directory is the reachable stand-in for any read failure that is not absence, such as a permission error. Absence means "the build has not
     // run yet" and gets that hint, while anything else is a real problem and must not be reported as a missing build artifact.
-    await withDir(async (dir) => {
+    await withTempDir(async (dir) => {
 
       await assert.rejects(() => loadSchemaManifest(dir), { constructor: CliError, message: /Unable to read the schema manifest/ });
     });

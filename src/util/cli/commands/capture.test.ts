@@ -11,14 +11,14 @@ import type { ProtectClient, RawPacket, TypedEvent } from "../../../index.ts";
 import type { SchemaManifest, SchemaNode } from "../manifest.ts";
 import { describe, test } from "node:test";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import type { FakeClientOptions } from "../fake-client.helpers.ts";
 import { PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS } from "../../../settings.ts";
 import assert from "node:assert/strict";
 import { createCaptureHandler } from "./capture.ts";
 import { loadSchemaManifest } from "../manifest.ts";
 import path from "node:path";
-import { tmpdir } from "node:os";
+import { withTempDir } from "../../../testing.helpers.ts";
 
 // A string field, the shape most of the fixture's declarations take.
 const text: SchemaNode = { kind: "primitive", types: ["string"] };
@@ -153,9 +153,7 @@ async function runCaptureRaw(options: RunOptions, dir: string, withAdopt?: (adop
 // Run capture into a throwaway directory and hand back the parsed bundle.
 async function runCapture(options: RunOptions, withAdopt?: (adopt: Adopt) => void): Promise<{ bundle: Bundle; stdout: string }> {
 
-  const dir = await mkdtemp(path.join(tmpdir(), "ufp-capture-"));
-
-  try {
+  return withTempDir(async (dir) => {
 
     const out = path.join(dir, "bundle.json");
     const result = await runCaptureRaw({ ...options, args: [ "--out", out, ...(options.args ?? []) ] }, dir, withAdopt);
@@ -163,10 +161,7 @@ async function runCapture(options: RunOptions, withAdopt?: (adopt: Adopt) => voi
     assert.equal(result.thrown, undefined, "the run completed");
 
     return { bundle: JSON.parse(await readFile(out, "utf8")) as Bundle, stdout: result.stdout };
-  } finally {
-
-    await rm(dir, { force: true, recursive: true });
-  }
+  });
 }
 
 describe("capture", () => {
@@ -541,10 +536,9 @@ describe("capture lifetime", () => {
   test("a stray positional is refused before the client opens, and nothing is written", async () => {
 
     // Capture reads its flags alone, so a stray word is a usage mistake the parser refuses, which the entry point renders at exit 2, before the controller is reached.
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-capture-"));
-    let opened = false;
+    await withTempDir(async (dir) => {
 
-    try {
+      let opened = false;
 
       const result = await runCaptureRaw({ args: ["stray"], publish: (): void => {
 
@@ -554,36 +548,26 @@ describe("capture lifetime", () => {
       assert.match(String((result.thrown as NodeJS.ErrnoException | undefined)?.code), /^ERR_PARSE_ARGS/, "the parser's own error, not a CLI error");
       assert.equal(opened, false, "the refusal comes before the client is opened");
       assert.deepEqual((await readdir(dir)).filter((entry) => entry !== "schema-manifest.json"), [], "nothing was written");
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("an abort before the bootstrap arrives takes the cancellation path and writes nothing", async () => {
 
     // A cancellation before the subject map exists has nothing to finalize, so the run ends as a cancellation rather than as a bundle.
-    const cancel = new AbortController();
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-capture-"));
+    await withTempDir(async (dir) => {
 
-    try {
-
+      const cancel = new AbortController();
       const result = await runCaptureRaw({ bootstrapHoldsOpen: true, publish: () => cancel.abort(), signal: cancel.signal }, dir);
 
       assert.ok(result.thrown instanceof ProtectAbortedError,
         "an abort before the fetch surfaces as the library's typed abort, which the entry point renders as exit 130");
       assert.deepEqual((await readdir(dir)).filter((entry) => entry !== "schema-manifest.json"), [], "nothing was written");
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("a rail that dies still leaves a bundle behind, written and announced before the error is raised", async () => {
 
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-capture-"));
-
-    try {
+    await withTempDir(async (dir) => {
 
       const out = path.join(dir, "bundle.json");
       const boom = new Error("the events rail died");
@@ -595,29 +579,27 @@ describe("capture lifetime", () => {
       assert.equal(bundle.frames.raw.kept.length, 1);
       assert.match(result.stdout, /Wrote /);
       assert.equal(result.thrown, boom);
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("the default filename is identity-neutral", async () => {
 
     // Nothing about the controller, the site, or the operator belongs in a filename that will be attached to an email.
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-capture-"));
-    const cwd = process.cwd();
+    await withTempDir(async (dir) => {
 
-    try {
+      const cwd = process.cwd();
 
-      process.chdir(dir);
+      try {
 
-      await runCaptureRaw({}, dir);
+        process.chdir(dir);
 
-      assert.ok((await readdir(dir)).some((entry) => /^ufp-capture-\d{8}-\d{6}\.json$/.test(entry)));
-    } finally {
+        await runCaptureRaw({}, dir);
 
-      process.chdir(cwd);
-      await rm(dir, { force: true, recursive: true });
-    }
+        assert.ok((await readdir(dir)).some((entry) => /^ufp-capture-\d{8}-\d{6}\.json$/.test(entry)));
+      } finally {
+
+        process.chdir(cwd);
+      }
+    });
   });
 });

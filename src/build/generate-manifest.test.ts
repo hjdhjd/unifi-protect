@@ -8,12 +8,11 @@ import { buildSchemaManifest, writeSchemaManifest } from "./generate-manifest.ts
 import { describe, test } from "node:test";
 import fs, { readFileSync } from "node:fs";
 import { loadSchemaManifest, schemaManifestLocation } from "../util/cli/manifest.ts";
-import { mkdtemp, rm } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
-import { tmpdir } from "node:os";
+import { withTempDir } from "../testing.helpers.ts";
 
 // The generator builds a TypeScript program, so it is built once here and shared by every assertion below rather than per test.
 const manifest: SchemaManifest = buildSchemaManifest();
@@ -275,18 +274,13 @@ describe("generate-manifest", () => {
 
     // The generator and the loader are two halves of one contract, so the emitted bytes are round-tripped through the loader's own validation rather than merely
     // inspected: anything the generator could emit that the loader would reject is a build that ships a manifest the CLI refuses to read.
-    const dir = await mkdtemp(path.join(tmpdir(), "ufp-manifest-build-"));
-
-    try {
+    await withTempDir(async (dir) => {
 
       const target = writeSchemaManifest(path.join(dir, "schema-manifest.json"));
 
       // The loaded tables carry no prototype and a strict deep equality compares prototypes, so the loaded manifest is compared in its JSON form.
       assert.deepEqual(JSON.parse(JSON.stringify(await loadSchemaManifest(target))), manifest);
-    } finally {
-
-      await rm(dir, { force: true, recursive: true });
-    }
+    });
   });
 
   test("the writer's default location and the loader's default location name one file", (t) => {

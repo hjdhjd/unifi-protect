@@ -7,7 +7,7 @@ import { PassThrough, Writable } from "node:stream";
 import { ProtectAbortedError, formatErrorChain } from "../../index.ts";
 import { describe, test } from "node:test";
 import { inspect, promisify } from "node:util";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { CliError } from "./shared.ts";
 import type { InteractivePrompt } from "./credentials.ts";
 import assert from "node:assert/strict";
@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadCredentials } from "./credentials.ts";
 import path from "node:path";
-import { tmpdir } from "node:os";
+import { withTempDir } from "../../testing.helpers.ts";
 
 // The CLI's entry point, which a row runs as its own process to read what the CLI itself prints for a refusal.
 const CLI_ENTRY = fileURLToPath(new URL("./index.ts", import.meta.url));
@@ -23,17 +23,7 @@ const CLI_ENTRY = fileURLToPath(new URL("./index.ts", import.meta.url));
 // Run a test body with a fresh, isolated working directory and home directory, cleaning both afterward so the developer's real ~/.ufp.json is never touched.
 async function withDirs(body: (cwd: string, home: string) => Promise<void>): Promise<void> {
 
-  const cwd = await mkdtemp(path.join(tmpdir(), "ufp-cli-cwd-"));
-  const home = await mkdtemp(path.join(tmpdir(), "ufp-cli-home-"));
-
-  try {
-
-    await body(cwd, home);
-  } finally {
-
-    await rm(cwd, { force: true, recursive: true });
-    await rm(home, { force: true, recursive: true });
-  }
+  return withTempDir(async (cwd) => withTempDir(async (home) => body(cwd, home)));
 }
 
 describe("loadCredentials", () => {

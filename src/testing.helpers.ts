@@ -85,7 +85,8 @@ export function capturingLog(): CapturingLogger {
 }
 
 /**
- * Run a function with a freshly created temporary directory. The directory is removed (recursively, ignoring errors) when the function resolves or rejects.
+ * Run a function with a freshly created temporary directory. The directory is removed recursively when the function resolves or rejects, and a directory that is
+ * already gone is not an error.
  *
  * Tests must never write to a fixed filesystem path - that creates order dependencies and leaks between runs. This helper guarantees isolation.
  *
