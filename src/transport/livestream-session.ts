@@ -10,11 +10,17 @@
  * single {@link AbortController} ends, an injected `webSocket` factory, a private {@link EventBus} for its surface, and `AsyncDisposable`. A reader who has
  * internalized `EventStream` reads this class and recognizes the same skeleton.
  *
- * The one thing the events stream does not need and this one does is **URL negotiation**. The events WebSocket connects to a fixed, predictable address; a livestream
- * URL is minted on demand by the controller over authenticated HTTP and must be fetched first. That fetch is the injected `resolveUrl` hook (dependency inversion,
- * exactly like the {@link Transport}'s `getAuthHeaders` and the {@link StateStore}'s `refresh`): the session owns the *whole* connect attempt - negotiate the URL, open
- * the socket, receive the first init segment - so every failure flows through one error rail, while the session never imports `Transport`. The composition root wires
- * `resolveUrl` to a transport-backed GET that returns the WebSocket URL on the controller authority.
+ * The one thing the events stream does not need and this one does is **URL negotiation**. The events WebSocket connects to a fixed, predictable address; a
+ * livestream's addresses are minted on demand by the controller over authenticated HTTP and must be fetched first. That fetch is the injected `resolveUrl` hook
+ * (dependency inversion, exactly like the {@link Transport}'s `getAuthHeaders` and the {@link StateStore}'s `refresh`): the session owns the *whole* connect attempt -
+ * negotiate the addresses, open the socket on its route, receive the first init segment - so every failure flows through one error rail, while the session never
+ * imports `Transport`. The composition root wires `resolveUrl` to a transport-backed GET that answers both of a livestream's addresses: the proxied one on the
+ * controller authority under the UniFi OS proxy, and the direct one on the controller's media server when the controller offers it.
+ *
+ * **A session dials exactly one route.** Its spec's `route` is `"proxied"`, the default, or `"direct"`, and never `"preferDirect"`, which the pool resolves to one of
+ * them for each attempt. The proxied route dials the controller authority with the session's auth headers and the certificate posture `verifyTls` sets; the direct
+ * route dials the media server, whose minted alias in the path is its only credential, with no session header and no certificate check. A direct session handed no
+ * direct address tears down with {@link ProtectLivestreamRouteError} and builds no socket.
  *
  * **The session is the single source of truth for the livestream wire protocol** - both the request params it builds from its {@link LivestreamSpec} and the binary
  * frame decode (a 1-byte frame type + 3-byte big-endian length per frame, reassembled across WebSocket messages, accumulated into a segment between `beginSegment` and
@@ -29,7 +35,7 @@
  */
 import { Agent, WebSocket } from "undici";
 import { PROTECT_LIVESTREAM_CHUNK_SIZE, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_SEGMENT_LENGTH } from "../settings.ts";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectStallError, assertNever } from "../errors.ts";
+import { ProtectAbortedError, ProtectError, ProtectLivestreamRouteError, ProtectNetworkError, ProtectStallError, assertNever } from "../errors.ts";
 import type { ProtectWebSocket, ProtectWebSocketCloseEvent, ProtectWebSocketErrorEvent, ProtectWebSocketMessageEvent, SocketTeardown } from "./ws.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import { millisecondsSince, wallClock } from "../clock.ts";
@@ -69,6 +75,9 @@ const EMPTY_BUFFER: Buffer = Buffer.alloc(0);
 // The byte width of each decode timestamp on the wire: a 64-bit big-endian unsigned integer, mirroring the `tfdt` box's baseMediaDecodeTime.
 const TIMESTAMP_BYTES = 8;
 
+// The port a WebSocket address dials when it names none, by its scheme.
+const WEBSOCKET_DEFAULT_PORTS: Readonly<Record<string, number>> = { "ws:": 80, "wss:": 443 };
+
 /**
  * The deterministic lifecycle of a livestream session. The transitions are: `idle -> connecting` (construction begins; the URL is negotiated and the socket built),
  * `connecting -> handshaking` (WebSocket `open`), `handshaking -> live` (first init segment received and cached), and `any -> closed` (teardown run, listeners
@@ -92,9 +101,33 @@ export type LivestreamSource =
   { lens: number; type: "lens" };
 
 /**
- * The description of a livestream a consumer asks for. The stream-affecting fields - the `source` selector (a quality channel or a secondary lens) plus `segmentLength`,
- * `chunkSize`, and `timestamps` - form the pool's sharing identity, so two subscribers share one underlying session only when these agree. `requestId` is a log label
- * only. Every field except `cameraId` has a default; an omitted `source` is the primary view (channel 0).
+ * How a livestream reaches the controller. One negotiation answers both of a livestream's addresses, so the route is a dial choice over that one negotiation:
+ *
+ * - `"proxied"`, the default, dials the controller authority under the UniFi OS proxy, carrying the session's auth headers and verifying the certificate as
+ *   `verifyTls` says.
+ * - `"direct"` dials the controller's media server at the authority's hostname and the port the controller minted, skipping the UniFi OS proxy and Protect's bridge.
+ *   The minted alias in its path is its only credential, so it carries no session header, and it never verifies the media server's self-signed certificate, whatever
+ *   `verifyTls` says. A negotiation that offers no direct address ends the stream with {@link ProtectLivestreamRouteError}.
+ * - `"preferDirect"` dials direct first each time the stream establishes or recovers, and once the direct route itself fails - a direct dial refused, reset or
+ *   left unanswered, a direct socket that opens and sends no media, or a negotiation that offers no direct address - it falls back, publishing
+ *   `livestreamRouteFallback` with the reason, and dials proxied until the stream is live again. Every route shares the negotiation, so a failed one moves nothing.
+ *
+ * @category Transport
+ */
+export type LivestreamRoute = "direct" | "preferDirect" | "proxied";
+
+/**
+ * A route one session dials: every {@link LivestreamRoute} but `"preferDirect"`, which the pool resolves to one of these for each attempt.
+ *
+ * @category Transport
+ */
+export type LivestreamDialRoute = Exclude<LivestreamRoute, "preferDirect">;
+
+/**
+ * The description of a livestream a consumer asks for. The fields that shape the stream - the `source` selector (a quality channel or a secondary lens) plus
+ * `segmentLength`, `chunkSize`, and `timestamps` - and the `route` it is dialed on form the pool's sharing identity, so two subscribers share one underlying session
+ * only when these agree. `requestId` is a log label only. Every field except `cameraId` has a default; an omitted `source` is the primary view (channel 0), and an
+ * omitted `route` is `"proxied"`.
  *
  * @category Transport
  */
@@ -108,6 +141,12 @@ export interface LivestreamSpec {
 
   /** Optional request label sent to the controller, surfaced in its logs. Default `${cameraId}-${channel}`. Not part of the pool's sharing identity. */
   requestId?: string;
+
+  /**
+   * Optional route the stream is dialed on: `"proxied"` (the default) through the UniFi OS proxy, `"direct"` to the controller's media server, or `"preferDirect"`,
+   * direct with the proxy behind it. See {@link LivestreamRoute}: a direct dial carries no session header and never verifies the media server's certificate.
+   */
+  route?: LivestreamRoute;
 
   /** Optional fMP4 segment length, in milliseconds. Floored at `PROTECT_LIVESTREAM_SEGMENT_LENGTH` (100), which is also the default. */
   segmentLength?: number;
@@ -136,6 +175,7 @@ export interface ResolvedLivestreamSpec {
   channel: number;
   lens: number;
   requestId: string;
+  route: LivestreamRoute;
   segmentLength: number;
   timestamps: boolean;
 }
@@ -167,15 +207,17 @@ export type Segment =
  *
  * - `segment` is the decoded stream: one init or media {@link Segment} per controller fragment. The pool bridges this rail and fans each segment to every subscriber.
  * - `closed` fires once when the session tears down, carrying a code and reason that classify the teardown: the peer's own close code and reason for a close it
- *   started, otherwise 1000 for a teardown we chose (an explicit close or a caller abort) and 1006 for one forced by a failure (a failed negotiation, a socket error,
- *   or a watchdog stall). It also carries the optional typed {@link ProtectError} cause an initiated teardown recorded - a caller abort, a failed negotiation, a socket
- *   error, or the watchdog stall - omitted for a plain or spontaneous close.
- * - `error` carries a typed {@link ProtectError}: the watchdog always emits a {@link ProtectStallError}, and a negotiation or socket failure typically wraps as a
- *   {@link ProtectNetworkError} - a socket failure classified by the rule the request path reads, so a refused certificate is a {@link ProtectCertificateError} and
- *   a connection attempt that timed out a {@link ProtectTimeoutError} - but when the injected `resolveUrl` hook throws an already-typed {@link ProtectError}, that
- *   instance passes through onto this rail unwrapped, so a negotiation failure can also surface a {@link ProtectStallError} or another {@link ProtectError} subtype.
- *   The error *type* is what a subscriber acts on. A listener sees the session already closed, with this error recorded as its close cause, because the teardown
- *   records the closed state and the cause before it reports.
+ *   started, otherwise 1000 for a teardown we chose (an explicit close or a caller abort) and 1006 for one forced by a failure (a failed negotiation, a direct
+ *   session's negotiation that offered no direct address, a socket error, or a watchdog stall). It also carries the optional typed {@link ProtectError} cause an
+ *   initiated teardown recorded - a caller abort, a failed negotiation, a missing direct address, a socket error, or the watchdog stall - omitted for a plain or
+ *   spontaneous close.
+ * - `error` carries a typed {@link ProtectError}: the watchdog always emits a {@link ProtectStallError}, a direct session whose negotiation offered no direct address
+ *   emits a {@link ProtectLivestreamRouteError}, and a negotiation or socket failure typically wraps as a {@link ProtectNetworkError} - a socket failure classified
+ *   by the rule the request path reads, so a refused certificate is a {@link ProtectCertificateError} and a connection attempt that timed out a
+ *   {@link ProtectTimeoutError} - but when the injected `resolveUrl` hook throws an already-typed {@link ProtectError}, that instance passes through onto this rail
+ *   unwrapped, so a negotiation failure can also surface a {@link ProtectStallError} or another {@link ProtectError} subtype. The error *type* is what a subscriber
+ *   acts on. A listener sees the session already closed, with this error recorded as its close cause, because the teardown records the closed state and the cause
+ *   before it reports.
  *
  * @category Transport
  */
@@ -187,20 +229,36 @@ export interface LivestreamSessionEvents {
 }
 
 /**
+ * The addresses one livestream negotiation answers, which a session's `resolveUrl` hook resolves to. `proxied` is the controller authority under the UniFi OS proxy
+ * with the minted path and the query that carries the token, and is always present. `direct` is the controller's media server at the authority's hostname with the
+ * minted port, path and query, or null when the controller offered no direct address the library can dial. A session dials exactly one of them, the one its route
+ * names.
+ *
+ * @category Transport
+ */
+export interface LivestreamAddresses {
+
+  direct: string | null;
+  proxied: string;
+}
+
+/**
  * Construction options for {@link LivestreamSession}.
  *
- * - `spec` describes the stream; the session resolves its defaults and builds the negotiation params from it.
- * - `resolveUrl` is the negotiation hook: given the request params, it returns the WebSocket URL on the controller authority. The composition root wires it to a
- *   transport-backed GET; tests pass a one-line fake.
- * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses). The session
- *   reads it when it builds its socket, after its negotiation, so a relogin the negotiation triggered reaches the upgrade; an injected `webSocket` factory receives
- *   the URL alone.
+ * - `spec` describes the stream and the one route the session dials, `"proxied"` (the default) or `"direct"`; a session is never handed `"preferDirect"`, which the
+ *   pool resolves to one of them for each attempt. The session resolves its defaults and builds the negotiation params from it.
+ * - `resolveUrl` is the negotiation hook: given the request params, it returns both of the livestream's {@link LivestreamAddresses}. The composition root wires it to
+ *   a transport-backed GET; tests pass a one-line fake.
+ * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses). On the
+ *   proxied route the session reads it when it builds its socket, after its negotiation, so a relogin the negotiation triggered reaches the upgrade. The direct route
+ *   never reads it, so no session header reaches the media server, and an injected `webSocket` factory receives the chosen URL alone.
  * - `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s; omit it for the default undici-backed factory, inject it in tests.
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts at any point, the session tears down.
  * - `clock` is the watchdog's time source; it defaults to the wall clock, and tests inject a fake to drive the silence watchdog deterministically.
  * - `log` is the destination for the session's diagnostic output; it defaults to a no-op logger, so a caller that never provides one incurs no logging cost.
- * - `verifyTls` opts the owned connection into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
- *   `webSocket` factory builds no agent here, so the option is inert alongside one.
+ * - `verifyTls` opts the proxied route's owned connection into strict TLS certificate verification; it defaults to `false` for the controller's self-signed
+ *   certificate. The direct route dials the media server, whose self-signed certificate nothing installed on UniFi OS replaces, with verification off whatever
+ *   this says. An injected `webSocket` factory builds no agent here, so the option is inert alongside one.
  *
  * @category Transport
  */
@@ -209,9 +267,9 @@ export interface LivestreamSessionOptions {
   clock?: Clock;
   getAuthHeaders?: () => Record<string, string>;
   log?: ProtectLogging;
-  resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+  resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<LivestreamAddresses>;
   signal?: AbortSignal;
-  spec: LivestreamSpec;
+  spec: LivestreamSpec & { route?: LivestreamDialRoute };
   verifyTls?: boolean;
   webSocket?: (url: string) => ProtectWebSocket;
 }
@@ -245,9 +303,39 @@ function resolveSource(source: LivestreamSource | undefined): { channel: number;
   }
 }
 
+// Resolve the route a stream is dialed on: an omitted route is the proxied one, and a value outside the routes, which only an untyped caller can pass, is refused here
+// as an unknown source type is, before anything is negotiated, so no mistyped value reaches the direct route's unverified socket. The resolved route keeps whatever
+// narrower route type the caller's spec carries.
+function resolveRoute<Route extends LivestreamRoute>(route: Route | undefined): Route | "proxied" {
+
+  if(route === undefined) {
+
+    return "proxied";
+  }
+
+  switch(route) {
+
+    case "direct":
+    case "preferDirect":
+    case "proxied": {
+
+      return route;
+    }
+
+    default: {
+
+      return assertNever(route);
+    }
+  }
+}
+
 /**
  * Apply every {@link LivestreamSpec} default in one place, so the session and the pool agree on the resolved stream identity. The segment length is floored at
- * {@link PROTECT_LIVESTREAM_SEGMENT_LENGTH}: a shorter request would only add controller load for no downstream benefit.
+ * {@link PROTECT_LIVESTREAM_SEGMENT_LENGTH}: a shorter request would only add controller load for no downstream benefit. An omitted route is `"proxied"`, a route
+ * outside {@link LivestreamRoute} is refused with {@link ProtectProtocolError} as an unknown source type is, and the resolved route keeps whatever narrower route type
+ * the spec carries, so a session's spec, which admits only the routes a session dials, resolves to one of those.
+ *
+ * @typeParam Route - The routes the spec's own type admits.
  *
  * @param spec - The raw spec a consumer supplied.
  *
@@ -255,7 +343,8 @@ function resolveSource(source: LivestreamSource | undefined): { channel: number;
  *
  * @category Transport
  */
-export function resolveLivestreamSpec(spec: LivestreamSpec): ResolvedLivestreamSpec {
+export function resolveLivestreamSpec<Route extends LivestreamRoute = LivestreamRoute>(spec: LivestreamSpec & { route?: Route }):
+  ResolvedLivestreamSpec & { route: Route | "proxied" } {
 
   // Resolve the source selector to its wire (channel, lens) pair first, so the resolved channel is available both as a field and for the requestId label default below.
   const { channel, lens } = resolveSource(spec.source);
@@ -267,14 +356,16 @@ export function resolveLivestreamSpec(spec: LivestreamSpec): ResolvedLivestreamS
     chunkSize: spec.chunkSize ?? PROTECT_LIVESTREAM_CHUNK_SIZE,
     lens: lens,
     requestId: spec.requestId ?? (spec.cameraId + "-" + channel.toString()),
+    route: resolveRoute(spec.route),
     segmentLength: Math.max(spec.segmentLength ?? PROTECT_LIVESTREAM_SEGMENT_LENGTH, PROTECT_LIVESTREAM_SEGMENT_LENGTH),
     timestamps: spec.timestamps ?? false
   };
 }
 
 /**
- * Compute the pool's sharing key for a resolved spec. The key is every **stream-affecting** field - the params that change the controller's output - so two subscribers
- * share one underlying session only when they asked for a byte-identical stream. `requestId` is a log label and is deliberately excluded.
+ * Compute the pool's sharing key for a resolved spec. The key is every field that changes what the controller produces or how the pool dials it - the source, the
+ * segment length, the chunk size, the timestamps and the route - so two subscribers share one underlying session only when they asked for a byte-identical stream on
+ * the same route. `requestId` is a log label and is deliberately excluded.
  *
  * @param spec - The resolved spec.
  *
@@ -284,7 +375,7 @@ export function resolveLivestreamSpec(spec: LivestreamSpec): ResolvedLivestreamS
  */
 export function livestreamKey(spec: ResolvedLivestreamSpec): string {
 
-  return [ spec.cameraId, spec.channel, spec.lens, spec.segmentLength, spec.chunkSize, spec.timestamps ].join(":");
+  return [ spec.cameraId, spec.channel, spec.lens, spec.segmentLength, spec.chunkSize, spec.timestamps, spec.route ].join(":");
 }
 
 // The mutable accumulator for the segment under construction. Chunks are collected per box during a segment and assembled into a single buffer at `endSegment`, so the
@@ -312,8 +403,8 @@ export class LivestreamSession implements AsyncDisposable {
   readonly #controller = new AbortController();
   readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #log: ProtectLogging;
-  readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
-  readonly #spec: ResolvedLivestreamSpec;
+  readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<LivestreamAddresses>;
+  readonly #spec: ResolvedLivestreamSpec & { route: LivestreamDialRoute };
   readonly #verifyTls: boolean;
   readonly #webSocketFactory: ((url: string) => ProtectWebSocket) | undefined;
 
@@ -337,9 +428,12 @@ export class LivestreamSession implements AsyncDisposable {
   #ws: ProtectWebSocket | null = null;
 
   // The address the socket dials and when its connection attempt began, as the injected clock's monotonic reading, both set as the socket is built: a certificate
-  // refusal names the address, and a connection attempt that times out measures its elapsed time from the stamp.
+  // refusal names the address, and a connection attempt that times out measures its elapsed time from the stamp. The port it dials, set once the socket is
+  // built, and whether the socket has opened, set by its open event and never cleared, are what the pool reads to say why a direct attempt failed.
   #address = "";
   #connectStartedAt = 0;
+  #dialedPort: number | null = null;
+  #opened = false;
 
   // The release of the connection the session owns, which the single teardown starts and close()/dispose await, null until the teardown runs, so it is also the gate
   // that runs the teardown once. lastSegmentAt is the watchdog's liveness source - the clock's monotonic reading at every frame.
@@ -413,6 +507,34 @@ export class LivestreamSession implements AsyncDisposable {
   }
 
   /**
+   * Whether the session has built its socket, which is where its connection attempt begins: false through the negotiation, and true once the negotiated address is
+   * dialed, for the rest of the session's life. The socket is built at most once, after a negotiation that answered, since a session is single-use, so a session
+   * that ended with this still false never reached its dial: its negotiation failed, it was handed no address it may dial, or it was closed first.
+   */
+  get dialed(): boolean {
+
+    return this.#ws !== null;
+  }
+
+  /**
+   * The port of the address the session dialed, the scheme's default when the address names none, and null until it dials. It stays null after the dial for an
+   * address that does not parse, or that names no port under a scheme other than `ws:` and `wss:`, which only an injected `webSocket` factory is ever handed.
+   */
+  get dialedPort(): number | null {
+
+    return this.#dialedPort;
+  }
+
+  /**
+   * Whether the session's socket has opened: false until its `open` event, and true from then on for the rest of the session's life, so a session that ended with
+   * this false never completed its WebSocket upgrade, and one that ended with it true completed it first.
+   */
+  get opened(): boolean {
+
+    return this.#opened;
+  }
+
+  /**
    * Subscribe to a session event. Returns a `Disposable`; prefer `using sub = session.on(...)` so the listener detaches at scope exit.
    *
    * @param event   - The event to listen for.
@@ -472,10 +594,10 @@ export class LivestreamSession implements AsyncDisposable {
     await this.close();
   }
 
-  // Negotiate the URL and open the socket. This is the connecting phase: a negotiation or network failure tears the session down as a fault, which reaches the error
-  // rail once the teardown has released the connection, exactly as a socket failure later would, so the consumer sees one uniform failure path for the whole connect
-  // attempt. An abort tears the session down through the same teardown but never emits on the error rail - it surfaces only as the `closeCause` and the `closed`
-  // payload's cause.
+  // Negotiate the addresses and open the socket on the session's route. This is the connecting phase: a negotiation or network failure, or a direct session's
+  // negotiation that offered no direct address, tears the session down as a fault, which reaches the error rail once the teardown has released the connection,
+  // exactly as a socket failure later would, so the consumer sees one uniform failure path for the whole connect attempt. An abort tears the session down through the
+  // same teardown but never emits on the error rail - it surfaces only as the `closeCause` and the `closed` payload's cause.
   async #connect(signal?: AbortSignal): Promise<void> {
 
     // An already-aborted caller signal tears us down in the constructor before this runs; bail without touching state so we never negotiate or build a socket.
@@ -486,13 +608,13 @@ export class LivestreamSession implements AsyncDisposable {
 
     this.#state = "connecting";
 
-    let url: string;
+    let addresses: LivestreamAddresses;
 
     try {
 
       // Only the caller's signal cancels the negotiation. A stop driven from inside the session (close()) lets the request finish and discards its result below; the
       // pool cancels a negotiation by passing its stream's lifetime signal as this session's signal.
-      url = await this.#resolveUrl(this.#buildParams(), (signal !== undefined) ? { signal } : {});
+      addresses = await this.#resolveUrl(this.#buildParams(), (signal !== undefined) ? { signal } : {});
     } catch(error) {
 
       // A teardown that already fired (caller abort during negotiation) has settled everything; do not also emit. We read the controller's abort state rather than
@@ -515,30 +637,70 @@ export class LivestreamSession implements AsyncDisposable {
       return;
     }
 
-    /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its
-     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. HTTP/2 is off and pipelining disabled
-     * because a WebSocket upgrade can use neither, and `allowH2` reaches the connector and the agent alike. The upgrade carries the session's auth headers, as
-     * EventStream's does, because UniFi OS's proxy refuses a media upgrade without the session even when the minted token is valid; they are read here, after the
-     * negotiation, so a relogin the negotiation triggered reaches the upgrade. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it
-     * assigns directly. Building the socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of it. The
-     * address is parsed without a throw, because an injected factory may be handed a URL undici would refuse, and this runs detached.
+    /* The dial rule, one arm per route, each naming the URL, the certificate posture and the upgrade's headers. The proxied route dials the controller authority
+     * under the UniFi OS proxy with the posture `verifyTls` sets, permissive by default for the controller's self-signed certificate, and the session's auth headers,
+     * as EventStream's upgrade does, because UniFi OS's proxy refuses a media upgrade without the session even when the minted token is valid. The headers are read
+     * as the socket is built, after the negotiation, so a relogin the negotiation triggered reaches the upgrade. The direct route dials the controller's media server,
+     * where the minted alias in the path is the only credential: it never reads the auth hook, so the session's cookie and CSRF token never reach the media
+     * server, and it never verifies the media server's certificate, which nothing installed on UniFi OS replaces. A direct session handed no direct address
+     * has nothing it may dial, so it tears down as a fault and builds no socket. The headers are a function, so an injected factory, which takes the URL alone,
+     * never reads the hook. A dial route added without an arm here leaves `dial` unassigned where the socket reads it, which fails to compile.
      */
-    this.#address = URL.parse(url)?.host ?? url;
+    let dial: { headers: () => Record<string, string>; url: string; verifyTls: boolean };
+
+    switch(this.#spec.route) {
+
+      case "direct": {
+
+        if(addresses.direct === null) {
+
+          this.#shutdown({ error: new ProtectLivestreamRouteError("The UniFi Protect controller offered no direct livestream address."), kind: "fault", line: null,
+            reason: "the controller offered no direct livestream address" });
+
+          return;
+        }
+
+        dial = { headers: (): Record<string, string> => ({}), url: addresses.direct, verifyTls: false };
+
+        break;
+      }
+
+      case "proxied": {
+
+        dial = { headers: (): Record<string, string> => this.#getAuthHeaders?.() ?? {}, url: addresses.proxied, verifyTls: this.#verifyTls };
+
+        break;
+      }
+    }
+
+    /* Build the socket: an injected factory in tests, handed the chosen URL alone, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an
+     * owned connector carrying the route's certificate posture. HTTP/2 is off and pipelining disabled because a WebSocket upgrade can use neither, and `allowH2`
+     * reaches the connector and the agent alike. undici's WebSocket structurally satisfies the minimal ProtectWebSocket surface, so it assigns directly. Building the
+     * socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of it. The address is the dialed host and
+     * port alone, never the path or the query that carry the alias and the token, and it is parsed without a throw, because an injected factory may be handed a URL
+     * undici would refuse, and this runs detached.
+     */
+    const target = URL.parse(dial.url);
+
+    this.#address = target?.host ?? dial.url;
     this.#connectStartedAt = this.#clock.monotonic();
 
     if(this.#webSocketFactory !== undefined) {
 
-      this.#ws = this.#webSocketFactory(url);
+      this.#ws = this.#webSocketFactory(dial.url);
     } else {
 
       const allowH2 = false;
-      const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
+      const connector = createOwnedConnector({ allowH2, verifyTls: dial.verifyTls });
       const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
 
       this.#owned = { connector, dispatcher: agent };
-      this.#ws = new WebSocket(url, { dispatcher: agent, headers: this.#getAuthHeaders?.() ?? {} });
+      this.#ws = new WebSocket(dial.url, { dispatcher: agent, headers: dial.headers() });
     }
 
+    // The port is read once the socket exists, so it is null for exactly as long as the session has not dialed. The URL parser reads a scheme's default port as no
+    // port at all, so an address naming none dials its scheme's default.
+    this.#dialedPort = (target === null) ? null : ((target.port === "") ? (WEBSOCKET_DEFAULT_PORTS[target.protocol] ?? null) : Number(target.port));
     this.#ws.binaryType = "arraybuffer";
 
     // The socket's handlers register with no `signal` option, since the teardown removes each itself. open, close, and error are `once` - each fires at most a single
@@ -574,10 +736,11 @@ export class LivestreamSession implements AsyncDisposable {
     });
   }
 
-  // The WebSocket opened. Move to handshaking, seed the watchdog's liveness clock, and start the silence watchdog now (not at construction) so it never trips during the
-  // bounded negotiation phase. The watchdog starts ahead of the debug line, so a logger that throws on the line leaves it running.
+  // The WebSocket opened. Record that it did, move to handshaking, seed the watchdog's liveness clock, and start the silence watchdog now (not at construction) so it
+  // never trips during the bounded negotiation phase. The watchdog starts ahead of the debug line, so a logger that throws on the line leaves it running.
   #onOpen(): void {
 
+    this.#opened = true;
     this.#state = "handshaking";
     this.#lastSegmentAt = this.#clock.monotonic();
 
@@ -801,7 +964,7 @@ export class LivestreamSession implements AsyncDisposable {
     const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
 
     this.#shutdown(socketFault({ cause, elapsed: millisecondsSince(this.#connectStartedAt, { clock: this.#clock }),
-      failed: "The UniFi Protect livestream API connection failed.", host: this.#address, open: (this.#state === "handshaking") || (this.#state === "live"),
+      failed: "The UniFi Protect livestream API connection failed.", host: this.#address, open: this.#opened,
       reason: "the livestream connection errored", reported: "The UniFi Protect livestream API reported an error.",
       timedOut: "The UniFi Protect livestream API connection timed out." }));
   }

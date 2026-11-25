@@ -1,15 +1,16 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * livestream-session.test.ts: Tests for LivestreamSession - URL negotiation, the fMP4 frame decode (init/media/reassembly/timestamps), the FSM, the silence watchdog,
- * and teardown. Driven through an injected fake WebSocket, a fake resolver, and a `TestClock`, so the session is exercised deterministically without a live controller.
+ * livestream-session.test.ts: Tests for LivestreamSession - URL negotiation, the route a session dials and what its upgrade carries, the fMP4 frame decode
+ * (init/media/reassembly/timestamps), the FSM, the silence watchdog, and teardown. Driven through an injected fake WebSocket, a fake resolver, and a `TestClock`, so
+ * the session is exercised deterministically without a live controller.
  */
 import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
+import type { LivestreamAddresses, LivestreamSessionOptions, LivestreamState, Segment } from "./livestream-session.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
-import type { LivestreamSpec, LivestreamState, Segment } from "./livestream-session.ts";
-import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
+import { ProtectAbortedError, ProtectCertificateError, ProtectLivestreamRouteError, ProtectNetworkError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
 import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
 import { buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
@@ -22,6 +23,7 @@ import assert from "node:assert/strict";
 import { constants } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { getEventListeners } from "node:events";
+import { inspect } from "node:util";
 import tls from "node:tls";
 
 // The sentence the session logs a fault of its open socket under, and the lines a log holds carrying it, at whatever level each was logged.
@@ -32,15 +34,45 @@ function reportedLines(log: CapturingLogger): CapturedLogEntry[] {
   return log.entries.filter((entry) => entry.message === REPORTED);
 }
 
-// A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
-const fixedUrl = async (): Promise<string> => "wss://controller/livestream";
+// A resolver that resolves immediately to fixed addresses: the proxied one given, and a direct one beside it when a row dials or offers the direct route.
+function fixedAddresses(proxied: string, direct: string | null = null): LivestreamSessionOptions["resolveUrl"] {
+
+  return async (): Promise<LivestreamAddresses> => ({ direct, proxied });
+}
+
+// The fixed resolver for tests that do not scrutinize negotiation.
+const fixedUrl = fixedAddresses("wss://controller/livestream");
+
+// The invented addresses the route rows offer, the minted alias a direct address carries in its path, and the invented session headers an auth hook returns.
+const PROXIED_URL = "wss://controller/proxy/protect/ws/livestream?token=proxied-token";
+const DIRECT_URL = "wss://controller:7446/direct-alias?camera=cam1";
+const ALIAS = "ZqXwVu";
+const AUTH_HEADERS = { cookie: "TOKEN=invented-session", "x-csrf-token": "invented-csrf" };
+
+// An auth hook that returns the invented headers and counts how often it was read, so a row reads whether a socket asked for the session at all.
+function countingAuthHeaders(): { calls: () => number; getAuthHeaders: () => Record<string, string> } {
+
+  let calls = 0;
+
+  return {
+
+    calls: (): number => calls,
+    getAuthHeaders: (): Record<string, string> => {
+
+      calls++;
+
+      return { ...AUTH_HEADERS };
+    }
+  };
+}
 
 // Construct a session over a fake socket, wait for the socket to be built (so its listeners are attached), and open it. The socket is built only after the async URL
 // negotiation, so we synchronize on the factory being invoked rather than emitting `open` synchronously the way the events-stream harness can. `webSocket` makes the
 // fake for a row that needs one built its own way; that fake must not open itself, since this helper opens it. The URL the session handed its socket factory is
 // returned beside the socket.
-async function openSession(options: { clock?: TestClock; log?: ProtectLogging; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
-  spec?: Partial<LivestreamSpec>; webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: TestClock; session: LivestreamSession; url: string; ws: FakeWebSocket }> {
+async function openSession(options: { clock?: TestClock; log?: ProtectLogging; resolveUrl?: LivestreamSessionOptions["resolveUrl"];
+  spec?: Partial<LivestreamSessionOptions["spec"]>; webSocket?: () => FakeWebSocket; } = {}): Promise<{ clock: TestClock; session: LivestreamSession; url: string;
+  ws: FakeWebSocket; }> {
 
   const clock = options.clock ?? new TestClock();
   const { promise, resolve } = Promise.withResolvers<{ url: string; ws: FakeWebSocket }>();
@@ -149,6 +181,9 @@ describe("LivestreamSession", () => {
       const sameStreamDifferentLabel = resolveLivestreamSpec({ cameraId: "cam1", requestId: "different", source: { channel: 0, type: "channel" } });
 
       assert.equal(livestreamKey(base), livestreamKey(sameStreamDifferentLabel));
+
+      // An omitted route is the proxied one, so the default keys exactly as the route named.
+      assert.equal(livestreamKey(base), livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", route: "proxied", source: { channel: 0, type: "channel" } })));
     });
 
     test("the key differs when any stream-affecting field differs", () => {
@@ -160,6 +195,7 @@ describe("LivestreamSession", () => {
       assert.notEqual(base, livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", segmentLength: 200, source: { channel: 0, type: "channel" } })));
       assert.notEqual(base, livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", chunkSize: 8192, source: { channel: 0, type: "channel" } })));
       assert.notEqual(base, livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", source: { channel: 0, type: "channel" }, timestamps: true })));
+      assert.notEqual(base, livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", route: "direct", source: { channel: 0, type: "channel" } })));
     });
   });
 
@@ -248,11 +284,11 @@ describe("LivestreamSession", () => {
     test("decode timestamps are attached to a media segment only when opted in, as a faithful number[]", async () => {
 
       const capture: URLSearchParams[] = [];
-      const resolveUrl = async (params: URLSearchParams): Promise<string> => {
+      const resolveUrl = async (params: URLSearchParams): Promise<LivestreamAddresses> => {
 
         capture.push(params);
 
-        return "wss://controller/livestream";
+        return { direct: null, proxied: "wss://controller/livestream" };
       };
 
       const { session, ws } = await openSession({ resolveUrl, spec: { timestamps: true } });
@@ -385,11 +421,11 @@ describe("LivestreamSession", () => {
     test("build params serialize a channel source", async () => {
 
       const capture: URLSearchParams[] = [];
-      const resolveUrl = async (params: URLSearchParams): Promise<string> => {
+      const resolveUrl = async (params: URLSearchParams): Promise<LivestreamAddresses> => {
 
         capture.push(params);
 
-        return "wss://controller/livestream";
+        return { direct: null, proxied: "wss://controller/livestream" };
       };
 
       await openSession({ resolveUrl, spec: { chunkSize: 8192, segmentLength: 200, source: { channel: 2, type: "channel" } } });
@@ -417,11 +453,11 @@ describe("LivestreamSession", () => {
     test("build params serialize a lens source", async () => {
 
       const capture: URLSearchParams[] = [];
-      const resolveUrl = async (params: URLSearchParams): Promise<string> => {
+      const resolveUrl = async (params: URLSearchParams): Promise<LivestreamAddresses> => {
 
         capture.push(params);
 
-        return "wss://controller/livestream";
+        return { direct: null, proxied: "wss://controller/livestream" };
       };
 
       await openSession({ resolveUrl, spec: { chunkSize: 8192, segmentLength: 200, source: { lens: 1, type: "lens" } } });
@@ -442,9 +478,167 @@ describe("LivestreamSession", () => {
 
     test("the socket factory is handed the URL the resolver negotiated", async () => {
 
-      const { url } = await openSession({ resolveUrl: async (): Promise<string> => "wss://controller/livestream?token=negotiated" });
+      const { url } = await openSession({ resolveUrl: fixedAddresses("wss://controller/livestream?token=negotiated") });
 
       assert.equal(url, "wss://controller/livestream?token=negotiated", "the socket must be built on the URL the resolver returned");
+    });
+  });
+
+  describe("routes", () => {
+
+    test("a session given no route builds its socket on the proxied address", async () => {
+
+      const { url } = await openSession({ resolveUrl: fixedAddresses(PROXIED_URL, DIRECT_URL) });
+
+      assert.equal(url, PROXIED_URL);
+    });
+
+    test("a direct session builds its socket on the direct address", async () => {
+
+      const { url } = await openSession({ resolveUrl: fixedAddresses(PROXIED_URL, DIRECT_URL), spec: { route: "direct" } });
+
+      assert.equal(url, DIRECT_URL);
+    });
+
+    test("a direct session handed no direct address puts ProtectLivestreamRouteError on its rail and closes 1006, building no socket", async () => {
+
+      let built = false;
+      const closed: { cause?: ProtectError; code: number; reason: string }[] = [];
+      const session = new LivestreamSession({
+
+        log: silentLog(),
+        resolveUrl: fixedAddresses(PROXIED_URL),
+        spec: { cameraId: "cam1", route: "direct" },
+        webSocket: (): FakeWebSocket => {
+
+          built = true;
+
+          return new FakeWebSocket({ autoOpen: false });
+        }
+      });
+      const errors = collectErrors(session);
+
+      // The negotiation answers at once, so the teardown has run by the next turn; reading then rather than awaiting keeps a session that dialed from hanging the row.
+      session.on("closed", (info) => void closed.push(info));
+      await settle();
+
+      const [error] = errors;
+      const info = present(closed[0], "the closed announcement");
+
+      assert.ok(error instanceof ProtectLivestreamRouteError);
+      assert.equal(error.message, "The UniFi Protect controller offered no direct livestream address.");
+      assert.ok(Object.is(session.closeCause, error), "the rail's error is the closure's cause");
+      assert.ok(Object.is(info.cause, error));
+      assert.equal(info.code, 1006);
+      assert.equal(info.reason, "the controller offered no direct livestream address");
+      assert.equal(built, false, "a session with nothing it may dial builds no socket");
+    });
+
+    /* The upgrade's headers, read at a real peer: the direct route reads no auth hook and stamps nothing, and it never verifies the media server's certificate, so a
+     * strict session still completes the handshake the self-signed peer offers.
+     */
+    test("a direct session under strict verification reaches handshaking, never reading the auth hook or stamping its headers on the upgrade", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const hook = countingAuthHeaders();
+      const session = new LivestreamSession({ getAuthHeaders: hook.getAuthHeaders, log: silentLog(),
+        resolveUrl: fixedAddresses("wss://" + peer.host + "/proxied", "wss://" + peer.host + "/AbCdEf"), spec: { cameraId: "cam1", route: "direct" }, verifyTls: true });
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking", "a direct dial never verifies the certificate");
+
+      const headers = await peer.upgrade(0);
+
+      assert.equal(Object.hasOwn(headers, "cookie"), false);
+      assert.equal(Object.hasOwn(headers, "x-csrf-token"), false);
+      assert.equal(hook.calls(), 0, "the direct route never reads the auth hook");
+
+      await session.close();
+    });
+
+    test("a session given no route carries both of the auth hook's headers on its upgrade", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const hook = countingAuthHeaders();
+      const session = new LivestreamSession({ getAuthHeaders: hook.getAuthHeaders, log: silentLog(), resolveUrl: fixedAddresses("wss://" + peer.host + "/live"),
+        spec: { cameraId: "cam1" } });
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      const headers = await peer.upgrade(0);
+
+      assert.equal(headers["cookie"], AUTH_HEADERS.cookie);
+      assert.equal(headers["x-csrf-token"], AUTH_HEADERS["x-csrf-token"]);
+      assert.equal(hook.calls(), 1);
+
+      await session.close();
+    });
+
+    test("a direct session on a minted alias that the peer resets keeps the alias out of its rail error and every line it logs", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+      const log = capturingLog();
+      const session = new LivestreamSession({ log,
+        resolveUrl: fixedAddresses("wss://" + peer.host + "/proxy/protect/" + ALIAS + "?token=" + ALIAS, "wss://" + peer.host + "/" + ALIAS + "?camera=cam1"),
+        spec: { cameraId: "cam1", route: "direct" } });
+
+      assert.equal(await whenState(session, "handshaking"), "handshaking");
+
+      const failing = session.once("error");
+
+      (await peer.connection(0)).reset();
+
+      const [failure] = await failing;
+
+      // The connected line and the fault's line are among what the session logged, so the reading covers each line a direct socket can raise.
+      assert.ok(failure instanceof ProtectNetworkError);
+      assert.ok(log.entries.some((entry) => entry.message === "Connected to the UniFi Protect livestream API."));
+      assert.equal(reportedLines(log).length, 1);
+
+      for(const rendered of [ inspect(failure, { depth: Infinity }), ...log.entries.map((entry) => inspect(entry, { depth: Infinity })) ]) {
+
+        assert.ok(!rendered.includes(ALIAS), "no error or line may carry the minted alias: " + rendered);
+      }
+    });
+
+    test("opened is false until the socket opens and true from then on, and dialedPort is null until the dial and the dialed port after it", async () => {
+
+      const { promise, resolve } = Promise.withResolvers<LivestreamAddresses>();
+      const sockets: FakeWebSocket[] = [];
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<LivestreamAddresses> => promise,
+        spec: { cameraId: "cam1", route: "direct" }, webSocket: (): FakeWebSocket => {
+
+          const ws = new FakeWebSocket({ autoOpen: false });
+
+          sockets.push(ws);
+
+          return ws;
+        } });
+
+      // Each reading is the session's dial, its port and whether its socket opened, taken while the negotiation is pending, once the socket is built on the direct
+      // address, once it opens, and once the session has closed.
+      const reading = (): [boolean, number | null, boolean] => [ session.dialed, session.dialedPort, session.opened ];
+
+      assert.deepEqual(reading(), [ false, null, false ]);
+
+      resolve({ direct: DIRECT_URL, proxied: PROXIED_URL });
+      await settle();
+
+      assert.deepEqual(reading(), [ true, 7446, false ]);
+
+      present(sockets[0], "the direct socket").emitOpen();
+
+      assert.deepEqual(reading(), [ true, 7446, true ]);
+
+      await session.close();
+
+      assert.deepEqual(reading(), [ true, 7446, true ]);
+
+      // A proxied address names no port, so the session dials its scheme's default.
+      const proxied = await openSession({ resolveUrl: fixedAddresses(PROXIED_URL, DIRECT_URL) });
+
+      assert.equal(proxied.session.dialedPort, 443);
+
+      await proxied.session.close();
     });
   });
 
@@ -741,7 +935,7 @@ describe("LivestreamSession", () => {
 
       // A real TLS peer rather than the injected fake: the certificate posture lives on the agent the default factory builds, which an injected socket never reaches.
       await using peer = await createLoopbackWebSocketPeer();
-      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: fixedAddresses("wss://" + peer.host + "/live"),
         spec: { cameraId: "cam1" } });
       const errors = collectErrors(session);
 
@@ -758,7 +952,7 @@ describe("LivestreamSession", () => {
     test("the upgrade refuses a certificate that does not verify when strict verification is asked for", async () => {
 
       await using peer = await createLoopbackWebSocketPeer();
-      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: fixedAddresses("wss://" + peer.host + "/live"),
         spec: { cameraId: "cam1" }, verifyTls: true });
       const errors = collectErrors(session);
 
@@ -793,7 +987,7 @@ describe("LivestreamSession", () => {
     test("close() of an open session ends its connection at once, though the peer never answers the close frame", async () => {
 
       await using peer = await createLoopbackWebSocketPeer();
-      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: fixedAddresses("wss://" + peer.host + "/live"), spec: { cameraId: "cam1" } });
 
       assert.equal(await whenState(session, "handshaking"), "handshaking");
 
@@ -814,7 +1008,7 @@ describe("LivestreamSession", () => {
       // `closed` rather than at the peer, which learns of a severance only on a later turn.
       using announced = announcedSockets();
 
-      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: fixedAddresses("wss://" + peer.host + "/live"), spec: { cameraId: "cam1" } });
 
       assert.equal(await whenState(session, "handshaking"), "handshaking");
 
@@ -834,7 +1028,7 @@ describe("LivestreamSession", () => {
       using announced = announcedSockets();
 
       const clock = new TestClock();
-      const session = new LivestreamSession({ clock, log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+      const session = new LivestreamSession({ clock, log: silentLog(), resolveUrl: fixedAddresses("wss://" + peer.host + "/live"),
         spec: { cameraId: "cam1" } });
       const releasedAtRail: boolean[] = [];
 
@@ -866,7 +1060,7 @@ describe("LivestreamSession", () => {
           throw new Error("the logger refused the stall's line");
         }
       } };
-      const session = new LivestreamSession({ clock, log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const session = new LivestreamSession({ clock, log, resolveUrl: fixedAddresses("wss://" + peer.host + "/live"), spec: { cameraId: "cam1" } });
       const errors = collectErrors(session);
 
       assert.equal(await whenState(session, "handshaking"), "handshaking");
@@ -887,7 +1081,7 @@ describe("LivestreamSession", () => {
       await using peer = await createLoopbackSilentPeer();
 
       const controller = new AbortController();
-      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", signal: controller.signal,
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: fixedAddresses("wss://" + peer.host + "/live"), signal: controller.signal,
         spec: { cameraId: "cam1" } });
       const errors = collectErrors(session);
       const closed = Promise.withResolvers<{ cause?: ProtectError; code: number; reason: string }>();
@@ -912,7 +1106,8 @@ describe("LivestreamSession", () => {
 
     test("a dial nothing is listening for carries the platform's own errno onto the rail", async () => {
 
-      const session = new LivestreamSession({ log: silentLog(), resolveUrl: async (): Promise<string> => "wss://127.0.0.1:" + (await freePort()).toString() + "/live",
+      const session = new LivestreamSession({ log: silentLog(),
+        resolveUrl: async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: "wss://127.0.0.1:" + (await freePort()).toString() + "/live" }),
         spec: { cameraId: "cam1" } });
       const [error] = await session.once("error");
 
@@ -941,7 +1136,7 @@ describe("LivestreamSession", () => {
         return socket;
       });
 
-      const session = new LivestreamSession({ clock, log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
+      const session = new LivestreamSession({ clock, log: silentLog(), resolveUrl: fixedAddresses("wss://" + peer.host + "/live"),
         spec: { cameraId: "cam1" } });
       const failing = session.once("error");
 
@@ -965,7 +1160,7 @@ describe("LivestreamSession", () => {
 
       await using peer = await createLoopbackWebSocketPeer();
       const log = capturingLog();
-      const session = new LivestreamSession({ log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const session = new LivestreamSession({ log, resolveUrl: fixedAddresses("wss://" + peer.host + "/live"), spec: { cameraId: "cam1" } });
 
       assert.equal(await whenState(session, "handshaking"), "handshaking");
 
@@ -986,7 +1181,7 @@ describe("LivestreamSession", () => {
 
       await using peer = await createLoopbackWebSocketPeer();
       const log = capturingLog();
-      const session = new LivestreamSession({ log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const session = new LivestreamSession({ log, resolveUrl: fixedAddresses("wss://" + peer.host + "/live"), spec: { cameraId: "cam1" } });
 
       assert.equal(await whenState(session, "handshaking"), "handshaking");
 
@@ -1020,7 +1215,7 @@ describe("LivestreamSession", () => {
         return socket;
       });
 
-      const session = new LivestreamSession({ log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const session = new LivestreamSession({ log, resolveUrl: fixedAddresses("wss://" + peer.host + "/live"), spec: { cameraId: "cam1" } });
 
       assert.equal(await whenState(session, "handshaking"), "handshaking");
 
@@ -1040,7 +1235,7 @@ describe("LivestreamSession", () => {
 
       await using peer = await createLoopbackWebSocketPeer({ resetUpgrade: true });
       const log = capturingLog();
-      const session = new LivestreamSession({ log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live", spec: { cameraId: "cam1" } });
+      const session = new LivestreamSession({ log, resolveUrl: fixedAddresses("wss://" + peer.host + "/live"), spec: { cameraId: "cam1" } });
       const [failure] = await session.once("error");
 
       // The dial succeeded, so the connector holds no dial failure, and the reset of the established connection is the record the one cause reads.
@@ -1128,11 +1323,11 @@ describe("LivestreamSession", () => {
       const handed: (AbortSignal | undefined)[] = [];
 
       // The resolver never settles on its own: once the signal it was handed aborts, it rejects with ProtectAbortedError, the way the transport answers a cancel.
-      const resolveUrl = async (_params: URLSearchParams, opts: { signal?: AbortSignal }): Promise<string> => {
+      const resolveUrl = async (_params: URLSearchParams, opts: { signal?: AbortSignal }): Promise<LivestreamAddresses> => {
 
         handed.push(opts.signal);
 
-        const { promise, reject } = Promise.withResolvers<string>();
+        const { promise, reject } = Promise.withResolvers<LivestreamAddresses>();
 
         opts.signal?.addEventListener("abort", () => reject(new ProtectAbortedError("The negotiation was aborted by the caller's signal.")), { once: true });
 
@@ -1166,7 +1361,7 @@ describe("LivestreamSession", () => {
 
     test("a close() while URL negotiation is in flight builds no socket once the negotiation resolves", async () => {
 
-      const negotiation = Promise.withResolvers<string>();
+      const negotiation = Promise.withResolvers<LivestreamAddresses>();
       let built = false;
 
       // No caller signal is passed, so the resolver is never cancelled: it resolves only after close() has torn the session down, and the connect must see that
@@ -1174,7 +1369,7 @@ describe("LivestreamSession", () => {
       const session = new LivestreamSession({
 
         log: silentLog(),
-        resolveUrl: async (): Promise<string> => negotiation.promise,
+        resolveUrl: async (): Promise<LivestreamAddresses> => negotiation.promise,
         spec: { cameraId: "cam1", source: { channel: 0, type: "channel" } },
         webSocket: (): FakeWebSocket => {
 
@@ -1186,7 +1381,7 @@ describe("LivestreamSession", () => {
 
       await settle();
       await session.close();
-      negotiation.resolve("wss://controller/livestream");
+      negotiation.resolve({ direct: null, proxied: "wss://controller/livestream" });
       await settle();
 
       assert.equal(built, false, "a negotiation that resolves after a close must not build a socket");

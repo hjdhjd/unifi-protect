@@ -137,7 +137,8 @@ export const PROTECT_LIVESTREAM_STALL_POLL_MS = 1000;
  * Livestream establishment deadline, in milliseconds. The pool's recovery runs in two regimes: bounded establishment (the stream has never produced a media segment)
  * and unbounded live recovery (it produced one once and then faulted). The default recovery policy gives up - surfacing ProtectLivestreamUnavailableError - once an
  * establishing episode has run for longer than this without a first media segment - a stream that connects but never produces media. Live recovery has no such
- * deadline: a stream that proved itself once keeps being retried (throttled by the backoff curve) until it returns or every subscriber leaves.
+ * deadline: a stream that proved itself once keeps being retried (throttled by the backoff curve) until it returns, every subscriber leaves, or a terminal ends it -
+ * a codec change, or a "direct" stream's renegotiation that offers no direct address.
  */
 export const PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS = 30000;
 
@@ -155,9 +156,10 @@ export const PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS = [ 5000, 8000, 10000 ];
  * Livestream live-recovery backoff curve, in milliseconds, indexed by consecutive failed attempts. Live recovery - the stream produced a media segment once and then
  * faulted - uses this curve as the headroom-clamped per-attempt window: the default policy grants the stage this long for a media segment, having torn down and
  * negotiated a fresh URL (which often clears a wedged endpoint), before abandoning the attempt and consulting the policy again. The window doubles as the inter-attempt
- * spacing - a fast-failing attempt still occupies its full window - so one curve expresses both "how long to give this attempt" and "how hard to back off," growing
- * with each failure; the last value is the steady ceiling. Unlike establishment, recovery is clamped by the consumer's reported headroom (see the await clamp below), so
- * an urgent consumer recovers faster than this curve and a patient one follows it.
+ * spacing - a fast-failing attempt still occupies its full window, except a "preferDirect" stream's direct attempt that fails at its dial or is offered no direct
+ * address, which falls back to the proxied route at once - so one curve expresses both "how long to give this attempt" and "how hard to back off," growing with each
+ * failure; the last value is the steady ceiling. Unlike establishment, recovery is clamped by the consumer's reported headroom (see the await clamp below), so an
+ * urgent consumer recovers faster than this curve and a patient one follows it.
  */
 export const PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS = [ 3000, 5000, 10000 ];
 

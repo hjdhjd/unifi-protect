@@ -5,9 +5,9 @@
  */
 import type { AdoptionContradictionPayload, AuthReloginPayload, ConnectionRebootDetectedPayload, ConnectionTransitionPayload, EventsClosedPayload, EventsPacketPayload,
   EventsReconnectingPayload, HttpRequestEndPayload, HttpRequestStartPayload, HttpThrottleEnteredPayload, LivestreamCodecChangedPayload,
-  LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, LivestreamSessionClosedPayload,
-  LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload, LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload,
-  ProtectDiagnosticsChannel, SchemaUnknownModelKeyPayload, SchemaUnmodeledCollectionPayload, TalkbackSessionClosedPayload,
+  LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, LivestreamRouteFallbackPayload,
+  LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload, LivestreamSubscriptionCreatedPayload,
+  LivestreamSubscriptionDisposedPayload, ProtectDiagnosticsChannel, SchemaUnknownModelKeyPayload, SchemaUnmodeledCollectionPayload, TalkbackSessionClosedPayload,
   TalkbackSessionOpenedPayload } from "./diagnostics.ts";
 import { channels, subscribeToChannel } from "./diagnostics.ts";
 import { describe, test } from "node:test";
@@ -36,6 +36,7 @@ interface ChannelBindings {
   livestreamRecoveryExhausted: ProtectDiagnosticsChannel<LivestreamRecoveryExhaustedPayload>;
   livestreamRecoveryRecovered: ProtectDiagnosticsChannel<LivestreamRecoveryRecoveredPayload>;
   livestreamRecoveryStarted: ProtectDiagnosticsChannel<LivestreamRecoveryStartedPayload>;
+  livestreamRouteFallback: ProtectDiagnosticsChannel<LivestreamRouteFallbackPayload>;
   livestreamSessionClosed: ProtectDiagnosticsChannel<LivestreamSessionClosedPayload>;
   livestreamSessionOpened: ProtectDiagnosticsChannel<LivestreamSessionOpenedPayload>;
   livestreamStallDetected: ProtectDiagnosticsChannel<LivestreamStallDetectedPayload>;

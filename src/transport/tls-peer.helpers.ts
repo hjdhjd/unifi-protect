@@ -154,6 +154,16 @@ export interface LoopbackHttpsPeer extends LoopbackTlsPeer {
 }
 
 /**
+ * A listening loopback WebSocket peer. Beside every {@link LoopbackTlsPeer} member, `upgrade(index)` resolves with the headers the upgrade request at that position
+ * in arrival order carried, each name lowercased, at once if it already arrived, which is how a test reads what a socket stamped on its upgrade. Each index supports
+ * a single outstanding waiter, as `connection` does.
+ */
+export interface LoopbackWebSocketPeer extends LoopbackTlsPeer {
+
+  upgrade(index: number): Promise<Readonly<Record<string, string>>>;
+}
+
+/**
  * One request a peer that answers nothing received, as a test observes it: the method and the path it carried. Each is typed as the platform's request declares
  * it, optional because that class carries a client's responses as well, though a request a server receives always carries each.
  */
@@ -501,7 +511,8 @@ export async function createLoopbackTlsProxyPeer({ ipv6 = false }: LoopbackPeerO
  * Holding rather than conversing is the whole point. Every WebSocket URL this library connects to is `wss://` by construction, the events URL and the negotiated
  * livestream and talkback URLs alike, so reaching a session's own socket path takes a real TLS peer, and what these tests ask is whether the handshake completes at
  * all - which the client's `open` event answers on its own - and whether a teardown ends the connection, which a peer that never answers the close frame leaves to
- * the client alone. The frame protocol above the socket is the injected-fake suites' subject, not this peer's.
+ * the client alone. The frame protocol above the socket is the injected-fake suites' subject, not this peer's. The headers of each upgrade request are recorded as
+ * its head arrives, so a test reads what a socket stamped on its upgrade, the session's auth headers above all, through `upgrade(index)`.
  *
  * A peer built with `resetUpgrade` answers no upgrade: it resets each connection once the request has arrived, so the client's TLS handshake completes and its
  * WebSocket never opens, the one stage at which a dropped connection is neither a failed dial nor the loss of an open socket.
@@ -510,10 +521,11 @@ export async function createLoopbackTlsProxyPeer({ ipv6 = false }: LoopbackPeerO
  *
  * @returns The listening peer.
  */
-export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade = false }: LoopbackWebSocketPeerOptions = {}): Promise<LoopbackTlsPeer> {
+export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade = false }: LoopbackWebSocketPeerOptions = {}): Promise<LoopbackWebSocketPeer> {
 
   // The peer offers only http/1.1 over ALPN because the WebSocket upgrade it answers by hand is an HTTP/1.1 exchange.
   const server = createTlsServer({ ALPNProtocols: ["http/1.1"], ...identity });
+  const upgrades = createLedger<Readonly<Record<string, string>>>();
 
   // The TCP socket beneath each TLS connection, by the client's port, which is how a peer that resets the upgrade reaches past its own TLS layer: a reset is a TCP
   // act, and the TLS socket above it has no way to send one.
@@ -555,6 +567,12 @@ export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade =
         return;
       }
 
+      // The head's header lines past its request line, each split at its first colon, recorded before the peer answers or resets, so a reset upgrade is read too.
+      const head = buffered.subarray(0, boundary).toString("latin1");
+
+      upgrades.record(Object.fromEntries(head.split("\r\n").slice(1).map((line) => [ line.slice(0, line.indexOf(":")).trim().toLowerCase(),
+        line.slice(line.indexOf(":") + 1).trim() ])));
+
       if(resetUpgrade) {
 
         accepted.get(socket.remotePort)?.resetAndDestroy();
@@ -562,14 +580,34 @@ export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade =
         return;
       }
 
-      const key = (/^sec-websocket-key: *(\S+)/im).exec(buffered.subarray(0, boundary).toString("latin1"))?.[1] ?? "";
+      const key = (/^sec-websocket-key: *(\S+)/im).exec(head)?.[1] ?? "";
 
       upgraded = true;
       socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + acceptDigest(key) + HEADER_TERMINATOR);
     });
   });
 
-  return startPeer(server, { ipv6 });
+  const peer = await startPeer(server, { ipv6 });
+
+  // The peer is wrapped member by member rather than spread, because a spread copies each getter's value once and would freeze its count at that moment.
+  return {
+
+    get accepted(): number {
+
+      return peer.accepted;
+    },
+    close: async (): Promise<void> => peer.close(),
+    connection: async (index: number): Promise<LoopbackConnection> => peer.connection(index),
+    get handshakes(): number {
+
+      return peer.handshakes;
+    },
+    host: peer.host,
+    protocol: async (index: number): Promise<string | false | null> => peer.protocol(index),
+    upgrade: async (index: number): Promise<Readonly<Record<string, string>>> => upgrades.at(index),
+    whenHandshakes: async (count: number): Promise<void> => peer.whenHandshakes(count),
+    [Symbol.asyncDispose]: async (): Promise<void> => peer.close()
+  };
 }
 
 /**

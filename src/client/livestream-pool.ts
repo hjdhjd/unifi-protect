@@ -5,36 +5,44 @@
  */
 
 /**
- * `LivestreamPool` is the library-owned fan-out *and recovery* layer over {@link LivestreamSession}. Two consumers that ask for the same stream share one underlying
- * WebSocket; each receives every segment through its own unbounded queue, so a slow consumer never backs up a fast one. Reference counting tears the underlying session
- * down when the last subscriber disposes, and the cached init segment is replayed automatically to any late joiner.
+ * `LivestreamPool` is the library-owned fan-out *and recovery* layer over {@link LivestreamSession}. Two consumers that ask for the same stream on the same route share
+ * one underlying WebSocket; each receives every segment through its own unbounded queue, so a slow consumer never backs up a fast one. Reference counting tears the
+ * underlying session down when the last subscriber disposes, and the cached init segment is replayed automatically to any late joiner.
  *
  * **Resilient by default; recovery lives where sharing lives.** A subscription's iterator survives stalls and reconnects - it pauses during the gap and resumes when
  * segments flow again. Because there is exactly one underlying socket per stream, the recover-or-give-up decision is inherently per-shared-stream, so it lives in the one
  * object that holds both the session and the subscriber set: the {@link ManagedSession}. When the underlying {@link LivestreamSession} dies (stall / error / close), the
- * managed session does not fail its subscribers; it runs a recovery loop - a reducer over recovery events, `{ decision = policy(ctx); apply }` - that consults the
- * injected {@link RecoveryPolicy} and, per its decision, reconnects (a fresh session and a fresh negotiation, which often clears a wedged endpoint), waits, or gives up.
- * "Raw, non-resilient" is therefore not a pool mode - it is the bare {@link LivestreamSession} used directly, or a `recoveryPolicy` returning `giveUp` on first failure.
+ * managed session runs a recovery loop - a reducer over recovery events, `{ decision = policy(ctx); apply }` - that consults the injected {@link RecoveryPolicy} and,
+ * per its decision, reconnects (a fresh session and a fresh negotiation, which often clears a wedged endpoint), waits, or gives up. The one session death that fails
+ * the subscribers without the policy is a `"direct"` stream's negotiation offering no direct address, which no retry changes. "Raw, non-resilient" is therefore not a
+ * pool mode - it is the bare {@link LivestreamSession} used directly, or a `recoveryPolicy` returning `giveUp` on first failure.
  *
- * **A consumer requests a spec, never a URL.** The controller mints a fresh, one-time URL per negotiation, so the pool dedups on the *spec* (its full stream-affecting
- * identity, via {@link livestreamKey}) *before* negotiating - only the first subscriber for a key creates a managed session, which then creates and negotiates each
- * underlying session, and a subscriber whose signal had already aborted creates and joins none. `subscribe` registers the managed session in the map synchronously,
- * so a concurrent early subscriber attaches to the one in-flight session.
+ * **The pool decides each attempt's route.** A session dials the one route it is handed and never reconnects, so the managed session, which owns recovery, picks it:
+ * a `"proxied"` or `"direct"` stream dials its own route on every attempt, and a `"preferDirect"` stream dials direct first in each episode and proxied for the rest
+ * of the episode once a direct attempt fails at its dial or is offered no direct address, publishing `livestreamRouteFallback` as it falls back, starting direct
+ * again in the next. Every route shares the negotiation, so a failed one moves no stream off its route.
  *
- * **The pool owns no transport.** It receives `resolveUrl` - the transport-backed negotiation hook (see {@link wsEndpointResolver}) - so it stays unit-testable with a
- * one-line fake resolver and a fake WebSocket, and the negotiation lives end-to-end inside each session (one connect attempt, one error path).
+ * **A consumer requests a spec, never a URL.** The controller mints fresh, one-time addresses per negotiation, so the pool dedups on the *spec* (its sharing identity,
+ * via {@link livestreamKey}) *before* negotiating - only the first subscriber for a key creates a managed session, which then creates and negotiates each underlying
+ * session, and a subscriber whose signal had already aborted creates and joins none. `subscribe` registers the managed session in the map synchronously, so a
+ * concurrent early subscriber attaches to the one in-flight session.
+ *
+ * **The pool owns no transport.** It receives `resolveUrl` - the transport-backed negotiation hook (see {@link livestreamUrlResolver}), answering both of a
+ * livestream's addresses - so it stays unit-testable with a one-line fake resolver and a fake WebSocket, and the negotiation lives end-to-end inside each session (one
+ * connect attempt, one error path).
  *
  * @module LivestreamPool
  */
+import type { LivestreamAddresses, LivestreamDialRoute, LivestreamSessionEvents, LivestreamSpec, ResolvedLivestreamSpec,
+  Segment } from "../transport/livestream-session.ts";
 import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
-  LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload, LivestreamSubscriptionCreatedPayload,
-  LivestreamSubscriptionDisposedPayload } from "../diagnostics.ts";
+  LivestreamRouteFallbackPayload, LivestreamRouteFallbackReason, LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload,
+  LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload } from "../diagnostics.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "../transport/livestream-session.ts";
-import type { LivestreamSessionEvents, LivestreamSpec, ResolvedLivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import { PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_DEFAULT_TOLERANCE_MS,
   PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS, PROTECT_LIVESTREAM_STALL_DEFAULT_MS,
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
-import { ProtectCodecChangeError, ProtectLivestreamUnavailableError, ProtectStallError } from "../errors.ts";
+import { ProtectCodecChangeError, ProtectLivestreamRouteError, ProtectLivestreamUnavailableError, ProtectStallError } from "../errors.ts";
 import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import type { LivestreamInit } from "../protocol/init-segment.ts";
@@ -49,7 +57,7 @@ import { randomUUID } from "node:crypto";
 /**
  * The coarse, stable lifecycle of a pooled stream as a subscriber observes it. `connecting` is bounded establishment (no MEDIA segment has ever flowed); `live` is a
  * healthy stream; `recovering` is an in-flight recovery episode (a recoverable stall shows here *without* ending iteration); `closed` is terminal (disposed, codec
- * change, or the policy gave up).
+ * change, a `"direct"` stream offered no direct address, or the policy gave up).
  *
  * @category Client
  */
@@ -63,7 +71,12 @@ export type LivestreamSubscriptionState = "closed" | "connecting" | "live" | "re
  */
 export interface RecoveryContext {
 
-  /** Consecutive failed reconnect attempts this episode; resets to 0 once a media segment flows again. */
+  /**
+   * The failed reconnect attempts this episode has counted; resets to 0 once a media segment flows again. A `"preferDirect"` stream's direct attempt whose session
+   * ended before its first media, after reaching its dial or on being offered no direct address, is not among them: it falls back to the proxied route at once,
+   * and the policy is consulted again with the count as it stood. A direct attempt still dialing when its window elapses, and one whose negotiation failed, are
+   * each counted as any failed attempt is.
+   */
   attempts: number;
 
   /** The camera this recovery episode belongs to, so a consumer policy can correlate the decision with per-camera state it alone observes. */
@@ -83,8 +96,12 @@ export interface RecoveryContext {
  * A recovery decision the {@link RecoveryPolicy} returns. Its arms are exhaustive:
  *
  * - `reconnect` tears down any socket and connects fresh; the attempt is treated as failed if no media segment arrives within `awaitMs`, then the policy is re-consulted.
- *   `awaitMs` doubles as the inter-attempt spacing (a fast-failing attempt still occupies its full window), so the single policy governs both disposition and timing.
+ *   `awaitMs` doubles as the inter-attempt spacing (a fast-failing attempt still occupies its full window, except a `"preferDirect"` stream's direct attempt that fails
+ *   at its dial or is offered no direct address, which falls back to the proxied route at once), so the single policy governs both disposition and timing.
  * - `wait` does nothing for `forMs`, then re-consults - unifying defer-soak (a still-connecting session's late media segment cancels it early) and inter-attempt backoff.
+ *   A `"preferDirect"` stream's direct attempt that had not reached its dial when its window elapsed, and so did not fall back then, ends the wait early if its dial
+ *   then fails or it is offered no direct address, and the stream falls back to the proxied route. A direct session already dialing at the elapse fell back then,
+ *   and its later end is absorbed.
  * - `giveUp` is terminal: the give-up error is thrown into every subscriber and the stream is torn down.
  *
  * @category Client
@@ -188,7 +205,8 @@ export interface LivestreamSubscribeOptions {
   /**
    * Discard any still-queued, undelivered segments the instant this subscription is disposed, so a consumer mid-iteration receives the terminal rather than draining
    * stale bytes first. Off by default: a disposed subscription normally drains its queue before ending. Scoped to the consumer's own disposal alone; a pool-forced
-   * terminal (codec change, give-up, last-subscriber detach, pool disposal) still drains the queue before the terminal surfaces, exactly as it does without this option.
+   * terminal (codec change, a `"direct"` stream's missing direct address, give-up, last-subscriber detach, pool disposal) still drains the queue before the terminal
+   * surfaces, exactly as it does without this option.
    */
   discardOnDispose?: boolean;
 
@@ -211,11 +229,12 @@ export interface LivestreamSubscribeOptions {
 }
 
 /**
- * Construction options for {@link LivestreamPool}. `resolveUrl` is the transport-backed negotiation hook (build it with {@link livestreamUrlResolver}, the shared {@link
- * wsEndpointResolver}'s livestream specialization); `getAuthHeaders` is the auth hook threaded down to each session's owned connection; `webSocket` is the injected I/O
- * dependency, shared with {@link EventStream}'s and threaded down to each session; `recoveryPolicy` is the per-stream recovery decision authority, defaulting to {@link
- * defaultLivestreamRecoveryPolicy}; `verifyTls` is the strict-TLS opt-in threaded down to each session's owned connection, defaulting to `false` for the controller's
- * self-signed certificate; `clock` is the time source, defaulting to the wall clock and replaceable for tests; `log` is the logger, defaulting to a no-op.
+ * Construction options for {@link LivestreamPool}. `resolveUrl` is the transport-backed negotiation hook answering both of a livestream's addresses (build it with
+ * {@link livestreamUrlResolver}); `getAuthHeaders` is the auth hook threaded down to each session, which stamps it on a proxied upgrade alone; `webSocket` is the
+ * injected I/O dependency, shared with {@link EventStream}'s and threaded down to each session; `recoveryPolicy` is the per-stream recovery decision authority,
+ * defaulting to {@link defaultLivestreamRecoveryPolicy}; `verifyTls` is the strict-TLS opt-in threaded down to each session's proxied connection, defaulting to
+ * `false` for the controller's self-signed certificate, while a direct connection never verifies the media server's; `clock` is the time source, defaulting to the
+ * wall clock and replaceable for tests; `log` is the logger, defaulting to a no-op.
  *
  * @category Client
  */
@@ -225,7 +244,7 @@ export interface LivestreamPoolOptions {
   getAuthHeaders?: () => Record<string, string>;
   log?: ProtectLogging;
   recoveryPolicy?: RecoveryPolicy;
-  resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+  resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<LivestreamAddresses>;
   verifyTls?: boolean;
   webSocket?: (url: string) => ProtectWebSocket;
 }
@@ -262,7 +281,8 @@ const detachedHost: SubscriptionHost = {
  * The stream is **resilient by default**: a recoverable stall or reconnect is invisible to the iterator - it pauses while the underlying session is re-established and
  * resumes uninterrupted when segments flow again (a reconnect to the same stream, whose init carries the same codec label and description, suppresses the redundant
  * init). The iterator terminates only on these conditions: disposal (a clean `done`), a reconnect whose init differs in its codec label or its description (it throws
- * {@link ProtectCodecChangeError}), and the recovery policy giving up (it throws {@link ProtectLivestreamUnavailableError}). A recoverable stall is *not* one of them.
+ * {@link ProtectCodecChangeError}), a `"direct"` stream whose negotiation offered no direct address (it throws {@link ProtectLivestreamRouteError}), and the recovery
+ * policy giving up (it throws {@link ProtectLivestreamUnavailableError}). A recoverable stall is *not* one of them.
  *
  * @category Client
  */
@@ -348,8 +368,9 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   }
 
   /**
-   * Iterate the segments of this subscription. The iterator yields every queued segment, then either ends (clean close / disposal) or throws the terminal error (codec
-   * change or give-up). A recoverable stall is invisible - the iterator parks and resumes. Breaking out of the loop disposes the subscription.
+   * Iterate the segments of this subscription. The iterator yields every queued segment, then either ends (clean close / disposal) or throws the terminal error (a codec
+   * change, a `"direct"` stream's missing direct address, or a give-up). A recoverable stall is invisible - the iterator parks and resumes. Breaking out of the loop
+   * disposes the subscription.
    *
    * @returns An async iterator of segments.
    */
@@ -417,9 +438,10 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
    * Resolve `true` once the shared stream has produced its first MEDIA segment, or `false` once this subscription's wait for it is over. Liveness is
    * media-keyed: a controller that connects and acks with an init but then produces no media is NOT established - it elapses its recovery window and reconnects, so this
    * resolves `true` only when media is actually flowing. It resolves `false` in every case where the wait is over without media: the shared stream gave up
-   * establishing, or this subscription itself was disposed - its own signal aborting, an explicit `await using` exit, or breaking its iterator - so a departed
-   * subscriber's own wait ends with the subscription rather than hanging on the shared establishment latch until the remaining subscribers happen to settle it. The
-   * boolean deliberately does not distinguish these outcomes because every consumer's correct reaction is identical: stop waiting and clean up.
+   * establishing or ended on a terminal first, or this subscription itself was disposed - its own signal aborting, an explicit `await using` exit, or breaking its
+   * iterator - so a departed subscriber's own wait ends with the subscription rather than hanging on the shared establishment latch until the remaining subscribers
+   * happen to settle it. The boolean deliberately does not distinguish these outcomes because every consumer's correct reaction is identical: stop waiting and clean
+   * up.
    *
    * @returns A promise resolving `true` once the first media segment flows, `false` if establishment was abandoned or this subscription was disposed first.
    */
@@ -432,9 +454,9 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
       return false;
     }
 
-    // Race the shared establishment latch against this subscription's own disposal. The shared latch settles for the whole stream (first media `true`, or give-up
-    // `false`); the disposal deferred settles `false` for this subscriber alone. It is shared across every call, so repeated waits register nothing per call and leak no
-    // listeners.
+    // Race the shared establishment latch against this subscription's own disposal. The shared latch settles for the whole stream: first media `true`, or `false` once
+    // the stream is over without it, ended by a give-up, a codec change, a "direct" stream's missing direct address or its teardown. The disposal deferred settles
+    // `false` for this subscriber alone. It is shared across every call, so repeated waits register nothing per call and leak no listeners.
     return Promise.race([ this.#host.whenEstablished(), this.#disposalDeferred.promise ]);
   }
 
@@ -458,8 +480,8 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   }
 
   /**
-   * Terminate this subscriber with a terminal error (codec change or give-up). Already-queued segments still drain first; the error throws only once the queue
-   * empties. Package-internal.
+   * Terminate this subscriber with a terminal error (a codec change, a `"direct"` stream's missing direct address, or a give-up). Already-queued segments still drain
+   * first; the error throws only once the queue empties. Package-internal.
    *
    * @internal
    */
@@ -548,9 +570,11 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
 }
 
 // The internal recovery-loop outcome of waiting out one decision's window: a media segment restored the stream (`recovered`), the window elapsed without one (`elapsed`),
-// a consumer asked to re-decide now (`reassess`), or the stream was torn down (`aborted`). A dying in-flight session does not settle an outcome - it simply stops
-// producing segments, so the window times out as `elapsed`, which keeps the model uniform (failure is always "no media segment in the window").
-type RecoveryOutcome = "aborted" | "elapsed" | "reassess" | "recovered";
+// a consumer asked to re-decide now (`reassess`), a "preferDirect" stream's direct attempt failed at its dial or was offered no direct address before its first media
+// (`directFailed`), or the stream was torn down (`aborted`). Any other dying in-flight session settles no outcome - it simply stops producing segments, so the window
+// times out as `elapsed`, which keeps the model uniform (failure is "no media segment in the window"). The direct attempt is the one exception, because the proxied
+// route behind it should not wait out a window the direct route has already answered; a failed negotiation is shared by every route and says nothing of the direct one.
+type RecoveryOutcome = "aborted" | "directFailed" | "elapsed" | "reassess" | "recovered";
 
 // The per-install one-shot latches that must move in lockstep with every freshly-installed session, consolidated into one object so the lockstep is enforced by
 // structure rather than by separate booleans a future edit could desynchronize. They are all reset atomically in `#installSession` and consumed at most once over
@@ -592,7 +616,7 @@ class ManagedSession implements SubscriptionHost {
 
   readonly #clock: Clock;
   readonly #controller = new AbortController();
-  readonly #createSession: (signal: AbortSignal) => LivestreamSession;
+  readonly #createSession: (signal: AbortSignal, route: LivestreamDialRoute) => LivestreamSession;
   readonly #established = Promise.withResolvers<boolean>();
   readonly #key: string;
   readonly #log: ProtectLogging;
@@ -607,8 +631,9 @@ class ManagedSession implements SubscriptionHost {
   #current: LivestreamSession | null = null;
   #currentRails: Disposable[] = [];
 
-  // The shared lifecycle state, the cached init (compared on reconnect for the codec gate), the last terminal error (only ever a codec change or give-up; recoverable
-  // session errors are absorbed by recovery and never stored), liveness for the recovery diagnostics, and the single teardown / establishment-latch guards.
+  // The shared lifecycle state, the cached init (compared on reconnect for the codec gate), the last terminal error (a codec change, a "direct" stream's missing direct
+  // address, or a give-up; recoverable session errors are absorbed by recovery and never stored), liveness for the recovery diagnostics, and the single teardown /
+  // establishment-latch guards.
   //
   // `#lastSegmentAt` and `#lastSegmentMonotonicAt` are the ANY-segment liveness clock (stamped on every segment, inits included) the recovery diagnostics report,
   // always stamped together: `#lastSegmentAt` is the clock's `now()`, the time of day the stall diagnostic publishes, recorded when the segment arrives, and
@@ -630,15 +655,17 @@ class ManagedSession implements SubscriptionHost {
 
   // The current recovery episode's bookkeeping: which regime, how many attempts have failed, when it began as the clock's monotonic reading, the lockstep
   // per-install latches (see the SessionInstallState type - the codec-gate point, the media-keyed recovery point, and the post-reconnect discontinuity marker, reset
-  // as a unit per install), and the resolver of the window the loop is currently awaiting (the single point the rails and reassess() settle).
+  // as a unit per install), the route the episode's attempts dial, and the resolver of the window the loop is currently awaiting (the single point the rails and
+  // reassess() settle). The route is set as each episode begins and moves only when a "preferDirect" episode falls back, so it is never carried into the next one.
   #attempts = 0;
   #episodeStartedAt = 0;
   #install: SessionInstallState = { awaitingFirstMedia: false, awaitingFirstSegment: false, pendingDiscontinuity: false };
   #phase: "establishing" | "recovering" = "establishing";
+  #route: LivestreamDialRoute = "proxied";
   #settleOutcome: ((outcome: RecoveryOutcome) => void) | null = null;
 
-  constructor(opts: { clock: Clock; createSession: (signal: AbortSignal) => LivestreamSession; key: string; log: ProtectLogging; onTeardown: (key: string) => void;
-    policy: RecoveryPolicy; resolved: ResolvedLivestreamSpec; }) {
+  constructor(opts: { clock: Clock; createSession: (signal: AbortSignal, route: LivestreamDialRoute) => LivestreamSession; key: string; log: ProtectLogging;
+    onTeardown: (key: string) => void; policy: RecoveryPolicy; resolved: ResolvedLivestreamSpec; }) {
 
     this.#clock = opts.clock;
     this.#createSession = opts.createSession;
@@ -739,7 +766,7 @@ class ManagedSession implements SubscriptionHost {
     }
   }
 
-  // Resolve once the stream first produces a MEDIA segment (true) or gives up establishing (false).
+  // Resolve once the stream first produces a MEDIA segment (true) or ends without one, a give-up or a terminal ending it first (false).
   whenEstablished(): Promise<boolean> {
 
     return this.#established.promise;
@@ -747,7 +774,8 @@ class ManagedSession implements SubscriptionHost {
 
   // The recovery loop: a reducer over recovery events. Each pass asks the policy for a decision given the live context, applies it (reconnect builds a fresh session;
   // wait leaves the socket alone; giveUp is terminal), then awaits the decision's window. A MEDIA segment ends the window as `recovered` and the episode is over; the
-  // window elapsing on a reconnect counts a failed attempt and re-consults; a torn-down stream ends the loop. The loop is bound to the managed session's
+  // window elapsing on a reconnect counts a failed attempt and re-consults; a "preferDirect" stream's direct attempt that failed at its dial, or was offered no direct
+  // address, before its first media falls back and re-consults with no attempt counted; a torn-down stream ends the loop. The loop is bound to the managed session's
   // AbortController, so teardown (last subscriber, pool disposal, terminal) ends it cleanly.
   async #runEpisode(phase: "establishing" | "recovering"): Promise<void> {
 
@@ -755,6 +783,30 @@ class ManagedSession implements SubscriptionHost {
     this.#state = (phase === "establishing") ? "connecting" : "recovering";
     this.#episodeStartedAt = this.#clock.monotonic();
     this.#attempts = 0;
+
+    // Every episode begins on the stream's own route, a "preferDirect" stream's on its direct one, so a fallback in one episode is never remembered in the next. A
+    // route added without an arm here leaves `route` unassigned where the episode reads it, which fails to compile.
+    let route: LivestreamDialRoute;
+
+    switch(this.#resolved.route) {
+
+      case "direct":
+      case "preferDirect": {
+
+        route = "direct";
+
+        break;
+      }
+
+      case "proxied": {
+
+        route = "proxied";
+
+        break;
+      }
+    }
+
+    this.#route = route;
 
     if((phase === "recovering") && channels.livestreamRecoveryStarted.hasSubscribers) {
 
@@ -801,6 +853,21 @@ class ManagedSession implements SubscriptionHost {
           return;
         }
 
+        // The episode's direct attempt failed at its dial, or was offered no direct address, before its first media: fall back to the proxied route and re-consult at
+        // once, counting no attempt, since the direct route has already answered. A teardown can land after that settle and before this pass resumes, and a stream
+        // that is over falls back to nothing, so the fallback runs only while the lifetime still stands and the loop's next pass ends it otherwise. TypeScript carries
+        // the pass's opening read of the signal across the await above, so the compiler reads the signal as never aborted here, and the lint rule follows the compiler.
+        if(outcome === "directFailed") {
+
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          if(!signal.aborted) {
+
+            this.#fallBack();
+          }
+
+          continue;
+        }
+
         // A reconnect whose window elapsed without a recovering MEDIA segment is a failed attempt; a wait that simply elapsed is not (it was deliberate backoff/defer). A
         // reassess on either re-consults immediately without counting an attempt. Because the recovery point keys on media, an init-then-no-media session - the
         // controller acked with an init then went silent - elapses its window exactly like a session that never connected, and counts as a failed media-establishment
@@ -812,6 +879,13 @@ class ManagedSession implements SubscriptionHost {
         if(isReconnect && (outcome === "elapsed")) {
 
           this.#attempts++;
+
+          // A direct attempt whose window elapsed with no media is counted as any elapsed window is, and falls back too when it reached its dial, one still dialing a
+          // port that drops packets among them. One whose negotiation failed or never answered dialed nothing, so the next attempt dials direct again.
+          if(this.#canFallBack()) {
+
+            this.#fallBack();
+          }
         }
       }
     } catch(error) {
@@ -821,6 +895,45 @@ class ManagedSession implements SubscriptionHost {
       this.#log.error("The UniFi Protect livestream recovery policy threw; tearing the stream down.", error);
       this.#giveUp(error);
     }
+  }
+
+  /* Whether the in-flight attempt may fall back to the proxied route, the one rule each fallback site reads. The attempt is a "preferDirect" stream's direct attempt:
+   * the episode's route still reads "direct", which only the fallback moves, so an episode falls back at most once and no session of it after the fallback qualifies.
+   * And the direct route itself answered it: its session reached its dial, or was offered no direct address. A negotiation that failed is shared by every route and
+   * says nothing of the direct one, so its attempt stays on the direct route and is counted when its window elapses.
+   */
+  #canFallBack(): boolean {
+
+    const session = this.#current;
+
+    return (this.#resolved.route === "preferDirect") && (this.#route === "direct") && (session !== null) &&
+      (session.dialed || (session.closeCause instanceof ProtectLivestreamRouteError));
+  }
+
+  /* Fall back from the episode's direct attempt to the proxied route for the rest of the episode, publishing why and logging it at debug, since the published
+   * reason is what a consumer acts on. The session is still the current one here, because the loop reaches this before it installs the next attempt, so its close
+   * cause, whether its socket opened and the port it dialed are the failed attempt's own. A route error means the controller offered no direct address; otherwise
+   * a socket that opened completed its WebSocket upgrade and sent no media before the attempt ended, and one that never opened never completed its upgrade. The
+   * line carries the close cause too, left out when the session recorded none, as a direct attempt still dialing when its window elapsed has not.
+   */
+  #fallBack(): void {
+
+    const session = this.#current;
+    const error = session?.closeCause ?? null;
+    const reason: LivestreamRouteFallbackReason = (error instanceof ProtectLivestreamRouteError) ? "noDirectAddress" :
+      ((session?.opened === true) ? "noMedia" : "unreachable");
+
+    this.#route = "proxied";
+
+    if(channels.livestreamRouteFallback.hasSubscribers) {
+
+      const payload = { cameraId: this.#resolved.cameraId, key: this.#key, port: session?.dialedPort ?? null, reason } satisfies LivestreamRouteFallbackPayload;
+
+      channels.livestreamRouteFallback.publish(payload);
+    }
+
+    this.#log.debug("The UniFi Protect livestream's direct route failed before its first media; falling back to the proxied route.",
+      { cameraId: this.#resolved.cameraId, ...((error !== null) && { error }), reason });
   }
 
   // The live recovery context the policy reads. Only library-observable fields; consumer-private state lives in the policy's own closure.
@@ -900,10 +1013,10 @@ class ManagedSession implements SubscriptionHost {
     // session never installs at all.
     this.#install = { awaitingFirstMedia: true, awaitingFirstSegment: true, pendingDiscontinuity: (this.#phase === "recovering") };
 
-    // Each session is handed its managed stream's lifetime signal. When the stream is torn down, whatever the cause, that signal closes the current session and
-    // cancels any URL negotiation still in flight, a replaced session's included. A recovery retry aborts nothing: it closes the session it replaces, whose
-    // negotiation runs to its own outcome, so the request still reports what the controller did with it.
-    const session = this.#createSession(this.#controller.signal);
+    // Each session is handed its managed stream's lifetime signal and the route the episode's attempts dial. When the stream is torn down, whatever the cause, that
+    // signal closes the current session and cancels any URL negotiation still in flight, a replaced session's included. A recovery retry aborts nothing: it closes
+    // the session it replaces, whose negotiation runs to its own outcome, so the request still reports what the controller did with it.
+    const session = this.#createSession(this.#controller.signal, this.#route);
 
     this.#current = session;
     this.#currentRails = [
@@ -1008,9 +1121,9 @@ class ManagedSession implements SubscriptionHost {
   // flight (its recovery window still bounds time-to-first-MEDIA) so that a controller that inits then never produces media elapses the window and reconnects rather than
   // being presumed live. It applies the codec gate, which compares the codec label and the description - the very first establishment caches and delivers the init; a
   // same-stream reconnect, whose label and description match the cached init's, suppresses the redundant re-emit (HKSV tolerates no second init; an FFmpeg pipe cannot
-  // re-init) and resumes uninterrupted; a changed label or description is the one terminal a recovery raises, torn down here via the controller's abort (which settles
-  // the window `aborted`, booking no spurious attempt). It does NOT need the settle-race guard the recovery-media path keeps: the init can only reach us on the current
-  // session's still-attached rail, and an elapsed window would already have disposed that rail before the init could arrive.
+  // re-init) and resumes uninterrupted; a changed label or description is terminal, torn down here via the controller's abort (which settles the window `aborted`,
+  // booking no spurious attempt). It does NOT need the settle-race guard the recovery-media path keeps: the init can only reach us on the current session's
+  // still-attached rail, and an elapsed window would already have disposed that rail before the init could arrive.
   #handleFirstSegment(segment: Segment): void {
 
     if(segment.type === "init") {
@@ -1200,8 +1313,12 @@ class ManagedSession implements SubscriptionHost {
     this.#teardown("the livestream recovery policy gave up");
   }
 
-  // The in-flight session surfaced a typed error. A stall publishes the stall diagnostic; otherwise nothing - a recoverable session error is absorbed by recovery and
-  // never reaches subscribers (only the codec-change / give-up terminals do). The session's `closed` follows, which the loop reads as the window producing no segment.
+  /* The in-flight session surfaced a typed error. A stall publishes the stall diagnostic. A "direct" stream's negotiation that offered no direct address ends the
+   * stream with that error, which every subscriber throws, the way a codec change ends one: no retry changes the controller's answer, and a give-up would spend the
+   * establishment deadline on a request that cannot succeed and publish the exhausted diagnostic a consumer's self-heal observer acts on. Every other session error,
+   * the same one on a "preferDirect" stream's direct attempt included, is absorbed by recovery and never reaches subscribers. The session's `closed` follows, which
+   * the loop reads as the window producing no segment, or as a direct attempt's failed dial.
+   */
   #onSessionError(error: ProtectError): void {
 
     if((error instanceof ProtectStallError) && channels.livestreamStallDetected.hasSubscribers) {
@@ -1211,14 +1328,37 @@ class ManagedSession implements SubscriptionHost {
 
       channels.livestreamStallDetected.publish(payload);
     }
+
+    if((error instanceof ProtectLivestreamRouteError) && (this.#resolved.route === "direct")) {
+
+      this.#lastError = error;
+      this.#teardown("the controller offered no direct livestream address");
+    }
   }
 
-  // The in-flight session closed. During a recovery episode (a window is being awaited) the death is absorbed - the window simply times out as `elapsed`, keeping failure
-  // uniform. While the stream is `live` (no episode running), a close is a fault, so we begin a recovery episode. A close during teardown, or between episodes with no
-  // live stream, is ignored.
+  /* The in-flight session closed. A teardown is read first and ends it: #teardown aborts the lifetime before it disposes the rails, so a last subscriber leaving, a
+   * pool disposal and a caller abort each deliver the current session's close while a window is still awaited, and none of them is a failed dial. A "preferDirect"
+   * stream's direct attempt that failed at its dial, or was offered no direct address, before its first media settles its window `directFailed`, which the loop reads
+   * as a fallback with no attempt counted. Any other death during a recovery episode (a window is being awaited) is absorbed - the window simply times out as
+   * `elapsed`, keeping failure uniform - a direct attempt whose negotiation failed included, and one after the episode fell back, inside a policy's wait as much as
+   * an attempt's window. While the stream is `live` (no episode running), a close is a fault, so we begin a recovery episode. A close between episodes with no live
+   * stream is ignored.
+   */
   #onSessionClosed(): void {
 
-    if(this.#torndown || (this.#settleOutcome !== null)) {
+    if(this.#torndown) {
+
+      return;
+    }
+
+    if(this.#canFallBack() && this.#install.awaitingFirstMedia) {
+
+      this.#settle("directFailed");
+
+      return;
+    }
+
+    if(this.#settleOutcome !== null) {
 
       return;
     }
@@ -1269,11 +1409,11 @@ class ManagedSession implements SubscriptionHost {
     this.#established.resolve(value);
   }
 
-  // The single guarded teardown, whether triggered by the last subscriber leaving, the pool disposing, a codec change, or a give-up. It first aborts the lifetime
-  // controller, which ends the recovery loop and closes the underlying session through the signal it was handed, cancelling any URL negotiation still in flight. It
-  // then disposes the in-flight rails (so no further segment arrives), removes the key from the pool map synchronously (so a new subscriber starts fresh rather than
-  // attaching to a closing session), resolves the establishment latch (false, if it never resolved), terminates the subscribers (failing them with the terminal error
-  // if there is one, else closing them cleanly), and publishes the close diagnostic.
+  // The single guarded teardown, whether triggered by the last subscriber leaving, the pool disposing, a codec change, a "direct" stream's missing direct address, or
+  // a give-up. It first aborts the lifetime controller, which ends the recovery loop and closes the underlying session through the signal it was handed, cancelling
+  // any URL negotiation still in flight. It then disposes the in-flight rails (so no further segment arrives), removes the key from the pool map synchronously (so a new
+  // subscriber starts fresh rather than attaching to a closing session), resolves the establishment latch (false, if it never resolved), terminates the subscribers
+  // (failing them with the terminal error if there is one, else closing them cleanly), and publishes the close diagnostic.
   #teardown(reason: string): void {
 
     if(this.#torndown) {
@@ -1322,7 +1462,7 @@ class ManagedSession implements SubscriptionHost {
 
 /**
  * The ref-counted, multi-subscriber, resilient-by-default livestream pool. Construct it at the composition root with a transport-backed {@link livestreamUrlResolver}
- * (the shared {@link wsEndpointResolver}'s livestream specialization) and an optional {@link RecoveryPolicy}; consumers reach it through `camera.livestream(...)`.
+ * and an optional {@link RecoveryPolicy}; consumers reach it through `camera.livestream(...)`.
  *
  * @category Client
  */
@@ -1332,7 +1472,7 @@ export class LivestreamPool implements AsyncDisposable {
   readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #log: ProtectLogging;
   readonly #recoveryPolicy: RecoveryPolicy;
-  readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+  readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<LivestreamAddresses>;
   readonly #sessions = new Map<string, ManagedSession>();
   // Carried as the caller stated it rather than resolved to a default here: the pool passes the posture through to each session it mints, and the permissive default
   // lives at the one place that builds an agent.
@@ -1352,8 +1492,9 @@ export class LivestreamPool implements AsyncDisposable {
 
   /**
    * Subscribe to a camera livestream. Returns immediately with a {@link LivestreamSubscription}; segments begin flowing once the underlying session connects (or
-   * immediately, replayed from the cached init, for a shared session already live). Subscribers asking for an identical stream share one underlying WebSocket, and the
-   * shared session recovers under the pool's policy without failing any subscriber.
+   * immediately, replayed from the cached init, for a shared session already live). Subscribers asking for the same stream on the same route share one underlying
+   * WebSocket, and the shared session recovers under the pool's policy, failing its subscribers only on a terminal: a codec change, a `"direct"` stream's missing
+   * direct address, or the policy giving up.
    *
    * @param spec - The stream to subscribe to.
    * @param opts - Per-subscription {@link LivestreamSubscribeOptions}: an optional abort signal that disposes this subscription (and only this one), an
@@ -1385,17 +1526,18 @@ export class LivestreamPool implements AsyncDisposable {
     let managed = this.#sessions.get(key);
 
     // First subscriber for this stream identity: create the one managed session (which owns session creation, negotiation, and recovery) and register it synchronously,
-    // so any concurrent early subscriber finds it here rather than opening a second socket.
+    // so any concurrent early subscriber finds it here rather than opening a second socket. Each session it creates dials the one route the managed session picked
+    // for that attempt, which replaces the spec's own.
     if(managed === undefined) {
 
-      const createSession = (signal: AbortSignal): LivestreamSession => new LivestreamSession({
+      const createSession = (signal: AbortSignal, route: LivestreamDialRoute): LivestreamSession => new LivestreamSession({
 
         clock: this.#clock,
         ...((this.#getAuthHeaders !== undefined) && { getAuthHeaders: this.#getAuthHeaders }),
         log: this.#log,
         resolveUrl: this.#resolveUrl,
         signal,
-        spec,
+        spec: { ...spec, route },
         ...((this.#verifyTls !== undefined) && { verifyTls: this.#verifyTls }),
         ...((this.#webSocketFactory !== undefined) && { webSocket: this.#webSocketFactory })
       });

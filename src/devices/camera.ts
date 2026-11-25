@@ -33,9 +33,10 @@ export interface SnapshotOptions {
 }
 
 /**
- * Options for {@link Camera.livestream} - the stream-affecting `source` selector (a quality channel or a secondary lens) and tuning (segment length, chunk size, opt-in
- * timestamps) without `cameraId` (the camera supplies its own id), plus the per-subscription {@link LivestreamSubscribeOptions} (an abort signal that disposes the
- * returned subscription, an `urgency` closure feeding the pool's resilient recovery, and `discardOnDispose`).
+ * Options for {@link Camera.livestream} - the `source` selector (a quality channel or a secondary lens), the tuning (segment length, chunk size, opt-in timestamps)
+ * and the `route` the stream is dialed on (`"proxied"` by default, `"direct"` or `"preferDirect"`) without `cameraId` (the camera supplies its own id), plus the
+ * per-subscription {@link LivestreamSubscribeOptions} (an abort signal that disposes the returned subscription, an `urgency` closure feeding the pool's resilient
+ * recovery, and `discardOnDispose`).
  *
  * @category Devices
  */
@@ -201,9 +202,9 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
   }
 
   /**
-   * Subscribe to a live fMP4 stream from this camera. Delegates to the library-owned pool, which shares one underlying WebSocket across every consumer of an identical
-   * stream and replays the cached init segment to late joiners. The returned subscription is an `AsyncIterable<Segment>` and `AsyncDisposable`; iterate it for segments,
-   * dispose it (or abort its signal) to leave - the underlying session closes once the last subscriber departs.
+   * Subscribe to a live fMP4 stream from this camera. Delegates to the library-owned pool, which shares one underlying WebSocket across every consumer asking for the
+   * same stream on the same route and replays the cached init segment to late joiners. The returned subscription is an `AsyncIterable<Segment>` and `AsyncDisposable`;
+   * iterate it for segments, dispose it (or abort its signal) to leave - the underlying session closes once the last subscriber departs.
    *
    * @param opts - The stream source and tuning, plus the per-subscription options (abort signal, urgency, and discard-on-dispose).
    *

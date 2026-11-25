@@ -124,6 +124,11 @@ export const channels = {
   /** A pooled livestream began a recovery episode after a previously-live session faulted. */
   livestreamRecoveryStarted: typed<LivestreamRecoveryStartedPayload>("unifi-protect:livestream:recovery:started"),
 
+  /** A pooled `"preferDirect"` livestream's direct attempt ended before its first media, and the stream fell back to the proxied route for the rest of its
+   * episode. Published once per fallback, naming why the direct attempt ended; the stream's next episode dials direct first again.
+   */
+  livestreamRouteFallback: typed<LivestreamRouteFallbackPayload>("unifi-protect:livestream:route:fallback"),
+
   /** The livestream pool tore down the managed session it held for a stream. */
   livestreamSessionClosed: typed<LivestreamSessionClosedPayload>("unifi-protect:livestream:session:closed"),
 
@@ -355,8 +360,9 @@ export interface LivestreamCodecChangedPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamRecoveryExhausted}. `attempts` is the number of consecutive failed reconnect attempts before the policy gave up. The
- * consumer's iterator also receives a {@link ProtectLivestreamUnavailableError}; this channel is what an opt-in self-heal observer watches.
+ * Payload published on {@link channels.livestreamRecoveryExhausted}. `attempts` is the number of failed attempts the episode counted before the policy gave up, which
+ * leaves out a `"preferDirect"` stream's direct attempt that ended before its first media and fell back at once. The consumer's iterator also receives a
+ * {@link ProtectLivestreamUnavailableError}; this channel is what an opt-in self-heal observer watches.
  *
  * @category Diagnostics
  */
@@ -396,6 +402,29 @@ export interface LivestreamRecoveryStartedPayload {
 }
 
 /**
+ * Why a `"preferDirect"` livestream fell back from its direct route, the `reason` a {@link LivestreamRouteFallbackPayload} carries: `"noDirectAddress"`, the
+ * controller offered no direct address; `"unreachable"`, the direct connection never opened, its dial refused, reset or left unanswered, or the media server
+ * refusing or never answering its WebSocket upgrade; and `"noMedia"`, it opened and no media arrived before the attempt ended.
+ *
+ * @category Diagnostics
+ */
+export type LivestreamRouteFallbackReason = "noDirectAddress" | "noMedia" | "unreachable";
+
+/**
+ * Payload published on {@link channels.livestreamRouteFallback}. `reason` names why the direct attempt ended, and `port` is the port the direct attempt dialed, or
+ * null when there was no direct address to dial.
+ *
+ * @category Diagnostics
+ */
+export interface LivestreamRouteFallbackPayload {
+
+  cameraId: string;
+  key: string;
+  port: number | null;
+  reason: LivestreamRouteFallbackReason;
+}
+
+/**
  * Payload published on {@link channels.livestreamSessionClosed}. `reason` is a short description of what ended the stream, such as its last subscriber leaving, a codec
  * change, or the recovery policy giving up.
  *
@@ -409,8 +438,9 @@ export interface LivestreamSessionClosedPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamSessionOpened}. `key` is the pool's stream-affecting sharing key
- * `${cameraId}:${channel}:${lens}:${segmentLength}:${chunkSize}:${timestamps}` (the resolved stream-affecting identity).
+ * Payload published on {@link channels.livestreamSessionOpened}. `key` is the pool's sharing key
+ * `${cameraId}:${channel}:${lens}:${segmentLength}:${chunkSize}:${timestamps}:${route}` (every resolved field that changes what the controller produces or how the
+ * pool dials it, the requested route among them).
  *
  * @category Diagnostics
  */

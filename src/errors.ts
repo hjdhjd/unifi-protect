@@ -388,17 +388,33 @@ export class ProtectCodecChangeError extends FatalError {
 }
 
 /**
+ * A livestream asked for its `"direct"` route, and the controller's negotiation offered no direct address the library can dial: none at all, one that does not
+ * parse, or one that is not `wss:`. A direct session raises it as it tears down, before it builds any socket, and a pooled `"direct"` stream ends on it, the way a
+ * codec change ends one, rather than through the recovery policy, so `livestreamRecoveryExhausted` never publishes for a request that could never succeed. Fatal
+ * because the controller answers every renegotiation the same way; the consumer re-subscribes on the `"proxied"` or `"preferDirect"` route.
+ *
+ * @category Errors
+ */
+export class ProtectLivestreamRouteError extends FatalError {
+
+  constructor(message: string, options?: { cause?: unknown }) {
+
+    super(message, { cause: options?.cause });
+  }
+}
+
+/**
  * A pooled livestream's recovery policy gave up. The `phase` names which regime the pool gave up in: `establishing` means no media segment arrived within the
  * bounded establishment deadline (the stream may have connected and sent its init, but never produced media), and `recovering` means a previously-live stream could
- * not be re-established and the policy elected to stop. Fatal because the policy - the single authority over whether to keep trying - has declared the stream
- * unrecoverable; the consumer re-subscribes if it still wants the stream. `attempts` carries how many consecutive reconnect attempts the episode made before the
- * policy returned `giveUp`.
+ * not be re-established and the policy elected to stop. Fatal because the policy, which decides whether to keep trying, has declared the stream unrecoverable; the
+ * consumer re-subscribes if it still wants the stream. `attempts` carries how many failed attempts the episode counted before the policy returned `giveUp`, which
+ * leaves out a `"preferDirect"` stream's direct attempt that ended before its first media and fell back at once.
  *
  * @category Errors
  */
 export class ProtectLivestreamUnavailableError extends FatalError {
 
-  /** The number of consecutive failed reconnect attempts the recovery episode made before the policy gave up. */
+  /** The number of failed attempts the recovery episode counted before the policy gave up. */
   readonly attempts: number;
 
   /** Which regime the give-up occurred in: bounded establishment, or unbounded live recovery. */

@@ -545,6 +545,20 @@ describe("TalkbackSession", () => {
       assert.equal(session.state, "live");
     });
 
+    test("the upgrade carries the headers the auth hook returns", async () => {
+
+      // The proxy refuses a media upgrade without the session, so the headers are read at the real peer the default factory's socket dials.
+      await using peer = await createLoopbackWebSocketPeer();
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", getAuthHeaders: (): Record<string, string> => ({ cookie: "TOKEN=invented-session",
+        "x-csrf-token": "invented-csrf" }), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      const headers = await peer.upgrade(0);
+
+      assert.equal(session.state, "live");
+      assert.equal(headers["cookie"], "TOKEN=invented-session");
+      assert.equal(headers["x-csrf-token"], "invented-csrf");
+    });
+
     test("the upgrade refuses a certificate that does not verify when strict verification is asked for", async () => {
 
       await using peer = await createLoopbackWebSocketPeer();

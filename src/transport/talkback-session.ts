@@ -64,8 +64,8 @@ export type TalkbackState = "closed" | "closing" | "connecting" | "live";
  * - `clock` is the time source a connection attempt that times out is measured on; it defaults to the wall clock, and tests inject a fake. It is read only for that
  *   measure, never on the write path.
  * - `log` receives the session's diagnostics logging; it defaults to a no-op logger.
- * - `resolveUrl` is the negotiation hook, identical in type to {@link LivestreamSession}'s: given the request params it returns the WebSocket URL on the controller
- *   authority. The composition root wires it to a transport-backed GET (see `talkbackUrlResolver`); tests pass a one-line fake.
+ * - `resolveUrl` is the negotiation hook: given the request params it returns the WebSocket URL on the controller authority. The composition root wires it to a
+ *   transport-backed GET (see `talkbackUrlResolver`); tests pass a one-line fake.
  * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses). The session
  *   reads it when it builds its socket, after its negotiation, so a relogin the negotiation triggered reaches the upgrade; an injected `webSocket` factory receives
  *   the URL alone.

@@ -95,13 +95,22 @@ try {
 `camera.livestream()` returns a `LivestreamSubscription` - an async iterable of fMP4 segments. The library pools sessions: two subscriptions with identical parameters share one underlying WebSocket, and a late joiner is replayed the cached init segment. This is true access to the camera's encoded video datastream (H.264, HEVC, or AV1), not the RTSP URLs.
 
 ```ts
-await using live = client.camera(id)?.livestream({ channel: 0, signal });
+const camera = client.camera(id);
+
+if(!camera) {
+
+  throw new Error("No such camera.");
+}
+
+await using live = camera.livestream({ signal, source: { channel: 0, type: "channel" } });
 
 for await (const segment of live) {
 
   ffmpeg.stdin.write(segment.data);
 }
 ```
+
+A stream's `route` decides how it reaches the controller. `"proxied"`, the default, goes through the UniFi OS proxy, as every other connection does. `"direct"` dials the controller's media server itself, skipping the proxy, and since that server presents its own self-signed certificate, a direct stream never verifies it even when `verifyTls` is on, carrying no session credentials to protect. `"preferDirect"` tries the direct route first and falls back to the proxied one when the direct route fails before its first media, publishing the reason on the `livestreamRouteFallback` diagnostics channel.
 
 ## Testing
 

@@ -1,31 +1,36 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
  * livestream-pool.test.ts: Tests for the resilient-by-default LivestreamPool - multi-subscriber session sharing, late-joiner init replay, exact ref-counted teardown,
- * slow-vs-fast subscriber isolation, the stream-affecting pool key, diagnostics, Camera.livestream delegation, and the recovery layer: invisible reconnect
- * (same-stream init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the establishing and recovering regimes, reassess, and
- * whenEstablished.
+ * slow-vs-fast subscriber isolation, the stream-affecting pool key, diagnostics, Camera.livestream delegation, the route each attempt dials with its fallback and its
+ * terminal, and the recovery layer: invisible reconnect (same-stream init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the
+ * establishing and recovering regimes, reassess, and whenEstablished.
  */
 import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AUDIO_RATE_CHANGED_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
+import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
+import type { LivestreamAddresses, LivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
-  LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload, LivestreamSubscriptionCreatedPayload,
-  LivestreamSubscriptionDisposedPayload } from "../diagnostics.ts";
+  LivestreamRouteFallbackPayload, LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload,
+  LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload } from "../diagnostics.ts";
 import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-pool.ts";
 import type { LivestreamPoolOptions, LivestreamSubscribeOptions, RecoveryContext, RecoveryPolicy } from "./livestream-pool.ts";
-import type { LivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT,
   PROTECT_LIVESTREAM_STALL_DEFAULT_MS, PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
-import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamUnavailableError, ProtectNetworkError } from "../errors.ts";
-import { TIME_OF_DAY_STEP_MS, capturingLog, settlement, silentLog } from "../testing.helpers.ts";
+import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamRouteError, ProtectLivestreamUnavailableError, ProtectNetworkError,
+  ProtectProtocolError } from "../errors.ts";
+import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
 import { buildInitSegment, buildMediaSegment } from "../transport/livestream-session.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
 import { describe, test } from "node:test";
+import { livestreamKey, resolveLivestreamSpec } from "../transport/livestream-session.ts";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { Camera } from "../devices/camera.ts";
 import type { DeviceContext } from "../devices/context.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
 import { createDeviceSelectors } from "../state/selectors.ts";
 import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
+import { inspect } from "node:util";
 
 const SPEC: LivestreamSpec = { cameraId: "cam1", source: { channel: 0, type: "channel" } };
 
@@ -52,31 +57,52 @@ function at<T>(items: T[], index: number): T {
   return value;
 }
 
-// A pool over fake sockets and a fixed resolver. Every socket the pool's sessions build is captured so tests can drive `open` / `message` / `error` deterministically. A
-// recovery policy may be injected; omitting it exercises the library default. A resolver may be injected in place of the fixed one, for a test that reads the
-// negotiation itself, and a logger in place of the silent one, for a test that reads what the pool logs.
+// The invented addresses the fixed resolver offers: the proxied one every stream given no route dials, and the direct one beside it.
+const PROXIED_URL = "wss://controller/live";
+const DIRECT_URL = "wss://controller:7446/live";
+
+// The line a "preferDirect" stream logs at debug as an episode falls back, and the debug lines a log holds carrying it.
+const FALLBACK = "The UniFi Protect livestream's direct route failed before its first media; falling back to the proxied route.";
+
+function fallbackLines(log: CapturingLogger): CapturedLogEntry[] {
+
+  return log.entries.filter((entry) => (entry.level === "debug") && (entry.message === FALLBACK));
+}
+
+// The key a "preferDirect" stream over SPEC is pooled under, which each fallback payload of it names.
+const PREFER_DIRECT_KEY = livestreamKey(resolveLivestreamSpec({ ...SPEC, route: "preferDirect" }));
+
+// A resolver whose negotiation offers no direct address, the answer a controller gives that mints none.
+const proxiedOnly = async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: PROXIED_URL });
+
+// A pool over fake sockets and a fixed resolver offering both addresses. Every socket the pool's sessions build is captured, with the URL it was built on, so tests
+// can drive `open` / `message` / `error` deterministically and read which route each attempt dialed. A recovery policy may be injected; omitting it exercises the
+// library default. A resolver may be injected in place of the fixed one, for a test that reads the negotiation itself, and a logger in place of the silent one, for
+// a test that reads what the pool logs.
 function makePool(options: { clock?: TestClock; log?: LivestreamPoolOptions["log"]; recoveryPolicy?: RecoveryPolicy;
-  resolveUrl?: LivestreamPoolOptions["resolveUrl"]; } = {}): { clock: TestClock; pool: LivestreamPool; sockets: FakeWebSocket[] } {
+  resolveUrl?: LivestreamPoolOptions["resolveUrl"]; } = {}): { clock: TestClock; pool: LivestreamPool; sockets: FakeWebSocket[]; urls: string[] } {
 
   const sockets: FakeWebSocket[] = [];
+  const urls: string[] = [];
   const clock = options.clock ?? new TestClock();
   const pool = new LivestreamPool({
 
     clock,
     log: options.log ?? silentLog(),
     ...((options.recoveryPolicy !== undefined) && { recoveryPolicy: options.recoveryPolicy }),
-    resolveUrl: options.resolveUrl ?? (async (): Promise<string> => "wss://controller/live"),
-    webSocket: (): FakeWebSocket => {
+    resolveUrl: options.resolveUrl ?? (async (): Promise<LivestreamAddresses> => ({ direct: DIRECT_URL, proxied: PROXIED_URL })),
+    webSocket: (url: string): FakeWebSocket => {
 
       const ws = new FakeWebSocket({ autoOpen: false });
 
       sockets.push(ws);
+      urls.push(url);
 
       return ws;
     }
   });
 
-  return { clock, pool, sockets };
+  return { clock, pool, sockets, urls };
 }
 
 // A resolver that records the signal each negotiation is handed and never settles on its own: once that signal aborts, the promise it returned rejects with
@@ -84,11 +110,11 @@ function makePool(options: { clock?: TestClock; log?: LivestreamPoolOptions["log
 function capturingResolver(): { resolveUrl: LivestreamPoolOptions["resolveUrl"]; signals: (AbortSignal | undefined)[] } {
 
   const signals: (AbortSignal | undefined)[] = [];
-  const resolveUrl = async (_params: URLSearchParams, opts: { signal?: AbortSignal }): Promise<string> => {
+  const resolveUrl = async (_params: URLSearchParams, opts: { signal?: AbortSignal }): Promise<LivestreamAddresses> => {
 
     signals.push(opts.signal);
 
-    const { promise, reject } = Promise.withResolvers<string>();
+    const { promise, reject } = Promise.withResolvers<LivestreamAddresses>();
 
     opts.signal?.addEventListener("abort", () => reject(new ProtectAbortedError("The negotiation was aborted by the caller's signal.")), { once: true });
 
@@ -658,8 +684,8 @@ describe("LivestreamPool", () => {
        * with anything the policy or the clock did.
        */
       await using peer = await createLoopbackWebSocketPeer();
-      await using pool = new LivestreamPool({ clock: new TestClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live",
-        verifyTls: true });
+      await using pool = new LivestreamPool({ clock: new TestClock(), log: silentLog(),
+        resolveUrl: async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: "wss://" + peer.host + "/live" }), verifyTls: true });
 
       await using subscription = pool.subscribe(SPEC);
 
@@ -676,13 +702,607 @@ describe("LivestreamPool", () => {
 
       // The same peer, the same pool wiring, one option apart - the control that says the refusal above was the option's doing and not the peer's.
       await using peer = await createLoopbackWebSocketPeer();
-      await using pool = new LivestreamPool({ clock: new TestClock(), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/live" });
+      await using pool = new LivestreamPool({ clock: new TestClock(), log: silentLog(),
+        resolveUrl: async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: "wss://" + peer.host + "/live" }) });
 
       await using subscription = pool.subscribe(SPEC);
 
       await peer.whenHandshakes(1);
 
       assert.equal(peer.handshakes, 1);
+    });
+  });
+
+  describe("routes", () => {
+
+    test("a stream given no route dials the proxied address on every attempt", async () => {
+
+      const { clock, pool, urls } = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      clock.advance(1000);
+      await settle();
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ PROXIED_URL, PROXIED_URL, PROXIED_URL ]);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("an unknown route is refused at subscribe with ProtectProtocolError, before anything is negotiated", () => {
+
+      let negotiations = 0;
+      const { pool } = makePool({ resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        return { direct: DIRECT_URL, proxied: PROXIED_URL };
+      } });
+
+      // A mistyped route the type refuses at compile time, which an untyped caller can still pass, is refused the way an unknown source type is. A negotiation
+      // starts inside subscribe itself, so none having started is what shows the refusal came first.
+      assert.throws(() => pool.subscribe({ ...SPEC, route: "proxy" } as unknown as LivestreamSpec), ProtectProtocolError);
+      assert.equal(negotiations, 0);
+    });
+
+    test("a direct stream offered no direct address throws ProtectLivestreamRouteError at once, never through the give-up", async () => {
+
+      const exhausted: LivestreamRecoveryExhaustedPayload[] = [];
+      const reasons: string[] = [];
+
+      using exhaustedSubscription = subscribeToChannel(channels.livestreamRecoveryExhausted, (payload) => void exhausted.push(payload));
+      using closedSubscription = subscribeToChannel(channels.livestreamSessionClosed, (payload) => void reasons.push(payload.reason));
+
+      const { pool, sockets } = makePool({ resolveUrl: proxiedOnly });
+      const sub = pool.subscribe({ ...SPEC, route: "direct" });
+      const pending = sub[Symbol.asyncIterator]().next();
+      const settled = settlement(pending);
+
+      // No clock advance: the terminal is the negotiation's own answer, which no window has to elapse to read, so it has arrived by the next turn.
+      await settle();
+
+      assert.ok(settled(), "the terminal arrives with no clock advance");
+
+      await assert.rejects(pending, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamRouteError);
+        assert.equal(error.message, "The UniFi Protect controller offered no direct livestream address.");
+
+        return true;
+      });
+
+      assert.equal(sockets.length, 0);
+      assert.deepEqual(exhausted, [], "a request that could never succeed publishes nothing a self-heal observer acts on");
+      assert.deepEqual(reasons, ["the controller offered no direct livestream address"]);
+      assert.equal(await sub.whenEstablished(), false);
+    });
+
+    test("a preferDirect stream offered no direct address dials proxied next with no clock advance and logs its fallback once", async () => {
+
+      const log = capturingLog();
+      const { pool, urls } = makePool({ log, resolveUrl: proxiedOnly });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct attempt had nothing to dial and built no socket, so the one socket is the proxied attempt that followed it at once.
+      assert.deepEqual(urls, [PROXIED_URL]);
+
+      const context = present(fallbackLines(log)[0], "the fallback's line").args[0] as { cameraId: string; error?: unknown; reason?: unknown };
+
+      assert.equal(fallbackLines(log).length, 1);
+      assert.equal(context.cameraId, "cam1");
+      assert.ok(context.error instanceof ProtectLivestreamRouteError, "the line carries what ended the direct attempt");
+      assert.equal(context.reason, "noDirectAddress");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a preferDirect stream whose direct socket errors before its init dials proxied next at the same attempt count and logs its fallback once", async () => {
+
+      const contexts: RecoveryContext[] = [];
+      const log = capturingLog();
+      const { pool, sockets, urls } = makePool({ log, recoveryPolicy: (context) => {
+
+        contexts.push(context);
+
+        return { awaitMs: 1000, kind: "reconnect" };
+      } });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      assert.deepEqual(urls, [DIRECT_URL]);
+
+      // The direct dial is refused: the attempt falls back at once, its window never elapsing, and the policy is consulted again with no attempt counted.
+      at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL ]);
+      assert.deepEqual(contexts.map((context) => context.attempts), [ 0, 0 ]);
+      assert.equal(fallbackLines(log).length, 1);
+      assert.ok((present(fallbackLines(log)[0], "the fallback's line").args[0] as { error?: unknown }).error instanceof ProtectNetworkError);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a preferDirect stream whose direct window elapses without media dials proxied next at one attempt, and its episode logs its fallback once", async () => {
+
+      const contexts: RecoveryContext[] = [];
+      const log = capturingLog();
+      const { clock, pool, urls } = makePool({ log, recoveryPolicy: (context) => {
+
+        contexts.push(context);
+
+        return { awaitMs: 1000, kind: "reconnect" };
+      } });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct attempt is still dialing when its window elapses, so it is counted as any elapsed window is and falls back then.
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL ]);
+      assert.deepEqual(contexts.map((context) => context.attempts), [ 0, 1 ]);
+
+      // The proxied window elapses too, and the episode stays on the proxied route with no further fallback line.
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL, PROXIED_URL ]);
+      assert.deepEqual(contexts.map((context) => context.attempts), [ 0, 1, 2 ]);
+      assert.equal(fallbackLines(log).length, 1);
+
+      // A session still dialing recorded no close cause, so the line carries none.
+      assert.equal(Object.hasOwn(present(fallbackLines(log)[0], "the fallback's line").args[0] as object, "error"), false);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a preferDirect stream whose negotiation fails logs no fallback, waits out its window, counts the attempt and dials direct next", async () => {
+
+      const contexts: RecoveryContext[] = [];
+      const log = capturingLog();
+
+      let negotiations = 0;
+
+      // The first negotiation fails as an unreachable controller fails it, and the next answers with the direct and proxied addresses.
+      const resolveUrl = async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        if(negotiations === 1) {
+
+          throw new ProtectNetworkError("The invented controller could not be reached.");
+        }
+
+        return { direct: DIRECT_URL, proxied: PROXIED_URL };
+      };
+      const { clock, pool, urls } = makePool({ log, recoveryPolicy: (context) => {
+
+        contexts.push(context);
+
+        return { awaitMs: 1000, kind: "reconnect" };
+      }, resolveUrl });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // Every route shares the negotiation, so its failure says nothing of the direct route: the attempt's end is absorbed and its window stands.
+      assert.equal(negotiations, 1, "nothing is negotiated again before the window elapses");
+      assert.deepEqual(urls, []);
+      assert.equal(fallbackLines(log).length, 0);
+
+      clock.advance(1000);
+      await settle();
+
+      // The elapsed window counts the attempt, and the episode's next attempt dials direct.
+      assert.deepEqual(contexts.map((context) => context.attempts), [ 0, 1 ]);
+      assert.deepEqual(urls, [DIRECT_URL]);
+      assert.equal(fallbackLines(log).length, 0);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a preferDirect stream live on proxied that faults starts its recovering episode direct, and that episode falls back and logs it once", async () => {
+
+      const log = capturingLog();
+      const policy: RecoveryPolicy = (context) => (context.phase === "establishing") ? { awaitMs: 100000, kind: "reconnect" } : { awaitMs: 3000, kind: "reconnect" };
+      const { clock, pool, sockets, urls } = makePool({ log, recoveryPolicy: policy });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // Establishment: the direct attempt is refused, and the proxied attempt behind it establishes the stream.
+      at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+      await establish(at(sockets, 1));
+
+      assert.equal(sub.state, "live");
+      assert.equal(fallbackLines(log).length, 1);
+
+      log.reset();
+
+      // The proxied session drops, and the recovering episode begins on the direct route again, nothing remembered from the episode before it.
+      at(sockets, 1).emitClose(1000, "dropped");
+      await settle();
+
+      assert.equal(at(urls, 2), DIRECT_URL);
+
+      // Its direct attempt is refused, one proxied attempt elapses with no media, and the next proxied attempt recovers the stream.
+      at(sockets, 2).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+      clock.advance(3000);
+      await settle();
+      await establish(at(sockets, 4));
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL, DIRECT_URL, PROXIED_URL, PROXIED_URL ]);
+      assert.equal(sub.state, "live");
+      assert.equal(fallbackLines(log).length, 1, "the recovering episode holds exactly one fallback line, its own");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("subscribers differing only in route hold a socket each, and subscribers on one route share one", async () => {
+
+      const { pool, sockets } = makePool();
+
+      await using proxiedSubscription = pool.subscribe(SPEC);
+      await using directSubscription = pool.subscribe({ ...SPEC, route: "direct" });
+      await using sharingSubscription = pool.subscribe({ ...SPEC, route: "direct" });
+
+      await settle();
+
+      assert.equal(sockets.length, 2);
+    });
+
+    test("a direct stream whose socket fails retries direct with no fallback line", async () => {
+
+      const log = capturingLog();
+      const { clock, pool, sockets, urls } = makePool({ log, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe({ ...SPEC, route: "direct" });
+
+      await settle();
+
+      // The failed socket's death is absorbed, so the window runs its length before the next attempt, which dials direct again.
+      at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+
+      assert.deepEqual(urls, [DIRECT_URL]);
+
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, DIRECT_URL ]);
+      assert.equal(fallbackLines(log).length, 0);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("no log line, livestream payload or thrown error carries a minted alias, across the route terminal and every fallback", async () => {
+
+      const alias = "ZqXwVu";
+      const aliased = async (): Promise<LivestreamAddresses> => ({ direct: "wss://controller:7446/" + alias + "?camera=cam1",
+        proxied: "wss://controller/proxy/protect/" + alias + "?token=" + alias });
+      const proxiedAliased = async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: (await aliased()).proxied });
+      const log = capturingLog();
+      const payloads: unknown[] = [];
+      const thrown: unknown[] = [];
+      const record = (message: unknown): void => void payloads.push(message);
+      const livestreamChannels = Object.values(channels).map((channel) => String(channel.name)).filter((name) => name.startsWith("unifi-protect:livestream:"));
+
+      for(const name of livestreamChannels) {
+
+        subscribe(name, record);
+      }
+
+      try {
+
+        // A direct stream offered no direct address: the route terminal every subscriber throws, collected as it arrives by the turn the scenarios settle on.
+        const terminal = makePool({ log, resolveUrl: proxiedAliased });
+
+        void terminal.pool.subscribe({ ...SPEC, route: "direct" })[Symbol.asyncIterator]().next().catch((error: unknown) => void thrown.push(error));
+
+        // A preferDirect stream offered no direct address, one whose direct socket fails, and one whose direct window elapses: each falls back with its line.
+        const missing = makePool({ log, resolveUrl: proxiedAliased });
+        const failing = makePool({ log, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }), resolveUrl: aliased });
+        const elapsing = makePool({ log, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }), resolveUrl: aliased });
+
+        missing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+        failing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+        elapsing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+        await settle();
+        at(failing.sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+        elapsing.clock.advance(1000);
+        await settle();
+
+        for(const pool of [ terminal.pool, missing.pool, failing.pool, elapsing.pool ]) {
+
+          // eslint-disable-next-line no-await-in-loop
+          await pool[Symbol.asyncDispose]();
+        }
+      } finally {
+
+        for(const name of livestreamChannels) {
+
+          unsubscribe(name, record);
+        }
+      }
+
+      // Every reading the scenarios raised was taken: the terminal, a fallback line for each preferDirect stream and every stream's payloads.
+      assert.equal(thrown.length, 1);
+      assert.equal(fallbackLines(log).length, 3);
+      assert.ok(payloads.length > 0);
+
+      for(const rendered of [ ...log.entries, ...payloads, ...thrown ].map((reading) => inspect(reading, { depth: Infinity }))) {
+
+        assert.ok(!rendered.includes(alias), "no reading may carry the minted alias: " + rendered);
+      }
+    });
+
+    test("disposing a preferDirect stream's only subscription, or its pool, during the direct attempt logs no fallback and builds no further socket", async () => {
+
+      const log = capturingLog();
+
+      // The subscription leaves while its direct attempt is still dialing.
+      const leaving = makePool({ log });
+      const sub = leaving.pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+      await sub[Symbol.asyncDispose]();
+      await settle();
+
+      // The pool is disposed while its stream's direct attempt is still dialing.
+      const disposing = makePool({ log });
+
+      disposing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+      await settle();
+      await disposing.pool[Symbol.asyncDispose]();
+      await settle();
+
+      // The direct attempt fails and the subscription leaves in the same turn, before the loop reads the failure, so the stream is over by the time it does.
+      const racing = makePool({ log });
+      const raced = racing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+      at(racing.sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      void raced[Symbol.asyncDispose]();
+      await settle();
+
+      assert.deepEqual([ leaving.urls, disposing.urls, racing.urls ], [ [DIRECT_URL], [DIRECT_URL], [DIRECT_URL] ]);
+      assert.equal(fallbackLines(log).length, 0, "a teardown is never read as a failed dial");
+    });
+
+    test("under a policy that waits after the counted direct elapse, the direct session's late close neither logs a second fallback nor ends the wait", async () => {
+
+      const contexts: RecoveryContext[] = [];
+      const log = capturingLog();
+      const policy: RecoveryPolicy = (context) => {
+
+        contexts.push(context);
+
+        return (context.attempts === 0) ? { awaitMs: 1000, kind: "reconnect" } : { forMs: 5000, kind: "wait" };
+      };
+      const { clock, pool, sockets, urls } = makePool({ log, recoveryPolicy: policy });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct attempt is still dialing when its window elapses: it is counted and falls back, and the policy then waits, leaving that session in place.
+      clock.advance(1000);
+      await settle();
+
+      assert.equal(fallbackLines(log).length, 1);
+      assert.equal(contexts.length, 2);
+
+      // The direct session's dial fails late, inside the wait: the episode has fallen back already, so the death is absorbed.
+      at(sockets, 0).emitError(new Error("connect ETIMEDOUT 10.0.0.9:7446"));
+      await settle();
+
+      assert.equal(fallbackLines(log).length, 1, "the episode logs its fallback once");
+      assert.equal(contexts.length, 2, "the wait was not ended early");
+      assert.deepEqual(urls, [DIRECT_URL]);
+
+      // The wait runs its full length before the policy is consulted again.
+      clock.advance(4999);
+      await settle();
+
+      assert.equal(contexts.length, 2);
+
+      clock.advance(1);
+      await settle();
+
+      assert.equal(contexts.length, 3);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("over a real peer, a strict preferDirect stream's direct upgrade carries no session header, and its proxied fallback refuses the certificate", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+
+      let calls = 0;
+      const log = capturingLog();
+      const getAuthHeaders = (): Record<string, string> => {
+
+        calls++;
+
+        return { cookie: "TOKEN=invented-session", "x-csrf-token": "invented-csrf" };
+      };
+
+      await using pool = new LivestreamPool({ clock: new TestClock(), getAuthHeaders, log,
+        resolveUrl: async (): Promise<LivestreamAddresses> => ({ direct: "wss://" + peer.host + "/direct-alias", proxied: "wss://" + peer.host + "/live" }),
+        verifyTls: true });
+      await using subscription = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      // Every wait on the peer is bounded, so a stream that never completes its direct upgrade or never falls back fails the row within the bound, which then
+      // disposes the pool and the peer rather than holding the test process open on a connection that never comes. The direct upgrade completes over the
+      // self-signed peer under strict verification, carrying no session header and never reading the hook.
+      const upgraded = peer.upgrade(0);
+
+      await expectAt(settlement(upgraded), { message: "the direct attempt completes its upgrade at the peer" });
+
+      const headers = await upgraded;
+
+      assert.equal(Object.hasOwn(headers, "cookie"), false);
+      assert.equal(Object.hasOwn(headers, "x-csrf-token"), false);
+      assert.equal(calls, 0);
+
+      // The peer resets the direct connection before any init, so the stream falls back at once, and the proxied attempt behind it verifies and refuses the peer. The
+      // direct connection was accepted ahead of its upgrade, so it is already in hand.
+      (await peer.connection(0)).reset();
+
+      const fallback = peer.connection(1);
+
+      await expectAt(settlement(fallback), { message: "the stream falls back to a proxied attempt" });
+
+      const handshakeSettled = Promise.race([ (await fallback).closed, peer.whenHandshakes(2) ]);
+
+      await expectAt(settlement(handshakeSettled), { message: "the proxied attempt refuses or completes its handshake" });
+
+      assert.equal(peer.handshakes, 1, "the proxied attempt refused the certificate before its handshake completed");
+      assert.equal(fallbackLines(log).length, 1);
+    });
+
+    test("a fallback with no subscriber publishes nothing and logs at debug, never as a warning", async () => {
+
+      const channel = channels.livestreamRouteFallback;
+      const log = capturingLog();
+
+      let published = 0;
+
+      /* The publish is counted through an own property shadowing the channel's, deleted after, so the channel reads as it did before the row. The test runner's
+       * mock restores a method by defining the original as an own property, which would leave the inactive channel's no-op publish in front of the active one
+       * once a later row subscribes.
+       */
+      channel.publish = (): void => {
+
+        published++;
+      };
+
+      try {
+
+        const { pool, sockets } = makePool({ log, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+        const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+        await settle();
+        at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+        await settle();
+
+        assert.equal(channel.hasSubscribers, false);
+        assert.equal(published, 0, "a channel nobody subscribes to is handed no payload");
+        assert.deepEqual(log.entries.filter((entry) => entry.message === FALLBACK).map((entry) => entry.level), ["debug"]);
+
+        await sub[Symbol.asyncDispose]();
+      } finally {
+
+        Reflect.deleteProperty(channel, "publish");
+      }
+    });
+
+    test("route:fallback fires once with reason unreachable and the dialed port when the direct socket fails before it opens", async () => {
+
+      const fallbacks: LivestreamRouteFallbackPayload[] = [];
+
+      using fallbackSubscription = subscribeToChannel(channels.livestreamRouteFallback, (payload) => void fallbacks.push(payload));
+
+      const { pool, sockets, urls } = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct dial is refused before its socket opens, so the direct connection was never established.
+      at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL ]);
+      assert.deepEqual(fallbacks, [{ cameraId: "cam1", key: PREFER_DIRECT_KEY, port: 7446, reason: "unreachable" }]);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("route:fallback fires with reason noMedia when the direct socket opened and its window elapsed without media", async () => {
+
+      const fallbacks: LivestreamRouteFallbackPayload[] = [];
+
+      using fallbackSubscription = subscribeToChannel(channels.livestreamRouteFallback, (payload) => void fallbacks.push(payload));
+
+      const { clock, pool, sockets, urls } = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct socket opens, so the connection was established, and then sends nothing before the attempt's window elapses.
+      at(sockets, 0).emitOpen();
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL ]);
+      assert.deepEqual(fallbacks, [{ cameraId: "cam1", key: PREFER_DIRECT_KEY, port: 7446, reason: "noMedia" }]);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("route:fallback fires with reason noDirectAddress and a null port when the controller offers no direct address", async () => {
+
+      const fallbacks: LivestreamRouteFallbackPayload[] = [];
+
+      using fallbackSubscription = subscribeToChannel(channels.livestreamRouteFallback, (payload) => void fallbacks.push(payload));
+
+      const { pool, urls } = makePool({ resolveUrl: proxiedOnly });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct attempt had no address to dial and built no socket, so the one socket is the proxied attempt behind it and the payload names no port.
+      assert.deepEqual(urls, [PROXIED_URL]);
+      assert.deepEqual(fallbacks, [{ cameraId: "cam1", key: PREFER_DIRECT_KEY, port: null, reason: "noDirectAddress" }]);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a failed negotiation and a disposal during the direct attempt publish no fallback", async () => {
+
+      const fallbacks: LivestreamRouteFallbackPayload[] = [];
+
+      using fallbackSubscription = subscribeToChannel(channels.livestreamRouteFallback, (payload) => void fallbacks.push(payload));
+
+      let negotiations = 0;
+
+      // A negotiation that fails says nothing of the direct route, so its attempt waits out its window, and the next attempt dials direct.
+      const negotiating = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }), resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        if(negotiations === 1) {
+
+          throw new ProtectNetworkError("The invented controller could not be reached.");
+        }
+
+        return { direct: DIRECT_URL, proxied: PROXIED_URL };
+      } });
+      const negotiated = negotiating.pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+      negotiating.clock.advance(1000);
+      await settle();
+
+      // The subscription leaves while its direct attempt is still dialing.
+      const leaving = makePool();
+      const left = leaving.pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+      await left[Symbol.asyncDispose]();
+      await settle();
+
+      assert.deepEqual([ negotiating.urls, leaving.urls ], [ [DIRECT_URL], [DIRECT_URL] ]);
+      assert.deepEqual(fallbacks, []);
+
+      await negotiated[Symbol.asyncDispose]();
     });
   });
 
@@ -2686,12 +3306,12 @@ describe("LivestreamPool", () => {
 
       const camera = new Camera(context, "cam-xyz");
 
-      camera.livestream({ signal: controller.signal, source: { channel: 2, type: "channel" }, timestamps: true, urgency });
+      camera.livestream({ route: "direct", signal: controller.signal, source: { channel: 2, type: "channel" }, timestamps: true, urgency });
 
       const captured = calls.at(-1);
 
       assert.ok(captured !== undefined);
-      assert.deepEqual(captured.spec, { cameraId: "cam-xyz", source: { channel: 2, type: "channel" }, timestamps: true });
+      assert.deepEqual(captured.spec, { cameraId: "cam-xyz", route: "direct", source: { channel: 2, type: "channel" }, timestamps: true });
       assert.equal(captured.opts.signal, controller.signal);
       assert.equal(captured.opts.urgency, urgency);
 

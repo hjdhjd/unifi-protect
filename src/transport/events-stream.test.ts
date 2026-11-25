@@ -230,6 +230,23 @@ describe("EventStream", () => {
       await stream.opened;
       await stream.close();
     });
+
+    test("the upgrade carries the headers the auth hook returns", async () => {
+
+      // The proxy refuses an upgrade without the session, so the headers are read at the real peer the default factory's socket dials.
+      await using peer = await createLoopbackWebSocketPeer();
+      const stream = new EventStream({ clock: new TestClock(), getAuthHeaders: (): Record<string, string> => ({ cookie: "TOKEN=invented-session",
+        "x-csrf-token": "invented-csrf" }), host: peer.host, lastUpdateId: "u0", log: silentLog() });
+
+      await stream.opened;
+
+      const headers = await peer.upgrade(0);
+
+      assert.equal(headers["cookie"], "TOKEN=invented-session");
+      assert.equal(headers["x-csrf-token"], "invented-csrf");
+
+      await stream.close();
+    });
   });
 
   describe("certificate verification", () => {
