@@ -235,6 +235,34 @@ export function parseNonNegativeInt(value: string, flag: string): number {
   return parsed;
 }
 
+/**
+ * Parse a CLI option value as one of a fixed set of choices (`--route`), matched exactly, case included, because each choice is the library's own spelling of a
+ * value it takes as typed. Fails with a precise message naming every choice rather than letting an unknown value reach the library.
+ *
+ * @typeParam T - The choices' string literal type.
+ *
+ * @param value   - The raw flag value.
+ * @param flag    - The flag name, for the error message.
+ * @param choices - The accepted values, in the order the message lists them.
+ *
+ * @returns The choice the value names, narrowed to the choices' type.
+ *
+ * @throws {@link CliError} when the value is not one of the choices.
+ *
+ * @category CLI
+ */
+export function parseChoice<T extends string>(value: string, flag: string, choices: readonly T[]): T {
+
+  const choice = choices.find((candidate) => candidate === value);
+
+  if(choice === undefined) {
+
+    throw new CliError("The " + flag + " value must be one of " + choices.join(", ") + ", but received \"" + value + "\".", { exitCode: 2 });
+  }
+
+  return choice;
+}
+
 // The unit suffixes a duration accepts, mapped to their millisecond factor. Kept small and explicit: a streaming command's time bound is naturally expressed in
 // seconds to hours, and `ms` covers the rare sub-second case. The single source for what a duration string may say.
 const DURATION_UNITS: Record<string, number> = { h: 3600000, m: 60000, ms: 1, s: 1000 };

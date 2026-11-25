@@ -2,7 +2,7 @@
  *
  * fake-client.helpers.ts: A minimal, configurable fake ProtectClient and command-context harness for unit-testing CLI commands through the injected openClient hook.
  */
-import type { LivestreamOptions, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment, TypedEvent } from "../../index.ts";
+import type { LivestreamOptions, LivestreamRoute, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment, TypedEvent } from "../../index.ts";
 import { ProtectAbortedError, createStateStore } from "../../index.ts";
 import type { CommandContext } from "./shared.ts";
 import { Output } from "./output/format.ts";
@@ -31,6 +31,9 @@ export interface FakeDeviceSpec {
 
 export interface FakeCameraSpec extends FakeDeviceSpec {
 
+  // A per-route livestream script, which replaces `segments` for a livestream opened on that route, an absent route reading as "proxied". An Error script throws at
+  // the first read, the way a stream that ends on a terminal does.
+  routes?: Partial<Record<LivestreamRoute, Error | Segment[]>>;
   segments?: Segment[];
   snapshot?: Buffer;
 }
@@ -259,8 +262,9 @@ function makeDevice(spec: FakeDeviceSpec, modelKey: string, calls: FakeCalls, ob
   return device;
 }
 
-// Build a fake camera: a device plus snapshot bytes and a livestream that records the options it was opened with, then yields the scripted segments and ends. The
-// `observations` count is threaded into the device beneath so the camera's `observe` yields the same fixed number of times.
+// Build a fake camera: a device plus snapshot bytes and a livestream that records the options it was opened with, then yields the route's scripted segments, or the
+// camera's own when its route has no script, and ends, or throws a route's scripted error at the first read. The `observations` count is threaded into the device
+// beneath so the camera's `observe` yields the same fixed number of times.
 function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number): Record<string, unknown> {
 
   const device = makeDevice(spec, "camera", calls, observations);
@@ -273,11 +277,18 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
 
       calls.livestreams.push({ camera: spec.id, opts });
 
+      const script = spec.routes?.[opts.route ?? "proxied"] ?? segments;
+
       return {
 
         async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
 
-          for(const segment of segments) {
+          if(script instanceof Error) {
+
+            throw script;
+          }
+
+          for(const segment of script) {
 
             yield segment;
           }

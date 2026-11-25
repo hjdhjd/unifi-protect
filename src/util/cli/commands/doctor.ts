@@ -2,7 +2,7 @@
  *
  * doctor.ts: `ufp doctor` - a structured, per-subsystem health check exercising the library's read-only subsystems. The canonical "is my install healthy?" command.
  */
-import type { Camera, ProtectClient } from "../../../index.ts";
+import type { Camera, LivestreamRoute, ProtectClient } from "../../../index.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import { DEVICE_CATEGORIES, devicesInCategory } from "../lookup.ts";
 import { channels, formatErrorChain, subscribeToChannel } from "../../../index.ts";
@@ -81,13 +81,23 @@ async function firstEvent(client: ProtectClient, signal: AbortSignal): Promise<s
   return null;
 }
 
-// Subscribe to a camera's livestream just long enough to confirm an init segment (with a codec and the tracks it describes) and at least one media segment arrive, then
-// leave. Proves the livestream pool, session negotiation, init description, and frame decode all work against real hardware.
-async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ codec: string; init: boolean; media: boolean; tracks: string }> {
+// What a livestream probe saw before it left: the codec label and the tracks the init described, and whether an init and a media segment arrived.
+interface LivestreamProbe {
+
+  codec: string;
+  init: boolean;
+  media: boolean;
+  tracks: string;
+}
+
+// Subscribe to a camera's livestream on one route just long enough to confirm an init segment (with a codec and the tracks it describes) and at least one media segment
+// arrive, then leave. Proves the livestream pool, session negotiation, the route's dial, init description, and frame decode all work against real hardware. A stream
+// that ends on a terminal throws it from here; a wait that elapses ends the iteration cleanly, with whatever arrived.
+async function probeLivestream(camera: Camera, route: LivestreamRoute, signal: AbortSignal): Promise<LivestreamProbe> {
 
   const deadline = AbortSignal.any([ signal, AbortSignal.timeout(LIVESTREAM_WAIT_MS) ]);
 
-  await using sub = camera.livestream({ signal: deadline, source: { channel: 0, type: "channel" } });
+  await using sub = camera.livestream({ route, signal: deadline, source: { channel: 0, type: "channel" } });
 
   let codec = "";
   let init = false;
@@ -115,6 +125,13 @@ async function probeLivestream(camera: Camera, signal: AbortSignal): Promise<{ c
   return { codec, init, media, tracks };
 }
 
+// The detail a livestream check reports: the camera, what arrived, and the codec label with the tracks the init described.
+function probeDetail(camera: Camera, { codec, init, media, tracks }: LivestreamProbe): string {
+
+  return camera.name + ": init=" + init.toString() + ", media=" + media.toString() + (codec !== "" ? (", codec " + codec) : "") +
+    (tracks !== "" ? (" (" + tracks + ")") : "");
+}
+
 // Render the report as an aligned list of checks plus a summary, returning whether no check failed (for the exit code; warn and skip results do not fail it).
 function renderReport(output: Output, results: CheckResult[]): boolean {
 
@@ -138,8 +155,10 @@ function renderReport(output: Output, results: CheckResult[]): boolean {
 /**
  * `ufp doctor`. Connects once and exercises the library's read-only subsystems as discrete checks: connect and authentication, state and bootstrap, derived selectors,
  * the user roster (populated at connect, the precondition for `isAdmin` to derive correctly), snapshot, the realtime firehose, the connection monitor, the livestream
- * pool, the diagnostics channels (a warn-level observation of which channels fired during the run), and schema drift (unknown modelKeys plus unrecognized bootstrap
- * collections). Designed as a permanent health probe: it exits non-zero if any check fails.
+ * pool on its proxied route and then on its direct route, the diagnostics channels (a warn-level observation of which channels fired during the run), and schema drift
+ * (unknown modelKeys plus unrecognized bootstrap collections). Designed as a permanent health probe: it exits non-zero if any check fails. The direct route only ever
+ * warns: a stream that ends on a terminal reports it, and one with no media when the wait elapses reports that, because a refused or unreachable port is retried
+ * until the establishment deadline, past the check's wait, so the elapsed wait cannot tell a refused port from a silent stream.
  *
  * @category CLI
  */
@@ -276,21 +295,43 @@ const doctorHandler: CommandHandler = async (ctx) => {
       status: connected.connection.isHealthy ? "pass" : "fail"
     }));
 
-    await check("Livestream pool", async () => {
+    // The livestream checks stream from the one online camera and skip alike without one, so the skip is stated once.
+    const livestreamCheck = async (name: string, run: (camera: Camera) => Promise<Omit<CheckResult, "name">>): Promise<void> => check(name, async () => {
 
       if(onlineCamera === undefined) {
 
         return { detail: "no online camera to stream", status: "skip" };
       }
 
-      const { codec, init, media, tracks } = await probeLivestream(onlineCamera, ctx.signal);
+      return run(onlineCamera);
+    });
 
-      return {
+    await livestreamCheck("Livestream pool (proxied route)", async (camera) => {
 
-        detail: onlineCamera.name + ": init=" + init.toString() + ", media=" + media.toString() + (codec !== "" ? (", codec " + codec) : "") +
-          (tracks !== "" ? (" (" + tracks + ")") : ""),
-        status: (init && media) ? "pass" : "fail"
-      };
+      const probe = await probeLivestream(camera, "proxied", ctx.signal);
+
+      return { detail: probeDetail(camera, probe), status: (probe.init && probe.media) ? "pass" : "fail" };
+    });
+
+    // The direct route is an alternative a consumer opts into, so a direct route that does not answer warns rather than fails. Its stream's terminal is caught here,
+    // where the check reports it, rather than at the chokepoint, which would fail the run.
+    await livestreamCheck("Livestream pool (direct route)", async (camera) => {
+
+      try {
+
+        const probe = await probeLivestream(camera, "direct", ctx.signal);
+
+        if(probe.init && probe.media) {
+
+          return { detail: probeDetail(camera, probe), status: "pass" };
+        }
+
+        return { detail: camera.name + ": no direct media within " + (LIVESTREAM_WAIT_MS / 1000).toString() +
+          "s; a refused or unreachable port retries until the establishment deadline", status: "warn" };
+      } catch(error) {
+
+        return { detail: formatErrorChain(error), status: "warn" };
+      }
     });
 
     await check("Diagnostics channels", () => Promise.resolve({

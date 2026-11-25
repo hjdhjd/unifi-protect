@@ -16,6 +16,7 @@ import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
 import { readFile, writeFile } from "node:fs/promises";
 import { CliError } from "../shared.ts";
 import type { CommandSpec } from "../shared.ts";
+import type { FakeCameraSpec } from "../fake-client.helpers.ts";
 import assert from "node:assert/strict";
 import { camera } from "./camera.ts";
 import { cameraFlashlight } from "./camera-flashlight.ts";
@@ -1183,7 +1184,7 @@ describe("watch livestream", () => {
           async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
 
             channels.livestreamCodecChanged.publish({ cameraId: "c1", from: { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION },
-              key: "c1:0:0:100:4096:false", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
+              key: "c1:0:0:100:4096:false:proxied", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
 
             yield { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION, type: "init" };
           },
@@ -1301,6 +1302,47 @@ describe("watch livestream", () => {
     await watchLivestream.run(ctx);
 
     assert.deepEqual(calls.livestreams.map((call) => [ call.camera, call.opts.source ]), [[ "c1", { lens: 1, type: "lens" } ]]);
+  });
+
+  test("--route opens the stream on that route", async () => {
+
+    // --json with no scripted segments keeps the run off the real stdout and away from the subscription stats the basic fake camera leaves out.
+    const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
+    const { ctx } = makeCommandContext({ args: [ "c1", "--route", "direct", "--json" ], client });
+
+    await watchLivestream.run(ctx);
+
+    assert.deepEqual(calls.livestreams.map((call) => [ call.camera, call.opts.route ]), [[ "c1", "direct" ]]);
+  });
+
+  test("no --route leaves the route out of the stream's options, so the library's default applies", async () => {
+
+    const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
+    const { ctx } = makeCommandContext({ args: [ "c1", "--json" ], client });
+
+    await watchLivestream.run(ctx);
+
+    assert.equal(calls.livestreams.length, 1);
+    assert.equal(Object.hasOwn(present(calls.livestreams[0], "the one livestream opened").opts, "route"), false);
+  });
+
+  test("an unknown --route is a usage error before the client opens", async () => {
+
+    const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
+    const { ctx } = makeCommandContext({ args: [ "c1", "--route", "nope" ], client });
+
+    let opened = false;
+
+    ctx.openClient = (): Promise<ProtectClient> => {
+
+      opened = true;
+
+      return Promise.resolve(client);
+    };
+
+    await assert.rejects(watchLivestream.run(ctx), { constructor: CliError, exitCode: 2,
+      message: "The --route value must be one of direct, preferDirect, proxied, but received \"nope\"." });
+    assert.equal(opened, false);
   });
 
   test("pipes the concatenated segment bytes to stdout, keeping the summary off it", async () => {
@@ -1968,10 +2010,11 @@ describe("chime play-buzzer", () => {
 
 describe("doctor", () => {
 
-  // The fixture for a connected, healthy run: an authenticated admin, an online camera that snapshots and streams (init + media), and a scriptable event firehose.
-  const healthyContext = (args: string[]): ReturnType<typeof makeCommandContext> => {
+  // The fixture for a connected, healthy run: an authenticated admin, an online camera that snapshots and streams (init + media), and a scriptable event firehose. A
+  // row may script the camera's stream per route, which replaces the healthy stream on that route alone.
+  const healthyContext = (args: string[], routes?: FakeCameraSpec["routes"]): ReturnType<typeof makeCommandContext> => {
 
-    const { client } = makeFakeClient({ authUser: { id: "u1", name: "admin" }, cameras: [{ id: "c1", name: "Cam", segments: [
+    const { client } = makeFakeClient({ authUser: { id: "u1", name: "admin" }, cameras: [{ id: "c1", name: "Cam", ...((routes !== undefined) && { routes }), segments: [
 
       { codec: "avc1", data: Buffer.from([1]), description: STREAM_DESCRIPTION, type: "init" },
       { data: Buffer.from([2]), mdat: Buffer.alloc(0), moof: Buffer.alloc(0), type: "media" }
@@ -2002,6 +2045,56 @@ describe("doctor", () => {
 
       process.exitCode = savedExit;
     }
+  });
+
+  // Run doctor in --json over a context and read back its parsed results and the exit code it set, restoring the process's own exit code after.
+  const runDoctor = async (context: ReturnType<typeof makeCommandContext>): Promise<{ exitCode: typeof process.exitCode;
+    results: { detail?: string; name: string; status: string }[]; }> => {
+
+    const savedExit = process.exitCode;
+
+    try {
+
+      await doctor.run(context.ctx);
+
+      return { exitCode: process.exitCode, results: (JSON.parse(context.stdout()) as { results: { detail?: string; name: string; status: string }[] }).results };
+    } finally {
+
+      process.exitCode = savedExit;
+    }
+  };
+
+  test("a healthy run passes the livestream pool on its proxied route and then on its direct route", async () => {
+
+    const { exitCode, results } = await runDoctor(healthyContext(["--json"]));
+    const livestream = results.filter((result) => result.name.startsWith("Livestream pool"));
+
+    assert.deepEqual(livestream.map((result) => [ result.name, result.status ]),
+      [ [ "Livestream pool (proxied route)", "pass" ], [ "Livestream pool (direct route)", "pass" ] ]);
+    assert.equal(present(livestream[1], "the direct check").detail, "Cam: init=true, media=true, codec avc1 (h264 1920x1080 L40, aac 16000 Hz mono)");
+    assert.equal(exitCode, 0);
+  });
+
+  test("a direct route whose stream ends on an error warns with its whole cause chain and exits zero", async () => {
+
+    const failure = new ProtectNetworkError("The UniFi Protect livestream API connection failed.", { cause: new Error("connect ECONNREFUSED 10.0.0.1:7446") });
+    const { exitCode, results } = await runDoctor(healthyContext(["--json"], { direct: failure }));
+    const direct = present(results.find((result) => result.name === "Livestream pool (direct route)"), "the direct check");
+
+    assert.equal(direct.status, "warn");
+    assert.equal(direct.detail, "The UniFi Protect livestream API connection failed: connect ECONNREFUSED 10.0.0.1:7446");
+    assert.equal(present(results.find((result) => result.name === "Livestream pool (proxied route)"), "the proxied check").status, "pass");
+    assert.equal(exitCode, 0, "a direct route that does not answer never fails the run");
+  });
+
+  test("a direct route that delivers no media warns that the wait cannot tell a refused port from a silent stream", async () => {
+
+    const { exitCode, results } = await runDoctor(healthyContext(["--json"], { direct: [] }));
+    const direct = present(results.find((result) => result.name === "Livestream pool (direct route)"), "the direct check");
+
+    assert.equal(direct.status, "warn");
+    assert.equal(direct.detail, "Cam: no direct media within 12s; a refused or unreachable port retries until the establishment deadline");
+    assert.equal(exitCode, 0);
   });
 
   test("a connect failure fails fast with its whole cause chain, runs no later checks, and exits one", async () => {
@@ -2144,7 +2237,7 @@ describe("diagnostics", () => {
     ctx.openClient = (opts?: { debug?: boolean; refreshIntervalMs?: number | false; signal?: AbortSignal }): Promise<ProtectClient> => {
 
       channels.livestreamCodecChanged.publish({ cameraId: "c1", from: { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION },
-        key: "c1:0:0:100:4096:false", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
+        key: "c1:0:0:100:4096:false:proxied", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
 
       return realOpen(opts);
     };

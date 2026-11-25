@@ -2,9 +2,9 @@
  *
  * watch-livestream.ts: `ufp watch livestream <camera>` - subscribe to a camera's fMP4 stream. Emits raw bytes for ffmpeg/ffprobe, or a per-segment summary / NDJSON.
  */
-import { COMMON_OPTIONS, CliError, boundedSignal, parseDuration, parseNonNegativeInt, parsePositiveInt, take } from "../shared.ts";
+import { COMMON_OPTIONS, CliError, boundedSignal, parseChoice, parseDuration, parseNonNegativeInt, parsePositiveInt, take } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
-import type { LivestreamSource, LivestreamSubscription, Segment } from "../../../index.ts";
+import type { LivestreamRoute, LivestreamSource, LivestreamSubscription, Segment } from "../../../index.ts";
 import { Output, formatBytes, formatTracks, nowStamp } from "../output/format.ts";
 import { renderDiagnostic, subscribeDiagnostics } from "../diagnostics-feed.ts";
 import { channels } from "../../../index.ts";
@@ -15,7 +15,8 @@ import { parseArgs } from "node:util";
 
 const USAGE = [
 
-  "Usage: ufp watch livestream <camera> [--channel N] [--lens N] [--out <path|->] [--json] [--diagnostics] [--count N] [--duration <dur>] [--timestamps] [--debug]",
+  "Usage: ufp watch livestream <camera> [--channel N] [--lens N] [--route <route>] [--out <path|->] [--json] [--diagnostics] [--count N] [--duration <dur>]",
+  "       [--timestamps] [--debug]",
   "",
   "Subscribe to a camera's live fMP4 stream until Ctrl-C (or a --count / --duration bound).",
   "",
@@ -33,6 +34,9 @@ const USAGE = [
   "Stream options:",
   "  --channel N        The camera channel to stream (default 0).",
   "  --lens N           The lens index for multi-lens cameras (default 0).",
+  "  --route <route>    How the stream reaches the controller: proxied (default) through the UniFi OS proxy, direct to the",
+  "                     controller's media server (its certificate is never verified), or preferDirect, direct with the",
+  "                     proxied route as the fallback.",
   "  --timestamps       Request per-frame decode timestamps (adds extendedVideoMetadata to the negotiation).",
   "  --segment-length N The fMP4 segment length in milliseconds (default and floor 100).",
   "  --chunk-size N     The WebSocket frame payload size in bytes (default 4096).",
@@ -60,9 +64,18 @@ const OPTIONS = {
   json: { type: "boolean" },
   lens: { type: "string" },
   out: { type: "string" },
+  route: { type: "string" },
   "segment-length": { type: "string" },
   timestamps: { type: "boolean" }
 } as const;
+
+// The --route choices, every livestream route the library takes. The `satisfies` on the literal refuses a choice the library lacks, and the assert below refuses a
+// route the list leaves out - a dropped route makes its type `never` and fails the assignment - so the flag cannot fall behind the library's routes.
+const ROUTES = [ "direct", "preferDirect", "proxied" ] as const satisfies readonly LivestreamRoute[];
+
+type RoutesComplete = LivestreamRoute extends typeof ROUTES[number] ? true : never;
+
+const _routesComplete: RoutesComplete = true;
 
 // The livestream pool's diagnostics channels - the subset whose name begins with the livestream subsystem prefix. Selecting by prefix rather than listing each channel
 // means a channel added to the subsystem later is picked up automatically, the same single-source discipline the `channels` registry exists to enforce.
@@ -138,6 +151,7 @@ const watchLivestreamHandler: CommandHandler = async (ctx) => {
 
   const channel = (values.channel !== undefined) ? parseNonNegativeInt(values.channel, "--channel") : 0;
   const lens = (values.lens !== undefined) ? parseNonNegativeInt(values.lens, "--lens") : undefined;
+  const route = (values.route !== undefined) ? parseChoice(values.route, "--route", ROUTES) : undefined;
   const segmentLength = (values["segment-length"] !== undefined) ? parsePositiveInt(values["segment-length"], "--segment-length") : undefined;
   const chunkSize = (values["chunk-size"] !== undefined) ? parsePositiveInt(values["chunk-size"], "--chunk-size") : undefined;
   const limit = (values.count !== undefined) ? parsePositiveInt(values.count, "--count") : undefined;
@@ -177,6 +191,7 @@ const watchLivestreamHandler: CommandHandler = async (ctx) => {
     signal: boundedSignal(ctx.signal, durationMs),
     source,
     ...((chunkSize !== undefined) && { chunkSize }),
+    ...((route !== undefined) && { route }),
     ...((segmentLength !== undefined) && { segmentLength }),
     ...((values.timestamps === true) && { timestamps: true })
   });

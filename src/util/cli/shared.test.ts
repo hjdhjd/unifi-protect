@@ -2,8 +2,8 @@
  *
  * shared.test.ts: Unit tests for the cross-command CLI infrastructure - the realtime-event filter engine, the option parsers, the async-iterator take, and CliError.
  */
-import { CliError, boundedSignal, buildEventFilter, buildRawFilter, commandList, compilePattern, filterStream, matchesEvent, matchesRawPacket, parseDuration,
-  parseList, parseNonNegativeInt, parsePositiveInt, take, wireAbortSignal } from "./shared.ts";
+import { CliError, boundedSignal, buildEventFilter, buildRawFilter, commandList, compilePattern, filterStream, matchesEvent, matchesRawPacket, parseChoice,
+  parseDuration, parseList, parseNonNegativeInt, parsePositiveInt, take, wireAbortSignal } from "./shared.ts";
 import type { CommandHandler, CommandSpec } from "./shared.ts";
 import type { RawPacket, TypedEvent } from "../../index.ts";
 import { describe, test } from "node:test";
@@ -122,6 +122,29 @@ describe("parseNonNegativeInt", () => {
 
     assert.throws(() => parseNonNegativeInt("9".repeat(400), "--channel"), { constructor: CliError, exitCode: 2 });
   });
+});
+
+describe("parseChoice", () => {
+
+  const routes = [ "direct", "preferDirect", "proxied" ] as const;
+
+  for(const choice of routes) {
+
+    test("returns \"" + choice + "\" as itself", () => {
+
+      assert.equal(parseChoice(choice, "--route", routes), choice);
+    });
+  }
+
+  // A choice is matched exactly, so a different case is no choice at all, and an empty value names none.
+  for(const bad of [ "Direct", "", "nope" ]) {
+
+    test("rejects \"" + bad + "\" as a usage error naming every choice", () => {
+
+      assert.throws(() => parseChoice(bad, "--route", routes), { constructor: CliError, exitCode: 2,
+        message: "The --route value must be one of direct, preferDirect, proxied, but received \"" + bad + "\"." });
+    });
+  }
 });
 
 describe("parseDuration", () => {
