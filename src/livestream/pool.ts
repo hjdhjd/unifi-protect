@@ -22,9 +22,9 @@
  *
  * **The pool decides each attempt's route.** A session dials the one route it is handed and never reconnects, so the managed session, which owns recovery, picks it:
  * a `"proxied"` or `"direct"` stream dials its own route on every attempt, and a `"preferDirect"` stream dials direct first in each episode and proxied for the rest
- * of the episode once a direct attempt fails at its dial or is offered no direct address, publishing `livestreamRouteFallback` as it falls back, starting direct
- * again in the next. A `"preferDirect"` stream asking for Opus that is offered no direct address ends instead, since its proxied route names its stream by that
- * address. Every route shares the negotiation, so a failed one moves no stream off its route.
+ * of the episode once a direct attempt fails at its dial, opens and sends no media, or is offered no direct address, publishing `livestreamRouteFallback` as it
+ * falls back, starting direct again in the next. A `"preferDirect"` stream asking for Opus that is offered no direct address ends instead, since its proxied route
+ * names its stream by that address. Every route shares the negotiation, so a failed one moves no stream off its route.
  *
  * **A consumer requests a spec, never a URL.** The controller mints fresh, one-time addresses per negotiation, so the pool dedups on the *spec* (its sharing identity,
  * via {@link livestreamKey}) *before* negotiating - only the first subscriber for a key creates a managed session, which then creates and negotiates each underlying
