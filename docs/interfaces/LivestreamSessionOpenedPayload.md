@@ -6,8 +6,9 @@
 
 # Interface: LivestreamSessionOpenedPayload
 
-Payload published on [channels.livestreamSessionOpened](../variables/channels.md#property-livestreamsessionopened). `key` is the pool's stream-affecting sharing key
-`${cameraId}:${channel}:${lens}:${segmentLength}:${chunkSize}:${timestamps}` (the resolved stream-affecting identity).
+Payload published on [channels.livestreamSessionOpened](../variables/channels.md#property-livestreamsessionopened). `key` is the pool's sharing key
+`${cameraId}:${channel}:${lens}:${segmentLength}:${chunkSize}:${timestamps}:${route}:${upstream}:${audio}` (every resolved field that changes what the controller
+produces or how the pool dials it, the requested route, the upstream the stream reads and the audio codec it asks for among them).
 
 ## Properties
 

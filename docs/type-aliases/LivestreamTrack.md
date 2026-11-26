@@ -9,7 +9,7 @@
 ```ts
 type LivestreamTrack = 
   | {
-  codec: "av1" | "h264" | "h265";
+  codec: LivestreamVideoCodec;
   height: number;
   id: number;
   kind: "video";
@@ -19,7 +19,7 @@ type LivestreamTrack =
 }
   | {
   channels: number;
-  codec: "aac" | "opus";
+  codec: LivestreamAudioCodec;
   id: number;
   kind: "audio";
   sampleRate: number;

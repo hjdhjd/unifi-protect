@@ -8,9 +8,9 @@
 
 A pooled livestream's recovery policy gave up. The `phase` names which regime the pool gave up in: `establishing` means no media segment arrived within the
 bounded establishment deadline (the stream may have connected and sent its init, but never produced media), and `recovering` means a previously-live stream could
-not be re-established and the policy elected to stop. Fatal because the policy - the single authority over whether to keep trying - has declared the stream
-unrecoverable; the consumer re-subscribes if it still wants the stream. `attempts` carries how many consecutive reconnect attempts the episode made before the
-policy returned `giveUp`.
+not be re-established and the policy elected to stop. Fatal because the policy, which decides whether to keep trying, has declared the stream unrecoverable; the
+consumer re-subscribes if it still wants the stream. `attempts` carries how many failed attempts the episode counted before the policy returned `giveUp`, which
+leaves out a `"preferDirect"` stream's direct attempt that ended before its first media and fell back at once.
 
 ## Extends
 
@@ -46,5 +46,5 @@ new ProtectLivestreamUnavailableError(message, options): ProtectLivestreamUnavai
 
 | Property | Modifier | Type | Description |
 | ------ | ------ | ------ | ------ |
-| <a id="attempts"></a> `attempts` | `readonly` | `number` | The number of consecutive failed reconnect attempts the recovery episode made before the policy gave up. |
+| <a id="attempts"></a> `attempts` | `readonly` | `number` | The number of failed attempts the recovery episode counted before the policy gave up. |
 | <a id="phase"></a> `phase` | `readonly` | `"establishing"` \| `"recovering"` | Which regime the give-up occurred in: bounded establishment, or unbounded live recovery. |

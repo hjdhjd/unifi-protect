@@ -6,8 +6,9 @@
 
 # Interface: LivestreamCodecChangedPayload
 
-Payload published on [channels.livestreamCodecChanged](../variables/channels.md#property-livestreamcodecchanged). `from` / `to` are the prior and the reconnected inits themselves, each with its codec label, its bytes
-and its description, the same pair the [ProtectCodecChangeError](../classes/ProtectCodecChangeError.md) the consumer's iterator receives carries; this is its observable companion.
+Payload published on [channels.livestreamCodecChanged](../variables/channels.md#property-livestreamcodecchanged). `from` / `to` are the stream's first init and the later init that differs from it, on a reconnect
+or on a live session, each with its codec label, its bytes and its description, the same pair the [ProtectCodecChangeError](../classes/ProtectCodecChangeError.md) the consumer's iterator
+receives carries; this is its observable companion.
 
 ## Properties
 

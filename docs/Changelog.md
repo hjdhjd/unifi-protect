@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.6.0 (2026-11-26)
+  * New feature: livestream routes. `camera.livestream({ route })` chooses how a stream reaches the controller: `"proxied"`, the default, goes through UniFi OS as before; `"direct"` goes straight to the controller's media server, at a fraction of the controller's CPU cost, without certificate verification; and `"preferDirect"` tries direct first and falls back to proxied with a warning. Each stream's diagnostics `key` now ends in its route, upstream, and audio codec, `:proxied:fmp4:aac` by default.
+  * New feature: Opus livestream audio. `camera.livestream({ audio: "opus" })` gives you Opus in the same fMP4 segments, on every route, read from the camera's UBV stream, and `upstream: "ubv"` reads that stream for AAC too.
+  * New feature: livestream frames. `camera.livestream({ output: "frames" })` gives you each video and audio frame as the camera sent it, with its codec and timestamp, instead of fMP4 segments.
+  * New feature: `ProtectLivestreamRouteError` ends a `"direct"` or Opus stream when the controller offers no direct address, and `ProtectLivestreamAudioError` ends an Opus stream when the controller sends a different audio codec.
+  * New feature: `ufp watch livestream` gains `--route`, `--audio`, `--upstream`, and `--output`, and `ufp doctor` now checks both routes and Opus.
+  * Fix: unreadable stream addresses from the controller now raise `ProtectProtocolError`.
+  * Housekeeping.
+
 ## 5.5.0 (2026-11-22)
   * New feature: recording replay. `ProtectClient.parsePacket()` reads back a packet you recorded from `rawPackets()`, and `ProtectClient.createClassifier()` turns a recorded connection's packets into the same events `events()` gave you live. `ufp decode --replay` does this from the command line, from a file or straight from `ufp watch raw --json`.
   * Fix: audio smart detections now reach `events()` with the sound that was detected, so a smoke alarm or speech detection arrives as a `smartDetect` naming its camera and the sound in `objectTypes`, not just the empty detection that opened it.

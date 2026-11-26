@@ -100,21 +100,50 @@ If the device is no longer present in the controller state.
 
 ### livestream()
 
+#### Call Signature
+
+```ts
+livestream(opts): LivestreamSubscription<LivestreamFrame>;
+```
+
+Subscribe to this camera's livestream as frames. Delegates to the library-owned pool, as a segments subscription does, and reads the camera's UBV record stream
+whatever `upstream` says: the returned subscription is an `AsyncIterable<LivestreamFrame>` and `AsyncDisposable`, yielding each video and audio frame as the
+camera sent it, with no init. It shares one underlying WebSocket with every consumer asking for the same stream on the same route from UBV with the same audio,
+segments consumers among them, and the camera states whether to expect audio as it does for segments.
+
+##### Parameters
+
+| Parameter | Type | Description |
+| ------ | ------ | ------ |
+| `opts` | [`LivestreamOptions`](LivestreamOptions.md) & \{ `output`: `"frames"`; \} | The stream source, tuning, route and audio codec, the per-subscription options (abort signal, urgency, and discard-on-dispose), and `output: "frames"`. |
+
+##### Returns
+
+[`LivestreamSubscription`](LivestreamSubscription.md)\<[`LivestreamFrame`](../type-aliases/LivestreamFrame.md)\>
+
+The subscription: live, or already disposed when its signal had already aborted.
+
+#### Call Signature
+
 ```ts
 livestream(opts): LivestreamSubscription;
 ```
 
-Subscribe to a live fMP4 stream from this camera. Delegates to the library-owned pool, which shares one underlying WebSocket across every consumer of an identical
-stream and replays the cached init segment to late joiners. The returned subscription is an `AsyncIterable<Segment>` and `AsyncDisposable`; iterate it for segments,
-dispose it (or abort its signal) to leave - the underlying session closes once the last subscriber departs.
+Subscribe to a live fMP4 stream from this camera. Delegates to the library-owned pool, which shares one underlying WebSocket across every consumer asking for the
+same stream on the same route and replays the cached init segment to late joiners. The returned subscription is an `AsyncIterable<Segment>` and `AsyncDisposable`;
+iterate it for segments, dispose it (or abort its signal) to leave - the underlying session closes once the last subscriber departs.
 
-#### Parameters
+The camera states whether the stream should expect audio, which decides whether a UBV stream holds its first segment for it: audio is expected when the camera
+has a microphone and the microphone is enabled. Its recording settings govern what is recorded and leave the live stream's audio as it was, so they are not
+read. A handle whose camera has left the controller state states nothing, and the spec's own default applies.
+
+##### Parameters
 
 | Parameter | Type | Description |
 | ------ | ------ | ------ |
-| `opts` | [`LivestreamOptions`](LivestreamOptions.md) | The stream source and tuning, plus the per-subscription options (abort signal, urgency, and discard-on-dispose). |
+| `opts` | [`LivestreamOptions`](LivestreamOptions.md) & \{ `output?`: `"segments"`; \} | The stream source, tuning, route, audio codec and upstream, plus the per-subscription options (abort signal, urgency, and discard-on-dispose), with `output: "segments"`, the default. |
 
-#### Returns
+##### Returns
 
 [`LivestreamSubscription`](LivestreamSubscription.md)
 

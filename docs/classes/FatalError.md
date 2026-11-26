@@ -21,6 +21,8 @@ limit rather than a verdict on the call, and which a later retry can clear.
 - [`ProtectBootstrapError`](ProtectBootstrapError.md)
 - [`ProtectCodecChangeError`](ProtectCodecChangeError.md)
 - [`ProtectConfigurationError`](ProtectConfigurationError.md)
+- [`ProtectLivestreamAudioError`](ProtectLivestreamAudioError.md)
+- [`ProtectLivestreamRouteError`](ProtectLivestreamRouteError.md)
 - [`ProtectLivestreamUnavailableError`](ProtectLivestreamUnavailableError.md)
 - [`ProtectProtocolError`](ProtectProtocolError.md)
 - [`ProtectRequestError`](ProtectRequestError.md)
