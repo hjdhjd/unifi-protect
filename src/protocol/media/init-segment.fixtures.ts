@@ -429,6 +429,20 @@ export const HEV1_INIT = init(trak({ entries: [visualEntry("hev1", 1920, 1080, b
 export const AV1_INIT = init(trak({ entries: [visualEntry("av01", 1920, 1080, box("av1C", Buffer.from([ 0x81, 0x0d, 0x0c, 0 ])))], handler: "vide", height: 1080,
   id: 1, width: 1920 }));
 
+// `AV1_INIT` with the `av1C` record's fourth byte reading 0xef: 111 (reserved), 0 (no initial presentation delay), then 1111, which is reserved while that flag is
+// clear.
+export const AV1_RESERVED_BITS_INIT = init(trak({ entries: [visualEntry("av01", 1920, 1080, box("av1C", Buffer.from([ 0x81, 0x0d, 0x0c, 0xef ])))],
+  handler: "vide", height: 1080, id: 1, width: 1920 }));
+
+// `AV1_INIT` with the `av1C` record's fourth byte reading 0xfa: 111 (reserved), 1 (an initial presentation delay follows), then 1010, a delay field of 10.
+export const AV1_PRESENTATION_DELAY_INIT = init(trak({ entries: [visualEntry("av01", 1920, 1080, box("av1C", Buffer.from([ 0x81, 0x0d, 0x0c, 0xfa ])))],
+  handler: "vide", height: 1080, id: 1, width: 1920 }));
+
+// `AV1_INIT` with the `av1C` record's third byte reading 0x4c where `AV1_INIT` reads 0x0c: the second bit from its top, `high_bitdepth`, set, a field a decoder
+// reads and the description does not.
+export const AV1_HIGH_BITDEPTH_INIT = init(trak({ entries: [visualEntry("av01", 1920, 1080, box("av1C", Buffer.from([ 0x81, 0x0d, 0x4c, 0 ])))],
+  handler: "vide", height: 1080, id: 1, width: 1920 }));
+
 // An H.264 track whose `avc1` entry codes 1920 by 1080 and carries no `avcC`, so the entry has no profile or level to read.
 export const VIDEO_WITHOUT_CONFIG_INIT = init(trak({ entries: [visualEntry("avc1", 1920, 1080)], handler: "vide", height: 1080, id: 1, width: 1920 }));
 

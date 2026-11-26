@@ -3,18 +3,19 @@
  * init-segment.test.ts: Tests for the livestream init segment reader - the captured Protect and third-party inits, the sample entry and box shapes the wire does not
  * exercise, and the never-throw contract over empty, partial and corrupted bytes.
  */
-import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AMCREST_INIT, AV1_INIT, AVC3_INIT, AVC_INIT, CHANNEL_CONFIGURATION_SEVEN_INIT, CHANNEL_CONFIGURATION_SIX_INIT,
-  CORE_CODER_DELAY_INIT, CUT_LARGESIZE_HEADER_INIT, DESCRIPTOR_AFTER_OTHER_TAG_INIT, DESCRIPTOR_TAG_ON_LAST_BYTE_INIT, DOORBELL_INIT, EMPTY_BOX_INIT, EMPTY_STSD_INIT,
-  ESCAPED_AAC_OBJECT_TYPE_INIT, ESCAPED_OBJECT_TYPE_INIT, ES_OPTIONAL_FIELDS_INIT, EXPLICIT_FREQUENCY_INIT, HEV1_INIT, ISO_V1_AUDIO_INIT, LARGESIZE_INIT,
-  MISSING_HDLR_INIT, MISSING_TKHD_INIT, MIXDOWN_PCE_INIT, MPEG2_AAC_INIT, NESTED_TO_END_BOX_INIT, OPUS_INIT, OPUS_WITHOUT_DOPS_INIT, OVERRUNNING_DESCRIPTOR_INIT,
-  OVERRUNNING_DESCRIPTOR_PAST_BUFFER_INIT, PADDED_DESCRIPTOR_INIT, PROGRAM_CONFIG_INIT, PROTECT_AV1_INIT, PS_INIT, QUICKTIME_V1_INIT, QUICKTIME_V2_INIT,
-  RESERVED_CHANNEL_CONFIGURATION_INIT, RESERVED_FREQUENCY_INIT, RUNAWAY_DESCRIPTOR_LENGTH_INIT, SBR_INIT, SHORT_AVCC_INIT, SHORT_HDLR_INIT, SHORT_SIZE_BOX_INIT,
-  SHORT_TKHD_INIT, STSD_COUNT_WITHOUT_ENTRY_INIT, STSD_ZERO_COUNT_WITH_ENTRY_INIT, TO_END_BOX_INIT, TRUNCATED_CONFIG_INIT, TWO_ENTRY_STSD_INIT, UNKNOWN_ENTRY_INIT,
-  UNKNOWN_HANDLER_INIT, UNKNOWN_QUICKTIME_VERSION_INIT, VIDEO_WITHOUT_CONFIG_INIT, WRONG_TAG_ES_DESCRIPTOR_INIT } from "./init-segment.fixtures.ts";
+import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AMCREST_INIT, AV1_INIT, AV1_PRESENTATION_DELAY_INIT, AV1_RESERVED_BITS_INIT, AVC3_INIT, AVC_INIT,
+  CHANNEL_CONFIGURATION_SEVEN_INIT, CHANNEL_CONFIGURATION_SIX_INIT, CORE_CODER_DELAY_INIT, CUT_LARGESIZE_HEADER_INIT, DESCRIPTOR_AFTER_OTHER_TAG_INIT,
+  DESCRIPTOR_TAG_ON_LAST_BYTE_INIT, DOORBELL_INIT, EMPTY_BOX_INIT, EMPTY_STSD_INIT, ESCAPED_AAC_OBJECT_TYPE_INIT, ESCAPED_OBJECT_TYPE_INIT, ES_OPTIONAL_FIELDS_INIT,
+  EXPLICIT_FREQUENCY_INIT, HEV1_INIT, ISO_V1_AUDIO_INIT, LARGESIZE_INIT, MISSING_HDLR_INIT, MISSING_TKHD_INIT, MIXDOWN_PCE_INIT, MPEG2_AAC_INIT, NESTED_TO_END_BOX_INIT,
+  OPUS_INIT, OPUS_WITHOUT_DOPS_INIT, OVERRUNNING_DESCRIPTOR_INIT, OVERRUNNING_DESCRIPTOR_PAST_BUFFER_INIT, PADDED_DESCRIPTOR_INIT, PROGRAM_CONFIG_INIT, PROTECT_AV1_INIT,
+  PS_INIT, QUICKTIME_V1_INIT, QUICKTIME_V2_INIT, RESERVED_CHANNEL_CONFIGURATION_INIT, RESERVED_FREQUENCY_INIT, RUNAWAY_DESCRIPTOR_LENGTH_INIT, SBR_INIT, SHORT_AVCC_INIT,
+  SHORT_HDLR_INIT, SHORT_SIZE_BOX_INIT, SHORT_TKHD_INIT, STSD_COUNT_WITHOUT_ENTRY_INIT, STSD_ZERO_COUNT_WITH_ENTRY_INIT, TO_END_BOX_INIT, TRUNCATED_CONFIG_INIT,
+  TWO_ENTRY_STSD_INIT, UNKNOWN_ENTRY_INIT, UNKNOWN_HANDLER_INIT, UNKNOWN_QUICKTIME_VERSION_INIT, VIDEO_WITHOUT_CONFIG_INIT,
+  WRONG_TAG_ES_DESCRIPTOR_INIT } from "./init-segment.fixtures.ts";
 import { describe, test } from "node:test";
+import { describeInitSegment, readSampleDescriptions } from "./init-segment.ts";
 import assert from "node:assert/strict";
 import { box } from "./boxes.ts";
-import { describeInitSegment } from "./init-segment.ts";
 
 // The H.264 Baseline track at 640 by 360, level 3.0, that several composed inits carry beside the shape under test.
 const COMPANION_VIDEO = { codec: "h264", height: 360, id: 1, kind: "video", level: 30, profile: 66, width: 640 } as const;
@@ -409,5 +410,54 @@ describe("describeInitSegment", () => {
         assert.doesNotThrow(() => describeInitSegment(corrupted), "overwriting offset " + offset.toString() + " with " + value.toString() + " threw.");
       }
     });
+  });
+});
+
+describe("readSampleDescriptions", () => {
+
+  test("answers each track's sample description in file order, each a view of the init past its stsd header", () => {
+
+    // The doorbell capture in a buffer of its own. Each answer is its trak's stsd past the header: version and flags, an entry count of 1, then the one entry, an
+    // hvc1 for the video trak and an mp4a for the audio trak, each lying inside its trak's span of the init's own buffer.
+    const init = Buffer.from(Uint8Array.from(DOORBELL_INIT).buffer);
+    const descriptions = readSampleDescriptions(init);
+
+    assert.deepEqual(descriptions.map((description) => [ description.readUInt32BE(4), description.toString("latin1", 12, 16) ]), [ [ 1, "hvc1" ], [ 1, "mp4a" ] ]);
+    assert.ok(descriptions.every((description) => description.buffer === init.buffer));
+    assert.deepEqual(descriptions.map((description) => (description.byteOffset < DOORBELL_VIDEO_TRAK_END) ? "video" : "audio"), [ "video", "audio" ]);
+    assert.ok(descriptions.every((description) => (description.byteOffset > DOORBELL_VIDEO_TRAK_START) &&
+      ((description.byteOffset + description.length) <= DOORBELL_AUDIO_TRAK_END)));
+  });
+
+  test("an AV1 track's description answers av1C's reserved bits cleared, as a copy that leaves the init as it was, and a description with none set is a view", () => {
+
+    // Each init in a buffer of its own. The two differ only in the av1C record's fourth byte, the description's last, which reads 0xef in the one and 0 in the
+    // other, so with the reserved bits cleared the two descriptions are the same bytes.
+    const reserved = Buffer.from(Uint8Array.from(AV1_RESERVED_BITS_INIT).buffer);
+    const plain = Buffer.from(Uint8Array.from(AV1_INIT).buffer);
+    const [cleared] = readSampleDescriptions(reserved);
+    const [view] = readSampleDescriptions(plain);
+
+    assert.ok((cleared !== undefined) && (view !== undefined));
+    assert.deepEqual(cleared, view);
+    assert.equal(cleared.readUInt8(cleared.length - 1), 0);
+    assert.notEqual(cleared.buffer, reserved.buffer);
+    assert.deepEqual(reserved, AV1_RESERVED_BITS_INIT);
+    assert.equal(view.buffer, plain.buffer);
+  });
+
+  test("with the initial-presentation-delay flag set, av1C's low four bits are its delay and stay", () => {
+
+    // The fourth byte reads 0xfa: the reserved bits clear, and the flag with its delay of 10 stays.
+    const [description] = readSampleDescriptions(AV1_PRESENTATION_DELAY_INIT);
+
+    assert.equal(description?.readUInt8(description.length - 1), 0x1a);
+  });
+
+  test("an init with no track answers none", () => {
+
+    // An init whose moov holds no trak, and bytes holding no moov at all.
+    assert.deepEqual(readSampleDescriptions(Buffer.concat([ box("ftyp", Buffer.from("iso6", "latin1")), box("moov") ])), []);
+    assert.deepEqual(readSampleDescriptions(Buffer.alloc(0)), []);
   });
 });

@@ -110,8 +110,8 @@ export const channels = {
    */
   httpThrottleExited: payloadless("unifi-protect:http:throttle:exited"),
 
-  /** A pooled livestream reconnected and the controller delivered a different stream than the one in flight, its codec label or its description changed - one of
-   * the terminal errors a recovering stream can raise.
+  /** A pooled livestream delivered a different stream than the one in flight, on a reconnect or on a live session: an init whose codec label, description or a
+   * track's sample description changed - one of the terminal errors a live or a recovering stream can raise.
    */
   livestreamCodecChanged: typed<LivestreamCodecChangedPayload>("unifi-protect:livestream:codec:changed"),
 
@@ -346,8 +346,9 @@ export interface HttpThrottleEnteredPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamCodecChanged}. `from` / `to` are the prior and the reconnected inits themselves, each with its codec label, its bytes
- * and its description, the same pair the {@link ProtectCodecChangeError} the consumer's iterator receives carries; this is its observable companion.
+ * Payload published on {@link channels.livestreamCodecChanged}. `from` / `to` are the stream's first init and the later init that differs from it, on a reconnect
+ * or on a live session, each with its codec label, its bytes and its description, the same pair the {@link ProtectCodecChangeError} the consumer's iterator
+ * receives carries; this is its observable companion.
  *
  * @category Diagnostics
  */
@@ -439,8 +440,8 @@ export interface LivestreamSessionClosedPayload {
 
 /**
  * Payload published on {@link channels.livestreamSessionOpened}. `key` is the pool's sharing key
- * `${cameraId}:${channel}:${lens}:${segmentLength}:${chunkSize}:${timestamps}:${route}` (every resolved field that changes what the controller produces or how the
- * pool dials it, the requested route among them).
+ * `${cameraId}:${channel}:${lens}:${segmentLength}:${chunkSize}:${timestamps}:${route}:${upstream}:${audio}` (every resolved field that changes what the controller
+ * produces or how the pool dials it, the requested route, the upstream the stream reads and the audio codec it asks for among them).
  *
  * @category Diagnostics
  */

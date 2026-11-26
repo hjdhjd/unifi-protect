@@ -7,6 +7,7 @@
  */
 import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AUDIO_RATE_CHANGED_INIT, DOORBELL_INIT } from "../protocol/media/init-segment.fixtures.ts";
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
+import { FakeWebSocket, receivingSurface } from "../transport/events-stream.helpers.ts";
 import type { LivestreamAddresses, LivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   LivestreamRouteFallbackPayload, LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload,
@@ -15,22 +16,26 @@ import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-po
 import type { LivestreamPoolOptions, LivestreamSubscribeOptions, RecoveryContext, RecoveryPolicy } from "./livestream-pool.ts";
 import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT,
   PROTECT_LIVESTREAM_STALL_DEFAULT_MS, PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
-import { ProtectAbortedError, ProtectCodecChangeError, ProtectLivestreamRouteError, ProtectLivestreamUnavailableError, ProtectNetworkError,
-  ProtectProtocolError } from "../errors.ts";
+import { ProtectAbortedError, ProtectCodecChangeError, ProtectConfigurationError, ProtectLivestreamAudioError, ProtectLivestreamRouteError,
+  ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError } from "../errors.ts";
 import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
-import { buildInitSegment, buildMediaSegment } from "../transport/livestream-session.helpers.ts";
+import { buildInitSegment, buildMediaSegment, ubvAudio, ubvOpening, ubvVideo } from "../transport/livestream-session.helpers.ts";
 import { channels, subscribeToChannel } from "../diagnostics.ts";
+import { createInitialState, reduce } from "../protocol/reducer.ts";
 import { describe, test } from "node:test";
+import { describeInitSegment, readSampleDescriptions } from "../protocol/media/init-segment.ts";
 import { livestreamKey, resolveLivestreamSpec } from "../transport/livestream-session.ts";
 import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { Camera } from "../devices/camera.ts";
 import type { DeviceContext } from "../devices/context.ts";
-import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import assert from "node:assert/strict";
 import { createDeviceSelectors } from "../state/selectors.ts";
 import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
+import { findChild } from "../protocol/media/boxes.ts";
+import { h264Sps } from "../protocol/media/codecs.helpers.ts";
 import { inspect } from "node:util";
+import { makeCamera } from "../fixtures.helpers.ts";
 
 const SPEC: LivestreamSpec = { cameraId: "cam1", source: { channel: 0, type: "channel" } };
 
@@ -46,6 +51,32 @@ const AI_PRO_DESCRIPTION = {
     { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
   ]
 };
+
+// `AI_PRO_INIT` with the last byte of its video track's sample description changed, the last byte of its `hvcC` record, which neither the codec label nor the
+// description reads: the same label and description over parameter sets a decoder is configured from differently.
+function changedSampleDescriptionInit(): Buffer {
+
+  const init = Buffer.from(AI_PRO_INIT);
+  const [video] = readSampleDescriptions(init);
+
+  assert.ok(video !== undefined);
+  video.writeUInt8(video.readUInt8(video.length - 1) ^ 0x01, video.length - 1);
+
+  return init;
+}
+
+// `AI_PRO_INIT` with its movie header's creation time one second later, the difference two connections of one stream carry. A version 0 `mvhd` holds its 32-bit
+// creation time past its version and flags.
+function laterCreationTimeInit(): Buffer {
+
+  const init = Buffer.from(AI_PRO_INIT);
+  const mvhd = findChild(init, findChild(init, { end: init.length, start: 0 }, "moov"), "mvhd");
+
+  assert.ok((mvhd !== undefined) && (init.readUInt8(mvhd.start) === 0));
+  init.writeUInt32BE(init.readUInt32BE(mvhd.start + 4) + 1, mvhd.start + 4);
+
+  return init;
+}
 
 // Total index access under noUncheckedIndexedAccess, read as an assertion.
 function at<T>(items: T[], index: number): T {
@@ -248,39 +279,6 @@ describe("LivestreamPool", () => {
 
       await sub1[Symbol.asyncDispose]();
       await sub2[Symbol.asyncDispose]();
-    });
-
-    test("a mid-session re-init on the steady path caches a fresh init carrying the new label, bytes and description", async () => {
-
-      const { pool, sockets } = makePool();
-      const sub = pool.subscribe(SPEC);
-
-      await settle();
-      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
-
-      const iterator = sub[Symbol.asyncIterator]();
-
-      assert.equal((await nextSegment(iterator)).type, "init");
-      assert.equal((await nextSegment(iterator)).type, "media");
-
-      // The live session sends a further init past its first media: the steady path rather than the codec gate, so the cache takes the new init whatever it
-      // carries. The cache holds the init's fields projected onto a fresh object, never the segment it arrived in, so it carries no `type`.
-      at(sockets, 0).emitMessage(buildInitSegment({ codec: "hvc1.1.6.L180.90", data: DOORBELL_INIT }));
-      await settle();
-
-      const segment = await nextSegment(iterator);
-
-      assert.ok(segment.type === "init");
-      assert.deepEqual(sub.initSegment, { codec: "hvc1.1.6.L180.90", data: DOORBELL_INIT, description: { tracks: [
-
-        { codec: "h265", height: 4096, id: 1, kind: "video", level: 180, profile: 1, width: 3024 },
-        { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
-      ] } });
-      assert.notEqual(sub.initSegment, segment);
-      assert.equal(sub.initSegment.description, segment.description);
-      assert.equal(Object.hasOwn(sub.initSegment, "type"), false);
-
-      await sub[Symbol.asyncDispose]();
     });
   });
 
@@ -1265,7 +1263,7 @@ describe("LivestreamPool", () => {
       await sub[Symbol.asyncDispose]();
     });
 
-    test("a failed negotiation and a disposal during the direct attempt publish no fallback", async () => {
+    test("a failed negotiation, a disposal during the direct attempt and an Opus stream's route terminal publish no fallback", async () => {
 
       const fallbacks: LivestreamRouteFallbackPayload[] = [];
 
@@ -1299,10 +1297,215 @@ describe("LivestreamPool", () => {
       await left[Symbol.asyncDispose]();
       await settle();
 
-      assert.deepEqual([ negotiating.urls, leaving.urls ], [ [DIRECT_URL], [DIRECT_URL] ]);
+      // A stream asking for Opus that is offered no direct address ends on its direct attempt.
+      const opus = makePool({ resolveUrl: proxiedOnly });
+      const ended = opus.pool.subscribe({ ...SPEC, audio: "opus", route: "preferDirect" });
+
+      await settle();
+
+      assert.deepEqual([ negotiating.urls, leaving.urls, opus.urls ], [ [DIRECT_URL], [DIRECT_URL], [] ]);
+      assert.equal(await ended.whenEstablished(), false);
       assert.deepEqual(fallbacks, []);
 
       await negotiated[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("the UBV upstream and its terminals", () => {
+
+    // A pool whose resolver answers each negotiation from `answers` in turn, holding the last, and whose sockets are fakes, each offered by its receiving surface
+    // alone at the positions `receiveOnly` names. Every fake is captured in the order the pool's sessions built them, and the negotiations are counted.
+    function scriptedPool(opts: { answers: readonly LivestreamAddresses[]; log?: CapturingLogger; receiveOnly?: readonly number[] }): { negotiations: () => number;
+      pool: LivestreamPool; sockets: FakeWebSocket[]; } {
+
+      const sockets: FakeWebSocket[] = [];
+      let negotiations = 0;
+      const pool = new LivestreamPool({ clock: new TestClock(), log: opts.log ?? silentLog(), resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        return at([...opts.answers], Math.min(negotiations, opts.answers.length) - 1);
+      }, webSocket: (): FakeWebSocket | ReturnType<typeof receivingSurface> => {
+
+        const ws = new FakeWebSocket({ autoOpen: false });
+
+        sockets.push(ws);
+
+        return (opts.receiveOnly ?? []).includes(sockets.length - 1) ? receivingSurface(ws) : ws;
+      } });
+
+      return { negotiations: (): number => negotiations, pool, sockets };
+    }
+
+    // Read a stream's terminal: once `trigger` has run, by default nothing beyond a settle, its iterator's next read rejects with the error class with no clock
+    // advance, the session-closed diagnostic carries the reason, and the exhausted diagnostic a self-heal observer acts on never publishes.
+    async function expectTerminal(iterator: AsyncIterator<Segment>, expected: { error: abstract new (...args: never[]) => Error; reason: string },
+      trigger: () => Promise<void> = settle): Promise<void> {
+
+      const exhausted: LivestreamRecoveryExhaustedPayload[] = [];
+      const reasons: string[] = [];
+
+      using exhaustedSubscription = subscribeToChannel(channels.livestreamRecoveryExhausted, (payload) => void exhausted.push(payload));
+      using closedSubscription = subscribeToChannel(channels.livestreamSessionClosed, (payload) => void reasons.push(payload.reason));
+
+      const pending = iterator.next();
+      const settled = settlement(pending);
+
+      await trigger();
+      await settle();
+
+      assert.ok(settled(), "the terminal arrives with no clock advance");
+      await assert.rejects(pending, { constructor: expected.error });
+      assert.deepEqual(exhausted, []);
+      assert.deepEqual(reasons, [expected.reason]);
+    }
+
+    // Establish a UBV stream on a socket: open it and deliver an opening whose init and first media segment the subscriber then reads.
+    async function establishUbv(ws: FakeWebSocket, iterator: AsyncIterator<Segment>, audio: "aac" | "opus"): Promise<void> {
+
+      ws.emitOpen();
+      ws.emitMessage(ubvOpening(audio));
+      await settle();
+
+      assert.deepEqual([ (await nextSegment(iterator)).type, (await nextSegment(iterator)).type ], [ "init", "media" ]);
+    }
+
+    // A run of Opus frames 20 ms apart on the 48 kHz clock from `ticks`, lasting the audio wait, in a stream asking for AAC.
+    function opusRun(ticks: number): Buffer {
+
+      return Buffer.concat(Array.from({ length: 151 }, (_value, index) => ubvAudio("opus", ticks + (index * 960))));
+    }
+
+    const BOTH: LivestreamAddresses = { direct: DIRECT_URL, proxied: PROXIED_URL };
+    const NO_DIRECT: LivestreamAddresses = { direct: null, proxied: PROXIED_URL };
+
+    test("subscribers differing in audio or upstream hold a socket each, Opus resolves to UBV, and an unknown audio or upstream is refused at subscribe", async () => {
+
+      const { pool, sockets } = makePool();
+
+      // AAC from Protect's own fMP4, named or left to the default, AAC from UBV, and Opus, which reads UBV whether its spec names the upstream or not, so the first
+      // two share one socket and the last two another.
+      pool.subscribe(SPEC);
+      pool.subscribe({ ...SPEC, audio: "aac" });
+      pool.subscribe({ ...SPEC, upstream: "ubv" });
+      pool.subscribe({ ...SPEC, audio: "opus" });
+      pool.subscribe({ ...SPEC, audio: "opus", upstream: "ubv" });
+      await settle();
+
+      assert.equal(sockets.length, 3);
+      assert.throws(() => pool.subscribe({ ...SPEC, audio: "mp3" as never }), { constructor: ProtectProtocolError });
+      assert.throws(() => pool.subscribe({ ...SPEC, upstream: "fmp4" as never }), { constructor: ProtectProtocolError });
+
+      await pool[Symbol.asyncDispose]();
+    });
+
+    test("a stream asking for Opus offered no direct address ends on ProtectLivestreamRouteError at once, establishing and live, never through the give-up",
+      async () => {
+
+        const expected = { error: ProtectLivestreamRouteError, reason: "the controller offered no direct livestream address" };
+        const establishing = scriptedPool({ answers: [NO_DIRECT] });
+
+        await expectTerminal(establishing.pool.subscribe({ ...SPEC, audio: "opus" })[Symbol.asyncIterator](), expected);
+        assert.equal(establishing.sockets.length, 0);
+
+        // Live on an address that named its stream, then a reconnect whose negotiation offers none.
+        const live = scriptedPool({ answers: [ BOTH, NO_DIRECT ] });
+        const iterator = live.pool.subscribe({ ...SPEC, audio: "opus" })[Symbol.asyncIterator]();
+
+        await settle();
+        await establishUbv(at(live.sockets, 0), iterator, "opus");
+        await expectTerminal(iterator, expected, async () => at(live.sockets, 0).emitClose(1006, ""));
+      });
+
+    test("a UBV stream carrying another audio codec ends on ProtectLivestreamAudioError at once, establishing and live, never through the give-up", async () => {
+
+      const expected = { error: ProtectLivestreamAudioError, reason: "the controller streamed another audio codec" };
+      const establishing = scriptedPool({ answers: [BOTH] });
+      const first = establishing.pool.subscribe({ ...SPEC, upstream: "ubv" })[Symbol.asyncIterator]();
+
+      await settle();
+      at(establishing.sockets, 0).emitOpen();
+      await expectTerminal(first, expected, async () => at(establishing.sockets, 0).emitMessage(opusRun(0)));
+
+      const live = scriptedPool({ answers: [BOTH] });
+      const iterator = live.pool.subscribe({ ...SPEC, upstream: "ubv" })[Symbol.asyncIterator]();
+
+      await settle();
+      await establishUbv(at(live.sockets, 0), iterator, "aac");
+      await expectTerminal(iterator, expected, async () => at(live.sockets, 0).emitMessage(opusRun(9600)));
+    });
+
+    test("an Opus stream whose socket cannot send ends on ProtectConfigurationError at once, establishing and live, never through the give-up", async () => {
+
+      const expected = { error: ProtectConfigurationError, reason: "the livestream socket cannot send" };
+      const establishing = scriptedPool({ answers: [BOTH], receiveOnly: [0] });
+      const first = establishing.pool.subscribe({ ...SPEC, audio: "opus" })[Symbol.asyncIterator]();
+
+      await settle();
+      at(establishing.sockets, 0).emitOpen();
+      await expectTerminal(first, expected, async () => at(establishing.sockets, 0).emitMessage(ubvOpening("opus")));
+
+      // Live on a socket that sends, then a reconnect onto one that cannot.
+      const live = scriptedPool({ answers: [BOTH], receiveOnly: [1] });
+      const iterator = live.pool.subscribe({ ...SPEC, audio: "opus" })[Symbol.asyncIterator]();
+
+      await settle();
+      await establishUbv(at(live.sockets, 0), iterator, "opus");
+      await expectTerminal(iterator, expected, async () => {
+
+        at(live.sockets, 0).emitClose(1006, "");
+        await settle();
+        at(live.sockets, 1).emitOpen();
+        at(live.sockets, 1).emitMessage(ubvOpening("opus"));
+      });
+    });
+
+    test("a preferDirect Opus stream offered no direct address ends on ProtectLivestreamRouteError with one socket-less session, no fallback and no fallback line",
+      async () => {
+
+        const log = capturingLog();
+        const { negotiations, pool, sockets } = scriptedPool({ answers: [NO_DIRECT], log });
+
+        await expectTerminal(pool.subscribe({ ...SPEC, audio: "opus", route: "preferDirect" })[Symbol.asyncIterator](),
+          { error: ProtectLivestreamRouteError, reason: "the controller offered no direct livestream address" });
+
+        assert.equal(negotiations(), 1);
+        assert.equal(sockets.length, 0);
+        assert.deepEqual(fallbackLines(log), []);
+      });
+
+    test("a UBV stream whose parameter sets change at a keyframe ends with ProtectCodecChangeError", async () => {
+
+      const { pool, sockets } = makePool();
+      const iterator = pool.subscribe({ ...SPEC, upstream: "ubv" })[Symbol.asyncIterator]();
+
+      await settle();
+      await establishUbv(at(sockets, 0), iterator, "aac");
+
+      // A keyframe at 18000 ticks carrying an SPS of level 3.1 closes the open segment and starts a new init in the writer, written as its first segment closes,
+      // which the codec gate then ends the stream on.
+      const changed = h264Sps({ constraints: 0, heightInMapUnitsMinus1: 14, levelIdc: 31, profileIdc: 77, widthInMbsMinus1: 19 });
+      const drained: string[] = [];
+
+      at(sockets, 0).emitMessage(Buffer.concat([ ubvVideo(14400), ubvVideo(18000, { keyframe: true, sps: changed }), ubvAudio("aac", 9600), ubvVideo(21600),
+        ubvVideo(25200), ubvVideo(28800) ]));
+      await settle();
+
+      await assert.rejects(async () => {
+
+        for(;;) {
+
+          // eslint-disable-next-line no-await-in-loop
+          drained.push((await nextSegment(iterator)).type);
+        }
+      }, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.deepEqual([ error.from.codec, error.to.codec ], [ "avc1.4d001e,mp4a.40.2", "avc1.4d001f,mp4a.40.2" ]);
+
+        return true;
+      });
+      assert.deepEqual(drained, ["media"], "the segment the restart closed is delivered, and the new init never is");
     });
   });
 
@@ -1590,6 +1793,161 @@ describe("LivestreamPool", () => {
       // The captures share a label and a description and differ only in their creation and modification times, the difference every reconnect of one stream
       // carries, so the reconnect's init is suppressed and the cache keeps the first init's bytes.
       await establish(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: AI_PRO_RECONNECT_INIT });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+      assert.deepEqual(sub.initSegment?.data, AI_PRO_INIT);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a changed init on a live session ends the stream with ProtectCodecChangeError and the codec diagnostic", async () => {
+
+      const changed: LivestreamCodecChangedPayload[] = [];
+
+      using changedSubscription = subscribeToChannel(channels.livestreamCodecChanged, (payload) => void changed.push(payload));
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The live session sends a further init past its first media, of another stream, then media: the codec gate ends the stream on the init, so the media never
+      // reaches the iterator, the diagnostic publishes once, and the cache keeps the stream's first init.
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "hvc1.1.6.L180.90", data: DOORBELL_INIT }));
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(changed.length, 1);
+      assert.deepEqual(at(changed, 0).from, { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
+      assert.deepEqual(at(changed, 0).to.data, DOORBELL_INIT);
+
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.equal(error.message, "The UniFi Protect livestream changed its codec or format.");
+        assert.deepEqual(error.from.data, AI_PRO_INIT);
+        assert.equal(error.to.codec, "hvc1.1.6.L180.90");
+        assert.deepEqual(error.to.data, DOORBELL_INIT);
+
+        return true;
+      });
+
+      assert.equal(sub.state, "closed");
+      assert.deepEqual(sub.initSegment?.data, AI_PRO_INIT);
+      assert.equal(sockets.length, 1);
+    });
+
+    test("an identical init on a live session is swallowed", async () => {
+
+      const changed: LivestreamCodecChangedPayload[] = [];
+
+      using changedSubscription = subscribeToChannel(channels.livestreamCodecChanged, (payload) => void changed.push(payload));
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      const cached = sub.initSegment;
+
+      // The live session sends the stream's own init again past its first media, then media: the init reaches no subscriber, so the next segment the iterator
+      // yields is that media, and the cache keeps the first init's very object.
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "hev1.1.6.L150.90", data: AI_PRO_INIT }));
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.initSegment, cached);
+      assert.equal(sub.state, "live");
+      assert.equal(changed.length, 0);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("an init whose sample description changed under the same label and description is a changed stream, on a reconnect and on a live session", async () => {
+
+      const changedSets = changedSampleDescriptionInit();
+
+      // The changed init carries the stream's label and describes as the stream does, so the label and the description alone would read it as the same stream.
+      assert.deepEqual(describeInitSegment(changedSets), AI_PRO_DESCRIPTION);
+
+      // A stream established on `AI_PRO_INIT` meets the changed init either from its reconnect or on its live session, each followed by media, which a gate that let
+      // the stream through would hand the iterator rather than end it.
+      const follow = async (path: "live" | "reconnect"): Promise<void> => {
+
+        const { pool, sockets } = makePool();
+        const sub = pool.subscribe(SPEC);
+
+        await settle();
+        await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+        const iterator = sub[Symbol.asyncIterator]();
+
+        assert.equal((await nextSegment(iterator)).type, "init");
+        assert.equal((await nextSegment(iterator)).type, "media");
+
+        if(path === "reconnect") {
+
+          at(sockets, 0).emitClose(1000, "the controller closed the stream");
+          await settle();
+          at(sockets, 1).emitOpen();
+        }
+
+        const socket = at(sockets, sockets.length - 1);
+
+        socket.emitMessage(buildInitSegment({ codec: "hev1.1.6.L150.90", data: changedSets }));
+        pushMedia(socket);
+        await settle();
+
+        await assert.rejects(iterator.next(), ProtectCodecChangeError, path);
+        assert.equal(sub.state, "closed", path);
+      };
+
+      await follow("reconnect");
+      await follow("live");
+    });
+
+    test("two inits that differ only in a creation time are one stream", async () => {
+
+      const later = laterCreationTimeInit();
+
+      assert.notDeepEqual(later, AI_PRO_INIT);
+
+      // A stream established on `AI_PRO_INIT` meets the init one second later in creation time from its reconnect and then on its live session: each is the same
+      // stream, so neither reaches the iterator, media resumes after each, and the cache keeps the first init.
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+      await establish(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: later });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 1).emitMessage(buildInitSegment({ codec: "hev1.1.6.L150.90", data: later }));
+      pushMedia(at(sockets, 1));
+      await settle();
 
       assert.equal((await nextSegment(iterator)).type, "media");
       assert.equal(sub.state, "live");
@@ -2660,7 +3018,7 @@ describe("LivestreamPool", () => {
       // byte watchdog cannot trip - it just saw a frame). The media watchdog compares the media-silence duration against the aggregated detection threshold, 10s by
       // default here, and recovers into a fresh session.
       clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
-      at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: AI_PRO_INIT }));
       await settle();
       await settle();
 
@@ -2847,13 +3205,13 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "media");
       assert.equal(sub.state, "live");
 
-      // Go media-silent FAR past the 10s default (12s) while keeping the byte heartbeat alive with non-media frames (a mid-session re-init is fanned out as an init and
-      // refreshes `#lastSegmentAt` but not `#lastMediaAt`). If the opt-out aggregated to the 10s default instead of Infinity, the media watchdog would fire here; an
-      // opted-out stream must stay live, proving the threshold is genuinely Infinity, not capped at the default.
+      // Go media-silent FAR past the 10s default (12s) while keeping the byte heartbeat alive with non-media frames (the stream's own init again, which the codec gate
+      // swallows, refreshes `#lastSegmentAt` but not `#lastMediaAt`). If the opt-out aggregated to the 10s default instead of Infinity, the media watchdog would fire
+      // here; an opted-out stream must stay live, proving the threshold is genuinely Infinity, not capped at the default.
       for(let step = 0; step < 12; step++) {
 
         clock.advance(1000);
-        at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
+        at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: AI_PRO_INIT }));
         // eslint-disable-next-line no-await-in-loop
         await settle();
         // eslint-disable-next-line no-await-in-loop
@@ -2944,18 +3302,18 @@ describe("LivestreamPool", () => {
       assert.equal((await nextSegment(iterator)).type, "init");
       assert.equal((await nextSegment(iterator)).type, "media");
 
-      /* Drive a non-media frame mid-silence. A mid-session re-init reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock), and it is fanned out as an
-       * init rather than as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the last picture. The
-       * watchdog wakes once per poll period from the first media, so the advances step along that grid: the first wake reads a second of silence, and the re-init
-       * lands between wakes.
+      /* Drive a non-media frame mid-silence. The stream's own init again reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock), and the codec gate
+       * swallows it rather than fanning it out as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the
+       * last picture. The watchdog wakes once per poll period from the first media, so the advances step along that grid: the first wake reads a second of silence,
+       * and the init lands between wakes.
        */
       clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS);
       await settle();
       clock.advance(500);
-      at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: Buffer.from("INIT") }));
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: AI_PRO_INIT }));
       await settle();
 
-      // The next wake, at 2s, crosses the media threshold relative to the LAST MEDIA (not the re-init). The watchdog fires because the non-media frame did not reset its
+      // The next wake, at 2s, crosses the media threshold relative to the LAST MEDIA (not the init). The watchdog fires because the non-media frame did not reset its
       // media clock.
       clock.advance(500);
       await settle();
@@ -3285,6 +3643,8 @@ describe("LivestreamPool", () => {
       const calls: { opts: LivestreamSubscribeOptions; spec: LivestreamSpec }[] = [];
       const controller = new AbortController();
       const urgency = (): number => 0;
+      const record = makeCamera({ featureFlags: { hasMic: true }, id: "cam-xyz", isMicEnabled: true });
+      const state = reduce(createInitialState(), { data: record, id: record.id, kind: "deviceAdded", modelKey: "camera" });
 
       // This fixture implements only the DeviceContext members that Camera.livestream() touches - livestreamPool.subscribe() to capture its arguments, and the store's
       // selector catalog, which the camera reads its record selector from as it is constructed - plus stub log/transport fields to satisfy the shape. Neither the
@@ -3300,7 +3660,7 @@ describe("LivestreamPool", () => {
           return {} as unknown;
         } },
         log: silentLog(),
-        store: { selectors: createDeviceSelectors() },
+        store: { selectors: createDeviceSelectors(), snapshot: () => state },
         transport: {}
       } as unknown as DeviceContext;
 
@@ -3311,7 +3671,7 @@ describe("LivestreamPool", () => {
       const captured = calls.at(-1);
 
       assert.ok(captured !== undefined);
-      assert.deepEqual(captured.spec, { cameraId: "cam-xyz", route: "direct", source: { channel: 2, type: "channel" }, timestamps: true });
+      assert.deepEqual(captured.spec, { audioExpected: true, cameraId: "cam-xyz", route: "direct", source: { channel: 2, type: "channel" }, timestamps: true });
       assert.equal(captured.opts.signal, controller.signal);
       assert.equal(captured.opts.urgency, urgency);
 
@@ -3321,8 +3681,40 @@ describe("LivestreamPool", () => {
       const discarding = calls.at(-1);
 
       assert.ok(discarding !== undefined);
-      assert.deepEqual(discarding.spec, { cameraId: "cam-xyz", source: { channel: 2, type: "channel" } });
+      assert.deepEqual(discarding.spec, { audioExpected: true, cameraId: "cam-xyz", source: { channel: 2, type: "channel" } });
       assert.equal(discarding.opts.discardOnDispose, true);
+    });
+
+    test("the camera states that audio is expected only when it has a microphone and the microphone is enabled, whatever its recording settings say", () => {
+
+      // A camera over a store whose snapshot is the state given, recording the spec each livestream() hands the pool.
+      const specs: LivestreamSpec[] = [];
+      const cameraOver = (state: ReturnType<typeof createInitialState>): Camera => new Camera({ livestreamPool: { subscribe: (spec: LivestreamSpec) => {
+
+        specs.push(spec);
+
+        return {} as unknown;
+      } }, log: silentLog(), store: { selectors: createDeviceSelectors(), snapshot: () => state }, transport: {} } as unknown as DeviceContext, "cam-xyz");
+
+      for(const hasMic of [ true, false ]) {
+
+        for(const isMicEnabled of [ true, false ]) {
+
+          for(const recordAudio of [ true, false ]) {
+
+            const record = makeCamera({ featureFlags: { hasMic }, id: "cam-xyz", isMicEnabled, recordingSettings: { recordAudio } });
+
+            cameraOver(reduce(createInitialState(), { data: record, id: record.id, kind: "deviceAdded", modelKey: "camera" })).livestream({});
+
+            assert.equal(specs.at(-1)?.audioExpected, hasMic && isMicEnabled, JSON.stringify({ hasMic, isMicEnabled, recordAudio }));
+          }
+        }
+      }
+
+      // A handle whose camera has left the state states nothing, so the spec's own default applies.
+      cameraOver(createInitialState()).livestream({});
+
+      assert.equal(Object.hasOwn(specs.at(-1) ?? {}, "audioExpected"), false);
     });
   });
 });

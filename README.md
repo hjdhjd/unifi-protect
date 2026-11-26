@@ -110,7 +110,23 @@ for await (const segment of live) {
 }
 ```
 
-A stream's `route` decides how it reaches the controller. `"proxied"`, the default, goes through the UniFi OS proxy, as every other connection does. `"direct"` dials the controller's media server itself, skipping the proxy, and since that server presents its own self-signed certificate, a direct stream never verifies it even when `verifyTls` is on, carrying no session credentials to protect. `"preferDirect"` tries the direct route first and falls back to the proxied one when the direct route fails before its first media, publishing the reason on the `livestreamRouteFallback` diagnostics channel.
+A stream's `route` decides how it reaches the controller. `"proxied"`, the default, goes through the UniFi OS proxy, as every other connection does. `"direct"` dials the controller's media server itself, on a port of its own that the controller names, skipping the proxy, and since that server presents its own self-signed certificate, a direct stream never verifies it even when `verifyTls` is on, carrying no session credentials to protect. `"preferDirect"` tries the direct route first and falls back to the proxied one when the direct route fails before its first media, publishing the reason on the `livestreamRouteFallback` diagnostics channel.
+
+A stream's `audio` decides its audio codec: `"aac"`, the default, or `"opus"`. Protect's own fMP4 carries AAC alone, so a stream asking for Opus reads the
+camera's UBV record stream instead, which the library writes as fMP4 itself, on every route. `upstream: "ubv"` reads UBV for an AAC stream too. Either way a
+subscriber iterates the same fMP4 segments, and subscribers share a stream only when they ask for the same audio from the same upstream.
+
+```ts
+await using opus = camera.livestream({ audio: "opus", signal, source: { channel: 0, type: "channel" } });
+
+for await (const segment of opus) {
+
+  ffmpeg.stdin.write(segment.data);
+}
+```
+
+A stream that asked for Opus and cannot get it ends at once rather than retrying: on `ProtectLivestreamRouteError` when the controller offers no direct address
+to name the stream by, and on `ProtectLivestreamAudioError` when the controller streams another audio codec.
 
 ## Testing
 

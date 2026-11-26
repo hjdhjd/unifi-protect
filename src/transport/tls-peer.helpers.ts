@@ -155,11 +155,13 @@ export interface LoopbackHttpsPeer extends LoopbackTlsPeer {
 
 /**
  * A listening loopback WebSocket peer. Beside every {@link LoopbackTlsPeer} member, `upgrade(index)` resolves with the headers the upgrade request at that position
- * in arrival order carried, each name lowercased, at once if it already arrived, which is how a test reads what a socket stamped on its upgrade. Each index supports
- * a single outstanding waiter, as `connection` does.
+ * in arrival order carried, each name lowercased, at once if it already arrived, which is how a test reads what a socket stamped on its upgrade, and `message(index)`
+ * resolves with the unmasked payload of the data frame at that position among those its clients sent, which is how a test reads what a socket sent. Each index
+ * supports a single outstanding waiter, as `connection` does.
  */
 export interface LoopbackWebSocketPeer extends LoopbackTlsPeer {
 
+  message(index: number): Promise<Buffer>;
   upgrade(index: number): Promise<Readonly<Record<string, string>>>;
 }
 
@@ -218,11 +220,13 @@ export interface LoopbackHungHttpsPeerOptions extends LoopbackPeerOptions {
 /**
  * Options for {@link createLoopbackWebSocketPeer}, beside every {@link LoopbackPeerOptions} member.
  *
+ * - `messages` are the binary messages the peer sends each client once its upgrade is answered, each in one frame, in order. It defaults to none.
  * - `resetUpgrade` makes the peer reset the connection once the upgrade request has arrived, rather than answer it, which is how a peer drops a connection after the
  *   TLS handshake and before the WebSocket opens. It defaults to `false`.
  */
 export interface LoopbackWebSocketPeerOptions extends LoopbackPeerOptions {
 
+  messages?: readonly Uint8Array[];
   resetUpgrade?: boolean;
 }
 
@@ -506,7 +510,7 @@ export async function createLoopbackTlsProxyPeer({ ipv6 = false }: LoopbackPeerO
 
 /**
  * Build a loopback TLS peer that speaks just enough of the WebSocket protocol for a session to connect to it: it completes the RFC 6455 upgrade by hand and then holds
- * the connection, sending no frames of its own.
+ * the connection, sending no frames of its own but the messages it was given, and recording the data frames its clients send.
  *
  * Holding rather than conversing is the whole point. Every WebSocket URL this library connects to is `wss://` by construction, the events URL and the negotiated
  * livestream and talkback URLs alike, so reaching a session's own socket path takes a real TLS peer, and what these tests ask is whether the handshake completes at
@@ -521,10 +525,12 @@ export async function createLoopbackTlsProxyPeer({ ipv6 = false }: LoopbackPeerO
  *
  * @returns The listening peer.
  */
-export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade = false }: LoopbackWebSocketPeerOptions = {}): Promise<LoopbackWebSocketPeer> {
+export async function createLoopbackWebSocketPeer({ ipv6 = false, messages = [], resetUpgrade = false }:
+  LoopbackWebSocketPeerOptions = {}): Promise<LoopbackWebSocketPeer> {
 
   // The peer offers only http/1.1 over ALPN because the WebSocket upgrade it answers by hand is an HTTP/1.1 exchange.
   const server = createTlsServer({ ALPNProtocols: ["http/1.1"], ...identity });
+  const received = createLedger<Buffer>();
   const upgrades = createLedger<Readonly<Record<string, string>>>();
 
   // The TCP socket beneath each TLS connection, by the client's port, which is how a peer that resets the upgrade reaches past its own TLS layer: a reset is a TCP
@@ -544,7 +550,7 @@ export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade =
 
   server.on("secureConnection", (socket) => {
 
-    let buffered = Buffer.alloc(0);
+    let buffered: Buffer = Buffer.alloc(0);
     let upgraded = false;
 
     // A client severing its end of the connection is what every one of these tests arranges on teardown, so the reset it raises here is expected rather than a fault.
@@ -552,8 +558,11 @@ export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade =
 
     socket.on("data", (chunk: Buffer) => {
 
-      // Once the upgrade is answered the peer simply reads and discards: the client's frames (a close frame above all) need no reply for its own teardown to complete.
+      // Once the upgrade is answered the peer reads the client's frames, recording each data frame's payload and answering none: a close frame above all needs no
+      // reply for the client's own teardown to complete.
       if(upgraded) {
+
+        buffered = readClientFrames(Buffer.concat([ buffered, chunk ]), (payload) => received.record(payload));
 
         return;
       }
@@ -583,7 +592,13 @@ export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade =
       const key = (/^sec-websocket-key: *(\S+)/im).exec(head)?.[1] ?? "";
 
       upgraded = true;
+      buffered = buffered.subarray(boundary + HEADER_TERMINATOR.length);
       socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + acceptDigest(key) + HEADER_TERMINATOR);
+
+      for(const message of messages) {
+
+        socket.write(serverFrame(message));
+      }
     });
   });
 
@@ -603,6 +618,7 @@ export async function createLoopbackWebSocketPeer({ ipv6 = false, resetUpgrade =
       return peer.handshakes;
     },
     host: peer.host,
+    message: async (index: number): Promise<Buffer> => received.at(index),
     protocol: async (index: number): Promise<string | false | null> => peer.protocol(index),
     upgrade: async (index: number): Promise<Readonly<Record<string, string>>> => upgrades.at(index),
     whenHandshakes: async (count: number): Promise<void> => peer.whenHandshakes(count),
@@ -681,6 +697,91 @@ export async function fetchStatus(dispatcher: Dispatcher, origin: string): Promi
 function acceptDigest(key: string): string {
 
   return createHash("sha1").update(key + WEBSOCKET_ACCEPT_GUID).digest("base64");
+}
+
+// One binary frame a server sends (RFC 6455 § 5.2): FIN with the binary opcode, then the payload's length unmasked, in 7 bits, or behind 126 in 16 bits, or behind 127
+// in 64 bits, then the payload.
+function serverFrame(payload: Uint8Array): Buffer {
+
+  const extended = (payload.length < 126) ? 0 : ((payload.length < 65536) ? 2 : 8);
+  const header = Buffer.alloc(2 + extended);
+
+  header.writeUInt8(0x82, 0);
+
+  switch(extended) {
+
+    case 0: {
+
+      header.writeUInt8(payload.length, 1);
+
+      break;
+    }
+
+    case 2: {
+
+      header.writeUInt8(126, 1);
+      header.writeUInt16BE(payload.length, 2);
+
+      break;
+    }
+
+    default: {
+
+      header.writeUInt8(127, 1);
+      header.writeBigUInt64BE(BigInt(payload.length), 2);
+    }
+  }
+
+  return Buffer.concat([ header, payload ]);
+}
+
+// Read every whole frame a client's bytes hold (RFC 6455 § 5.2), handing `record` each text or binary frame's payload unmasked, and answer the bytes of a frame the
+// bytes cut, which the next chunk completes. Control frames, a close among them, are read past.
+function readClientFrames(bytes: Buffer, record: (payload: Buffer) => void): Buffer {
+
+  let offset = 0;
+
+  while((bytes.length - offset) >= 2) {
+
+    const opcode = bytes.readUInt8(offset) & 0x0f;
+    const masked = (bytes.readUInt8(offset + 1) & 0x80) !== 0;
+    const short = bytes.readUInt8(offset + 1) & 0x7f;
+    const extended = (short === 126) ? 2 : ((short === 127) ? 8 : 0);
+    const headerSize = 2 + extended + (masked ? 4 : 0);
+
+    if((bytes.length - offset) < headerSize) {
+
+      break;
+    }
+
+    const length = (short === 126) ? bytes.readUInt16BE(offset + 2) : ((short === 127) ? Number(bytes.readBigUInt64BE(offset + 2)) : short);
+
+    if((bytes.length - offset) < (headerSize + length)) {
+
+      break;
+    }
+
+    const payload = Buffer.from(bytes.subarray(offset + headerSize, offset + headerSize + length));
+
+    if(masked) {
+
+      const mask = bytes.subarray(offset + headerSize - 4, offset + headerSize);
+
+      for(let index = 0; index < payload.length; index++) {
+
+        payload.writeUInt8(payload.readUInt8(index) ^ mask.readUInt8(index % 4), index);
+      }
+    }
+
+    if((opcode === 1) || (opcode === 2)) {
+
+      record(payload);
+    }
+
+    offset += headerSize + length;
+  }
+
+  return bytes.subarray(offset);
 }
 
 // The arrival-order bookkeeping every peer here shares: values recorded in the order they arrive, and an accessor that resolves with the one at a given position

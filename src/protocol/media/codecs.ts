@@ -26,18 +26,18 @@ import { ProtectProtocolError } from "../../errors.ts";
 import type { Span } from "./boxes.ts";
 
 /**
- * The audio codecs the media group reads and writes.
+ * The audio codecs a livestream carries and the media group reads and writes. A livestream asks for one of them as its `audio`.
  *
  * @category Transport
  */
-export type AudioCodec = "aac" | "opus";
+export type LivestreamAudioCodec = "aac" | "opus";
 
 /**
- * The video codecs the media group reads and writes.
+ * The video codecs a livestream carries and the media group reads and writes.
  *
  * @category Transport
  */
-export type VideoCodec = "av1" | "h264" | "h265";
+export type LivestreamVideoCodec = "av1" | "h264" | "h265";
 
 /**
  * What an audio codec's reader yields from one parse: the decoded channel count and sample rate, the codec, its RFC 6381 label, and the record its sample entry
@@ -48,7 +48,7 @@ export type VideoCodec = "av1" | "h264" | "h265";
 export interface AudioConfiguration {
 
   readonly channels: number;
-  readonly codec: AudioCodec;
+  readonly codec: LivestreamAudioCodec;
   readonly label: string;
   readonly record: Buffer;
   readonly sampleRate: number;
@@ -62,7 +62,7 @@ export interface AudioConfiguration {
  */
 export interface VideoConfiguration {
 
-  readonly codec: VideoCodec;
+  readonly codec: LivestreamVideoCodec;
   readonly height: number;
   readonly label: string;
   readonly level: number;
@@ -85,7 +85,7 @@ export interface VideoFrameParts {
 
 // The audio sample entries the media group reads and writes, each with its codec: `mp4a` carries AAC, its record in an `esds`, and `Opus` carries Opus, its record
 // in a `dOps`.
-export const AUDIO_FORMATS: ReadonlyMap<string, AudioCodec> = new Map([
+export const AUDIO_FORMATS: ReadonlyMap<string, LivestreamAudioCodec> = new Map([
 
   [ "mp4a", "aac" ],
   [ "Opus", "opus" ]
@@ -94,7 +94,7 @@ export const AUDIO_FORMATS: ReadonlyMap<string, AudioCodec> = new Map([
 // The video sample entries the media group reads and writes, each with its codec and the child box holding its decoder configuration record. The entries of one
 // codec differ only in where the stream's parameter sets travel - in the record for `avc1` and `hvc1`, in the stream for `avc3` and `hev1` - so both carry the
 // same record, and each codec's first entry is the one that carries them in the record.
-export const VIDEO_FORMATS: ReadonlyMap<string, { readonly codec: VideoCodec; readonly config: string }> = new Map([
+export const VIDEO_FORMATS: ReadonlyMap<string, { readonly codec: LivestreamVideoCodec; readonly config: string }> = new Map([
 
   [ "av01", { codec: "av1", config: "av1C" } ],
   [ "avc1", { codec: "h264", config: "avcC" } ],

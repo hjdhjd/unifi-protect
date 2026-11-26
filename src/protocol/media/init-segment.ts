@@ -4,9 +4,10 @@
  */
 
 /**
- * Pure reader of the fMP4 initialization segment a livestream opens with (the `ftyp` and `moov` boxes the controller sends as its init frame). This module is Layer 1,
- * the packet codec's sibling: no I/O, no time, no side effects - bytes in, a description out. Unlike the packet codec it never throws, because an init the reader
- * cannot fully read is still a stream a consumer can decode...so a malformed init describes as the tracks that were readable, and a truncated one as its whole tracks.
+ * Pure reader of the fMP4 initialization segment a livestream opens with (the `ftyp` and `moov` boxes the controller or the library's writer produces). This
+ * module is Layer 1, the packet codec's sibling: no I/O, no time, no side effects - bytes in, a description out. Unlike the packet codec it never throws, because
+ * an init the reader cannot fully read is still a stream a consumer can decode...so a malformed init describes as the tracks that were readable, and a truncated
+ * one as its whole tracks.
  *
  * The walk reads one path through the box tree for each track, in file order:
  *
@@ -47,11 +48,12 @@
  */
 import { AAC_LC_OBJECT_TYPE, CHANNEL_COUNTS, SAMPLING_FREQUENCIES } from "./aac.ts";
 import { AUDIO_FORMATS, VIDEO_FORMATS } from "./codecs.ts";
-import type { AudioCodec, VideoCodec } from "./codecs.ts";
 import type { Box, Span } from "./boxes.ts";
+import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs.ts";
 import { children, findChild, readFourCc, readUInt } from "./boxes.ts";
 import { BitReader } from "./bits.ts";
 import { OPUS_DECODE_RATE } from "./opus.ts";
+import { asBuffer } from "../buffer.ts";
 
 /**
  * What a livestream's init segment says about the stream: every track in its `moov`, in file order, or none when the bytes carry no readable `moov`. A stream with no
@@ -73,17 +75,19 @@ export interface LivestreamDescription {
  * @category Transport
  */
 export type LivestreamTrack =
-  | { readonly codec: VideoCodec; readonly height: number; readonly id: number; readonly kind: "video"; readonly level: number;
+  | { readonly codec: LivestreamVideoCodec; readonly height: number; readonly id: number; readonly kind: "video"; readonly level: number;
     readonly profile: number; readonly width: number; } |
-  { readonly channels: number; readonly codec: AudioCodec; readonly id: number; readonly kind: "audio"; readonly sampleRate: number } |
+  { readonly channels: number; readonly codec: LivestreamAudioCodec; readonly id: number; readonly kind: "audio"; readonly sampleRate: number } |
   { readonly codec: "unknown"; readonly id: number; readonly kind: "audio" | "unknown" | "video"; readonly sampleEntry: string };
 
 /**
- * One livestream initialization segment: the controller's codec label from its codec-information frame (`codec`, the RFC 6381 string, `""` when no such frame
- * preceded the init), the init bytes (`data`), and the stream's `description` read once from them. The label and the description come from different sources and
- * are carried side by side: the label names the codec family, profile, level and audio object type, and nothing about sample rate, channels or dimensions, which the
- * description reads from the bytes. Every place an init travels or rests carries this one type - a `Segment`'s init arm, a subscription's cached init, and the prior
- * and reconnected inits a codec change reports.
+ * One livestream initialization segment: its codec label (`codec`, the RFC 6381 string), the controller's from its codec-information frame on Protect's own fMP4,
+ * `""` when no such frame preceded the init, and the writer's on UBV, the init bytes (`data`), and the stream's `description` read once from them. The label and
+ * the description come from different sources and are carried side by side: the label names the codec family, profile, level and audio object type, and nothing
+ * about sample rate, channels or dimensions, which the description reads from the bytes. Every place an init travels or rests carries this one type - a
+ * `Segment`'s init arm, a subscription's cached init, and the stream's first init and the later one a codec change reports. Two inits of one stream differ in their
+ * bytes, whose creation times move on every connection, so a codec change is read from the label, the description and each track's sample description, never
+ * from the bytes whole.
  *
  * @category Transport
  */
@@ -140,12 +144,23 @@ const SampleEntryOffset = {
 // each one's record: `hvcC` holds `general_profile_idc` in the low five bits of its byte 1 and `general_level_idc` in its byte 12, `avcC` holds
 // `AVCProfileIndication` and `AVCLevelIndication` in its bytes 1 and 3, and `av1C` holds `seq_profile` in the high three bits of its byte 1 and `seq_level_idx_0` in
 // the low five.
-const VIDEO_RECORD_FIELDS: Readonly<Record<VideoCodec, VideoFormat>> = {
+const VIDEO_RECORD_FIELDS: Readonly<Record<LivestreamVideoCodec, VideoFormat>> = {
 
   av1: { level: { bits: 5, byte: 1, shift: 0 }, profile: { bits: 3, byte: 1, shift: 5 } },
   h264: { level: { bits: 8, byte: 3, shift: 0 }, profile: { bits: 8, byte: 1, shift: 0 } },
   h265: { level: { bits: 8, byte: 12, shift: 0 }, profile: { bits: 5, byte: 1, shift: 0 } }
 };
+
+// The `av1C` record's fourth byte: its top three bits are reserved, then the initial-presentation-delay flag, then four bits that hold the delay while the flag
+// is set and are reserved while it is clear. The format reserves those bits and no decoder reads them, so a track's sample description reads with them cleared.
+const AV1C_DELAY_BYTE = 3;
+
+const Av1cDelayBits = {
+
+  DELAY: 0x0f,
+  PRESENT: 0x10,
+  RESERVED: 0xe0
+} as const;
 
 // The MPEG-4 Systems descriptor tags an `esds` carries: the elementary stream descriptor, its decoder configuration descriptor and that descriptor's
 // decoder-specific info, which is the path from `esds` to the `AudioSpecificConfig` the reader walks, and the SL configuration descriptor that follows the decoder
@@ -206,7 +221,7 @@ const CHANNEL_CONFIGURATION_FROM_PCE = 0;
  */
 export function describeInitSegment(data: Uint8Array): LivestreamDescription {
 
-  const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  const bytes = asBuffer(data);
   const moov = findChild(bytes, { end: bytes.length, start: 0 }, "moov");
   const tracks: LivestreamTrack[] = [];
 
@@ -232,6 +247,86 @@ export function describeInitSegment(data: Uint8Array): LivestreamDescription {
   }
 
   return { tracks };
+}
+
+/**
+ * Read each track's sample description out of a livestream's fMP4 initialization segment: the payload of every `trak`'s `stsd`, past its header, in file order. A
+ * sample description holds exactly what a decoder is configured from - each sample entry with its decoder configuration record, which for H.264 and HEVC carries
+ * the stream's parameter sets - and none of the creation times the rest of an init carries. The reserved bits of an AV1 track's `av1C` record are no part of it:
+ * the format reserves them and no decoder reads them, so they read as cleared.
+ *
+ * Like {@link describeInitSegment}, this is a total, synchronous, pure function that never throws, and it answers what it finds: a track with no readable `stsd` adds
+ * none, and a cut `trak` is passed over, as the description passes it over.
+ *
+ * @param data - The init segment bytes.
+ *
+ * @returns Each track's sample description in file order, or none when the bytes carry no readable `moov`. Each is a view of `data`, but for an AV1 track whose
+ *   `av1C` sets a reserved bit, which answers a copy with those bits cleared and leaves `data` as it was.
+ *
+ * @category Codec
+ */
+export function readSampleDescriptions(data: Buffer): Buffer[] {
+
+  const moov = findChild(data, { end: data.length, start: 0 }, "moov");
+  const descriptions: Buffer[] = [];
+
+  if(moov === undefined) {
+
+    return descriptions;
+  }
+
+  for(const box of children(data, moov)) {
+
+    if((box.type !== "trak") || box.clamped) {
+
+      continue;
+    }
+
+    const stsd = findChild(data, findChild(data, findChild(data, findChild(data, box, "mdia"), "minf"), "stbl"), "stsd");
+
+    if(stsd !== undefined) {
+
+      descriptions.push(sampleDescription(data, stsd));
+    }
+  }
+
+  return descriptions;
+}
+
+// One track's sample description, its `stsd` payload as a view of the init. A track whose first sample entry is AV1 and whose `av1C` sets a reserved bit answers a
+// copy with those bits cleared instead, so the init is never written through; a record too short to hold the byte leaves the view.
+function sampleDescription(bytes: Buffer, stsd: Box): Buffer {
+
+  const description = bytes.subarray(stsd.start, stsd.end);
+  const entry = firstSampleEntry(bytes, stsd);
+  const format = (entry === undefined) ? undefined : VIDEO_FORMATS.get(entry.type);
+
+  if((entry === undefined) || (format?.codec !== "av1")) {
+
+    return description;
+  }
+
+  const record = findConfigRecord(bytes, entry, format.config);
+  const byte = readUInt(bytes, record, AV1C_DELAY_BYTE, 1);
+
+  if((record === undefined) || (byte === undefined)) {
+
+    return description;
+  }
+
+  // The delay bits are reserved only while the flag that announces a delay is clear.
+  const reserved = Av1cDelayBits.RESERVED | (((byte & Av1cDelayBits.PRESENT) === 0) ? Av1cDelayBits.DELAY : 0);
+
+  if((byte & reserved) === 0) {
+
+    return description;
+  }
+
+  const cleared = Buffer.from(description);
+
+  cleared.writeUInt8(byte & ~reserved, record.start + AV1C_DELAY_BYTE - stsd.start);
+
+  return cleared;
 }
 
 // Describe one `trak`. A track without a readable `tkhd` has no id to report, so it is skipped; every other track describes as its sample entry's format, or as the
@@ -333,13 +428,13 @@ function readSampleEntry(bytes: Buffer, opts: { entry: Box; id: number; stsdVers
 
 // Read a video sample entry of a codec: its dimensions from the entry's own fields and its profile and level from the decoder configuration record its `config`
 // child box holds.
-function readVideoEntry(bytes: Buffer, opts: { codec: VideoCodec; config: string; entry: Box; id: number }): LivestreamTrack | undefined {
+function readVideoEntry(bytes: Buffer, opts: { codec: LivestreamVideoCodec; config: string; entry: Box; id: number }): LivestreamTrack | undefined {
 
   const { codec, config, entry, id } = opts;
   const format = VIDEO_RECORD_FIELDS[codec];
   const width = readUInt(bytes, entry, SampleEntryOffset.VISUAL_WIDTH, 2);
   const height = readUInt(bytes, entry, SampleEntryOffset.VISUAL_HEIGHT, 2);
-  const record = findChild(bytes, { end: entry.end, start: entry.start + SampleEntryOffset.VISUAL_CHILDREN }, config);
+  const record = findConfigRecord(bytes, entry, config);
   const profile = readConfigField(bytes, record, format.profile);
   const level = readConfigField(bytes, record, format.level);
 
@@ -349,6 +444,13 @@ function readVideoEntry(bytes: Buffer, opts: { codec: VideoCodec; config: string
   }
 
   return { codec, height, id, kind: "video", level, profile, width };
+}
+
+// The decoder configuration record a video sample entry holds in its `config` child box, among the children that follow the entry's fixed fields, or undefined when
+// the entry holds none.
+function findConfigRecord(bytes: Buffer, entry: Box, config: string): Box | undefined {
+
+  return findChild(bytes, { end: entry.end, start: entry.start + SampleEntryOffset.VISUAL_CHILDREN }, config);
 }
 
 // Read one field of a decoder configuration record, or undefined when the record is absent or too short to hold it.

@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * ubv.test.ts: Tests for the UBV reader - each track's record read as its frame, the records read past, the timestamp's halves, the payload's padding, the
- * zero-copy views and the copy a cut header is held as, a stream cut anywhere, and each refusal.
+ * ubv.test.ts: Tests for the UBV reader - each track's record read as its frame under either header, the records read past, the timestamp's halves, the
+ * payload's padding, the zero-copy views and the copy a cut header is held as, a stream cut anywhere, and each refusal.
  */
 import { AV1_FRAME, H264_IDR, H264_NON_IDR, H265_TRAIL_R, adtsFrame, h264Unit, h265Unit, lengthPrefixed, obu, opusPacket,
   temporalDelimiter } from "./codecs.helpers.ts";
@@ -37,7 +37,7 @@ const OPUS_READ: MediaFrame = { codec: "opus", data: OPUS_PAYLOAD, kind: "audio"
 // A clock record under the 16-byte header with an eight-byte payload, a record of track 2048 under the 20-byte header, one of track 77 under the 16-byte header,
 // and an empty one of track 512 under the 16-byte header, 20 bytes, the shortest record and exactly the longest header's length: none is a media track, so each
 // is read past.
-const CLOCK_RECORD = ubvRecord({ longHeader: false, payload: Buffer.from([ 0, 0, 0, 0, 0x3b, 0x9a, 0xca, 0x07 ]), shortField: 0x1234, track: UBV_CLOCK });
+const CLOCK_RECORD = ubvRecord({ longHeader: false, payload: Buffer.from([ 0, 0, 0, 0, 0x3b, 0x9a, 0xca, 0x07 ]), timestamp: 0x1234, track: UBV_CLOCK });
 const UNKNOWN_RECORD = ubvRecord({ payload: Buffer.from([ 9, 8, 7, 6, 5 ]), timestamp: 5, track: 2048 });
 const UNKNOWN_SHORT_RECORD = ubvRecord({ longHeader: false, payload: Buffer.from([ 1, 2 ]), track: 77 });
 const EMPTY_RECORD = ubvRecord({ longHeader: false, payload: Buffer.alloc(0), track: 512 });
@@ -74,6 +74,34 @@ describe("UbvReader", () => {
     const [frame] = new UbvReader().push(ubvRecord({ payload: OPUS_PAYLOAD, timestamp: (41 * (2 ** 32)) + 0x89abcdef, track: UBV_OPUS }));
 
     assert.equal(frame?.timestamp, 178403397103);
+  });
+
+  test("a media record reads as its frame under either header, the 16-byte header's timestamp the 32-bit value at offset 8", () => {
+
+    // An H.264 keyframe and an Opus packet under the 16-byte header, each timestamp with its top bit set, so a signed read would turn it negative, then the same
+    // payloads under the 20-byte header past 2 ** 32 ticks.
+    const frames = new UbvReader().push(Buffer.concat([
+      ubvRecord({ keyframe: true, longHeader: false, payload: H264_PAYLOAD, timestamp: 4294963200, track: UBV_H264 }),
+      ubvRecord({ longHeader: false, payload: OPUS_PAYLOAD, timestamp: 3000000000, track: UBV_OPUS }),
+      ubvRecord({ keyframe: true, payload: H264_PAYLOAD, timestamp: 4294970896, track: UBV_H264 }),
+      ubvRecord({ payload: OPUS_PAYLOAD, timestamp: 4294968256, track: UBV_OPUS })
+    ]));
+
+    assert.deepEqual(frames, [ { ...H264_READ, timestamp: 4294963200 }, { ...OPUS_READ, timestamp: 3000000000 }, { ...H264_READ, timestamp: 4294970896 },
+      { ...OPUS_READ, timestamp: 4294968256 } ]);
+  });
+
+  test("a track that crosses from the 16-byte header to the 20-byte one reads its timestamps continuously", () => {
+
+    // An H.264 track 3000 ticks a frame: two records under the 16-byte header below 2 ** 32 ticks, then two under the 20-byte header from 2 ** 32.
+    const frames = new UbvReader().push(Buffer.concat([
+      ubvRecord({ keyframe: true, longHeader: false, payload: H264_PAYLOAD, timestamp: 4294961296, track: UBV_H264 }),
+      ubvRecord({ longHeader: false, payload: SLICE_PAYLOAD, timestamp: 4294964296, track: UBV_H264 }),
+      ubvRecord({ payload: SLICE_PAYLOAD, timestamp: 4294967296, track: UBV_H264 }),
+      ubvRecord({ payload: SLICE_PAYLOAD, timestamp: 4294970296, track: UBV_H264 })
+    ]));
+
+    assert.deepEqual(frames.map(({ timestamp }) => timestamp), [ 4294961296, 4294964296, 4294967296, 4294970296 ]);
   });
 
   test("payloads at each remainder of four read back whole, past their padding", () => {
@@ -128,6 +156,26 @@ describe("UbvReader across chunks", () => {
     assert.deepEqual(frames, STREAM_FRAMES);
   });
 
+  test("a stream whose tracks carry different headers reads every frame, whole and cut at every byte offset", () => {
+
+    // Video under the 20-byte header past 2 ** 32 ticks, AAC and Opus under the 16-byte header, and the clock, interleaved.
+    const stream = Buffer.concat([ CLOCK_RECORD, ubvRecord({ keyframe: true, payload: H264_PAYLOAD, timestamp: 4294970896, track: UBV_H264 }),
+      ubvRecord({ longHeader: false, payload: AAC_PAYLOAD, timestamp: 192000040, track: UBV_AAC }),
+      ubvRecord({ payload: SLICE_PAYLOAD, timestamp: 4294974496, track: UBV_H264 }),
+      ubvRecord({ longHeader: false, payload: OPUS_PAYLOAD, timestamp: 192001440, track: UBV_OPUS }) ]);
+    const expected: MediaFrame[] = [ { ...H264_READ, timestamp: 4294970896 }, AAC_READ,
+      { codec: "h264", data: SLICE_PAYLOAD, keyframe: false, kind: "video", rate: 90000, timestamp: 4294974496 }, OPUS_READ ];
+
+    assert.deepEqual(new UbvReader().push(stream), expected);
+
+    for(let cut = 0; cut <= stream.length; cut++) {
+
+      const reader = new UbvReader();
+
+      assert.deepEqual([ ...reader.push(stream.subarray(0, cut)), ...reader.push(stream.subarray(cut)) ], expected, "cut at " + String(cut));
+    }
+  });
+
   test("a header a chunk's end cuts is held as a copy, so a chunk changed after its push reads as it was pushed", () => {
 
     // The H.264 record cut 11 bytes in, inside its header, and that first chunk zeroed once pushed: a reader holding a view of its bytes would read a record
@@ -175,12 +223,6 @@ describe("UbvReader refusals", () => {
     const record = ubvRecord({ payload: opusPacket({ config: 3, payload: Buffer.from([ 1, 2, 3 ]), stereo: false }), track: UBV_OPUS, trailer: 23 });
 
     assert.throws(() => new UbvReader().push(record), { constructor: ProtectProtocolError, message: /trailer/ });
-  });
-
-  test("refuses a media track's record under the 16-byte header, which carries no timestamp", () => {
-
-    assert.throws(() => new UbvReader().push(ubvRecord({ longHeader: false, payload: H264_PAYLOAD, track: UBV_H264 })),
-      { constructor: ProtectProtocolError, message: /16-byte header/ });
   });
 
   test("refuses an AAC record whose ADTS header is malformed", () => {

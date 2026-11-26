@@ -22,7 +22,7 @@
  *
  * @module ProtectFrames
  */
-import type { AudioCodec, VideoCodec } from "./codecs.ts";
+import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs.ts";
 
 /**
  * One audio frame: its codec, its payload as the camera sent it (`data`, a view rather than a copy), and its `timestamp` in ticks at `rate`.
@@ -31,7 +31,7 @@ import type { AudioCodec, VideoCodec } from "./codecs.ts";
  */
 export interface AudioFrame {
 
-  readonly codec: AudioCodec;
+  readonly codec: LivestreamAudioCodec;
   readonly data: Buffer;
   readonly kind: "audio";
   readonly rate: number;
@@ -53,7 +53,7 @@ export type MediaFrame = AudioFrame | VideoFrame;
  */
 export interface VideoFrame {
 
-  readonly codec: VideoCodec;
+  readonly codec: LivestreamVideoCodec;
   readonly data: Buffer;
   readonly keyframe: boolean;
   readonly kind: "video";

@@ -313,7 +313,9 @@ export function assertNever(value: never): never {
  * URL can carry, such as an IPv6 literal with a zone (`fe80::1%en0`), a value carrying a userinfo before its last `@`, which a host never does, or one carrying a
  * path, a query or a fragment. An empty marker before the `@` (`@nvr.local`, `:@nvr.local`) names no account and folds away rather than being refused. Each refusal
  * that names the address quotes it with its userinfo masked by {@link maskAddressCredentials}, so a userinfo written into the address is never
- * printed. Fatal because the same configuration is refused the same way on every attempt, so the caller corrects it rather than retrying.
+ * printed. A livestream session raises it too, as it tears down, when it must send on a socket that has no `send` method: a stream asking for Opus over UBV on
+ * its proxied route asks for its codec by a message on its socket, and a socket an injected `webSocket` factory builds may carry no way to send one. Fatal because
+ * the same configuration is refused the same way on every attempt, so the caller corrects it rather than retrying.
  *
  * @category Errors
  */
@@ -362,20 +364,22 @@ export class ProtectBootstrapError extends FatalError {
 export type ProtectBootstrapStage = "apply" | "fetch" | "login" | "parse" | "subscribe";
 
 /**
- * A pooled livestream reconnected and the controller delivered a different stream than the one in flight: its codec label or its description differs (H.264 to HEVC,
- * a channel reconfigured mid-stream, or a sample rate, channel count or dimensions that moved under the same label). Fatal because no fixed-format consumer can adapt
- * in place: an FFmpeg pipe cannot re-initialize, and HKSV tolerates no second init segment. The pool surfaces this as a terminal a recovering stream can raise -
- * alongside {@link ProtectLivestreamUnavailableError} when the recovery policy gives up instead - after which the consumer re-subscribes for a fresh stream against
- * the new format. `from` and `to` are the inits themselves, each with its codec label, its bytes and its description, so a consumer can log precisely what changed.
+ * A pooled livestream delivered a different stream than the one in flight, on a reconnect or on a live session: an init whose codec label, description or a track's
+ * sample description differs from the stream's (H.264 to HEVC, a channel reconfigured mid-stream, a sample rate, channel count or dimensions that moved under the
+ * same label, or parameter sets that changed under both). The reserved bits of an AV1 track's `av1C` record are no part of its sample description, because the
+ * format reserves them and no decoder reads them. Fatal because no fixed-format consumer can adapt in place: an FFmpeg pipe cannot re-initialize, and HKSV
+ * tolerates no second init segment. The pool surfaces this as a terminal a live or a recovering stream can raise - alongside
+ * {@link ProtectLivestreamUnavailableError} when the recovery policy gives up instead - after which the consumer re-subscribes for a fresh stream against the new
+ * format. `from` and `to` are the inits themselves, each with its codec label, its bytes and its description, so a consumer can log precisely what changed.
  *
  * @category Errors
  */
 export class ProtectCodecChangeError extends FatalError {
 
-  /** The init the stream began with, before the reconnect: its codec label, bytes and description. */
+  /** The init the stream began with: its codec label, bytes and description. */
   readonly from: LivestreamInit;
 
-  /** The init the reconnected stream delivered: its codec label, bytes and description. */
+  /** The later init that differs from it, on a reconnect or on a live session: its codec label, bytes and description. */
   readonly to: LivestreamInit;
 
   constructor(message: string, options: { cause?: unknown; from: LivestreamInit; to: LivestreamInit }) {
@@ -388,10 +392,30 @@ export class ProtectCodecChangeError extends FatalError {
 }
 
 /**
- * A livestream asked for its `"direct"` route, and the controller's negotiation offered no direct address the library can dial: none at all, one that does not
- * parse, or one that is not `wss:`. A direct session raises it as it tears down, before it builds any socket, and a pooled `"direct"` stream ends on it, the way a
- * codec change ends one, rather than through the recovery policy, so `livestreamRecoveryExhausted` never publishes for a request that could never succeed. Fatal
- * because the controller answers every renegotiation the same way; the consumer re-subscribes on the `"proxied"` or `"preferDirect"` route.
+ * A livestream asked for one audio codec, and the controller is streaming another. A UBV stream drops audio of a codec other than the one it asked for, and ends on
+ * this once that audio has run, on its own clock and with none of the asked codec between, for as long as the library waits for a stream's audio
+ * (`PROTECT_LIVESTREAM_AUDIO_WAIT_MS`): the controller is not honoring the request. The pool ends the stream on it at once, the way a codec change ends one,
+ * rather than through the recovery policy, so `livestreamRecoveryExhausted` never publishes for it. A `"preferDirect"` stream whose direct socket carries the other
+ * codec ends on it without trying the proxied route, because the fallback answers a failed dial and this is none. Fatal because no retry changes what the
+ * controller streams; the consumer re-subscribes asking for the codec it gets.
+ *
+ * @category Errors
+ */
+export class ProtectLivestreamAudioError extends FatalError {
+
+  constructor(message: string, options?: { cause?: unknown }) {
+
+    super(message, { cause: options?.cause });
+  }
+}
+
+/**
+ * A livestream's request needs a direct address the controller's negotiation did not offer: none at all, one that does not parse, or one that is not `wss:`. A
+ * request needs one when it is a stream on its `"direct"` route, which dials it, or a stream asking for Opus over UBV, whose proxied route names its stream by
+ * that address's path. A session raises it as it tears down, before it builds any socket, and the pool ends such a stream on it, the way a codec change ends one,
+ * rather than through the recovery policy, so `livestreamRecoveryExhausted` never publishes for a request that could never succeed. A `"preferDirect"` stream
+ * asking for Opus ends on it at its direct attempt, since its proxied route needs the same address. Fatal because the controller answers every renegotiation the
+ * same way; the consumer re-subscribes on the `"proxied"` or `"preferDirect"` route, or asking for AAC.
  *
  * @category Errors
  */

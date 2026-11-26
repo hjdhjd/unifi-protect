@@ -6,9 +6,9 @@
  */
 import { AV1_FRAME, H264_IDR, H264_NON_IDR, H265_IDR_W_RADL, H265_TRAIL_R, adtsFrame, av1SequenceHeader, h264Pps, h264Sps, h264Unit, h265Pps, h265Sps, h265Unit,
   h265Vps, lengthPrefixed, obu, opusPacket, temporalDelimiter } from "./codecs.helpers.ts";
-import type { AudioCodec, VideoCodec } from "./codecs.ts";
 import type { AudioFrame, MediaFrame, VideoFrame } from "./frames.ts";
 import type { Av1SequenceHeaderFields, H264SpsFields, H265SpsFields } from "./codecs.helpers.ts";
+import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs.ts";
 import { audioFrame, readFragment, videoFrame } from "./fmp4-writer.helpers.ts";
 import { box, fixed16, fullBox, u16, u32 } from "./boxes.ts";
 import { describe, test } from "node:test";
@@ -100,7 +100,8 @@ const AUDIO_ORIGIN = 96000000;
  * which sit 1920 ticks apart on a 48 kHz clock from 1440 ticks past the origin. At the default segment length of 100 ms, the fourth video frame closes the first
  * segment over the first three.
  */
-function stream(opts: { audio?: readonly Buffer[]; audioCodec?: AudioCodec; codec: VideoCodec; deltas: readonly Buffer[]; key: Buffer }): MediaFrame[] {
+function stream(opts: { audio?: readonly Buffer[]; audioCodec?: LivestreamAudioCodec; codec: LivestreamVideoCodec; deltas: readonly Buffer[];
+  key: Buffer; }): MediaFrame[] {
 
   const { audio = [], audioCodec = "aac", codec, deltas, key } = opts;
   const video = [ key, ...deltas ].map((data, index) => ({ at: index * 0.04, frame: videoFrame(codec, data, { keyframe: index === 0,
@@ -483,6 +484,48 @@ describe("Fmp4Writer segments", () => {
   });
 });
 
+describe("Fmp4Writer audio wait", () => {
+
+  test("with an audio wait, an unwritten init's first segment stays open past the segment length until an audio configuration is learned, then closes on the " +
+    "next video frame", () => {
+
+    // At 100 ms with a wait of 1000 ms, the video reaches the segment length at 10800 ticks and the segment stays open. An AAC frame 9600 ticks past the origin on
+    // its clock, 18000 on the video clock, teaches the writer its configuration, and the video frame after it closes the segment over five samples, under an init
+    // carrying the audio.
+    const writer = new Fmp4Writer({ audioWait: 1000, segmentLength: 100 });
+    const answers = [ key(0), delta(3600), delta(7200), delta(10800), delta(14400), sound(9600, aac([1])), delta(18000) ].map((frame) => writer.push(frame));
+
+    assert.deepEqual(answers.map(kinds), [ [], [], [], [], [], [], [ "init", "media" ] ]);
+    assert.deepEqual(inits(answers.flat()).map(({ codec }) => codec), ["avc1.640028,mp4a.40.2"]);
+    assert.equal(trackSamples(fragments(answers.flat()), 1).length, 5);
+  });
+
+  test("with an audio wait, audio that ends below the keyframe is learned, so the first segment closes at the segment length under an init carrying it", () => {
+
+    // An AAC frame 480 ticks before the origin arrives after the keyframe: it is dropped, and its configuration learned, so the wait is over before it begins and
+    // the fourth video frame closes the first segment at the segment length.
+    const writer = new Fmp4Writer({ audioWait: 1000, segmentLength: 100 });
+    const answers = [ key(0), sound(-480, aac([1])), delta(3600), delta(7200), delta(10800) ].map((frame) => writer.push(frame));
+
+    assert.deepEqual(answers.map(kinds), [ [], [], [], [], [ "init", "media" ] ]);
+    assert.deepEqual(inits(answers.flat()).map(({ codec }) => codec), ["avc1.640028,mp4a.40.2"]);
+    assert.deepEqual(trackSamples(fragments(answers.flat()), 2), []);
+  });
+
+  test("with an audio wait and no audio, the first segment closes at the wait's length and the next at the segment length", () => {
+
+    // A wait of 320 ms is 28800 ticks: with no audio, the frame at 28800 closes the first segment over eight samples under a video-only init, and the written init's
+    // next segment closes at the segment length, 9000 ticks, as the frame at 39600 arrives over three.
+    const writer = new Fmp4Writer({ audioWait: 320, segmentLength: 100 });
+    const answers = [ key(0), ...Array.from({ length: 11 }, (_value, index) => delta((index + 1) * 3600)) ].map((frame) => writer.push(frame));
+
+    assert.deepEqual(answers.flatMap((answer, index) => (answer.length > 0) ? [{ index, kinds: kinds(answer) }] : []), [ { index: 8, kinds: [ "init", "media" ] },
+      { index: 11, kinds: ["media"] } ]);
+    assert.deepEqual(inits(answers.flat()).map(({ codec }) => codec), ["avc1.640028"]);
+    assert.deepEqual(fragments(answers.flat()).map(({ tracks }) => tracks[0]?.samples.length), [ 8, 3 ]);
+  });
+});
+
 describe("Fmp4Writer restarts", () => {
 
   test("a keyframe whose parameter sets change closes the segment and opens a new init at itself, on the same timeline", () => {
@@ -690,6 +733,14 @@ describe("Fmp4Writer refusals", () => {
     // A step of 2 ** 32 - 1 ticks on the audio track fits a trun entry's duration and is held; one tick more is refused as the frame that ends it arrives.
     assert.deepEqual(kinds(write([ key(0), sound(1440), sound(1440 + (2 ** 32) - 1) ])), []);
     assert.throws(() => write([ key(0), sound(1440), sound(1440 + (2 ** 32)) ]), { constructor: ProtectProtocolError, message: /step forward/ });
+  });
+
+  test("a wait that is not a positive, finite length is refused", () => {
+
+    for(const audioWait of [ 0, -1, Number.NaN, Number.POSITIVE_INFINITY ]) {
+
+      assert.throws(() => new Fmp4Writer({ audioWait, segmentLength: 100 }), { constructor: ProtectProtocolError, message: /audio wait/ }, String(audioWait));
+    }
   });
 
   test("a segment length that is not a positive, finite number, a step past 32 bits and a coded size past 16 bits are refused", () => {

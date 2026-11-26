@@ -1,14 +1,14 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * livestream-session.ts: One livestream WebSocket per (cameraId, channel, lens) - negotiate, decode the fMP4 frame protocol, and fan segments out through a three-rail
- * EventBus, with a silence watchdog. The structural sibling of EventStream.
+ * livestream-session.ts: One livestream WebSocket per (cameraId, channel, lens) - negotiate, hand each message to the intake that decodes it, and fan segments out
+ * through a three-rail EventBus, with a silence watchdog. The structural sibling of EventStream.
  */
 
 /**
- * `LivestreamSession` owns one camera livestream WebSocket and decodes the controller's fMP4 frame protocol into a stream of {@link Segment}s. It is the **structural
- * sibling of {@link EventStream}**: construct-begins-connecting, socket listeners its one teardown removes by identity, a {@link Clock}-driven silence watchdog a
- * single {@link AbortController} ends, an injected `webSocket` factory, a private {@link EventBus} for its surface, and `AsyncDisposable`. A reader who has
- * internalized `EventStream` reads this class and recognizes the same skeleton.
+ * `LivestreamSession` owns one camera livestream WebSocket and, through its intake, decodes what the controller streams into a stream of {@link Segment}s. It is
+ * the **structural sibling of {@link EventStream}**: construct-begins-connecting, socket listeners its one teardown removes by identity, a {@link Clock}-driven
+ * silence watchdog a single {@link AbortController} ends, an injected `webSocket` factory, a private {@link EventBus} for its surface, and `AsyncDisposable`. A reader
+ * who has internalized `EventStream` reads this class and recognizes the same skeleton.
  *
  * The one thing the events stream does not need and this one does is **URL negotiation**. The events WebSocket connects to a fixed, predictable address; a
  * livestream's addresses are minted on demand by the controller over authenticated HTTP and must be fetched first. That fetch is the injected `resolveUrl` hook
@@ -20,11 +20,21 @@
  * **A session dials exactly one route.** Its spec's `route` is `"proxied"`, the default, or `"direct"`, and never `"preferDirect"`, which the pool resolves to one of
  * them for each attempt. The proxied route dials the controller authority with the session's auth headers and the certificate posture `verifyTls` sets; the direct
  * route dials the media server, whose minted alias in the path is its only credential, with no session header and no certificate check. A direct session handed no
- * direct address tears down with {@link ProtectLivestreamRouteError} and builds no socket.
+ * direct address tears down with {@link ProtectLivestreamRouteError} and builds no socket, and so does a proxied session asking for Opus, which names its stream by
+ * that address.
  *
- * **The session is the single source of truth for the livestream wire protocol** - both the request params it builds from its {@link LivestreamSpec} and the binary
- * frame decode (a 1-byte frame type + 3-byte big-endian length per frame, reassembled across WebSocket messages, accumulated into a segment between `beginSegment` and
- * `endSegment`). `resolveUrl` is only the generic "negotiate a ws endpoint" step; everything livestream-specific lives here.
+ * **A livestream reads one upstream or the other.** Protect's own fMP4 carries AAC, and Ubiquiti's UBV record stream carries Opus as well, read by the library and
+ * written as fMP4 by it: a spec that names `upstream: "ubv"` or asks for Opus reads UBV, and any other reads Protect's own fMP4. The proxy's bridge drops the
+ * audio codec from the request, so a proxied session asking for Opus sends one play command on its socket, naming its stream by the path of the negotiation's
+ * direct address, when its first binary message arrives and never at open, where it can lose a race with the bridge's own. It is the one message the library
+ * sends on a livestream socket, and the alias it carries is never logged and never carried by an error.
+ *
+ * **The session is the single source of truth for the livestream wire protocol** - both the request params it builds from its {@link LivestreamSpec} and the
+ * decode, which lives behind the {@link LivestreamIntake} boundary: the session hands every binary message to the one intake it holds for its life, picked by the
+ * stream's upstream, and each hands every init and media segment back through the session's sink. {@link Fmp4Intake} reads the controller's own frames (a 1-byte
+ * frame type + 3-byte big-endian length per frame, reassembled across WebSocket messages, accumulated into a segment between `beginSegment` and `endSegment`), and
+ * {@link UbvIntake} reads UBV records into frames, which it also hands to the sink, and writes them as fMP4. An intake's refusal ends the session as a fault.
+ * `resolveUrl` is only the generic "negotiate a ws endpoint" step; everything livestream-specific lives here and behind the intake.
  *
  * **The watchdog detects here; the consumer's policy responds.** The session clock-stamps the arrival of every frame and runs a silence watchdog on the injected
  * `Clock`; a wake that finds the channel silent beyond {@link PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT} tears the socket down and emits `error({@link ProtectStallError})`
@@ -34,46 +44,30 @@
  * @module LivestreamSession
  */
 import { Agent, WebSocket } from "undici";
+import { Fmp4Intake, UbvIntake } from "./livestream-session-intake.ts";
+import type { LivestreamIntake, LivestreamIntakeSink } from "./livestream-session-intake.ts";
 import { PROTECT_LIVESTREAM_CHUNK_SIZE, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_SEGMENT_LENGTH } from "../settings.ts";
-import { ProtectAbortedError, ProtectError, ProtectLivestreamRouteError, ProtectNetworkError, ProtectStallError, assertNever } from "../errors.ts";
+import { ProtectAbortedError, ProtectConfigurationError, ProtectError, ProtectLivestreamRouteError, ProtectNetworkError, ProtectProtocolError, ProtectStallError,
+  assertNever } from "../errors.ts";
 import type { ProtectWebSocket, ProtectWebSocketCloseEvent, ProtectWebSocketErrorEvent, ProtectWebSocketMessageEvent, SocketTeardown } from "./ws.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
 import { millisecondsSince, wallClock } from "../clock.ts";
 import { socketFault, teardownCode, toBuffer } from "./ws.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
+import type { LivestreamAudioCodec } from "../protocol/media/codecs.ts";
 import type { LivestreamInit } from "../protocol/media/init-segment.ts";
+import type { MediaFrame } from "../protocol/media/frames.ts";
 import type { OwnedDispatcher } from "./connector.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { StreamOptions } from "../event-bus.ts";
-import { describeInitSegment } from "../protocol/media/init-segment.ts";
 import { noopLog } from "../logging.ts";
 
-// The frame-type identifier byte that prefixes every UniFi Protect livestream WebSocket payload. The single byte tells us how to read the body that follows it. An
-// erasable `as const` map gives the dot-access shape of a numeric enum without the non-erasable runtime emit; keys are alphabetized per the project convention, and the
-// wire-protocol byte values speak for themselves at the call sites.
-const LiveFrame = {
+// The width of the length a play command's JSON follows on the wire, a 32-bit big-endian count of its bytes.
+const PLAY_LENGTH_BYTES = 4;
 
-  audio: 253,
-  beginSegment: 249,
-  codecInformation: 248,
-  endSegment: 255,
-  initSegment: 250,
-  mdat: 254,
-  moof: 251,
-  timestamp: 247,
-  video: 252
-} as const;
-
-// The set of valid frame-type bytes, for O(1) validation on the decode hot path. `Object.values` over the `as const` map yields just the literal bytes - no enum
-// reverse-mapping artifacts to filter.
-const VALID_LIVE_FRAMES: ReadonlySet<number> = new Set(Object.values(LiveFrame));
-
-// A reused zero-length buffer so the common "no partial frame carried over" case allocates nothing.
-const EMPTY_BUFFER: Buffer = Buffer.alloc(0);
-
-// The byte width of each decode timestamp on the wire: a 64-bit big-endian unsigned integer, mirroring the `tfdt` box's baseMediaDecodeTime.
-const TIMESTAMP_BYTES = 8;
+// The sentence a session reports media its intake could not read with, as the fault's line and as the error a throw that is not a ProtectError is wrapped in.
+const UNREADABLE_MEDIA = "The UniFi Protect livestream sent media the library could not read.";
 
 // The port a WebSocket address dials when it names none, by its scheme.
 const WEBSOCKET_DEFAULT_PORTS: Readonly<Record<string, number>> = { "ws:": 80, "wss:": 443 };
@@ -111,10 +105,20 @@ export type LivestreamSource =
  * - `"preferDirect"` dials direct first each time the stream establishes or recovers, and once the direct route itself fails - a direct dial refused, reset or
  *   left unanswered, a direct socket that opens and sends no media, or a negotiation that offers no direct address - it falls back, publishing
  *   `livestreamRouteFallback` with the reason, and dials proxied until the stream is live again. Every route shares the negotiation, so a failed one moves nothing.
+ *   A stream asking for Opus is the exception to the last case: its proxied route names its stream by the direct address, so a negotiation that offers none ends
+ *   it with {@link ProtectLivestreamRouteError} on every route, this one included, with no fallback.
  *
  * @category Transport
  */
 export type LivestreamRoute = "direct" | "preferDirect" | "proxied";
+
+/**
+ * Where a livestream's media comes from: `"fmp4"`, Protect's own fMP4, or `"ubv"`, Ubiquiti's UBV record stream, which the library reads and writes as fMP4 itself.
+ * A stream reads UBV when its spec names `upstream: "ubv"` or asks for Opus, which Protect's own fMP4 does not carry, and Protect's own fMP4 otherwise.
+ *
+ * @category Transport
+ */
+export type LivestreamUpstream = "fmp4" | "ubv";
 
 /**
  * A route one session dials: every {@link LivestreamRoute} but `"preferDirect"`, which the pool resolves to one of these for each attempt.
@@ -125,13 +129,27 @@ export type LivestreamDialRoute = Exclude<LivestreamRoute, "preferDirect">;
 
 /**
  * The description of a livestream a consumer asks for. The fields that shape the stream - the `source` selector (a quality channel or a secondary lens) plus
- * `segmentLength`, `chunkSize`, and `timestamps` - and the `route` it is dialed on form the pool's sharing identity, so two subscribers share one underlying session
- * only when these agree. `requestId` is a log label only. Every field except `cameraId` has a default; an omitted `source` is the primary view (channel 0), and an
- * omitted `route` is `"proxied"`.
+ * `segmentLength`, `chunkSize`, and `timestamps` - the `route` it is dialed on, and the `upstream` it resolves to with the `audio` it asks for form the pool's
+ * sharing identity, so two subscribers share one underlying session only when these agree. `requestId` is a log label only, and `audioExpected` shapes only how a
+ * UBV stream waits for its audio. Every field except `cameraId` has a default; an omitted `source` is the primary view (channel 0), an omitted `route` is
+ * `"proxied"`, an omitted `audio` is AAC, and an omitted `upstream` is resolved from the audio.
  *
  * @category Transport
  */
 export interface LivestreamSpec {
+
+  /**
+   * Optional audio codec the stream carries: `"aac"`, the default, or `"opus"`. Protect's own fMP4 carries AAC alone, so a stream asking for Opus reads UBV, on
+   * every route: the direct route asks for it in the request, and the proxied route by a play command on its socket.
+   */
+  audio?: LivestreamAudioCodec;
+
+  /**
+   * Optional statement of whether the camera sends audio, `true` when left out. It shapes only how a UBV stream waits for its audio: a stream that expects audio holds
+   * its first segment until an audio frame of the asked codec arrives, under the library's safety net, and one that expects none closes it at the segment length.
+   * It never joins the stream's sharing key. `Camera.livestream` states it from the camera's record.
+   */
+  audioExpected?: boolean;
 
   /** Optional maximum WebSocket payload size, in bytes. Larger means lower fragmentation, higher per-frame latency. Default `PROTECT_LIVESTREAM_CHUNK_SIZE` (4096). */
   chunkSize?: number;
@@ -148,7 +166,10 @@ export interface LivestreamSpec {
    */
   route?: LivestreamRoute;
 
-  /** Optional fMP4 segment length, in milliseconds. Floored at `PROTECT_LIVESTREAM_SEGMENT_LENGTH` (100), which is also the default. */
+  /**
+   * Optional fMP4 segment length, in milliseconds, which the controller writes to on Protect's own fMP4 and the library on UBV. Floored at
+   * `PROTECT_LIVESTREAM_SEGMENT_LENGTH` (100), which is also the default.
+   */
   segmentLength?: number;
 
   /**
@@ -158,18 +179,30 @@ export interface LivestreamSpec {
    */
   source?: LivestreamSource;
 
-  /** Optionally request per-segment decode timestamps. When `true`, the negotiation asks the controller for extended metadata and each media segment carries them. */
+  /**
+   * Optionally request per-segment decode timestamps, Protect's own fMP4 metadata. When `true`, the negotiation asks the controller for extended metadata and each
+   * media segment of Protect's own fMP4 carries them. A UBV stream does not carry them, so its segments carry none whatever this says.
+   */
   timestamps?: boolean;
+
+  /**
+   * Optional upstream the stream is read from: `"ubv"` reads Ubiquiti's UBV record stream even for AAC. Left out, a stream asking for Opus reads UBV and any other
+   * reads Protect's own fMP4.
+   */
+  upstream?: "ubv";
 }
 
 /**
- * A {@link LivestreamSpec} with every default applied. The single resolved shape both the session (to build its request params) and the pool (to compute its sharing
- * key) read, so the defaulting logic lives in exactly one place ({@link resolveLivestreamSpec}).
+ * A {@link LivestreamSpec} with every default applied. The single resolved shape both the session (to build its request params and pick its intake) and the pool
+ * (to compute its sharing key) read, so the defaulting logic lives in exactly one place ({@link resolveLivestreamSpec}). Every field but `audioExpected` and
+ * `requestId` joins the key.
  *
  * @category Transport
  */
 export interface ResolvedLivestreamSpec {
 
+  audio: LivestreamAudioCodec;
+  audioExpected: boolean;
   chunkSize: number;
   cameraId: string;
   channel: number;
@@ -178,21 +211,24 @@ export interface ResolvedLivestreamSpec {
   route: LivestreamRoute;
   segmentLength: number;
   timestamps: boolean;
+  upstream: LivestreamUpstream;
 }
 
 /**
  * One segment of a livestream, in CMAF/DASH vocabulary: either the stream's initialization segment or a media segment. Each arm is a complete, decodable unit.
  *
- * - `init` carries the FTYP+MOOV initialization segment as one {@link LivestreamInit}: the controller's RFC 6381 codec label, the init bytes, and the stream's
- *   description read from them - everything a decoder needs before the media flows.
+ * - `init` carries the FTYP+MOOV initialization segment as one {@link LivestreamInit}: the stream's RFC 6381 codec label, the init bytes, and the stream's
+ *   description read from them - everything a decoder needs before the media flows. On Protect's own fMP4 the label is the controller's, and on UBV the one the
+ *   library wrote the init under.
  * - `media` carries one complete fMP4 fragment. `moof` and `mdat` are **zero-copy `subarray` views** into `data` (no byte copy), for a consumer that wants the boxes
  *   at the lowest usable level; carrying a one-buffer-many-views model onto the single yielded item rather than re-emitting the same bytes on separate items.
- *   `timestamps` is present only when the consumer opted in via `LivestreamSpec`'s `timestamps` field; it is one decode timestamp per frame (faithful to the wire's
- *   array, not a lossy scalar), and stays within JavaScript's safe-integer range because the session always negotiates `rebaseTimestampsToZero`, which is what makes
- *   `number` exact here rather than `bigint`. `discontinuity` is present (and `true`) only on the first media segment delivered after a genuine reconnect, and absent
- *   otherwise.
- *   It marks a timeline discontinuity: because the session always negotiates `rebaseTimestampsToZero`, a reconnect restarts the `tfdt` baseMediaDecodeTime near zero - a
- *   backward jump relative to the prior segments - so a consumer maintaining a decode timeline (an FFmpeg pipe, an MSE-style source buffer) should treat a
+ *   `timestamps` is present only on Protect's own fMP4 when the consumer opted in via `LivestreamSpec`'s `timestamps` field, and never on UBV; it is one decode
+ *   timestamp per frame (faithful to the wire's array, not a lossy scalar), and stays within JavaScript's safe-integer range because the session always negotiates
+ *   `rebaseTimestampsToZero`, which is what makes `number` exact here rather than `bigint`. `discontinuity` is present (and `true`) only on the first media segment
+ *   delivered after a genuine reconnect, and absent otherwise.
+ *   It marks a timeline discontinuity: every session's timeline starts near zero - Protect's own fMP4 is negotiated with `rebaseTimestampsToZero`, and a UBV
+ *   stream's writer counts from its first keyframe - so a reconnect restarts the `tfdt` baseMediaDecodeTime near zero, a
+ *   backward jump relative to the prior segments, and a consumer maintaining a decode timeline (an FFmpeg pipe, an MSE-style source buffer) should treat a
  *   marked segment as a splice point: flush and resume at this clean keyframe. A consumer that does not maintain a cross-segment timeline ignores it. The session itself
  *   never sets it - a session has no concept of a reconnect; that is the pool's, which stamps the marker as it fans the first post-reconnect media segment.
  *
@@ -205,19 +241,23 @@ export type Segment =
 /**
  * The events {@link LivestreamSession} publishes on its three-rail surface.
  *
- * - `segment` is the decoded stream: one init or media {@link Segment} per controller fragment. The pool bridges this rail and fans each segment to every subscriber.
+ * - `segment` is the decoded stream: one init or media {@link Segment} per fragment. The pool bridges this rail and fans each segment to every subscriber.
+ * - `frame` carries each media frame a UBV stream's intake reads, as it arrives and as a view of the socket message it arrived in, ahead of the segments the frame
+ *   completes. Audio of a codec other than the one the stream asked for never reaches it. Protect's own fMP4 carries no frames, so a session reading it emits none.
  * - `closed` fires once when the session tears down, carrying a code and reason that classify the teardown: the peer's own close code and reason for a close it
- *   started, otherwise 1000 for a teardown we chose (an explicit close or a caller abort) and 1006 for one forced by a failure (a failed negotiation, a direct
- *   session's negotiation that offered no direct address, a socket error, or a watchdog stall). It also carries the optional typed {@link ProtectError} cause an
- *   initiated teardown recorded - a caller abort, a failed negotiation, a missing direct address, a socket error, or the watchdog stall - omitted for a plain or
- *   spontaneous close.
- * - `error` carries a typed {@link ProtectError}: the watchdog always emits a {@link ProtectStallError}, a direct session whose negotiation offered no direct address
- *   emits a {@link ProtectLivestreamRouteError}, and a negotiation or socket failure typically wraps as a {@link ProtectNetworkError} - a socket failure classified
- *   by the rule the request path reads, so a refused certificate is a {@link ProtectCertificateError} and a connection attempt that timed out a
- *   {@link ProtectTimeoutError} - but when the injected `resolveUrl` hook throws an already-typed {@link ProtectError}, that instance passes through onto this rail
- *   unwrapped, so a negotiation failure can also surface a {@link ProtectStallError} or another {@link ProtectError} subtype. The error *type* is what a subscriber
- *   acts on. A listener sees the session already closed, with this error recorded as its close cause, because the teardown records the closed state and the cause
- *   before it reports.
+ *   started, otherwise 1000 for a teardown we chose (an explicit close or a caller abort) and 1006 for one forced by a failure (a failed negotiation, a negotiation
+ *   that offered no direct address to a session that needs one, a socket that cannot send the play command or fails to, a socket error, media the intake could not
+ *   read, or a watchdog stall). It also carries the optional typed {@link ProtectError} cause an initiated teardown recorded - a caller abort or the failure's own
+ *   error - omitted for a plain or spontaneous close.
+ * - `error` carries a typed {@link ProtectError}: the watchdog always emits a {@link ProtectStallError}; a session whose negotiation offered no direct address, a
+ *   direct one or a proxied one asking for Opus, emits a {@link ProtectLivestreamRouteError}; a proxied session asking for Opus whose socket has no `send` emits a
+ *   {@link ProtectConfigurationError}; an intake's refusal emits its own error, a {@link ProtectProtocolError} for media it could not read or a
+ *   {@link ProtectLivestreamAudioError} for a UBV stream carrying another audio codec; and a negotiation or socket failure typically wraps as a
+ *   {@link ProtectNetworkError} - a socket failure classified by the rule the request path reads, so a refused certificate is a {@link ProtectCertificateError} and a
+ *   connection attempt that timed out a {@link ProtectTimeoutError} - but when the injected `resolveUrl` hook throws an already-typed {@link ProtectError}, that
+ *   instance passes through onto this rail unwrapped, so a negotiation failure can also surface a {@link ProtectStallError} or another {@link ProtectError} subtype.
+ *   The error *type* is what a subscriber acts on. A listener sees the session already closed, with this error recorded as its close cause, because the teardown
+ *   records the closed state and the cause before it reports.
  *
  * @category Transport
  */
@@ -225,6 +265,7 @@ export interface LivestreamSessionEvents {
 
   closed: [info: { cause?: ProtectError; code: number; reason: string }];
   error: [err: ProtectError];
+  frame: [frame: MediaFrame];
   segment: [segment: Segment];
 }
 
@@ -252,7 +293,9 @@ export interface LivestreamAddresses {
  * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses). On the
  *   proxied route the session reads it when it builds its socket, after its negotiation, so a relogin the negotiation triggered reaches the upgrade. The direct route
  *   never reads it, so no session header reaches the media server, and an injected `webSocket` factory receives the chosen URL alone.
- * - `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s; omit it for the default undici-backed factory, inject it in tests.
+ * - `webSocket` is the injected I/O dependency, shared with {@link EventStream}'s; omit it for the default undici-backed factory, inject it in tests. Its socket is
+ *   typed by its receiving surface, but a proxied session asking for Opus must send its play command on it, so it reads the socket's `send` when it must send,
+ *   and ends on {@link ProtectConfigurationError} when the socket has none.
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts at any point, the session tears down.
  * - `clock` is the watchdog's time source; it defaults to the wall clock, and tests inject a fake to drive the silence watchdog deterministically.
  * - `log` is the destination for the session's diagnostic output; it defaults to a no-op logger, so a caller that never provides one incurs no logging cost.
@@ -329,11 +372,60 @@ function resolveRoute<Route extends LivestreamRoute>(route: Route | undefined): 
   }
 }
 
+// Resolve the audio codec a stream asks for: an omitted codec is AAC, and a value outside the codecs, which only an untyped caller can pass, is refused here as an
+// unknown route is.
+function resolveAudio(audio: LivestreamAudioCodec | undefined): LivestreamAudioCodec {
+
+  if(audio === undefined) {
+
+    return "aac";
+  }
+
+  switch(audio) {
+
+    case "aac":
+    case "opus": {
+
+      return audio;
+    }
+
+    default: {
+
+      return assertNever(audio);
+    }
+  }
+}
+
+// Resolve the upstream a stream reads: UBV when the spec names it, and when it asks for Opus, which Protect's own fMP4 does not carry, and Protect's own fMP4
+// otherwise. An upstream named as anything but UBV, which only an untyped caller can pass, is refused, so Protect's own fMP4 is never named, only left to the default.
+function resolveUpstream(upstream: "ubv" | undefined, audio: LivestreamAudioCodec): LivestreamUpstream {
+
+  switch(upstream) {
+
+    case undefined: {
+
+      return (audio === "opus") ? "ubv" : "fmp4";
+    }
+
+    case "ubv": {
+
+      return upstream;
+    }
+
+    default: {
+
+      return assertNever(upstream);
+    }
+  }
+}
+
 /**
  * Apply every {@link LivestreamSpec} default in one place, so the session and the pool agree on the resolved stream identity. The segment length is floored at
  * {@link PROTECT_LIVESTREAM_SEGMENT_LENGTH}: a shorter request would only add controller load for no downstream benefit. An omitted route is `"proxied"`, a route
  * outside {@link LivestreamRoute} is refused with {@link ProtectProtocolError} as an unknown source type is, and the resolved route keeps whatever narrower route type
- * the spec carries, so a session's spec, which admits only the routes a session dials, resolves to one of those.
+ * the spec carries, so a session's spec, which admits only the routes a session dials, resolves to one of those. An omitted audio codec is AAC, the upstream is UBV
+ * when the spec names it or asks for Opus and Protect's own fMP4 otherwise, and an audio codec or an upstream outside its union is refused as a route is. An
+ * omitted `audioExpected` is `true`.
  *
  * @typeParam Route - The routes the spec's own type admits.
  *
@@ -346,11 +438,15 @@ function resolveRoute<Route extends LivestreamRoute>(route: Route | undefined): 
 export function resolveLivestreamSpec<Route extends LivestreamRoute = LivestreamRoute>(spec: LivestreamSpec & { route?: Route }):
   ResolvedLivestreamSpec & { route: Route | "proxied" } {
 
-  // Resolve the source selector to its wire (channel, lens) pair first, so the resolved channel is available both as a field and for the requestId label default below.
+  // Resolve the source selector to its wire (channel, lens) pair first, so the resolved channel is available both as a field and for the requestId label default
+  // below, and the audio codec ahead of the upstream it decides.
   const { channel, lens } = resolveSource(spec.source);
+  const audio = resolveAudio(spec.audio);
 
   return {
 
+    audio,
+    audioExpected: spec.audioExpected ?? true,
     cameraId: spec.cameraId,
     channel: channel,
     chunkSize: spec.chunkSize ?? PROTECT_LIVESTREAM_CHUNK_SIZE,
@@ -358,14 +454,16 @@ export function resolveLivestreamSpec<Route extends LivestreamRoute = Livestream
     requestId: spec.requestId ?? (spec.cameraId + "-" + channel.toString()),
     route: resolveRoute(spec.route),
     segmentLength: Math.max(spec.segmentLength ?? PROTECT_LIVESTREAM_SEGMENT_LENGTH, PROTECT_LIVESTREAM_SEGMENT_LENGTH),
-    timestamps: spec.timestamps ?? false
+    timestamps: spec.timestamps ?? false,
+    upstream: resolveUpstream(spec.upstream, audio)
   };
 }
 
 /**
  * Compute the pool's sharing key for a resolved spec. The key is every field that changes what the controller produces or how the pool dials it - the source, the
- * segment length, the chunk size, the timestamps and the route - so two subscribers share one underlying session only when they asked for a byte-identical stream on
- * the same route. `requestId` is a log label and is deliberately excluded.
+ * segment length, the chunk size, the timestamps, the route, the upstream and the audio codec - so two subscribers share one underlying session only when they
+ * asked for a byte-identical stream on the same route. `requestId` is a log label and `audioExpected` shapes only how a UBV stream waits for its audio, so each is
+ * deliberately excluded.
  *
  * @param spec - The resolved spec.
  *
@@ -375,22 +473,14 @@ export function resolveLivestreamSpec<Route extends LivestreamRoute = Livestream
  */
 export function livestreamKey(spec: ResolvedLivestreamSpec): string {
 
-  return [ spec.cameraId, spec.channel, spec.lens, spec.segmentLength, spec.chunkSize, spec.timestamps, spec.route ].join(":");
-}
-
-// The mutable accumulator for the segment under construction. Chunks are collected per box during a segment and assembled into a single buffer at `endSegment`, so the
-// hot path makes one allocation per segment rather than one per chunk. The controller delivers boxes in moof, mdat, video, audio order, the order we concatenate.
-interface SegmentAccumulator {
-
-  audio: Buffer[];
-  mdat: Buffer[];
-  moof: Buffer[];
-  video: Buffer[];
+  return [ spec.cameraId, spec.channel, spec.lens, spec.segmentLength, spec.chunkSize, spec.timestamps, spec.route, spec.upstream, spec.audio ].join(":");
 }
 
 /**
- * One livestream WebSocket, decoded into a {@link Segment} stream. Constructed directly (construction begins connecting); intended for {@link LivestreamPool} consumption
- * via its `segment` / `error` / `closed` rails, not direct consumer use.
+ * One livestream WebSocket, decoded into a {@link Segment} stream, and on UBV a frame stream beside it. Constructed directly (construction begins connecting);
+ * intended for {@link LivestreamPool} consumption via its `segment` / `frame` / `error` / `closed` rails, not direct consumer use. A proxied session asking for Opus
+ * sends one play command on its socket, reading the socket's `send` when it must send, so a socket an injected factory built without one ends the session as a fault
+ * on {@link ProtectConfigurationError}, with no line.
  *
  * @category Transport
  */
@@ -445,14 +535,14 @@ export class LivestreamSession implements AsyncDisposable {
   // error, or the watchdog's stall - and null for a plain close and for a peer's close, whose frame is its whole account.
   #closeCause: ProtectError | null = null;
 
-  // The cached init segment (a detached copy, since it is held for the session lifetime and replayed to late joiners) and the codec string captured from the controller.
-  #codec = "";
+  // The cached init segment, held for the session lifetime and replayed to late joiners, which the intake hands over as bytes no socket message holds.
   #initSegment: LivestreamInit | null = null;
 
-  // The segment under construction, the partial-frame tail carried between WebSocket messages, and the decode timestamps awaiting the next media segment.
-  #current: SegmentAccumulator = { audio: [], mdat: [], moof: [], video: [] };
-  #packetRemaining: Buffer = EMPTY_BUFFER;
-  #pendingTimestamps: number[] | null = null;
+  // The one intake every socket message is handed to, picked by the stream's upstream, which the teardown releases so a closed session holds no reader's cut record
+  // and no writer's held frames. And the play command a proxied session asking for Opus sends as its first binary message arrives, built once its negotiation
+  // names the stream and released once sent, so it is sent at most once.
+  #intake: LivestreamIntake | null;
+  #play: Buffer | null = null;
 
   constructor(options: LivestreamSessionOptions) {
 
@@ -465,6 +555,29 @@ export class LivestreamSession implements AsyncDisposable {
     this.#spec = resolveLivestreamSpec(options.spec);
     this.#verifyTls = options.verifyTls ?? false;
     this.#webSocketFactory = options.webSocket;
+
+    // The one intake every socket message is handed to for the session's life, picked by the upstream, whose sink caches each init and emits each segment and frame
+    // on its rail. A UBV stream's segment length and audio go to its writer, and Protect's own fMP4 is paced by the controller and reads neither. An upstream added
+    // without an arm here leaves the intake unassigned, which fails to compile.
+    const sink: LivestreamIntakeSink = { frame: (frame): void => void this.#bus.emit("frame", frame), init: (init): void => this.#onInit(init),
+      media: (segment): void => this.#emitSegment(segment) };
+
+    switch(this.#spec.upstream) {
+
+      case "fmp4": {
+
+        this.#intake = new Fmp4Intake({ log: this.#log, sink, timestamps: this.#spec.timestamps });
+
+        break;
+      }
+
+      case "ubv": {
+
+        this.#intake = new UbvIntake({ audio: this.#spec.audio, audioExpected: this.#spec.audioExpected, segmentLength: this.#spec.segmentLength, sink });
+
+        break;
+      }
+    }
 
     // The caller's signal cancels the connect attempt and, once live, the session, and the teardown removes this binding as it removes the socket's handlers. An
     // already-aborted signal tears down immediately - the connect below sees the abort and bails before opening a socket.
@@ -643,8 +756,10 @@ export class LivestreamSession implements AsyncDisposable {
      * as the socket is built, after the negotiation, so a relogin the negotiation triggered reaches the upgrade. The direct route dials the controller's media server,
      * where the minted alias in the path is the only credential: it never reads the auth hook, so the session's cookie and CSRF token never reach the media
      * server, and it never verifies the media server's certificate, which nothing installed on UniFi OS replaces. A direct session handed no direct address
-     * has nothing it may dial, so it tears down as a fault and builds no socket. The headers are a function, so an injected factory, which takes the URL alone,
-     * never reads the hook. A dial route added without an arm here leaves `dial` unassigned where the socket reads it, which fails to compile.
+     * has nothing it may dial, so it tears down as a fault and builds no socket. A proxied session asking for Opus names its stream in its play command by the
+     * direct address's path less its leading slash, so one handed no direct address tears down the same way, and one handed an address builds its play command
+     * here, where the alias is read and then held in the command alone. The headers are a function, so an injected factory, which takes the URL alone, never reads
+     * the hook. A dial route added without an arm here leaves `dial` unassigned where the socket reads it, which fails to compile.
      */
     let dial: { headers: () => Record<string, string>; url: string; verifyTls: boolean };
 
@@ -654,8 +769,7 @@ export class LivestreamSession implements AsyncDisposable {
 
         if(addresses.direct === null) {
 
-          this.#shutdown({ error: new ProtectLivestreamRouteError("The UniFi Protect controller offered no direct livestream address."), kind: "fault", line: null,
-            reason: "the controller offered no direct livestream address" });
+          this.#refuseRoute();
 
           return;
         }
@@ -666,6 +780,21 @@ export class LivestreamSession implements AsyncDisposable {
       }
 
       case "proxied": {
+
+        // Opus is carried by UBV alone, so a stream asking for it is a UBV stream.
+        if(this.#spec.audio === "opus") {
+
+          const alias = (addresses.direct === null) ? undefined : URL.parse(addresses.direct)?.pathname.slice(1);
+
+          if(alias === undefined) {
+
+            this.#refuseRoute();
+
+            return;
+          }
+
+          this.#play = this.#buildPlay(alias);
+        }
 
         dial = { headers: (): Record<string, string> => this.#getAuthHeaders?.() ?? {}, url: addresses.proxied, verifyTls: this.#verifyTls };
 
@@ -711,29 +840,80 @@ export class LivestreamSession implements AsyncDisposable {
     this.#ws.addEventListener("error", this.#socketListeners.error, { once: true });
   }
 
-  // Build the controller request params from the resolved spec. This is the library's single source for the livestream wire protocol's request shape. We always rebase
-  // timestamps to zero (so any opted-in decode timestamps stay within safe-integer range as `number`) and never use the wall clock (so timestamps stay monotonic decode
-  // timestamps, which every fMP4 consumer downstream expects). `extendedVideoMetadata` is requested only when the consumer asked for timestamps. `allowPartialGOP` and
-  // `progressive` are sent unconditionally as empty-value flags, since presence alone is what the controller reads: `allowPartialGOP` asks it to emit a fragment every
-  // `fragmentDurationMillis` instead of waiting for a full GOP's keyframe boundary, and `progressive` asks it to stream each fragment as it is produced instead of
-  // batching them - both match the segment-paced, frame-by-frame protocol this session decodes as bytes arrive.
+  /* Build the controller request params from the resolved spec. This is the library's single source for the livestream wire protocol's request shape, one set
+   * for each upstream.
+   *
+   * Protect's own fMP4: we always rebase timestamps to zero (so any opted-in decode timestamps stay within safe-integer range as `number`) and never use the wall
+   * clock (so timestamps stay monotonic decode timestamps, which every fMP4 consumer downstream expects). `extendedVideoMetadata` is requested only when the consumer
+   * asked for timestamps. `allowPartialGOP` and `progressive` are sent unconditionally as empty-value flags, since presence alone is what the controller reads:
+   * `allowPartialGOP` asks it to emit a fragment every `fragmentDurationMillis` instead of waiting for a full GOP's keyframe boundary, and `progressive` asks it to
+   * stream each fragment as it is produced instead of batching them - both match the segment-paced, frame-by-frame protocol the session's intake decodes as bytes
+   * arrive.
+   *
+   * UBV: the camera, the channel, the lens, the chunk size and the request label alone, with `audiocodec` when the stream asks for Opus, which the direct route
+   * honors and the proxy's bridge drops. Every fragmenting flag shapes Protect's own fMP4 and nothing of a record stream: the library writes the segments, at the
+   * spec's segment length, and a UBV stream carries no decode timestamps to ask for. An upstream added without an arm here leaves the method without a return,
+   * which fails to compile.
+   */
   #buildParams(): URLSearchParams {
 
-    return new URLSearchParams({
+    switch(this.#spec.upstream) {
 
-      allowPartialGOP: "",
-      camera: this.#spec.cameraId,
-      channel: this.#spec.channel.toString(),
-      chunkSize: this.#spec.chunkSize.toString(),
-      ...(this.#spec.timestamps ? { extendedVideoMetadata: "" } : {}),
-      fragmentDurationMillis: this.#spec.segmentLength.toString(),
-      lens: this.#spec.lens.toString(),
-      progressive: "",
-      rebaseTimestampsToZero: "true",
-      requestId: this.#spec.requestId,
-      type: "fmp4",
-      useWallClock: "false"
-    });
+      case "fmp4": {
+
+        return new URLSearchParams({
+
+          allowPartialGOP: "",
+          camera: this.#spec.cameraId,
+          channel: this.#spec.channel.toString(),
+          chunkSize: this.#spec.chunkSize.toString(),
+          ...(this.#spec.timestamps ? { extendedVideoMetadata: "" } : {}),
+          fragmentDurationMillis: this.#spec.segmentLength.toString(),
+          lens: this.#spec.lens.toString(),
+          progressive: "",
+          rebaseTimestampsToZero: "true",
+          requestId: this.#spec.requestId,
+          type: "fmp4",
+          useWallClock: "false"
+        });
+      }
+
+      case "ubv": {
+
+        return new URLSearchParams({
+
+          ...((this.#spec.audio === "opus") ? { audiocodec: "opus" } : {}),
+          camera: this.#spec.cameraId,
+          channel: this.#spec.channel.toString(),
+          chunkSize: this.#spec.chunkSize.toString(),
+          lens: this.#spec.lens.toString(),
+          requestId: this.#spec.requestId,
+          type: "ubnt"
+        });
+      }
+    }
+  }
+
+  // Build the play command a proxied session asking for Opus sends, the one message the library sends on a livestream socket: a 32-bit big-endian length, then the
+  // JSON command asking the media server to play the stream the alias names with Opus audio. The proxy's bridge drops the audio codec from the request, which is why
+  // the session asks again on its socket.
+  #buildPlay(alias: string): Buffer {
+
+    const command = Buffer.from(JSON.stringify({ cmd: "play", params: { audiocodec: "opus", name: alias } }));
+    const play = Buffer.alloc(PLAY_LENGTH_BYTES + command.length);
+
+    play.writeUInt32BE(command.length, 0);
+    command.copy(play, PLAY_LENGTH_BYTES);
+
+    return play;
+  }
+
+  // Tear down on a negotiation that offered no direct address to a session that needs one, a direct session that dials it or a proxied one asking for Opus that
+  // names its stream by it. The session has nothing it may do, so it builds no socket.
+  #refuseRoute(): void {
+
+    this.#shutdown({ error: new ProtectLivestreamRouteError("The UniFi Protect controller offered no direct livestream address."), kind: "fault", line: null,
+      reason: "the controller offered no direct livestream address" });
   }
 
   // The WebSocket opened. Record that it did, move to handshaking, seed the watchdog's liveness clock, and start the silence watchdog now (not at construction) so it
@@ -749,8 +929,13 @@ export class LivestreamSession implements AsyncDisposable {
     this.#log.debug("Connected to the UniFi Protect livestream API.", { camera: this.#spec.cameraId, channel: this.#spec.channel });
   }
 
-  // A frame batch arrived. Stamp liveness first (any byte proves the channel is alive), then decode every complete frame the buffer holds, carrying a partial tail to the
-  // next message. The wire layout per frame is a 1-byte type, a 3-byte big-endian length, then that many payload bytes.
+  /* A message arrived. Stamp liveness first (any byte proves the channel is alive), skip a message that is not part of the binary protocol, and hand the rest to the
+   * intake, which decodes every complete frame it holds and carries a partial tail to the next message.
+   *
+   * A proxied session asking for Opus sends its play command as its first binary message arrives, ahead of that message's decode, and a send that fails ends the
+   * session before the message is decoded. The intake's work runs in one `try`: its refusal ends the session as a fault with one warning, carried as the
+   * teardown's line so a refusal after the session has closed logs nothing, and a throw that is not a ProtectError is wrapped as a ProtectProtocolError carrying it.
+   */
   #onMessage(data: unknown): void {
 
     this.#lastSegmentAt = this.#clock.monotonic();
@@ -764,136 +949,57 @@ export class LivestreamSession implements AsyncDisposable {
       return;
     }
 
-    // Prepend any leftover partial frame from the previous message so a frame split across two messages is reassembled before we decode it.
-    let packet = buffer;
+    if((this.#play !== null) && !this.#sendPlay(this.#play)) {
 
-    if(this.#packetRemaining.length > 0) {
-
-      packet = Buffer.concat([ this.#packetRemaining, packet ]);
-      this.#packetRemaining = EMPTY_BUFFER;
+      return;
     }
 
-    let offset = 0;
+    try {
 
-    for(;;) {
+      this.#intake?.push(buffer);
+    } catch(error) {
 
-      // Fewer than 4 bytes left is an incomplete header; save the tail to prepend to the next message.
-      if((packet.length - offset) < 4) {
+      const failure = (error instanceof ProtectError) ? error : new ProtectProtocolError(UNREADABLE_MEDIA, { cause: error });
 
-        this.#packetRemaining = packet.subarray(offset);
-
-        break;
-      }
-
-      const frameType = packet.readUInt8(offset);
-
-      // An unrecognized frame type means we have lost frame sync within this packet; we cannot resync mid-buffer, so we abandon the remainder and start fresh on the
-      // next message. Genuine corruption is rare and the watchdog covers a wedged stream.
-      if(!VALID_LIVE_FRAMES.has(frameType)) {
-
-        this.#log.debug("Discarding a livestream packet after an invalid frame header.", { frameType });
-
-        break;
-      }
-
-      // Protect encodes the length of the frame payload in the three bytes after the type, as a big-endian 24-bit unsigned integer.
-      const length = packet.readUIntBE(offset + 1, 3);
-
-      // If the full payload is not yet in hand, save the frame (header included) to prepend to the next message.
-      if(packet.length < (offset + 4 + length)) {
-
-        this.#packetRemaining = packet.subarray(offset);
-
-        break;
-      }
-
-      const dataStart = offset + 4;
-      const dataEnd = dataStart + length;
-
-      this.#handleFrame(frameType, packet.subarray(dataStart, dataEnd));
-
-      offset = dataEnd;
+      this.#shutdown({ error: failure, kind: "fault", line: { context: { error: failure }, level: "warn", message: UNREADABLE_MEDIA },
+        reason: "the livestream sent media the library could not read" });
     }
   }
 
-  // Dispatch one decoded frame. Media boxes accumulate into the current segment; control frames reset the accumulator, capture the codec or timestamps, or emit a
-  // completed segment.
-  #handleFrame(frameType: number, data: Buffer): void {
+  /* Send the play command, once: it is released before it is sent, so no later message sends it again. The socket is typed by its receiving surface, so its `send`
+   * is read here, when the session must send, and called as the socket's own method, which undici's WebSocket requires of it. A socket with no `send`, one an
+   * injected factory built, ends the session as a fault on ProtectConfigurationError with no line, since every attempt would meet the same socket, and a send that
+   * throws is a failure of the socket, classified as any other is. Either answers false, and the caller decodes nothing more.
+   */
+  #sendPlay(play: Buffer): boolean {
 
-    switch(frameType) {
+    const socket: (ProtectWebSocket & { send?: (data: Uint8Array) => void }) | null = this.#ws;
 
-      case LiveFrame.audio:
+    this.#play = null;
 
-        this.#current.audio.push(data);
+    if(typeof socket?.send !== "function") {
 
-        break;
+      this.#shutdown({ error: new ProtectConfigurationError("The UniFi Protect livestream socket has no send method, which a proxied stream asking for Opus needs to " +
+        "ask for its codec."), kind: "fault", line: null, reason: "the livestream socket cannot send" });
 
-      case LiveFrame.beginSegment:
-
-        // Reset with fresh arrays so any leftovers from a prior segment cannot leak in if frames arrive out of the expected order.
-        this.#current = { audio: [], mdat: [], moof: [], video: [] };
-
-        break;
-
-      case LiveFrame.codecInformation:
-
-        this.#codec = data.toString();
-        this.#log.debug("Livestream codec information received.", { codec: this.#codec });
-
-        break;
-
-      case LiveFrame.endSegment:
-
-        this.#emitMediaSegment();
-
-        break;
-
-      case LiveFrame.initSegment:
-
-        this.#emitInitSegment(data);
-
-        break;
-
-      case LiveFrame.mdat:
-
-        this.#current.mdat.push(data);
-
-        break;
-
-      case LiveFrame.moof:
-
-        this.#current.moof.push(data);
-
-        break;
-
-      case LiveFrame.timestamp:
-
-        // Capture decode timestamps only when the consumer opted in; otherwise the controller would not be sending them and we ignore any that appear. Each is a 64-bit
-        // big-endian value, read as a BigInt and narrowed to a number - safe because we always negotiate rebaseTimestampsToZero, keeping the values near zero.
-        if(this.#spec.timestamps) {
-
-          this.#pendingTimestamps = Array.from({ length: Math.floor(data.length / TIMESTAMP_BYTES) },
-            (_value, index) => Number(data.readBigUInt64BE(index * TIMESTAMP_BYTES)));
-        }
-
-        break;
-
-      case LiveFrame.video:
-
-        this.#current.video.push(data);
-
-        break;
+      return false;
     }
+
+    try {
+
+      socket.send(play);
+    } catch(error) {
+
+      this.#shutdown(this.#socketFault(error, "the livestream play command could not be sent"));
+
+      return false;
+    }
+
+    return true;
   }
 
-  // Cache and emit the initialization segment. We take a detached copy because the cache is held for the session's lifetime and replayed to late joiners; holding the
-  // zero-copy view would keep the whole originating message buffer alive. The description is read here, once per init frame, so the cache and every segment built
-  // from it share one description and nothing on the media path ever parses. The first init segment is what advances the session to `live`.
-  #emitInitSegment(raw: Buffer): void {
-
-    const data = Buffer.from(raw);
-    const description = describeInitSegment(data);
-    const init: LivestreamInit = { codec: this.#codec, data, description };
+  // The intake handed over an initialization segment: cache it and emit it. The first init segment is what advances the session to `live`.
+  #onInit(init: LivestreamInit): void {
 
     this.#initSegment = init;
 
@@ -905,50 +1011,10 @@ export class LivestreamSession implements AsyncDisposable {
     this.#emitSegment({ ...init, type: "init" });
   }
 
-  // Assemble the accumulated boxes into one media segment and emit it. We sum the box lengths, allocate once, and copy each chunk into place; `moof` and `mdat` are then
-  // zero-copy views into that single buffer. `alloc` (not `allocUnsafe`) means a length miscount surfaces as zero padding rather than leaked memory, at negligible cost.
-  #emitMediaSegment(): void {
-
-    const moofLength = this.#sumChunks(this.#current.moof);
-    const mdatLength = this.#sumChunks(this.#current.mdat);
-    const total = moofLength + mdatLength + this.#sumChunks(this.#current.video) + this.#sumChunks(this.#current.audio);
-    const data = Buffer.alloc(total);
-
-    let position = 0;
-
-    for(const chunks of [ this.#current.moof, this.#current.mdat, this.#current.video, this.#current.audio ]) {
-
-      for(const chunk of chunks) {
-
-        data.set(chunk, position);
-        position += chunk.length;
-      }
-    }
-
-    const moof = data.subarray(0, moofLength);
-    const mdat = data.subarray(moofLength, moofLength + mdatLength);
-    const timestamps = this.#pendingTimestamps;
-
-    this.#pendingTimestamps = null;
-    this.#emitSegment((timestamps !== null) ? { data, mdat, moof, timestamps, type: "media" } : { data, mdat, moof, type: "media" });
-  }
-
   // Emit a decoded segment on the rail. A separate method so both segment kinds flow through one publish point.
   #emitSegment(segment: Segment): void {
 
     this.#bus.emit("segment", segment);
-  }
-
-  #sumChunks(chunks: readonly Buffer[]): number {
-
-    let total = 0;
-
-    for(const chunk of chunks) {
-
-      total += chunk.length;
-    }
-
-    return total;
   }
 
   /* The socket reported an error. The cause is read once, from the connector ahead of the event, as EventStream reads it: a failed upgrade reports a content-free
@@ -961,12 +1027,17 @@ export class LivestreamSession implements AsyncDisposable {
   #onError(event: { error?: unknown; message?: string }): void {
 
     const connector = this.#owned?.connector;
-    const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
 
-    this.#shutdown(socketFault({ cause, elapsed: millisecondsSince(this.#connectStartedAt, { clock: this.#clock }),
-      failed: "The UniFi Protect livestream API connection failed.", host: this.#address, open: this.#opened,
-      reason: "the livestream connection errored", reported: "The UniFi Protect livestream API reported an error.",
-      timedOut: "The UniFi Protect livestream API connection timed out." }));
+    this.#shutdown(this.#socketFault(connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error, "the livestream connection errored"));
+  }
+
+  // Classify a failure of the socket into the fault its teardown runs for, by the rule every socket reads, under the session's own sentences: a socket error and a
+  // play command the socket failed to send are classified alike.
+  #socketFault(cause: unknown, reason: string): Extract<SocketTeardown, { kind: "fault" }> {
+
+    return socketFault({ cause, elapsed: millisecondsSince(this.#connectStartedAt, { clock: this.#clock }), failed: "The UniFi Protect livestream API connection failed.",
+      host: this.#address, open: this.#opened, reason, reported: "The UniFi Protect livestream API reported an error.",
+      timedOut: "The UniFi Protect livestream API connection timed out." });
   }
 
   /* The single teardown, run once whether the socket's close event, an error, the watchdog, the caller's signal or an explicit close starts it, with the reason it
@@ -998,6 +1069,10 @@ export class LivestreamSession implements AsyncDisposable {
     this.#detachListeners();
     this.#controller.abort();
     this.#released = (this.#owned === null) ? Promise.resolve() : releaseOwned(this.#owned);
+
+    // The intake and a play command never sent are released with the socket, so a closed session holds no reader's cut record, no writer's held frames and no alias.
+    this.#intake = null;
+    this.#play = null;
     this.#closeCause = this.#closeCauseOf(teardown);
 
     if(teardown.kind === "fault") {

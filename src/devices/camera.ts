@@ -33,14 +33,15 @@ export interface SnapshotOptions {
 }
 
 /**
- * Options for {@link Camera.livestream} - the `source` selector (a quality channel or a secondary lens), the tuning (segment length, chunk size, opt-in timestamps)
- * and the `route` the stream is dialed on (`"proxied"` by default, `"direct"` or `"preferDirect"`) without `cameraId` (the camera supplies its own id), plus the
- * per-subscription {@link LivestreamSubscribeOptions} (an abort signal that disposes the returned subscription, an `urgency` closure feeding the pool's resilient
- * recovery, and `discardOnDispose`).
+ * Options for {@link Camera.livestream} - the `source` selector (a quality channel or a secondary lens), the tuning (segment length, chunk size, opt-in timestamps),
+ * the `route` the stream is dialed on (`"proxied"` by default, `"direct"` or `"preferDirect"`), the `audio` codec it carries (`"aac"` by default, or `"opus"`) and
+ * the `upstream` it reads (`"ubv"` to read UBV even for AAC), without `cameraId` (the camera supplies its own id) and without `audioExpected` (the camera states
+ * it from its record), plus the per-subscription {@link LivestreamSubscribeOptions} (an abort signal that disposes the returned subscription, an `urgency` closure
+ * feeding the pool's resilient recovery, and `discardOnDispose`).
  *
  * @category Devices
  */
-export interface LivestreamOptions extends Omit<LivestreamSpec, "cameraId">, LivestreamSubscribeOptions {}
+export interface LivestreamOptions extends Omit<LivestreamSpec, "audioExpected" | "cameraId">, LivestreamSubscribeOptions {}
 
 /**
  * A camera projection. Inherits the read-through getters, live `observe`, and the write-through `update` and `reboot` commands from {@link DeviceProjection}, and adds
@@ -206,16 +207,22 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
    * same stream on the same route and replays the cached init segment to late joiners. The returned subscription is an `AsyncIterable<Segment>` and `AsyncDisposable`;
    * iterate it for segments, dispose it (or abort its signal) to leave - the underlying session closes once the last subscriber departs.
    *
-   * @param opts - The stream source and tuning, plus the per-subscription options (abort signal, urgency, and discard-on-dispose).
+   * The camera states whether the stream should expect audio, which decides whether a UBV stream holds its first segment for it: audio is expected when the camera
+   * has a microphone and the microphone is enabled. Its recording settings govern what is recorded and leave the live stream's audio as it was, so they are not
+   * read. A handle whose camera has left the controller state states nothing, and the spec's own default applies.
+   *
+   * @param opts - The stream source, tuning, route, audio codec and upstream, plus the per-subscription options (abort signal, urgency, and discard-on-dispose).
    *
    * @returns The subscription: live, or already disposed when its signal had already aborted.
    */
   livestream(opts: LivestreamOptions): LivestreamSubscription {
 
     const { discardOnDispose, signal, urgency, ...spec } = opts;
+    const record = this.peek();
 
-    return this.ctx.livestreamPool.subscribe({ cameraId: this.id, ...spec },
-      { ...((discardOnDispose !== undefined) && { discardOnDispose }), ...((signal !== undefined) && { signal }), ...((urgency !== undefined) && { urgency }) });
+    return this.ctx.livestreamPool.subscribe({ ...((record !== undefined) && { audioExpected: record.featureFlags.hasMic && record.isMicEnabled }),
+      cameraId: this.id, ...spec }, { ...((discardOnDispose !== undefined) && { discardOnDispose }), ...((signal !== undefined) && { signal }),
+      ...((urgency !== undefined) && { urgency }) });
   }
 
   /**

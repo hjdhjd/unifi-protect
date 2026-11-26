@@ -51,6 +51,11 @@
  * video. An init is written when its first segment closes, ahead of that segment, with the audio configuration learned by the earlier of the first audio frame it
  * accepts and that close, or with no audio track when none was learned by then.
  *
+ * An init states its audio track once, and a track that appears after the init is written starts a new init, which a consumer of one format cannot follow. So a
+ * writer given an audio wait holds an unwritten init's segment open while it has learned no audio configuration, until its video reaches the longer of the segment
+ * length and the wait. The first audio configuration learned ends the wait, and the video frame after it closes the segment, already past the segment length; an
+ * init written without audio, once the wait has passed, closes every later segment at the segment length.
+ *
  * A video frame belongs to the open init when it is of the init's codec and every parameter set it carries is one the init was read from. A keyframe that does
  * not belong starts a new init at itself, on the same timeline. Parameter sets of the init's codec that do not belong are read only from a keyframe that carries a
  * sample, so any other record carrying them is refused: the pictures after it would otherwise decode under the init's sets. An audio frame whose configuration
@@ -61,7 +66,7 @@
  * @module ProtectFmp4Writer
  */
 import { AUDIO_FORMATS, VIDEO_FORMATS } from "./codecs.ts";
-import type { AudioCodec, AudioConfiguration, VideoCodec, VideoConfiguration, VideoFrameParts } from "./codecs.ts";
+import type { AudioConfiguration, LivestreamAudioCodec, LivestreamVideoCodec, VideoConfiguration, VideoFrameParts } from "./codecs.ts";
 import type { AudioFrame, MediaFrame, VideoFrame } from "./frames.ts";
 import { BOX_HEADER_SIZE, FULL_BOX_HEADER_SIZE, box, fixed16, fullBox, u16, u32, u8, writeBoxHeader, writeFullBoxHeader, writeUInt64 } from "./boxes.ts";
 import { DECODER_CONFIG_FIXED_SIZE, DescriptorTag, OBJECT_TYPE_MPEG4_AUDIO } from "./init-segment.ts";
@@ -82,12 +87,14 @@ export type Fmp4Segment = { readonly codec: string; readonly data: Buffer; reado
   { readonly data: Buffer; readonly mdat: Buffer; readonly moof: Buffer; readonly type: "media" };
 
 /**
- * The writer's options: `segmentLength`, the video duration in milliseconds at which a media segment closes.
+ * The writer's options: `segmentLength`, the video duration in milliseconds at which a media segment closes, and `audioWait`, the longest video duration in
+ * milliseconds an unwritten init's segment stays open for an audio configuration while the writer has learned none. Left out, nothing waits.
  *
  * @category Transport
  */
 export interface Fmp4WriterOptions {
 
+  readonly audioWait?: number;
   readonly segmentLength: number;
 }
 
@@ -170,7 +177,7 @@ const MAX_SAMPLE_DURATION = (2 ** 32) - 1;
 const MILLISECONDS_PER_SECOND = 1000;
 
 // What the writer does with each video codec: split a frame into its parameter sets and its sample, and read the configuration a track is written from.
-const VIDEO_CODECS: Readonly<Record<VideoCodec, { readonly read: (parameterSets: readonly Buffer[]) => VideoConfiguration;
+const VIDEO_CODECS: Readonly<Record<LivestreamVideoCodec, { readonly read: (parameterSets: readonly Buffer[]) => VideoConfiguration;
   readonly split: (data: Buffer) => VideoFrameParts; }>> = {
 
   av1: { read: readAv1Configuration, split: splitAv1Frame },
@@ -183,11 +190,11 @@ const VIDEO_CODECS: Readonly<Record<VideoCodec, { readonly read: (parameterSets:
  * for every codec, which its own suite asserts.
  */
 const VIDEO_SAMPLE_ENTRIES = Object.fromEntries([...VIDEO_FORMATS].toReversed().map(([ type, { codec, config } ]) => [ codec, { config, type } ])) as
-  Readonly<Record<VideoCodec, { readonly config: string; readonly type: string }>>;
+  Readonly<Record<LivestreamVideoCodec, { readonly config: string; readonly type: string }>>;
 
 // What the writer does with each audio codec: read the configuration fields and the sample a frame carries, read the configuration a track is written from, and
 // write the box carrying the configuration's record.
-const AUDIO_CODECS: Readonly<Record<AudioCodec, { readonly read: (data: Buffer) => AudioConfiguration; readonly readFrame: (data: Buffer) => AudioFrameParts;
+const AUDIO_CODECS: Readonly<Record<LivestreamAudioCodec, { readonly read: (data: Buffer) => AudioConfiguration; readonly readFrame: (data: Buffer) => AudioFrameParts;
   readonly recordBox: (record: Buffer) => Buffer; }>> = {
 
   aac: { read: readAacConfiguration, readFrame: readAdtsFrame, recordBox: esds },
@@ -195,7 +202,7 @@ const AUDIO_CODECS: Readonly<Record<AudioCodec, { readonly read: (data: Buffer) 
 };
 
 // The sample entry the writer writes for each audio codec: the one the media group's map names for it, so the writer and the init reader spell each entry once.
-const AUDIO_SAMPLE_ENTRIES = Object.fromEntries([...AUDIO_FORMATS].map(([ type, codec ]) => [ codec, type ])) as Readonly<Record<AudioCodec, string>>;
+const AUDIO_SAMPLE_ENTRIES = Object.fromEntries([...AUDIO_FORMATS].map(([ type, codec ]) => [ codec, type ])) as Readonly<Record<LivestreamAudioCodec, string>>;
 
 // An audio frame's configuration fields, as its codec's reader states them, and its sample.
 interface AudioFrameParts {
@@ -207,7 +214,7 @@ interface AudioFrameParts {
 // An audio stream as the writer compares one to another: its codec, the clock its timestamps count at, and its configuration fields.
 interface AudioStream {
 
-  readonly codec: AudioCodec;
+  readonly codec: LivestreamAudioCodec;
   readonly fields: readonly number[];
   readonly rate: number;
 }
@@ -311,21 +318,21 @@ export class Fmp4Writer {
   #init: OpenInit | undefined;
   readonly #segmentLength: number;
 
+  // The length an unwritten init's segment needs while no audio configuration has been learned: the longer of the segment length and the audio wait, or the
+  // segment length alone when nothing waits.
+  readonly #waitLength: number;
+
   /**
    * Create a writer for one stream.
    *
    * @param options - The writer's options.
    *
-   * @throws {@link ProtectProtocolError} if `segmentLength` is not a positive, finite number of milliseconds.
+   * @throws {@link ProtectProtocolError} if `segmentLength`, or an `audioWait` given, is not a positive, finite number of milliseconds.
    */
   constructor(options: Fmp4WriterOptions) {
 
-    if(!Number.isFinite(options.segmentLength) || (options.segmentLength <= 0)) {
-
-      throw new ProtectProtocolError("fMP4 writer's segment length is not a positive, finite number of milliseconds.");
-    }
-
-    this.#segmentLength = options.segmentLength;
+    this.#segmentLength = milliseconds(options.segmentLength, "segment length");
+    this.#waitLength = Math.max(this.#segmentLength, (options.audioWait === undefined) ? 0 : milliseconds(options.audioWait, "audio wait"));
   }
 
   /**
@@ -504,15 +511,17 @@ export class Fmp4Writer {
     this.#init = next;
   }
 
-  // Finish the held video frame with the step to the frame that follows it, and close the segment once the video it holds reaches the segment length.
+  // Finish the held video frame with the step to the frame that follows it, and close the segment once the video it holds reaches its length: the segment length,
+  // or the wait's length while the open init is unwritten and no audio configuration has been learned, a frame dropped below its keyframe teaching one as well.
   #finishVideo(init: OpenInit, timestamp: number, segments: Fmp4Segment[]): void {
 
     const duration = sampleDuration(timestamp - init.heldVideo.timestamp);
+    const length = ((this.#audio === undefined) && !init.written) ? this.#waitLength : this.#segmentLength;
 
     init.segment.video.push({ ...init.heldVideo, duration });
     init.segment.videoDuration += duration;
 
-    if(init.segment.videoDuration >= ((this.#segmentLength * init.video.rate) / MILLISECONDS_PER_SECOND)) {
+    if(init.segment.videoDuration >= ((length * init.video.rate) / MILLISECONDS_PER_SECOND)) {
 
       this.#close(init, segments);
     }
@@ -613,6 +622,17 @@ function rescale(instant: Instant, rate: number): number {
   const seconds = Math.floor(instant.timestamp / instant.rate);
 
   return (seconds * rate) + Math.floor(((instant.timestamp - (seconds * instant.rate)) * rate) / instant.rate);
+}
+
+// A length the writer is given, in milliseconds. One that is not a positive, finite number is refused, naming the option it was given as.
+function milliseconds(length: number, option: string): number {
+
+  if(!Number.isFinite(length) || (length <= 0)) {
+
+    throw new ProtectProtocolError("fMP4 writer's " + option + " is not a positive, finite number of milliseconds.");
+  }
+
+  return length;
 }
 
 // A step between two frames of a track as a sample's duration. A step that is not positive, or too long for a `trun` entry's 32 bits, is refused: the writer

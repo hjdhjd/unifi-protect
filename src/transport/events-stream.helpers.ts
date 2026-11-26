@@ -39,7 +39,8 @@ export interface FakeWebSocketOptions {
  * A deterministic in-memory WebSocket that satisfies the {@link ProtectWebSocket} surface {@link EventStream} consumes. Tests inject it via the `webSocket` factory
  * and drive the connection with the `emit*` methods - no network, no real server, no timing nondeterminism. It honors `once` on `addEventListener` and detaches on
  * `removeEventListener` by identity, exactly as the real socket does, and nothing else removes a listener, so a teardown that forgets a removal leaves a listener
- * {@link FakeWebSocket.listenerCount} reads.
+ * {@link FakeWebSocket.listenerCount} reads. It records every message sent on it, as a real socket's `send` would carry it, for a livestream session that sends one;
+ * {@link receivingSurface} offers a socket that cannot send.
  */
 export class FakeWebSocket implements ProtectWebSocket {
 
@@ -47,6 +48,9 @@ export class FakeWebSocket implements ProtectWebSocket {
 
   // Whether close() has been requested on the socket, for tests that assert the EventStream asked the underlying socket to close.
   closeRequested = false;
+
+  // Every message sent on the socket, in order, each as the bytes the sender handed it.
+  readonly sent: Uint8Array[] = [];
 
   readonly #closeFault: boolean;
   readonly #failsOnClose: boolean;
@@ -142,6 +146,12 @@ export class FakeWebSocket implements ProtectWebSocket {
     }
   }
 
+  /** Record a message sent on the socket. */
+  send(data: Uint8Array): void {
+
+    this.sent.push(data);
+  }
+
   /** Fire the `open` event. */
   emitOpen(): void {
 
@@ -207,4 +217,34 @@ export class FakeWebSocket implements ProtectWebSocket {
 
     return set;
   }
+}
+
+/**
+ * The receiving surface of a fake socket alone: every member {@link ProtectWebSocket} names, each the fake's own, and no `send`, as a socket an injected factory
+ * builds may carry none. The test drives the fake behind it.
+ *
+ * @param ws - The fake whose receiving surface is offered.
+ *
+ * @returns The fake's receiving surface.
+ */
+export function receivingSurface(ws: FakeWebSocket): ProtectWebSocket {
+
+  // The fake's registration methods take each listener type-erased behind their overloads, so each is reached through the one signature its implementation has.
+  const registration = ws as unknown as { addEventListener(type: string, listener: unknown, options?: ListenerOptions): void;
+    removeEventListener(type: string, listener: unknown): void; };
+
+  return {
+
+    addEventListener: (type: string, listener: unknown, options?: ListenerOptions): void => registration.addEventListener(type, listener, options),
+    get binaryType(): "arraybuffer" | "blob" {
+
+      return ws.binaryType;
+    },
+    set binaryType(value: "arraybuffer" | "blob") {
+
+      ws.binaryType = value;
+    },
+    close: (): void => ws.close(),
+    removeEventListener: (type: string, listener: unknown): void => registration.removeEventListener(type, listener)
+  };
 }

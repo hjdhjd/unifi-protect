@@ -7,15 +7,15 @@
  * format gives it within its box, and slices each sample out of the segment by its track run's data offset and sizes. A layout error on either side therefore
  * fails a row rather than cancelling out.
  */
-import type { AudioCodec, VideoCodec } from "./codecs.ts";
 import type { AudioFrame, VideoFrame } from "./frames.ts";
+import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs.ts";
 import { children, findChild, readUInt } from "./boxes.ts";
 import type { Span } from "./boxes.ts";
 
 // Frames.
 
 // A video frame of a codec, a keyframe or not, at a timestamp on a clock of 90000 unless another is given.
-export function videoFrame(codec: VideoCodec, data: Buffer, opts: { keyframe?: boolean; rate?: number; timestamp: number }): VideoFrame {
+export function videoFrame(codec: LivestreamVideoCodec, data: Buffer, opts: { keyframe?: boolean; rate?: number; timestamp: number }): VideoFrame {
 
   const { keyframe = false, rate = 90000, timestamp } = opts;
 
@@ -23,7 +23,7 @@ export function videoFrame(codec: VideoCodec, data: Buffer, opts: { keyframe?: b
 }
 
 // An audio frame of a codec at a timestamp on its clock.
-export function audioFrame(codec: AudioCodec, data: Buffer, opts: { rate: number; timestamp: number }): AudioFrame {
+export function audioFrame(codec: LivestreamAudioCodec, data: Buffer, opts: { rate: number; timestamp: number }): AudioFrame {
 
   return { codec, data, kind: "audio", rate: opts.rate, timestamp: opts.timestamp };
 }

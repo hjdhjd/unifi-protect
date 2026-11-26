@@ -1,21 +1,24 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * livestream-session.test.ts: Tests for LivestreamSession - URL negotiation, the route a session dials and what its upgrade carries, the fMP4 frame decode
- * (init/media/reassembly/timestamps), the FSM, the silence watchdog, and teardown. Driven through an injected fake WebSocket, a fake resolver, and a `TestClock`, so
- * the session is exercised deterministically without a live controller.
+ * livestream-session.test.ts: Tests for LivestreamSession - URL negotiation, the route a session dials and what its upgrade carries, the fMP4 frame decode that
+ * lives behind its intake (init/media/reassembly/timestamps), the FSM, the silence watchdog, and teardown. Driven through an injected fake WebSocket, a fake
+ * resolver, and a `TestClock`, so the session is exercised deterministically without a live controller.
  */
 import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/media/init-segment.fixtures.ts";
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
+import { FakeWebSocket, receivingSurface } from "./events-stream.helpers.ts";
 import type { LivestreamAddresses, LivestreamSessionOptions, LivestreamState, Segment } from "./livestream-session.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
-import { ProtectAbortedError, ProtectCertificateError, ProtectLivestreamRouteError, ProtectNetworkError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
+import { ProtectAbortedError, ProtectCertificateError, ProtectConfigurationError, ProtectLivestreamRouteError, ProtectNetworkError, ProtectProtocolError,
+  ProtectStallError, ProtectTimeoutError } from "../errors.ts";
 import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
-import { buildInitSegment, buildLiveFrame, buildMediaSegment } from "./livestream-session.helpers.ts";
+import { UBV_H264, ubvRecord } from "../protocol/media/ubv.helpers.ts";
+import { buildInitSegment, buildLiveFrame, buildMediaSegment, ubvOpening, ubvVideo } from "./livestream-session.helpers.ts";
 import { describe, test } from "node:test";
-import { FakeWebSocket } from "./events-stream.helpers.ts";
+import type { MediaFrame } from "../protocol/media/frames.ts";
 import { PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT } from "../settings.ts";
 import type { ProtectError } from "../errors.ts";
 import type { ProtectLogging } from "../logging.ts";
@@ -48,6 +51,27 @@ const PROXIED_URL = "wss://controller/proxy/protect/ws/livestream?token=proxied-
 const DIRECT_URL = "wss://controller:7446/direct-alias?camera=cam1";
 const ALIAS = "ZqXwVu";
 const AUTH_HEADERS = { cookie: "TOKEN=invented-session", "x-csrf-token": "invented-csrf" };
+
+// A direct address carrying the minted alias in its path, which a proxied session asking for Opus names its stream by.
+const ALIAS_URL = "wss://controller:7446/" + ALIAS + "?camera=cam1";
+
+// The sentence a session logs and wraps media its intake could not read under.
+const UNREADABLE = "The UniFi Protect livestream sent media the library could not read.";
+
+// The play command a proxied session asking for Opus sends, restated from its wire form apart from the session: a 32-bit big-endian length, then the JSON command
+// naming the alias.
+function playCommand(alias: string): Buffer {
+
+  const command = Buffer.from("{\"cmd\":\"play\",\"params\":{\"audiocodec\":\"opus\",\"name\":\"" + alias + "\"}}");
+  const length = Buffer.alloc(4);
+
+  length.writeUInt32BE(command.length, 0);
+
+  return Buffer.concat([ length, command ]);
+}
+
+// A UBV record whose first byte is not the record marker, which the reader refuses.
+const UNREADABLE_RECORD = ubvRecord({ marker: 0xa1, payload: Buffer.alloc(4), track: UBV_H264 });
 
 // An auth hook that returns the invented headers and counts how often it was read, so a row reads whether a socket asked for the session at all.
 function countingAuthHeaders(): { calls: () => number; getAuthHeaders: () => Record<string, string> } {
@@ -197,6 +221,14 @@ describe("LivestreamSession", () => {
       assert.notEqual(base, livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", source: { channel: 0, type: "channel" }, timestamps: true })));
       assert.notEqual(base, livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", route: "direct", source: { channel: 0, type: "channel" } })));
     });
+
+    test("the resolved spec expects audio when the spec leaves it out, and the key ignores whether audio is expected", () => {
+
+      assert.equal(resolveLivestreamSpec({ cameraId: "cam1" }).audioExpected, true);
+      assert.equal(resolveLivestreamSpec({ audioExpected: false, cameraId: "cam1" }).audioExpected, false);
+      assert.equal(livestreamKey(resolveLivestreamSpec({ audioExpected: false, cameraId: "cam1", upstream: "ubv" })),
+        livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", upstream: "ubv" })));
+    });
   });
 
   describe("connection and frame decode", () => {
@@ -314,6 +346,36 @@ describe("LivestreamSession", () => {
 
       assert.ok(defaultSegment?.type === "media");
       assert.equal(defaultSegment.timestamps, undefined, "a session that did not opt in must not attach the timestamps a stray frame carries");
+    });
+
+    test("a decode timestamp frame attaches to the one media segment after it", async () => {
+
+      // Two media segments under a session that opted in: the first carries the timestamp frame sent ahead of it, and the second, which none precedes, carries none.
+      const { session, ws } = await openSession({ spec: { timestamps: true } });
+      const segments = collectSegments(session);
+
+      ws.emitMessage(buildMediaSegment({ mdat: Buffer.from("M"), moof: Buffer.from("F"), timestamps: [ 0, 3000 ] }));
+      ws.emitMessage(buildMediaSegment({ mdat: Buffer.from("N"), moof: Buffer.from("G") }));
+
+      assert.deepEqual(segments.map((segment) => (segment.type === "media") ? segment.timestamps : null), [ [ 0, 3000 ], undefined ]);
+    });
+
+    test("a cached init is a copy, never a view of the socket message", async () => {
+
+      // The init arrives in a message over a buffer of its own, which is zeroed once delivered: the cached init and the emitted segment keep the bytes sent.
+      const { session, ws } = await openSession();
+      const segments = collectSegments(session);
+      const message = new Uint8Array(buildInitSegment({ data: AMCREST_INIT }));
+
+      ws.emitMessage(message.buffer);
+      message.fill(0);
+
+      const [segment] = segments;
+
+      assert.ok(segment?.type === "init");
+      assert.deepEqual(segment.data, AMCREST_INIT);
+      assert.deepEqual(session.initSegment?.data, AMCREST_INIT);
+      assert.notEqual(session.initSegment.data.buffer, message.buffer);
     });
 
     test("a frame split across two WebSocket messages is reassembled", async () => {
@@ -474,6 +536,28 @@ describe("LivestreamSession", () => {
       assert.equal(params.get("chunkSize"), "8192");
       assert.equal(params.get("fragmentDurationMillis"), "200");
       assert.equal(params.has("extendedVideoMetadata"), false);
+    });
+
+    test("build params serialize a UBV stream's parameters alone, with Opus asked for on every route", async () => {
+
+      const capture: URLSearchParams[] = [];
+      const resolveUrl = async (params: URLSearchParams): Promise<LivestreamAddresses> => {
+
+        capture.push(params);
+
+        return { direct: ALIAS_URL, proxied: PROXIED_URL };
+      };
+
+      // A UBV stream asking for timestamps and a segment length sends neither: the library writes its segments and a UBV stream carries no decode timestamps.
+      await openSession({ resolveUrl, spec: { chunkSize: 8192, segmentLength: 200, source: { channel: 1, type: "channel" }, timestamps: true, upstream: "ubv" } });
+      await openSession({ resolveUrl, spec: { audio: "opus" } });
+      await openSession({ resolveUrl, spec: { audio: "opus", route: "direct" } });
+
+      const opus = [ [ "audiocodec", "opus" ], [ "camera", "cam1" ], [ "channel", "0" ], [ "chunkSize", "4096" ], [ "lens", "0" ], [ "requestId", "cam1-0" ],
+        [ "type", "ubnt" ] ];
+
+      assert.deepEqual(capture.map((params) => [...params]), [ [ [ "camera", "cam1" ], [ "channel", "1" ], [ "chunkSize", "8192" ], [ "lens", "0" ],
+        [ "requestId", "cam1-1" ], [ "type", "ubnt" ] ], opus, opus ]);
     });
 
     test("the socket factory is handed the URL the resolver negotiated", async () => {
@@ -639,6 +723,205 @@ describe("LivestreamSession", () => {
       assert.equal(proxied.session.dialedPort, 443);
 
       await proxied.session.close();
+    });
+  });
+
+  describe("the UBV upstream", () => {
+
+    test("a UBV stream yields the writer's init with its label and description, its media as one allocation with no timestamps whatever the option says, and its " +
+      "frames on the frame rail as views of the message", async () => {
+
+      const { session, ws } = await openSession({ spec: { timestamps: true, upstream: "ubv" } });
+      const segments = collectSegments(session);
+      const frames: MediaFrame[] = [];
+
+      session.on("frame", (frame) => void frames.push(frame));
+
+      // The message is its own allocation, so a frame that is a view of it shares its buffer and a copy cannot.
+      const message = new Uint8Array(ubvOpening("aac"));
+
+      ws.emitMessage(message);
+
+      const [ init, media ] = segments;
+
+      assert.ok(init?.type === "init");
+      assert.equal(init.codec, "avc1.4d001e,mp4a.40.2");
+      assert.deepEqual(init.description, { tracks: [ { codec: "h264", height: 240, id: 1, kind: "video", level: 30, profile: 77, width: 320 },
+        { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 48000 } ] });
+      assert.equal(session.state, "live");
+      assert.ok(media?.type === "media");
+      assert.equal(Object.hasOwn(media, "timestamps"), false);
+      assert.equal(media.data.byteOffset, 0);
+      assert.equal(media.data.buffer.byteLength, media.data.length);
+      assert.equal(media.moof.buffer, media.data.buffer);
+      assert.equal(media.mdat.buffer, media.data.buffer);
+      assert.deepEqual(frames.map(({ kind }) => kind), [ "video", "audio", "video", "video", "video" ]);
+
+      for(const frame of frames) {
+
+        assert.equal(frame.data.buffer, message.buffer);
+      }
+    });
+
+    test("a proxied Opus session sends one play command when its first message arrives, never at open", async () => {
+
+      const { ws } = await openSession({ resolveUrl: fixedAddresses(PROXIED_URL, ALIAS_URL), spec: { audio: "opus" } });
+
+      assert.deepEqual(ws.sent, [], "nothing is sent at open");
+
+      ws.emitMessage("a message the binary protocol does not carry");
+
+      assert.deepEqual(ws.sent, [], "a message the session skips sends nothing");
+
+      ws.emitMessage(ubvOpening("opus"));
+      ws.emitMessage(ubvVideo(14400));
+
+      assert.deepEqual(ws.sent.map((data) => Buffer.from(data)), [playCommand(ALIAS)]);
+    });
+
+    test("a direct Opus session and a proxied AAC session on UBV send nothing", async () => {
+
+      for(const spec of [ { audio: "opus", route: "direct" }, { upstream: "ubv" } ] as const) {
+
+        // Sequential by intent: each session is opened and read on its own.
+        // eslint-disable-next-line no-await-in-loop
+        const { ws } = await openSession({ resolveUrl: fixedAddresses(PROXIED_URL, ALIAS_URL), spec });
+
+        ws.emitMessage(ubvOpening("opus"));
+
+        assert.deepEqual(ws.sent, [], JSON.stringify(spec));
+      }
+    });
+
+    test("a proxied Opus session offered no direct address puts ProtectLivestreamRouteError on its rail and closes 1006, building no socket", async () => {
+
+      let built = false;
+      const closed: { cause?: ProtectError; code: number; reason: string }[] = [];
+      const session = new LivestreamSession({ log: silentLog(), resolveUrl: fixedAddresses(PROXIED_URL), spec: { audio: "opus", cameraId: "cam1" },
+        webSocket: (): FakeWebSocket => {
+
+          built = true;
+
+          return new FakeWebSocket({ autoOpen: false });
+        } });
+      const errors = collectErrors(session);
+
+      session.on("closed", (info) => void closed.push(info));
+      await settle();
+
+      const [error] = errors;
+
+      assert.ok(error instanceof ProtectLivestreamRouteError);
+      assert.equal(error.message, "The UniFi Protect controller offered no direct livestream address.");
+      assert.equal(present(closed[0], "the closed announcement").reason, "the controller offered no direct livestream address");
+      assert.equal(built, false, "a session with no stream to name builds no socket");
+    });
+
+    test("a proxied Opus session whose socket cannot send ends on ProtectConfigurationError with no line, before the message is decoded", async () => {
+
+      const log = capturingLog();
+      const fake = new FakeWebSocket({ autoOpen: false });
+      const { promise, resolve } = Promise.withResolvers<undefined>();
+      const session = new LivestreamSession({ log, resolveUrl: fixedAddresses(PROXIED_URL, ALIAS_URL), spec: { audio: "opus", cameraId: "cam1" },
+        webSocket: (): ReturnType<typeof receivingSurface> => {
+
+          resolve(undefined);
+
+          return receivingSurface(fake);
+        } });
+      const closed: { cause?: ProtectError; code: number; reason: string }[] = [];
+      const errors = collectErrors(session);
+      const segments = collectSegments(session);
+
+      session.on("closed", (info) => void closed.push(info));
+      await promise;
+      fake.emitOpen();
+      fake.emitMessage(ubvOpening("opus"));
+
+      const [error] = errors;
+      const info = present(closed[0], "the closed announcement");
+
+      assert.ok(error instanceof ProtectConfigurationError);
+      assert.match(error.message, /no send method/);
+      assert.deepEqual([ info.code, info.reason ], [ 1006, "the livestream socket cannot send" ]);
+      assert.deepEqual(segments, [], "the message is never decoded");
+      assert.deepEqual(log.entries.filter(({ level }) => (level === "warn") || (level === "error")), []);
+    });
+
+    test("a play command the socket fails to send ends the session as a failure of the socket, before the message is decoded", async () => {
+
+      const failing = new FakeWebSocket({ autoOpen: false });
+
+      failing.send = (): void => {
+
+        throw errnoError("write EPIPE", "EPIPE");
+      };
+
+      const { session, ws } = await openSession({ resolveUrl: fixedAddresses(PROXIED_URL, ALIAS_URL), spec: { audio: "opus" }, webSocket: () => failing });
+      const closed: { cause?: ProtectError; code: number; reason: string }[] = [];
+      const errors = collectErrors(session);
+      const segments = collectSegments(session);
+
+      session.on("closed", (info) => void closed.push(info));
+      ws.emitMessage(ubvOpening("opus"));
+
+      assert.ok(errors[0] instanceof ProtectNetworkError);
+      assert.equal(present(closed[0], "the closed announcement").reason, "the livestream play command could not be sent");
+      assert.deepEqual(segments, []);
+    });
+
+    test("a proxied Opus session over the loopback peer sends its play and reaches live with no fault", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer({ messages: [ubvOpening("opus")] });
+      const session = new LivestreamSession({ log: silentLog(),
+        resolveUrl: fixedAddresses("wss://" + peer.host + "/live", "wss://" + peer.host + "/" + ALIAS + "?camera=cam1"), spec: { audio: "opus", cameraId: "cam1" } });
+      const errors = collectErrors(session);
+
+      assert.equal(await whenState(session, "live"), "live");
+      assert.deepEqual(await peer.message(0), playCommand(ALIAS));
+      assert.deepEqual(errors, []);
+
+      await session.close();
+    });
+
+    test("no rail error, payload or log line of a proxied Opus session carries the alias it sends", async () => {
+
+      const log = capturingLog();
+      const { session, ws } = await openSession({ log, resolveUrl: fixedAddresses(PROXIED_URL, ALIAS_URL), spec: { audio: "opus" } });
+      const closed: { cause?: ProtectError; code: number; reason: string }[] = [];
+      const errors = collectErrors(session);
+
+      session.on("closed", (info) => void closed.push(info));
+      ws.emitMessage(Buffer.concat([ ubvOpening("opus"), UNREADABLE_RECORD ]));
+
+      // The play went out and the refusal after it logged its line, so the reading covers the lines and payloads a play and a fault can raise.
+      assert.equal(ws.sent.length, 1);
+      assert.ok(log.entries.some(({ message }) => message === UNREADABLE));
+
+      for(const rendered of [ ...errors, ...closed, ...log.entries ].map((item) => inspect(item, { depth: Infinity }))) {
+
+        assert.ok(!rendered.includes(ALIAS), "no error, payload or line may carry the alias: " + rendered);
+      }
+    });
+
+    test("a refusal of what the stream sent ends the session as a fault with one warning", async () => {
+
+      const log = capturingLog();
+      const { session, ws } = await openSession({ log, spec: { upstream: "ubv" } });
+      const closed: { cause?: ProtectError; code: number; reason: string }[] = [];
+      const errors = collectErrors(session);
+
+      session.on("closed", (info) => void closed.push(info));
+      ws.emitMessage(UNREADABLE_RECORD);
+
+      const [error] = errors;
+      const info = present(closed[0], "the closed announcement");
+
+      assert.ok(error instanceof ProtectProtocolError);
+      assert.ok(Object.is(session.closeCause, error), "the refusal is the closure's cause");
+      assert.deepEqual([ info.code, info.reason ], [ 1006, "the livestream sent media the library could not read" ]);
+      assert.deepEqual(log.entries.filter(({ level }) => level === "warn").map(({ args, message }) => ({ args, message })), [{ args: [{ error }],
+        message: UNREADABLE }]);
     });
   });
 

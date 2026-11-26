@@ -21,8 +21,9 @@
 
 // Errors - the typed hierarchy. Consumers branch on these with `instanceof`, so they are value exports; the bootstrap-stage tag is a type.
 export { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectCodecChangeError,
-  ProtectConfigurationError, ProtectError, ProtectLivestreamRouteError, ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError,
-  ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError } from "./errors.ts";
+  ProtectConfigurationError, ProtectError, ProtectLivestreamAudioError, ProtectLivestreamRouteError, ProtectLivestreamUnavailableError, ProtectNetworkError,
+  ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError,
+  RecoverableError } from "./errors.ts";
 export type { ProtectBootstrapStage } from "./errors.ts";
 
 // The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator, and the
@@ -66,6 +67,8 @@ export type { LivestreamRoute, LivestreamSource, Segment } from "./transport/liv
 // The livestream init a `Segment`'s init arm, a subscription's cached init and a codec change all carry, and the description read from its bytes. The free reader
 // stays internal; the static `ProtectClient.describeInitSegment()` is the consumer-facing entry for init bytes a consumer holds of its own.
 export type { LivestreamDescription, LivestreamInit, LivestreamTrack } from "./protocol/media/init-segment.ts";
+// The codecs a livestream carries: the audio codec a consumer asks for, and the video codec a described track names.
+export type { LivestreamAudioCodec, LivestreamVideoCodec } from "./protocol/media/codecs.ts";
 // The id-keyed device-collection vocabulary - the category key set the selector catalog and every per-category consumer iterate over. A value export (a consumer iterates
 // the runtime array to reach a category's selectors) plus its type; `DeviceModelKey` stays internal, since the collection vocabulary is the consumer-facing surface.
 export { DEVICE_COLLECTION_KEYS } from "./protocol/events.ts";

@@ -8,18 +8,18 @@
  * out, or a {@link ProtectProtocolError} naming the fault.
  *
  * The stream is a run of records, each a header, its payload padded with zero bytes to a four-byte boundary, and a 32-bit trailer counting the header and the padded
- * payload. A record's header is 20 bytes, or 16 when it carries no timestamp:
+ * payload. A record's header is 20 bytes when its timestamp is 64 bits wide, or 16 when it is 32 bits wide:
  *
  * | Byte offset | Field     | Bits | Values                                                                                                  |
  * |-------------|-----------|------|---------------------------------------------------------------------------------------------------------|
  * | 0           | marker    | 8    | `a0`                                                                                                    |
  * | 1-2         | track     | 16   | the track id                                                                                            |
  * | 3           | kind      | 8    | not read                                                                                                |
- * | 4           | flags     | 8    | `04` selects the 20-byte header, and `20` marks a keyframe                                              |
+ * | 4           | flags     | 8    | `04` marks a 64-bit timestamp and so the 20-byte header, and `20` marks a keyframe                      |
  * | 5-7         | code      | 24   | a per-track code and counter, not read                                                                  |
  * | 8-15        | timestamp | 64   | the 20-byte header: ticks at the track's clock, read as two 32-bit halves                               |
  * | 16-19       | size      | 32   | the 20-byte header: the payload's length in bytes                                                       |
- * | 8-11        |           | 32   | the 16-byte header: not read                                                                            |
+ * | 8-11        | timestamp | 32   | the 16-byte header: ticks at the track's clock                                                          |
  * | 12-15       | size      | 32   | the 16-byte header: the payload's length in bytes                                                       |
  *
  * The track names what a record carries and the clock its timestamp counts at:
@@ -31,10 +31,10 @@
  * | 1002    | an Opus packet                                  | 48000                                              |
  * | 1003    | an HEVC frame                                   | 90000                                              |
  * | 1004    | an AV1 temporal unit                            | 90000                                              |
- * | `da7e`  | the stream's clock, under the 16-byte header    |                                                    |
+ * | `da7e`  | the stream's clock                              |                                                    |
  *
- * The clock and every track outside this vocabulary are read past and yield nothing, so a track the stream adds never ends it. A media track's record carries the
- * 20-byte header, since its frame needs the timestamp.
+ * The clock and every track outside this vocabulary are read past and yield nothing, so a track the stream adds never ends it. Either header carries the timestamp a
+ * frame needs, so a media record is read under either: one stream can carry tracks under each, and a track's records can move from one header to the other.
  *
  * The reader is fed the stream in chunks cut anywhere, and answers the frames each chunk completes. A record whole within a chunk yields a frame that is a view into
  * that chunk. A record a chunk's end cuts is joined into one buffer, allocated once its length is known, and its frame is a view into that buffer; a header a chunk's
@@ -44,21 +44,23 @@
  *
  * @module ProtectUbv
  */
-import type { AudioCodec, VideoCodec } from "./codecs.ts";
+import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs.ts";
 import type { MediaFrame } from "./frames.ts";
 import { OPUS_DECODE_RATE } from "./opus.ts";
 import { ProtectProtocolError } from "../../errors.ts";
+import { asBuffer } from "../buffer.ts";
 import { readAdtsHeader } from "./aac.ts";
 import { readUInt64 } from "./boxes.ts";
 
 // The byte every record opens with.
 const RECORD_MARKER = 0xa0;
 
-// The two header lengths. The 20-byte header adds the 64-bit timestamp ahead of the payload's size, which is the last field of either header.
+// The two header lengths. The 16-byte header carries a 32-bit timestamp and the 20-byte header a 64-bit one, each ahead of the payload's size, which is the last
+// field of either header.
 const SHORT_HEADER_SIZE = 16;
 const LONG_HEADER_SIZE = 20;
 
-// The header's fields at fixed offsets: the track id, the flags and, in the 20-byte header, the timestamp.
+// The header's fields at fixed offsets: the track id, the flags and the timestamp, whose width the flags select.
 const HeaderOffset = {
 
   FLAGS: 4,
@@ -66,7 +68,7 @@ const HeaderOffset = {
   TRACK: 1
 } as const;
 
-// The flag bits the reader acts on: one selects the 20-byte header, and one marks a video record as a keyframe.
+// The flag bits the reader acts on: one marks a 64-bit timestamp, which selects the 20-byte header, and one marks a video record as a keyframe.
 const RecordFlag = {
 
   KEYFRAME: 0x20,
@@ -88,7 +90,7 @@ const UBV_PAYLOAD_LIMIT = 16777216;
 const VIDEO_CLOCK_RATE = 90000;
 
 // What a media track carries: the codec of its frames, and whether they are video or audio.
-type TrackFormat = { readonly codec: AudioCodec; readonly kind: "audio" } | { readonly codec: VideoCodec; readonly kind: "video" };
+type TrackFormat = { readonly codec: LivestreamAudioCodec; readonly kind: "audio" } | { readonly codec: LivestreamVideoCodec; readonly kind: "video" };
 
 // The tracks the reader yields frames for. The clock track and every other id are absent, so their records are read past.
 const TRACKS: ReadonlyMap<number, TrackFormat> = new Map<number, TrackFormat>([
@@ -126,12 +128,12 @@ export class UbvReader {
    * @returns Every media frame the chunk completes, in record order. A frame whose record lies whole within the chunk is a view into the chunk, and one whose record
    *   the chunk completes is a view into the buffer that record was joined into.
    *
-   * @throws {@link ProtectProtocolError} if a record does not open with the marker, declares a payload above 16 MiB, ends in a trailer other than its length, or
-   *   carries a media track under the 16-byte header, or if an AAC record's ADTS header is malformed.
+   * @throws {@link ProtectProtocolError} if a record does not open with the marker, declares a payload above 16 MiB or ends in a trailer other than its length,
+   *   or if an AAC record's ADTS header is malformed.
    */
   push(chunk: Uint8Array): MediaFrame[] {
 
-    const bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    const bytes = asBuffer(chunk);
     const frames: MediaFrame[] = [];
     let offset = 0;
 
@@ -242,13 +244,8 @@ function readRecord(record: Buffer, frames: MediaFrame[]): void {
     return;
   }
 
-  if(headerSize !== LONG_HEADER_SIZE) {
-
-    throw new ProtectProtocolError("UBV record of a media track carries the 16-byte header, which holds no timestamp.");
-  }
-
   const data = record.subarray(headerSize, headerSize + record.readUInt32BE(headerSize - COUNT_SIZE));
-  const timestamp = readUInt64(record, HeaderOffset.TIMESTAMP);
+  const timestamp = (headerSize === LONG_HEADER_SIZE) ? readUInt64(record, HeaderOffset.TIMESTAMP) : record.readUInt32BE(HeaderOffset.TIMESTAMP);
 
   if(track.kind === "video") {
 

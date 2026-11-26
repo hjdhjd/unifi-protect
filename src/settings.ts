@@ -176,6 +176,8 @@ export const PROTECT_LIVESTREAM_DEFAULT_TOLERANCE_MS = 10000;
  * most-urgent subscriber's reported tolerance less this margin, so the cap always leaves the consumer some cushion between "the library abandons this attempt" and "the
  * consumer's own buffer runs dry."
  * Subtracting a fixed margin rather than a fraction keeps the headroom math legible and the cushion predictable regardless of the reported tolerance's magnitude.
+ * The pool also adds it to PROTECT_LIVESTREAM_AUDIO_WAIT_MS as the floor of every reconnect window of a UBV stream that expects audio, where it covers an attempt's
+ * negotiation, its dial and its wait for the first keyframe.
  */
 export const PROTECT_LIVESTREAM_AWAIT_MARGIN_MS = 1000;
 
@@ -208,10 +210,20 @@ export const PROTECT_REBOOT_DETECTION_THRESHOLD = 5000;
 export const PROTECT_LIVESTREAM_CHUNK_SIZE = 4096;
 
 /**
- * Default and minimum fMP4 segment length, in milliseconds, for a livestream. Protect itself defaults to 100 ms, and we enforce the same value as a floor: shorter
- * segments increase controller load for no practical benefit downstream. Consumers may request a longer segment via the spec, but never a shorter one.
+ * Default and minimum fMP4 segment length, in milliseconds, for a livestream, which the controller writes to on Protect's own fMP4 and the library's writer on UBV.
+ * Protect itself defaults to 100 ms, and we enforce the same value as a floor: shorter segments increase load for no practical benefit downstream. Consumers may
+ * request a longer segment via the spec, but never a shorter one.
  */
 export const PROTECT_LIVESTREAM_SEGMENT_LENGTH = 100;
+
+/**
+ * Livestream audio wait, in milliseconds: the safety net under a wait the audio's own arrival ends. A UBV stream that expects audio holds its first segment open
+ * until an audio frame of the codec it asked for arrives, because an init states its audio track once, and this is the longest that segment's video runs before the
+ * init is written without audio. It is also the longest a UBV stream carries audio of a codec other than the one it asked for, measured on that audio's own clock,
+ * before it ends on ProtectLivestreamAudioError. The pool holds every reconnect window of a UBV stream that expects audio to at least this wait plus
+ * PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, in recovery as while establishing, so a stream still waiting is never read as a failed attempt.
+ */
+export const PROTECT_LIVESTREAM_AUDIO_WAIT_MS = 3000;
 
 /**
  * Talkback send-buffer safety ceiling, in bytes. The TalkbackSession drains a consumer-supplied audio source with structural backpressure - it pulls the next chunk only

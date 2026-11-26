@@ -14,9 +14,10 @@ export const UBV_H264 = 7;
 export const UBV_H265 = 1003;
 export const UBV_OPUS = 1002;
 
-/* The fields of one record. The builder writes the 20-byte header unless `longHeader` is false, the marker `a0` unless `marker` states another, the keyframe flag
- * when `keyframe` is set, the payload's own length unless `size` states another, and a trailer counting the header and the padded payload unless `trailer` states
- * another. `kind` fills byte 3, `code` bytes 5 to 7 and `shortField` bytes 8 to 11 of the 16-byte header, none of which the reader reads; each is 0 unless given.
+/* The fields of one record. The builder writes the 20-byte header with its 64-bit timestamp unless `longHeader` is false, which writes the 16-byte header with its
+ * 32-bit timestamp; the marker `a0` unless `marker` states another; the keyframe flag when `keyframe` is set; the payload's own length unless `size` states another;
+ * and a trailer counting the header and the padded payload unless `trailer` states another. `kind` fills byte 3 and `code` bytes 5 to 7, neither of which the
+ * reader reads; each is 0 unless given, as is `timestamp`.
  */
 export interface UbvRecordFields {
 
@@ -26,7 +27,6 @@ export interface UbvRecordFields {
   readonly longHeader?: boolean;
   readonly marker?: number;
   readonly payload: Uint8Array;
-  readonly shortField?: number;
   readonly size?: number;
   readonly timestamp?: number;
   readonly track: number;
@@ -34,11 +34,11 @@ export interface UbvRecordFields {
 }
 
 // One UBV record: the header, the payload, zero bytes up to the next four-byte boundary, then the 32-bit trailer. The 20-byte header writes its 64-bit timestamp as
-// the high 32 bits at offset 8 and the low 32 bits at offset 12, then the payload's size at 16; the 16-byte header writes the size at 12.
+// the high 32 bits at offset 8 and the low 32 bits at offset 12, then the payload's size at 16; the 16-byte header writes its 32-bit timestamp at offset 8, then
+// the size at 12.
 export function ubvRecord(fields: UbvRecordFields): Buffer {
 
-  const { code = 0, keyframe = false, kind = 0, longHeader = true, marker = 0xa0, payload, shortField = 0, size = payload.length, timestamp = 0, track,
-    trailer } = fields;
+  const { code = 0, keyframe = false, kind = 0, longHeader = true, marker = 0xa0, payload, size = payload.length, timestamp = 0, track, trailer } = fields;
   const headerSize = longHeader ? 20 : 16;
   const padding = (4 - (payload.length % 4)) % 4;
   const header = Buffer.alloc(headerSize);
@@ -57,7 +57,7 @@ export function ubvRecord(fields: UbvRecordFields): Buffer {
     header.writeUInt32BE(size, 16);
   } else {
 
-    header.writeUInt32BE(shortField, 8);
+    header.writeUInt32BE(timestamp, 8);
     header.writeUInt32BE(size, 12);
   }
 

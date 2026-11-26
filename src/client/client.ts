@@ -89,7 +89,8 @@ import { wallClock } from "../clock.ts";
  *   accepts - turn it on where a trusted certificate has been installed on the controller and a connection to an impostor should fail rather than proceed. An
  *   injected `dispatcher` or `webSocket` factory brings its own TLS settings, so the option reaches only the connections this client builds for itself.
  * - `webSocket` is the receive-direction {@link ProtectWebSocket} factory used by the events stream and livestream pool; it defaults to a real socket and is the
- *   socket-injection point for tests. It does not apply to the write-direction talkback socket.
+ *   socket-injection point for tests. It does not apply to the write-direction talkback socket. A livestream asking for Opus on its proxied route sends one play
+ *   command on its socket, so a socket this factory builds must carry a `send` method for such a stream, which ends on {@link ProtectConfigurationError} without one.
  *
  * @category Client
  */
