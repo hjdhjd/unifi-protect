@@ -8,6 +8,7 @@ import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/media/init-segment.fixt
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";
+import { FRAME_END_SEGMENT, buildInitSegment, buildLiveFrame, buildMediaSegment, ubvOpening, ubvVideo } from "./livestream-session.helpers.ts";
 import { FakeWebSocket, receivingSurface } from "./events-stream.helpers.ts";
 import type { LivestreamAddresses, LivestreamSessionOptions, LivestreamState, Segment } from "./livestream-session.ts";
 import { LivestreamSession, livestreamKey, resolveLivestreamSpec } from "./livestream-session.ts";
@@ -16,7 +17,6 @@ import { ProtectAbortedError, ProtectCertificateError, ProtectConfigurationError
 import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
 import { UBV_H264, ubvRecord } from "../protocol/media/ubv.helpers.ts";
-import { buildInitSegment, buildLiveFrame, buildMediaSegment, ubvOpening, ubvVideo } from "./livestream-session.helpers.ts";
 import { describe, test } from "node:test";
 import type { MediaFrame } from "../protocol/media/frames.ts";
 import { PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT } from "../settings.ts";
@@ -358,6 +358,19 @@ describe("LivestreamSession", () => {
       ws.emitMessage(buildMediaSegment({ mdat: Buffer.from("N"), moof: Buffer.from("G") }));
 
       assert.deepEqual(segments.map((segment) => (segment.type === "media") ? segment.timestamps : null), [ [ 0, 3000 ], undefined ]);
+    });
+
+    test("a timestamp list held from a segment that never ended does not attach to the segment after it", async () => {
+
+      // A segment that begins and carries its timestamp frame and boxes, but whose end never arrives, then a whole segment that carries no timestamp frame.
+      const { session, ws } = await openSession({ spec: { timestamps: true } });
+      const segments = collectSegments(session);
+      const unended = buildMediaSegment({ mdat: Buffer.from("M"), moof: Buffer.from("F"), timestamps: [ 0, 3000 ] });
+
+      ws.emitMessage(unended.subarray(0, unended.length - buildLiveFrame(FRAME_END_SEGMENT).length));
+      ws.emitMessage(buildMediaSegment({ mdat: Buffer.from("N"), moof: Buffer.from("G") }));
+
+      assert.deepEqual(segments.map((segment) => (segment.type === "media") ? [ segment.data.toString(), segment.timestamps ] : null), [[ "GN", undefined ]]);
     });
 
     test("a cached init is a copy, never a view of the socket message", async () => {

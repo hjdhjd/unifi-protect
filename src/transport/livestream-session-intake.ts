@@ -206,8 +206,10 @@ export class Fmp4Intake implements LivestreamIntake {
 
       case LiveFrame.beginSegment:
 
-        // Reset with fresh arrays so any leftovers from a prior segment cannot leak in if frames arrive out of the expected order.
+        // Reset with fresh arrays so any leftovers from a prior segment cannot leak in if frames arrive out of the expected order, and forget a decode timestamp list a
+        // prior segment left held. A segment's list arrives inside it, after the frame that begins it, so a list still held here belongs to a segment that never ended.
         this.#current = { audio: [], mdat: [], moof: [], video: [] };
+        this.#pendingTimestamps = null;
 
         break;
 
