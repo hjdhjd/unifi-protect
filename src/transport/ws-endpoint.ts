@@ -23,9 +23,9 @@
  *
  * @module ProtectWebSocketEndpoints
  */
-import type { LivestreamAddresses } from "./livestream-session.ts";
+import type { LivestreamAddresses } from "../livestream/session.ts";
 import { PROTECT_PROXY_PATH } from "./url-host.ts";
-import { ProtectProtocolError } from "../errors.ts";
+import { ProtectProtocolError } from "../shared/errors.ts";
 import type { Transport } from "./http.ts";
 
 // The negotiation endpoint paths, each composed from the shared Protect proxy prefix, under which the proxied address the negotiation answers sits too. The paths

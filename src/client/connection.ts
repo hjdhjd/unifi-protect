@@ -28,24 +28,24 @@
  *
  * @module ConnectionMonitor
  */
-import type { ConnectionRebootDetectedPayload, EventsReconnectingPayload } from "../diagnostics.ts";
+import type { ConnectionRebootDetectedPayload, EventsReconnectingPayload } from "../shared/diagnostics.ts";
 import { PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
-  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
+  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../shared/settings.ts";
 import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectRequestError, formatErrorChain, isControllerRefusal, isSignInRefusal,
-  unwrapBootstrapError } from "../errors.ts";
-import { millisecondsSince, wallClock } from "../clock.ts";
-import type { Clock } from "../clock.ts";
-import { EventBus } from "../event-bus.ts";
+  unwrapBootstrapError } from "../shared/errors.ts";
+import { millisecondsSince, wallClock } from "../shared/clock.ts";
+import type { Clock } from "../shared/clock.ts";
+import { EventBus } from "../shared/event-bus.ts";
 import type { EventStream } from "../transport/events-stream.ts";
-import type { ProtectLogging } from "../logging.ts";
-import type { RawPacket } from "../protocol/packet.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
+import type { RawPacket } from "../protocol/realtime/packet.ts";
 import type { StateStore } from "../state/store.ts";
-import type { StreamOptions } from "../event-bus.ts";
-import type { TypedEvent } from "../protocol/events.ts";
-import { channels } from "../diagnostics.ts";
+import type { StreamOptions } from "../shared/event-bus.ts";
+import type { TypedEvent } from "../protocol/realtime/events.ts";
+import { channels } from "../shared/diagnostics.ts";
 import { classifyTransportError } from "../transport/failure.ts";
 import { connectionFaultLevel } from "../transport/connection-fault.ts";
-import { noopLog } from "../logging.ts";
+import { noopLog } from "../shared/logging.ts";
 import { selectControllerUpSince } from "../state/selectors.ts";
 
 // The recovery sub-state the monitor maintains internally. `state` exposes this widened with the derived `throttled` value (see ConnectionState), so the throttle verdict

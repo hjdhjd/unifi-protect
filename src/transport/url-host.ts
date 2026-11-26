@@ -4,7 +4,7 @@
  * one derivation of the controller's URL authority, with each refusal that names the address quoting it through that mask, and the Protect proxy prefix every
  * Protect path on that authority opens with.
  */
-import { ProtectConfigurationError } from "../errors.ts";
+import { ProtectConfigurationError } from "../shared/errors.ts";
 import { isIP } from "node:net";
 
 /**

@@ -14,15 +14,15 @@
  */
 import { DIAL_SETTLE_BOUND_MS, createLoopbackHttpsPeer, createLoopbackHungHttpsPeer, createLoopbackResettingPeer, createLoopbackSilentPeer, elapsedSince,
   pendingThroughRedialWait } from "./tls-peer.helpers.ts";
-import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../diagnostics.ts";
+import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../shared/diagnostics.ts";
 import { MockAgent, Pool, RetryHandler, errors, request } from "undici";
-import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../settings.ts";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../shared/settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError,
-  ProtectThrottledError, ProtectTimeoutError } from "../errors.ts";
+  ProtectThrottledError, ProtectTimeoutError } from "../shared/errors.ts";
 import { RETRY_POLICY, Transport, controllerServing, responseOk, retryUnlessHinted } from "./http.ts";
-import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
+import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../shared/testing.helpers.ts";
 import { TestClock, errnoError, present, settle } from "homebridge-plugin-utils/testing";
-import { channels, subscribeToChannel } from "../diagnostics.ts";
+import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
 import type { AddressInfo } from "node:net";

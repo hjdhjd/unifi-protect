@@ -3,7 +3,7 @@
  * ws.test.ts: Tests for the reasons a socket's one teardown runs for - the close code each reason announces, the frame a peer-close error names, and the fault a
  * socket's failure classifies into, with the line it carries at each level the connection-fault table answers.
  */
-import { ProtectCertificateError, ProtectNetworkError, ProtectTimeoutError } from "../errors.ts";
+import { ProtectCertificateError, ProtectNetworkError, ProtectTimeoutError } from "../shared/errors.ts";
 import { closeFrameText, socketFault, teardownCode } from "./ws.ts";
 import { describe, test } from "node:test";
 import type { SocketTeardown } from "./ws.ts";

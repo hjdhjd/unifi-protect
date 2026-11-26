@@ -2,11 +2,11 @@
  *
  * generate-manifest.ts: The build step that derives the schema manifest from the library's own type tier and the protocol vocabularies.
  */
-import { DEVICE_COLLECTION_KEYS, DEVICE_MODEL_KEYS, KNOWN_EVENT_TYPES, KNOWN_MODEL_KEYS, STATE_MODEL_KEYS } from "../protocol/events.ts";
-import type { JsonTypeName, ModelKeyVocabulary, SchemaManifest, SchemaNode } from "../util/cli/manifest.ts";
-import { MAP_BACKED_STATE_MODEL_KEYS, mapFieldFor } from "../protocol/reducer.ts";
+import { DEVICE_COLLECTION_KEYS, DEVICE_MODEL_KEYS, KNOWN_EVENT_TYPES, KNOWN_MODEL_KEYS, STATE_MODEL_KEYS } from "../protocol/realtime/events.ts";
+import type { JsonTypeName, ModelKeyVocabulary, SchemaManifest, SchemaNode } from "../cli/commands/capture/manifest.ts";
+import { MAP_BACKED_STATE_MODEL_KEYS, mapFieldFor } from "../protocol/realtime/reducer.ts";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { compareCodeUnit } from "../util/cli/output/format.ts";
+import { compareCodeUnit } from "../cli/output/format.ts";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";

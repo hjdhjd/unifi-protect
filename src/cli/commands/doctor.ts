@@ -1,0 +1,417 @@
+/* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ *
+ * doctor.ts: `ufp doctor` - a structured, per-subsystem health check exercising the library's read-only subsystems. The canonical "is my install healthy?" command.
+ */
+import type { Camera, LivestreamAudioCodec, LivestreamRoute, ProtectClient } from "../../index.ts";
+import type { CommandHandler, CommandSpec } from "../shared.ts";
+import { DEVICE_CATEGORIES, devicesInCategory } from "../lookup.ts";
+import { channels, formatErrorChain, subscribeToChannel } from "../../index.ts";
+import { COMMON_OPTIONS } from "../shared.ts";
+import type { Output } from "../output/format.ts";
+import { formatTracks } from "../output/format.ts";
+import { parseArgs } from "node:util";
+import { subscribeDiagnostics } from "../diagnostics-feed.ts";
+
+const USAGE = [
+
+  "Usage: ufp doctor [--json] [--debug]",
+  "",
+  "Run a structured health check of every library subsystem against the controller and report pass/fail per check.",
+  "Exits non-zero if any check fails, so it is usable as a monitoring probe.",
+  "",
+  "Options:",
+  "  --json      Emit the results as a JSON object instead of a report.",
+  "  --debug     Emit the library's debug logging to stderr.",
+  "  -h, --help  Show this help.",
+  "",
+  "Examples:",
+  "  ufp doctor                       # human-readable pass/fail report",
+  "  ufp doctor --json || echo failed # machine-readable; non-zero exit on any failure"
+].join("\n");
+
+// How long to wait for live signals during the health check - long enough that a healthy controller always produces them, short enough that doctor stays a quick probe.
+const EVENT_WAIT_MS = 8000;
+const LIVESTREAM_WAIT_MS = 12000;
+
+// A single check's verdict. `pass` is healthy, `warn` is a non-fatal observation worth flagging (e.g. zero users seen or schema drift), `fail` is a real problem (and
+// fails the exit code), `skip` means the check did not apply (e.g. no online camera to snapshot, so there is nothing to test).
+type CheckStatus = "fail" | "pass" | "skip" | "warn";
+
+interface CheckResult {
+
+  detail?: string;
+  name: string;
+  status: CheckStatus;
+}
+
+// Render a status as a fixed-width, colored tag so the report reads as an aligned column.
+function statusTag(output: Output, status: CheckStatus): string {
+
+  switch(status) {
+
+    case "pass":
+
+      return output.colors.green("PASS");
+
+    case "warn":
+
+      return output.colors.yellow("WARN");
+
+    case "fail":
+
+      return output.colors.red("FAIL");
+
+    default:
+
+      return output.colors.dim("SKIP");
+  }
+}
+
+// Wait for the first realtime event (or time out). A healthy controller broadcasts device-health patches every few seconds, so receiving one proves the events channel is
+// flowing end to end. Returns the kind of the first event seen, or null on timeout.
+async function firstEvent(client: ProtectClient, signal: AbortSignal): Promise<string | null> {
+
+  const deadline = AbortSignal.any([ signal, AbortSignal.timeout(EVENT_WAIT_MS) ]);
+
+  for await(const event of client.events({ signal: deadline })) {
+
+    return event.kind;
+  }
+
+  return null;
+}
+
+// What a livestream probe saw before it left: the codec label and the tracks the init described, whether one of those tracks is Opus, and whether an init and a media
+// segment arrived.
+interface LivestreamProbe {
+
+  codec: string;
+  init: boolean;
+  media: boolean;
+  opus: boolean;
+  tracks: string;
+}
+
+// Subscribe to a camera's livestream on one route, with the audio codec it asks for, just long enough to confirm an init segment (with a codec and the tracks it
+// describes) and at least one media segment arrive, then leave. Proves the livestream pool, session negotiation, the route's dial, init description, and frame decode all
+// work against real hardware. A stream that ends on a terminal throws it from here; a wait that elapses ends the iteration cleanly, with whatever arrived.
+async function probeLivestream(camera: Camera, stream: { audio?: LivestreamAudioCodec; route: LivestreamRoute }, signal: AbortSignal): Promise<LivestreamProbe> {
+
+  const deadline = AbortSignal.any([ signal, AbortSignal.timeout(LIVESTREAM_WAIT_MS) ]);
+
+  await using sub = camera.livestream({ ...stream, signal: deadline, source: { channel: 0, type: "channel" } });
+
+  let codec = "";
+  let init = false;
+  let media = false;
+  let opus = false;
+  let tracks = "";
+
+  for await(const segment of sub) {
+
+    if(segment.type === "init") {
+
+      init = true;
+      codec = segment.codec;
+      opus = segment.description.tracks.some((track) => track.codec === "opus");
+      tracks = formatTracks(segment.description);
+    } else {
+
+      media = true;
+    }
+
+    if(init && media) {
+
+      break;
+    }
+  }
+
+  return { codec, init, media, opus, tracks };
+}
+
+// Whether a camera can stream Opus audio: it has a microphone, the microphone is enabled, and Opus is among the audio codecs it encodes.
+function streamsOpus(camera: Camera): boolean {
+
+  const { featureFlags, isMicEnabled } = camera.config;
+
+  return featureFlags.hasMic && isMicEnabled && featureFlags.audioCodecs.includes("opus");
+}
+
+// The detail a livestream check reports: the camera, what arrived, and the codec label with the tracks the init described.
+function probeDetail(camera: Camera, { codec, init, media, tracks }: LivestreamProbe): string {
+
+  return camera.name + ": init=" + init.toString() + ", media=" + media.toString() + (codec !== "" ? (", codec " + codec) : "") +
+    (tracks !== "" ? (" (" + tracks + ")") : "");
+}
+
+// Render the report as an aligned list of checks plus a summary, returning whether no check failed (for the exit code; warn and skip results do not fail it).
+function renderReport(output: Output, results: CheckResult[]): boolean {
+
+  for(const result of results) {
+
+    const detail = (result.detail !== undefined) ? ("  " + output.colors.dim(result.detail)) : "";
+
+    output.line(statusTag(output, result.status) + "  " + output.colors.bold(result.name) + detail);
+  }
+
+  const passed = results.filter((result) => result.status === "pass").length;
+  const warned = results.filter((result) => result.status === "warn").length;
+  const failed = results.filter((result) => result.status === "fail").length;
+
+  output.line();
+  output.line(output.colors.bold(passed.toString() + " passed, " + warned.toString() + " warnings, " + failed.toString() + " failed."));
+
+  return failed === 0;
+}
+
+/**
+ * `ufp doctor`. Connects once and exercises the library's read-only subsystems as discrete checks: connect and authentication, state and bootstrap, derived selectors,
+ * the user roster (populated at connect, the precondition for `isAdmin` to derive correctly), snapshot, the realtime firehose, the connection monitor, the livestream
+ * pool on its proxied route and then on its direct route, Opus over UBV on the proxied route, the diagnostics channels (a warn-level observation of which channels
+ * fired during the run), and schema drift (unknown modelKeys plus unrecognized bootstrap collections). Designed as a permanent health probe: it exits non-zero if any
+ * check fails. The direct route only ever warns: a stream that ends on a terminal reports it, and one with no media when the wait elapses reports that, because a
+ * refused or unreachable port is retried until the establishment deadline, past the check's wait, so the elapsed wait cannot tell a refused port from a silent
+ * stream. The Opus check only ever warns too, and runs on the first online camera whose microphone is present and enabled and which encodes Opus.
+ *
+ * @category CLI
+ */
+const doctorHandler: CommandHandler = async (ctx) => {
+
+  const { values } = parseArgs({ allowPositionals: false, args: ctx.args, options: { ...COMMON_OPTIONS, json: { type: "boolean" } }, strict: true });
+
+  if(values.help === true) {
+
+    ctx.output.line(USAGE);
+
+    return;
+  }
+
+  const results: CheckResult[] = [];
+
+  // Every check after the connect runs through this single chokepoint: it centralizes turning an unexpected thrown error into a `fail` result, so one probe's crash
+  // demotes to a failed check rather than aborting the whole doctor run and taking the remaining checks down with it. The connect check is handled inline below, because
+  // its failure ends the run.
+  const check = async (name: string, run: () => Promise<Omit<CheckResult, "name">>): Promise<void> => {
+
+    try {
+
+      results.push({ name, ...(await run()) });
+    } catch(error) {
+
+      results.push({ detail: formatErrorChain(error), name, status: "fail" });
+    }
+  };
+
+  // What the diagnostics observations below accumulate. The sets are declared out here because the checks that report them run further down; the subscriptions that
+  // fill them are established inside the try, ahead of the connect.
+  const fired = new Set<string>();
+  const unknownModelKeys = new Set<string>();
+  const unmodeledDrift = new Set<string>();
+  const unmodeledRecognized = new Set<string>();
+
+  // The client is disposed by hand in the `finally` below rather than held with `await using`, because the connect is itself a check whose failure is recorded and
+  // reported rather than thrown, which `await using` around the open would not allow.
+  let client: ProtectClient | undefined;
+
+  try {
+
+    // Observe which channels fire during the run, and capture the schema-drift signals, by subscribing before we connect so the connect handshake's own diagnostics are
+    // counted. The census spans every channel and only needs each name, so it goes through the shared feed; the schema-drift channels are subscribed individually and
+    // typed, so each handler reads its payload's fields directly. Every one of them is a `using` declaration inside this block, so they detach on every exit path and do
+    // so before the `finally` below disposes the client - no handler outlives the run, and none observes what the client's own teardown publishes.
+    using census = subscribeDiagnostics(Object.values(channels), (name) => fired.add(name));
+    using unknownModelKeyDrift = subscribeToChannel(channels.schemaUnknownModelKey, (payload) => unknownModelKeys.add(payload.modelKey));
+
+    // The bootstrap-dimension twin, split by the payload's `known` flag so it mirrors the realtime dimension's severity: a class the library does not recognize at
+    // all (known:false) is genuine drift and warns, while a recognized-but-unreduced class (known:true, e.g. aiport) is named as an informational pass detail.
+    using unmodeledCollectionDrift = subscribeToChannel(channels.schemaUnmodeledCollection,
+      (payload) => (payload.known ? unmodeledRecognized : unmodeledDrift).add(payload.modelKey));
+
+    // The connect itself is the first check; a failure here aborts the rest (there is nothing to test without a client).
+    try {
+
+      client = await ctx.openClient({ debug: values.debug === true, signal: ctx.signal });
+      results.push({ detail: "connected to " + (client.controllerName ?? "the controller"), name: "Connect and authenticate", status: "pass" });
+    } catch(error) {
+
+      results.push({ detail: formatErrorChain(error), name: "Connect and authenticate", status: "fail" });
+
+      const ok = (values.json === true) ? false : renderReport(ctx.output, results);
+
+      if(values.json === true) {
+
+        ctx.output.jsonPretty({ ok, results });
+      }
+
+      process.exitCode = 1;
+
+      return;
+    }
+
+    const connected = client;
+    const snapshot = connected.state.snapshot();
+
+    await check("State and bootstrap", () => Promise.resolve({
+
+      // The inventory line is built off the canonical DEVICE_CATEGORIES vocabulary rather than a hand-listed set, so any device class added to the vocabulary appears
+      // here automatically and the count can never drift from the categories `info` / `reboot` / `watch state` share.
+      detail: DEVICE_CATEGORIES.map((category) => devicesInCategory(connected, category).length.toString() + " " + category).join(", "),
+
+      // The NVR record is what every bootstrap carries about the controller itself, so its presence proves the bootstrap was reduced into state.
+      status: (snapshot.nvr !== null) ? "pass" : "fail"
+    }));
+
+    await check("Derived state (selectors)", () => Promise.resolve({
+
+      detail: "isAdmin=" + connected.isAdmin.toString() + ", controllerName=" + (connected.controllerName ?? "null"),
+
+      // The controller name is selected from the bootstrapped NVR record, so a non-null value proves the selectors read the reduced state. `isAdmin` is reported but
+      // not judged, because false is a valid answer for a non-admin account.
+      status: (connected.controllerName !== null) ? "pass" : "fail"
+    }));
+
+    await check("User roster (realtime isAdmin)", () => Promise.resolve({
+
+      detail: snapshot.users.size.toString() + " users reduced into state; isAdmin derives from the authenticated user and advances on the realtime user rail",
+      status: (snapshot.users.size > 0) ? "pass" : "warn"
+    }));
+
+    const onlineCamera = connected.cameras.find((camera) => camera.isOnline);
+
+    await check("Snapshot", async () => {
+
+      if(onlineCamera === undefined) {
+
+        return { detail: "no online camera to snapshot", status: "skip" };
+      }
+
+      const image = await onlineCamera.snapshot({ signal: ctx.signal });
+
+      // A JPEG begins with the start-of-image marker FF D8.
+      const isJpeg = (image.length >= 2) && (image[0] === 0xFF) && (image[1] === 0xD8);
+
+      return { detail: onlineCamera.name + ": " + image.length.toString() + " bytes" + (isJpeg ? " (JPEG)" : ""), status: isJpeg ? "pass" : "fail" };
+    });
+
+    await check("Realtime event firehose", async () => {
+
+      const kind = await firstEvent(connected, ctx.signal);
+      const detail = (kind !== null) ? ("first event: " + kind) : ("no event within " + (EVENT_WAIT_MS / 1000).toString() + "s");
+
+      return { detail, status: (kind !== null) ? "pass" : "fail" };
+    });
+
+    await check("Connection monitor", () => Promise.resolve({
+
+      detail: "state=" + connected.connection.state + ", throttled=" + connected.connection.isThrottled.toString() + ", lost=" + connected.connection.isLost.toString() +
+        ", rebooting=" + connected.connection.isRebooting.toString(),
+      status: connected.connection.isHealthy ? "pass" : "fail"
+    }));
+
+    // The livestream checks stream from the one online camera and skip alike without one, so the skip is stated once.
+    const livestreamCheck = async (name: string, run: (camera: Camera) => Promise<Omit<CheckResult, "name">>): Promise<void> => check(name, async () => {
+
+      if(onlineCamera === undefined) {
+
+        return { detail: "no online camera to stream", status: "skip" };
+      }
+
+      return run(onlineCamera);
+    });
+
+    await livestreamCheck("Livestream pool (proxied route)", async (camera) => {
+
+      const probe = await probeLivestream(camera, { route: "proxied" }, ctx.signal);
+
+      return { detail: probeDetail(camera, probe), status: (probe.init && probe.media) ? "pass" : "fail" };
+    });
+
+    // The direct route is an alternative a consumer opts into, so a direct route that does not answer warns rather than fails. Its stream's terminal is caught here,
+    // where the check reports it, rather than at the chokepoint, which would fail the run.
+    await livestreamCheck("Livestream pool (direct route)", async (camera) => {
+
+      try {
+
+        const probe = await probeLivestream(camera, { route: "direct" }, ctx.signal);
+
+        if(probe.init && probe.media) {
+
+          return { detail: probeDetail(camera, probe), status: "pass" };
+        }
+
+        return { detail: camera.name + ": no direct media within " + (LIVESTREAM_WAIT_MS / 1000).toString() +
+          "s; a refused or unreachable port retries until the establishment deadline", status: "warn" };
+      } catch(error) {
+
+        return { detail: formatErrorChain(error), status: "warn" };
+      }
+    });
+
+    // Opus over UBV on the proxied route is asked for by the play command the library sends, the one capability Protect itself does not expose, so it is probed on a
+    // camera that can stream Opus at all and skipped without one. Like the direct route it is an alternative a consumer opts into: a stream that carries no Opus warns,
+    // with its terminal's cause chain when it ended on one, and never fails the run.
+    const opusCamera = connected.cameras.find((camera) => camera.isOnline && streamsOpus(camera));
+
+    await check("Livestream Opus over UBV (proxied route)", async () => {
+
+      if(opusCamera === undefined) {
+
+        return { detail: "no online camera with an enabled microphone that encodes Opus", status: "skip" };
+      }
+
+      try {
+
+        const probe = await probeLivestream(opusCamera, { audio: "opus", route: "proxied" }, ctx.signal);
+
+        return { detail: probeDetail(opusCamera, probe), status: (probe.opus && probe.media) ? "pass" : "warn" };
+      } catch(error) {
+
+        return { detail: formatErrorChain(error), status: "warn" };
+      }
+    });
+
+    await check("Diagnostics channels", () => Promise.resolve({
+
+      detail: fired.size.toString() + " of " + Object.keys(channels).length.toString() + " channels fired during the run",
+
+      // A healthy run always publishes an events packet and an HTTP request start, so seeing those two proves the channel registry is live.
+      status: (fired.has(String(channels.eventsPacket.name)) && fired.has(String(channels.httpRequestStart.name))) ? "pass" : "warn"
+    }));
+
+    await check("Schema drift", () => Promise.resolve({
+
+      // Genuine drift warns; recognition does not. A realtime packet carrying an unknown modelKey, or a bootstrap collection whose class the library does not recognize
+      // at all (known:false), is genuine drift and warns. A recognized-but-unreduced bootstrap class (known:true, e.g. aiport) is named as an informational pass detail -
+      // the library knows it exists, it just does not project it yet - so it never warns. The detail always lists every bucket, using a "no X observed" placeholder
+      // when a bucket is empty, so a support log always shows the full picture at a glance.
+      detail: [
+        (unknownModelKeys.size === 0) ? "no unknown modelKeys observed" : ("unknown modelKeys: " + [...unknownModelKeys].join(", ")),
+        (unmodeledDrift.size === 0) ? "no unmodeled drift observed" : ("unmodeled drift (known:false): " + [...unmodeledDrift].join(", ")),
+        (unmodeledRecognized.size === 0) ? "none recognized-but-unmodeled" : ("recognized-but-unmodeled: " + [...unmodeledRecognized].join(", ") + " (not a defect)")
+      ].join("; "),
+      status: ((unknownModelKeys.size === 0) && (unmodeledDrift.size === 0)) ? "pass" : "warn"
+    }));
+
+    const ok = (values.json === true) ? (results.every((result) => result.status !== "fail")) : renderReport(ctx.output, results);
+
+    if(values.json === true) {
+
+      ctx.output.jsonPretty({ ok, results });
+    }
+
+    process.exitCode = ok ? 0 : 1;
+  } finally {
+
+    if(client !== undefined) {
+
+      await client[Symbol.asyncDispose]();
+    }
+  }
+};
+
+// The command descriptor: the handler above plus the one-line summary the usage screen lists it by, so the listing derives from the same object that dispatches.
+export const doctor: CommandSpec = {
+
+  run: doctorHandler,
+  summary: "Run a per-subsystem health check against the controller and report pass/fail."
+};

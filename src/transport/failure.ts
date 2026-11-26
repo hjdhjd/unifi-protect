@@ -19,7 +19,7 @@
  * 4. The transport and errno codes, mapped to their kinds.
  * 5. Everything else, which is a real failure carrying no marker anyone can read.
  */
-import { causeChain } from "../errors.ts";
+import { causeChain } from "../shared/errors.ts";
 
 /* The verdicts the platform's certificate verification can return, each spelled as Node spells it on the error's `code`: the OpenSSL X509 verification family Node
  * maps by name, together with the hostname check Node runs itself.

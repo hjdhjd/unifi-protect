@@ -5,7 +5,7 @@
  * livestream and talkback specializations (each over GET), the composition on an authority carrying a port, the shared no-URL / unparseable-URL / non-2xx failure
  * paths, and forwarding the caller's abort signal to the transport, driven through an undici MockAgent so no live controller is needed.
  */
-import { ProtectAbortedError, ProtectAuthorizationError, ProtectProtocolError } from "../errors.ts";
+import { ProtectAbortedError, ProtectAuthorizationError, ProtectProtocolError } from "../shared/errors.ts";
 import { describe, test } from "node:test";
 import { livestreamUrlResolver, talkbackUrlResolver } from "./ws-endpoint.ts";
 import assert from "node:assert/strict";

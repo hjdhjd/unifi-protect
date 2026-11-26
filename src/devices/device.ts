@@ -2,12 +2,12 @@
  *
  * device.ts: The projection bases - a read-only core every projection shares, and the command-bearing device layer that adds update/reboot on top.
  */
-import type { DeviceCollectionKey, DeviceModelKey } from "../protocol/events.ts";
+import type { DeviceCollectionKey, DeviceModelKey } from "../protocol/realtime/events.ts";
 import type { HttpMethod, ProtectResponse } from "../transport/http.ts";
 import type { DeepPartial } from "../types/index.ts";
 import type { DeviceContext } from "./context.ts";
 import type { ProtectDeviceConfigMap } from "../state/selectors.ts";
-import type { ProtectState } from "../protocol/reducer.ts";
+import type { ProtectState } from "../protocol/realtime/reducer.ts";
 import { deviceEndpoint } from "./endpoints.ts";
 import { isDeviceOnline } from "../state/selectors.ts";
 

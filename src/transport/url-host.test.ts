@@ -5,7 +5,7 @@
  */
 import { controllerAuthority, formatUrlHost, maskAddressCredentials } from "./url-host.ts";
 import { describe, test } from "node:test";
-import { ProtectConfigurationError } from "../errors.ts";
+import { ProtectConfigurationError } from "../shared/errors.ts";
 import assert from "node:assert/strict";
 import { maskAddressCredentials as barrelMaskAddressCredentials } from "../index.ts";
 import { inspect } from "node:util";

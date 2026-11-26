@@ -2,10 +2,10 @@
  *
  * context.ts: The narrow, package-internal dependency surface a device projection needs from the client.
  */
-import type { LivestreamPool } from "../client/livestream-pool.ts";
-import type { ProtectLogging } from "../logging.ts";
+import type { LivestreamPool } from "../livestream/pool.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
 import type { StateStore } from "../state/store.ts";
-import type { TalkbackSession } from "../transport/talkback-session.ts";
+import type { TalkbackSession } from "../talkback/session.ts";
 import type { Transport } from "../transport/http.ts";
 
 /**

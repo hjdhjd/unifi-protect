@@ -4,7 +4,7 @@
  */
 import { Camera } from "./camera.ts";
 import { Chime } from "./chime.ts";
-import type { DeviceCollectionKey } from "../protocol/events.ts";
+import type { DeviceCollectionKey } from "../protocol/realtime/events.ts";
 import type { DeviceContext } from "./context.ts";
 import { Fob } from "./fob.ts";
 import { Light } from "./light.ts";

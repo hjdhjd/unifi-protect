@@ -22,7 +22,7 @@
  *
  * @module ProtectFrames
  */
-import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs.ts";
+import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs/codecs.ts";
 
 /**
  * One audio frame: its codec, its payload as the camera sent it (`data`, a view rather than a copy), and its `timestamp` in ticks at `rate`.

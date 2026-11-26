@@ -44,12 +44,12 @@
  *
  * @module ProtectUbv
  */
-import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs.ts";
+import type { LivestreamAudioCodec, LivestreamVideoCodec } from "./codecs/codecs.ts";
 import type { MediaFrame } from "./frames.ts";
-import { OPUS_DECODE_RATE } from "./opus.ts";
-import { ProtectProtocolError } from "../../errors.ts";
+import { OPUS_DECODE_RATE } from "./codecs/opus.ts";
+import { ProtectProtocolError } from "../../shared/errors.ts";
 import { asBuffer } from "../buffer.ts";
-import { readAdtsHeader } from "./aac.ts";
+import { readAdtsHeader } from "./codecs/aac.ts";
 import { readUInt64 } from "./boxes.ts";
 
 // The byte every record opens with.

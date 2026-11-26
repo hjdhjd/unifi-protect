@@ -5,28 +5,28 @@
  * the silence watchdog, and teardown. Driven through an injected fake WebSocket and a `TestClock`, so the realtime stream is exercised deterministically without a
  * live controller.
  */
-import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
+import type { CapturedLogEntry, CapturingLogger } from "../shared/testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackAlpnPeer, createLoopbackSilentPeer, createLoopbackWebSocketPeer,
   elapsedSince } from "./tls-peer.helpers.ts";
-import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
-import { PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
-import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, ProtectTimeoutError } from "../errors.ts";
-import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
+import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../shared/diagnostics.ts";
+import { PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../shared/settings.ts";
+import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, ProtectTimeoutError } from "../shared/errors.ts";
+import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../shared/testing.helpers.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
-import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
-import { channels, subscribeToChannel } from "../diagnostics.ts";
+import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/realtime/packet.helpers.ts";
+import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
 import { describe, test } from "node:test";
-import { makeAudioDetectAdd, makeAudioDetectUpdate } from "../fixtures.helpers.ts";
+import { makeAudioDetectAdd, makeAudioDetectUpdate } from "../shared/fixtures.helpers.ts";
 import { EventStream } from "./events-stream.ts";
 import type { EventStreamEvents } from "./events-stream.ts";
 import { FakeWebSocket } from "./events-stream.helpers.ts";
-import type { ProtectLogging } from "../logging.ts";
-import type { TypedEvent } from "../protocol/events.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
+import type { TypedEvent } from "../protocol/realtime/events.ts";
 import assert from "node:assert/strict";
 import { constants } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
-import { encodePacket } from "../protocol/packet.ts";
+import { encodePacket } from "../protocol/realtime/packet.ts";
 import { getEventListeners } from "node:events";
 import tls from "node:tls";
 

@@ -1,0 +1,4451 @@
+/* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
+ *
+ * pool.test.ts: Tests for the resilient-by-default LivestreamPool - multi-subscriber session sharing, late-joiner init replay, exact ref-counted teardown,
+ * slow-vs-fast subscriber isolation, the stream-affecting pool key, diagnostics, Camera.livestream delegation, the route each attempt dials with its fallback and its
+ * terminal, and the recovery layer: invisible reconnect (same-stream init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the
+ * establishing and recovering regimes, reassess, and whenEstablished.
+ */
+import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AUDIO_RATE_CHANGED_INIT, AV1_HIGH_BITDEPTH_INIT, AV1_INIT, AV1_RESERVED_BITS_INIT,
+  DOORBELL_INIT } from "../protocol/media/fmp4/init-segment.fixtures.ts";
+import type { CapturedLogEntry, CapturingLogger } from "../shared/testing.helpers.ts";
+import { FakeWebSocket, receivingSurface } from "../transport/events-stream.helpers.ts";
+import type { LivestreamAddresses, LivestreamFrame, LivestreamSpec, Segment } from "./session.ts";
+import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
+  LivestreamRouteFallbackPayload, LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload,
+  LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload } from "../shared/diagnostics.ts";
+import type { LivestreamOutput, LivestreamPoolOptions, LivestreamSubscribeOptions, RecoveryContext, RecoveryPolicy } from "./pool.ts";
+import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./pool.ts";
+import { PROTECT_LIVESTREAM_AUDIO_WAIT_MS, PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS,
+  PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_STALL_DEFAULT_MS, PROTECT_LIVESTREAM_STALL_FLOOR_MS,
+  PROTECT_LIVESTREAM_STALL_POLL_MS } from "../shared/settings.ts";
+import { ProtectAbortedError, ProtectCodecChangeError, ProtectConfigurationError, ProtectLivestreamAudioError, ProtectLivestreamRouteError,
+  ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError } from "../shared/errors.ts";
+import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../shared/testing.helpers.ts";
+import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
+import { buildInitSegment, buildMediaSegment, ubvAudio, ubvOpening, ubvVideo } from "./session.helpers.ts";
+import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
+import { createInitialState, reduce } from "../protocol/realtime/reducer.ts";
+import { describe, test } from "node:test";
+import { describeInitSegment, readSampleDescriptions } from "../protocol/media/fmp4/init-segment.ts";
+import { livestreamKey, resolveLivestreamSpec } from "./session.ts";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
+import { Camera } from "../devices/camera.ts";
+import type { DeviceContext } from "../devices/context.ts";
+import assert from "node:assert/strict";
+import { createDeviceSelectors } from "../state/selectors.ts";
+import { createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
+import { findChild } from "../protocol/media/boxes.ts";
+import { h264Sps } from "../protocol/media/codecs/codecs.helpers.ts";
+import { inspect } from "node:util";
+import { makeCamera } from "../shared/fixtures.helpers.ts";
+
+const SPEC: LivestreamSpec = { cameraId: "cam1", source: { channel: 0, type: "channel" } };
+
+// The line the media-stall watchdog logs as it closes a session that went media-silent, whose context carries the silence it read.
+const MEDIA_SILENT = "Livestream media went silent beyond the detection threshold; recovering the stalled session.";
+
+// The description of `AI_PRO_INIT`, the init bytes every helper-driven init carries unless a test passes its own.
+const AI_PRO_DESCRIPTION = {
+
+  tracks: [
+
+    { codec: "h265", height: 2160, id: 1, kind: "video", level: 150, profile: 1, width: 3840 },
+    { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 16000 }
+  ]
+};
+
+// `AI_PRO_INIT` with the last byte of one track's sample description changed, the video track's unless another index is named: for the video track the last byte
+// of its `hvcC` record, which neither the codec label nor the description reads, so the same label and description sit over parameter sets a decoder is configured
+// from differently. Each description is a view of the init, so the change is written through it.
+function changedSampleDescriptionInit(track = 0): Buffer {
+
+  const init = Buffer.from(AI_PRO_INIT);
+  const description = readSampleDescriptions(init)[track];
+
+  assert.ok(description !== undefined);
+  description.writeUInt8(description.readUInt8(description.length - 1) ^ 0x01, description.length - 1);
+
+  return init;
+}
+
+// `AI_PRO_INIT` with its movie header's creation time one second later, the difference two connections of one stream carry. A version 0 `mvhd` holds its 32-bit
+// creation time past its version and flags.
+function laterCreationTimeInit(): Buffer {
+
+  const init = Buffer.from(AI_PRO_INIT);
+  const mvhd = findChild(init, findChild(init, { end: init.length, start: 0 }, "moov"), "mvhd");
+
+  assert.ok((mvhd !== undefined) && (init.readUInt8(mvhd.start) === 0));
+  init.writeUInt32BE(init.readUInt32BE(mvhd.start + 4) + 1, mvhd.start + 4);
+
+  return init;
+}
+
+// Total index access under noUncheckedIndexedAccess, read as an assertion.
+function at<T>(items: T[], index: number): T {
+
+  const value = items[index];
+
+  assert.ok(value !== undefined, "expected an element at index " + index.toString());
+
+  return value;
+}
+
+// The invented addresses the fixed resolver offers: the proxied one every stream given no route dials, and the direct one beside it.
+const PROXIED_URL = "wss://controller/live";
+const DIRECT_URL = "wss://controller:7446/live";
+
+// The line a "preferDirect" stream logs at debug as an episode falls back, and the debug lines a log holds carrying it.
+const FALLBACK = "The UniFi Protect livestream's direct route failed before its first media; falling back to the proxied route.";
+
+function fallbackLines(log: CapturingLogger): CapturedLogEntry[] {
+
+  return log.entries.filter((entry) => (entry.level === "debug") && (entry.message === FALLBACK));
+}
+
+// The key a "preferDirect" stream over SPEC is pooled under, which each fallback payload of it names.
+const PREFER_DIRECT_KEY = livestreamKey(resolveLivestreamSpec({ ...SPEC, route: "preferDirect" }));
+
+// A resolver whose negotiation offers no direct address, the answer a controller gives that mints none.
+const proxiedOnly = async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: PROXIED_URL });
+
+// A pool over fake sockets and a fixed resolver offering both addresses. Every socket the pool's sessions build is captured, with the URL it was built on, so tests
+// can drive `open` / `message` / `error` deterministically and read which route each attempt dialed. A recovery policy may be injected; omitting it exercises the
+// library default. A resolver may be injected in place of the fixed one, for a test that reads the negotiation itself, and a logger in place of the silent one, for
+// a test that reads what the pool logs.
+function makePool(options: { clock?: TestClock; log?: LivestreamPoolOptions["log"]; recoveryPolicy?: RecoveryPolicy;
+  resolveUrl?: LivestreamPoolOptions["resolveUrl"]; } = {}): { clock: TestClock; pool: LivestreamPool; sockets: FakeWebSocket[]; urls: string[] } {
+
+  const sockets: FakeWebSocket[] = [];
+  const urls: string[] = [];
+  const clock = options.clock ?? new TestClock();
+  const pool = new LivestreamPool({
+
+    clock,
+    log: options.log ?? silentLog(),
+    ...((options.recoveryPolicy !== undefined) && { recoveryPolicy: options.recoveryPolicy }),
+    resolveUrl: options.resolveUrl ?? (async (): Promise<LivestreamAddresses> => ({ direct: DIRECT_URL, proxied: PROXIED_URL })),
+    webSocket: (url: string): FakeWebSocket => {
+
+      const ws = new FakeWebSocket({ autoOpen: false });
+
+      sockets.push(ws);
+      urls.push(url);
+
+      return ws;
+    }
+  });
+
+  return { clock, pool, sockets, urls };
+}
+
+// A resolver that records the signal each negotiation is handed and never settles on its own: once that signal aborts, the promise it returned rejects with
+// ProtectAbortedError, the way the transport answers a cancelled negotiation. A negotiation handed no signal stays pending.
+function capturingResolver(): { resolveUrl: LivestreamPoolOptions["resolveUrl"]; signals: (AbortSignal | undefined)[] } {
+
+  const signals: (AbortSignal | undefined)[] = [];
+  const resolveUrl = async (_params: URLSearchParams, opts: { signal?: AbortSignal }): Promise<LivestreamAddresses> => {
+
+    signals.push(opts.signal);
+
+    const { promise, reject } = Promise.withResolvers<LivestreamAddresses>();
+
+    opts.signal?.addEventListener("abort", () => reject(new ProtectAbortedError("The negotiation was aborted by the caller's signal.")), { once: true });
+
+    return promise;
+  };
+
+  return { resolveUrl, signals };
+}
+
+// Pull a single segment from a subscription, asserting the iterator yielded one.
+async function nextSegment(iterator: AsyncIterator<Segment>): Promise<Segment> {
+
+  const result = await iterator.next();
+
+  assert.equal(result.done, false);
+
+  return result.value;
+}
+
+// Drive a fresh socket through the open + init-segment handshake ONLY (no media), then yield the event loop. Liveness is media-keyed, so this drives a stream to the
+// codec-gate / init point but NOT to "established" / "recovered" - the codec gate fires on the init, the cached init is delivered or suppressed, but `whenEstablished()`
+// stays pending and the recovery episode stays in flight until media flows. Used by tests that legitimately need init-without-media: the codec-gate terminal (a codec
+// change is detected on the init, before any media) and the late-joiner replay (a joiner attaching in the init->media gap gets the cached init). The init bytes default
+// to a captured Protect init, so every init the pool caches carries a real description; a caller driving a changed description passes another capture.
+async function establishInit(ws: FakeWebSocket, opts: { codec: string; data?: Buffer } = { codec: "avc1.640028" }): Promise<void> {
+
+  ws.emitOpen();
+  ws.emitMessage(buildInitSegment({ codec: opts.codec, data: opts.data ?? AI_PRO_INIT }));
+
+  await settle();
+}
+
+// Fully establish (or recover) a stream: drive the open + init handshake AND the first media segment, then yield the event loop so both reach the subscribers. Liveness
+// is media-keyed, so it is this first media - not the init - that settles the episode `recovered`, resolves `whenEstablished()` true, and returns the stream to `live`.
+// The codec label and the init bytes let a caller drive a same-stream (recoverable) or a changed (terminal) reconnect; a changed stream is detected on the init and
+// tears the stream down before the media, so callers driving one use `establishInit` instead.
+async function establish(ws: FakeWebSocket, opts: { codec: string; data?: Buffer } = { codec: "avc1.640028" }): Promise<void> {
+
+  await establishInit(ws, opts);
+  pushMedia(ws);
+
+  await settle();
+}
+
+// Push one media segment over a socket.
+function pushMedia(ws: FakeWebSocket): void {
+
+  ws.emitMessage(buildMediaSegment({ mdat: Buffer.from("m"), moof: Buffer.from("f") }));
+}
+
+describe("LivestreamPool", () => {
+
+  describe("multi-subscriber session sharing", () => {
+
+    test("two subscriptions to the same stream share exactly one underlying session", async () => {
+
+      const { pool, sockets } = makePool();
+
+      await using firstSubscription = pool.subscribe(SPEC);
+      await using secondSubscription = pool.subscribe(SPEC);
+
+      await settle();
+
+      assert.equal(sockets.length, 1);
+    });
+
+    test("disposing one subscriber keeps the session alive for the other; disposing the last closes it", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC);
+
+      await settle();
+
+      const ws = at(sockets, 0);
+
+      ws.emitOpen();
+
+      // The first subscriber leaves; the session must keep running for the second.
+      await sub1[Symbol.asyncDispose]();
+      pushMedia(ws);
+
+      const segment = await nextSegment(sub2[Symbol.asyncIterator]());
+
+      assert.equal(segment.type, "media");
+      assert.equal(ws.closeRequested, false);
+
+      // The last subscriber leaves; the underlying session is torn down.
+      await sub2[Symbol.asyncDispose]();
+
+      assert.equal(ws.closeRequested, true);
+    });
+
+    test("different stream-affecting specs do not share a session", async () => {
+
+      const { pool, sockets } = makePool();
+
+      await using firstSubscription = pool.subscribe({ cameraId: "cam1", source: { channel: 0, type: "channel" } });
+      await using secondSubscription = pool.subscribe({ cameraId: "cam1", source: { channel: 1, type: "channel" } });
+
+      await settle();
+
+      assert.equal(sockets.length, 2);
+    });
+  });
+
+  describe("late-joiner init replay", () => {
+
+    test("a subscriber that joins after the init segment receives the cached init first", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Drive the init only (no media yet): the joiner attaches in the init->media gap, exactly the case where the cached init must be replayed before any media flows.
+      await establishInit(at(sockets, 0), { codec: "avc1.640028", data: Buffer.from("INIT") });
+
+      // A late joiner: the init has already been cached, so it is replayed as this subscriber's first segment.
+      const sub2 = pool.subscribe(SPEC);
+      const segment = await nextSegment(sub2[Symbol.asyncIterator]());
+
+      // The replay is a fresh segment over the cached init's fields - the label, the bytes, and the description, the same object the cache holds. Bytes too short
+      // to hold a box describe as no tracks.
+      assert.ok(segment.type === "init");
+      assert.deepEqual(segment, { codec: "avc1.640028", data: Buffer.from("INIT"), description: { tracks: [] }, type: "init" });
+      assert.equal(sub2.codec, "avc1.640028");
+      assert.deepEqual(sub2.initSegment, { codec: "avc1.640028", data: Buffer.from("INIT"), description: { tracks: [] } });
+      assert.notEqual(segment, sub2.initSegment);
+      assert.equal(segment.description, sub2.initSegment.description);
+
+      await sub1[Symbol.asyncDispose]();
+      await sub2[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("slow-vs-fast subscriber isolation", () => {
+
+    test("a slow subscriber's backlog does not affect a fast subscriber's delivery", async () => {
+
+      const { pool, sockets } = makePool();
+      const fast = pool.subscribe(SPEC);
+      const slow = pool.subscribe(SPEC);
+
+      await settle();
+
+      const ws = at(sockets, 0);
+
+      ws.emitOpen();
+
+      // Push a large run of segments. The slow subscriber never reads, so its queue grows; the fast subscriber drains in full.
+      const total = 10000;
+
+      for(let index = 0; index < total; index++) {
+
+        pushMedia(ws);
+      }
+
+      let delivered = 0;
+
+      for await(const _segment of fast) {
+
+        if(++delivered === total) {
+
+          break;
+        }
+      }
+
+      // The fast subscriber received every segment independently of the slow one, whose queue holds the full backlog.
+      assert.equal(delivered, total);
+      assert.equal(slow.stats.queueDepth, total);
+      assert.equal(slow.stats.peakQueueDepth, total);
+      assert.equal(slow.stats.delivered, 0);
+
+      await slow[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("subscription abort signal", () => {
+
+    test("aborting a subscription's signal disposes only that subscription", async () => {
+
+      const { pool, sockets } = makePool();
+      const controller = new AbortController();
+      const sub1 = pool.subscribe(SPEC);
+
+      // The pool retains this subscription internally, so we discard the handle; its abort signal is what disposes it.
+      pool.subscribe(SPEC, { signal: controller.signal });
+
+      await settle();
+
+      const ws = at(sockets, 0);
+
+      ws.emitOpen();
+
+      // Aborting sub2's signal disposes it; the shared session lives on for sub1.
+      controller.abort();
+      await settle();
+
+      assert.equal(ws.closeRequested, false);
+
+      // Disposing the remaining subscriber tears the session down, proving sub2 had already detached (refcount 2 -> 1 -> 0).
+      await sub1[Symbol.asyncDispose]();
+
+      assert.equal(ws.closeRequested, true);
+    });
+
+    test("an already-aborted signal returns a subscription that is already closed and joins no stream", async () => {
+
+      const opened: LivestreamSessionOpenedPayload[] = [];
+      let urgencyCalls = 0;
+      const urgency = (): number => {
+
+        urgencyCalls++;
+
+        return 0;
+      };
+
+      using openedSubscription = subscribeToChannel(channels.livestreamSessionOpened, (payload) => void opened.push(payload));
+
+      const { pool } = makePool();
+      const controller = new AbortController();
+
+      controller.abort();
+
+      const sub = pool.subscribe(SPEC, { signal: controller.signal, urgency });
+
+      // Every read here is synchronous with the subscribe: the handle is over the moment the caller holds it, so no session was opened and no urgency consulted.
+      assert.equal(sub.state, "closed");
+      assert.equal(sub.initSegment, null);
+      assert.equal(sub.codec, "");
+      assert.equal(urgencyCalls, 0);
+      assert.equal(opened.length, 0);
+      assert.equal(await sub.whenEstablished(), false);
+      assert.equal((await sub[Symbol.asyncIterator]().next()).done, true);
+    });
+
+    test("a late joiner under an already-aborted signal is closed and receives no replayed init", async () => {
+
+      const { pool, sockets } = makePool();
+      const first = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const controller = new AbortController();
+
+      controller.abort();
+
+      // The shared stream is live with an init cached, so a joiner that attached would read it and answer the establishment wait true. This one joins nothing.
+      const late = pool.subscribe(SPEC, { signal: controller.signal });
+      const wait = late.whenEstablished();
+
+      assert.equal(late.state, "closed");
+      assert.equal(late.initSegment, null);
+      assert.equal(late.codec, "");
+      assert.equal(await wait, false);
+      assert.equal((await late[Symbol.asyncIterator]().next()).done, true);
+      assert.equal(at(sockets, 0).closeRequested, false);
+
+      await first[Symbol.asyncDispose]();
+    });
+
+    test("a joiner under an already-aborted signal does not re-decide a parked recovery", async () => {
+
+      const clock = new TestClock();
+      let recoveringCalls = 0;
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        recoveringCalls++;
+
+        // The first recovery decision parks on a long wait; only a joiner that truly attaches should force the re-decision that reconnects.
+        return (recoveringCalls === 1) ? { forMs: 1000000000, kind: "wait" } : { awaitMs: 100000, kind: "reconnect" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      // The controller drops the live stream, beginning a recovering episode the policy parks on a wait - no new socket yet.
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      const controller = new AbortController();
+
+      controller.abort();
+      pool.subscribe(SPEC, { signal: controller.signal });
+      await settle();
+
+      assert.equal(sockets.length, 1);
+      assert.equal(recoveringCalls, 1);
+
+      // Positive control: a joiner with no signal attaches mid-recovery and re-decides the parked window, so the assertions above measure the aborted joiner alone.
+      const joiner = pool.subscribe(SPEC);
+
+      await settle();
+
+      assert.equal(sockets.length, 2);
+      assert.equal(recoveringCalls, 2);
+
+      await joiner[Symbol.asyncDispose]();
+      await sub[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("iterator wake and clean delivery", () => {
+
+    test("a parked iterator wakes when a segment arrives", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      const ws = at(sockets, 0);
+
+      ws.emitOpen();
+
+      const iterator = sub[Symbol.asyncIterator]();
+      // Pull before any segment is queued, so the iterator parks on the wake promise; the incoming segment must resolve it.
+      const pending = iterator.next();
+
+      pushMedia(ws);
+
+      const result = await pending;
+
+      assert.equal(result.done, false);
+      assert.equal(result.value.type, "media");
+
+      await sub[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("ref-counting under concurrent dispose/subscribe", () => {
+
+    test("subscribing again after the last subscriber left creates a fresh session", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+
+      await settle();
+      await sub1[Symbol.asyncDispose]();
+
+      // The key was removed at refcount 0, so a new subscription negotiates a fresh session rather than attaching to the closed one.
+      await using newSubscription = pool.subscribe(SPEC);
+
+      await settle();
+
+      assert.equal(sockets.length, 2);
+    });
+  });
+
+  describe("discardOnDispose", () => {
+
+    test("dropping the undelivered queue on dispose delivers no stale segments and reports the exact discarded count", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC, { discardOnDispose: true });
+
+      await settle();
+
+      // Queue an init and two media without pulling, so three undelivered segments sit in this subscriber's queue.
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+      pushMedia(at(sockets, 0));
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(sub.stats.queueDepth, 3);
+
+      await sub[Symbol.asyncDispose]();
+
+      // The discard cleared every queued segment, and the terminal - not a stale segment - surfaces on the next pull.
+      assert.equal(sub.stats.discarded, 3);
+      assert.equal(sub.stats.queueDepth, 0);
+      assert.equal((await sub[Symbol.asyncIterator]().next()).done, true);
+    });
+
+    test("a pool-forced give-up still drains the queued init before the terminal, even with discardOnDispose set", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC, { discardOnDispose: true });
+
+      await settle();
+
+      // Walk the default establishing curve to the deadline, as the init-then-no-media give-up test does, emitting an init on each fresh socket. The first attempt's
+      // init is queued; later same-stream re-inits are suppressed.
+      const windows = [ 5000, 8000, 10000, 10000 ];
+
+      for(const window of windows) {
+
+        // eslint-disable-next-line no-await-in-loop
+        await establishInit(at(sockets, sockets.length - 1), { codec: "avc1.640028" });
+        clock.advance(window);
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+      }
+
+      // discardOnDispose is scoped to the consumer's own disposal, NOT the pool-forced fail() teardown: the queued init still drains to the consumer before the give-up
+      // terminal, exactly as it does without the option. This is the drain-then-throw contract holding for the pool-forced path regardless of the flag.
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      await assert.rejects(iterator.next(), ProtectLivestreamUnavailableError);
+    });
+
+    test("a pool disposal still drains the queued segments before the clean terminal, even with discardOnDispose set", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC, { discardOnDispose: true });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+      await pool[Symbol.asyncDispose]();
+
+      // Pool disposal closes the subscription rather than disposing it, so discardOnDispose never clears the queue: the init and media still drain before the clean
+      // terminal, and nothing was discarded.
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal((await iterator.next()).done, true);
+      assert.equal(sub.stats.discarded, 0);
+    });
+
+    test("without discardOnDispose a disposed subscription still drains its queued segments before ending", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(sub.stats.queueDepth, 2);
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      await sub[Symbol.asyncDispose]();
+
+      // The default is unchanged: the queued init and media still drain to the consumer before the clean terminal, and nothing was discarded.
+      assert.equal(sub.stats.discarded, 0);
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal((await iterator.next()).done, true);
+    });
+  });
+
+  describe("pool disposal", () => {
+
+    test("disposing the pool closes every managed session", async () => {
+
+      const { pool, sockets } = makePool();
+
+      await using firstSubscription = pool.subscribe({ cameraId: "cam1", source: { channel: 0, type: "channel" } });
+      await using secondSubscription = pool.subscribe({ cameraId: "cam2", source: { channel: 0, type: "channel" } });
+
+      await settle();
+      at(sockets, 0).emitOpen();
+      at(sockets, 1).emitOpen();
+
+      await pool[Symbol.asyncDispose]();
+
+      assert.equal(sockets.length, 2);
+      assert.equal(at(sockets, 0).closeRequested, true);
+      assert.equal(at(sockets, 1).closeRequested, true);
+    });
+
+    test("a stream stopped during URL negotiation aborts the signal its resolver was handed", async () => {
+
+      const { resolveUrl, signals } = capturingResolver();
+      const { pool } = makePool({ resolveUrl });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // The last subscriber leaves while the negotiation is still pending, which stops the stream.
+      await sub[Symbol.asyncDispose]();
+
+      const [signal] = signals;
+
+      assert.equal(signals.length, 1);
+      assert.ok(signal instanceof AbortSignal);
+      assert.equal(signal.aborted, true);
+    });
+
+    test("a recovery retry leaves the replaced session's negotiation running", async () => {
+
+      const { resolveUrl, signals } = capturingResolver();
+      const { clock, pool } = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }), resolveUrl });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // The first window elapses with its negotiation still pending, so the policy reconnects: a fresh session replaces the first, whose negotiation runs on.
+      clock.advance(1000);
+      await settle();
+
+      const [ first, second ] = signals;
+
+      assert.equal(signals.length, 2);
+      assert.ok(first instanceof AbortSignal);
+      assert.ok(second instanceof AbortSignal);
+      assert.ok(Object.is(first, second));
+      assert.equal(first.aborted, false);
+      assert.equal(second.aborted, false);
+
+      // Stopping the stream ends the lifetime every negotiation was handed.
+      await sub[Symbol.asyncDispose]();
+
+      assert.equal(first.aborted, true);
+      assert.equal(second.aborted, true);
+    });
+  });
+
+  describe("certificate verification", () => {
+
+    test("the pool hands its certificate posture to the sessions it mints", async () => {
+
+      /* The pool opens no socket of its own - it mints sessions that do - so what is at stake here is the wiring, and a posture the pool accepted but never passed on
+       * would leave a strict pool dialing exactly as a permissive one does. This subscription therefore runs with no injected socket factory, so the session builds
+       * the agent that carries the posture, and it dials the loopback peer through it.
+       *
+       * The peer is the observer, which keeps this off the recovery machinery entirely: a refusing client and an accepting one both open a TCP connection, and only
+       * the accepting one gets a TLS handshake above it. So a severed connection with no completed handshake is the refusal, in the one place it cannot be confused
+       * with anything the policy or the clock did.
+       */
+      await using peer = await createLoopbackWebSocketPeer();
+      await using pool = new LivestreamPool({ clock: new TestClock(), log: silentLog(),
+        resolveUrl: async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: "wss://" + peer.host + "/live" }), verifyTls: true });
+
+      await using subscription = pool.subscribe(SPEC);
+
+      const connection = await peer.connection(0);
+
+      // Racing the two outcomes rather than awaiting the severance alone: a session that never received the posture would complete the handshake and hold the
+      // connection open, so waiting only on the close would report that as a timeout instead of as the wiring gap it is.
+      await Promise.race([ connection.closed, peer.whenHandshakes(1) ]);
+
+      assert.equal(peer.handshakes, 0, "a session carrying the pool's strict posture must refuse the certificate before the handshake completes");
+    });
+
+    test("the pool's sessions connect normally when strict verification is not asked for", async () => {
+
+      // The same peer, the same pool wiring, one option apart - the control that says the refusal above was the option's doing and not the peer's.
+      await using peer = await createLoopbackWebSocketPeer();
+      await using pool = new LivestreamPool({ clock: new TestClock(), log: silentLog(),
+        resolveUrl: async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: "wss://" + peer.host + "/live" }) });
+
+      await using subscription = pool.subscribe(SPEC);
+
+      await peer.whenHandshakes(1);
+
+      assert.equal(peer.handshakes, 1);
+    });
+  });
+
+  describe("routes", () => {
+
+    test("a stream given no route dials the proxied address on every attempt", async () => {
+
+      const { clock, pool, urls } = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      clock.advance(1000);
+      await settle();
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ PROXIED_URL, PROXIED_URL, PROXIED_URL ]);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("an unknown route is refused at subscribe with ProtectProtocolError, before anything is negotiated", () => {
+
+      let negotiations = 0;
+      const { pool } = makePool({ resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        return { direct: DIRECT_URL, proxied: PROXIED_URL };
+      } });
+
+      // A mistyped route the type refuses at compile time, which an untyped caller can still pass, is refused the way an unknown source type is. A negotiation
+      // starts inside subscribe itself, so none having started is what shows the refusal came first.
+      assert.throws(() => pool.subscribe({ ...SPEC, route: "proxy" } as unknown as LivestreamSpec), ProtectProtocolError);
+      assert.equal(negotiations, 0);
+    });
+
+    test("a direct stream offered no direct address throws ProtectLivestreamRouteError at once, never through the give-up", async () => {
+
+      const exhausted: LivestreamRecoveryExhaustedPayload[] = [];
+      const reasons: string[] = [];
+
+      using exhaustedSubscription = subscribeToChannel(channels.livestreamRecoveryExhausted, (payload) => void exhausted.push(payload));
+      using closedSubscription = subscribeToChannel(channels.livestreamSessionClosed, (payload) => void reasons.push(payload.reason));
+
+      const { pool, sockets } = makePool({ resolveUrl: proxiedOnly });
+      const sub = pool.subscribe({ ...SPEC, route: "direct" });
+      const pending = sub[Symbol.asyncIterator]().next();
+      const settled = settlement(pending);
+
+      // No clock advance: the terminal is the negotiation's own answer, which no window has to elapse to read, so it has arrived by the next turn.
+      await settle();
+
+      assert.ok(settled(), "the terminal arrives with no clock advance");
+
+      await assert.rejects(pending, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamRouteError);
+        assert.equal(error.message, "The UniFi Protect controller offered no direct livestream address.");
+
+        return true;
+      });
+
+      assert.equal(sockets.length, 0);
+      assert.deepEqual(exhausted, [], "a request that could never succeed publishes nothing a self-heal observer acts on");
+      assert.deepEqual(reasons, ["the controller offered no direct livestream address"]);
+      assert.equal(await sub.whenEstablished(), false);
+    });
+
+    test("a preferDirect stream offered no direct address dials proxied next with no clock advance and logs its fallback once", async () => {
+
+      const log = capturingLog();
+      const { pool, urls } = makePool({ log, resolveUrl: proxiedOnly });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct attempt had nothing to dial and built no socket, so the one socket is the proxied attempt that followed it at once.
+      assert.deepEqual(urls, [PROXIED_URL]);
+
+      const context = present(fallbackLines(log)[0], "the fallback's line").args[0] as { cameraId: string; error?: unknown; reason?: unknown };
+
+      assert.equal(fallbackLines(log).length, 1);
+      assert.equal(context.cameraId, "cam1");
+      assert.ok(context.error instanceof ProtectLivestreamRouteError, "the line carries what ended the direct attempt");
+      assert.equal(context.reason, "noDirectAddress");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a preferDirect stream whose direct socket errors before its init dials proxied next at the same attempt count and logs its fallback once", async () => {
+
+      const contexts: RecoveryContext[] = [];
+      const log = capturingLog();
+      const { pool, sockets, urls } = makePool({ log, recoveryPolicy: (context) => {
+
+        contexts.push(context);
+
+        return { awaitMs: 1000, kind: "reconnect" };
+      } });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      assert.deepEqual(urls, [DIRECT_URL]);
+
+      // The direct dial is refused: the attempt falls back at once, its window never elapsing, and the policy is consulted again with no attempt counted.
+      at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL ]);
+      assert.deepEqual(contexts.map((context) => context.attempts), [ 0, 0 ]);
+      assert.equal(fallbackLines(log).length, 1);
+      assert.ok((present(fallbackLines(log)[0], "the fallback's line").args[0] as { error?: unknown }).error instanceof ProtectNetworkError);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a preferDirect stream whose direct window elapses without media dials proxied next at one attempt, and its episode logs its fallback once", async () => {
+
+      const contexts: RecoveryContext[] = [];
+      const log = capturingLog();
+      const { clock, pool, urls } = makePool({ log, recoveryPolicy: (context) => {
+
+        contexts.push(context);
+
+        return { awaitMs: 1000, kind: "reconnect" };
+      } });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct attempt is still dialing when its window elapses, so it is counted as any elapsed window is and falls back then.
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL ]);
+      assert.deepEqual(contexts.map((context) => context.attempts), [ 0, 1 ]);
+
+      // The proxied window elapses too, and the episode stays on the proxied route with no further fallback line.
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL, PROXIED_URL ]);
+      assert.deepEqual(contexts.map((context) => context.attempts), [ 0, 1, 2 ]);
+      assert.equal(fallbackLines(log).length, 1);
+
+      // A session still dialing recorded no close cause, so the line carries none.
+      assert.equal(Object.hasOwn(present(fallbackLines(log)[0], "the fallback's line").args[0] as object, "error"), false);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a preferDirect stream whose negotiation fails logs no fallback, waits out its window, counts the attempt and dials direct next", async () => {
+
+      const contexts: RecoveryContext[] = [];
+      const log = capturingLog();
+
+      let negotiations = 0;
+
+      // The first negotiation fails as an unreachable controller fails it, and the next answers with the direct and proxied addresses.
+      const resolveUrl = async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        if(negotiations === 1) {
+
+          throw new ProtectNetworkError("The invented controller could not be reached.");
+        }
+
+        return { direct: DIRECT_URL, proxied: PROXIED_URL };
+      };
+      const { clock, pool, urls } = makePool({ log, recoveryPolicy: (context) => {
+
+        contexts.push(context);
+
+        return { awaitMs: 1000, kind: "reconnect" };
+      }, resolveUrl });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // Every route shares the negotiation, so its failure says nothing of the direct route: the attempt's end is absorbed and its window stands.
+      assert.equal(negotiations, 1, "nothing is negotiated again before the window elapses");
+      assert.deepEqual(urls, []);
+      assert.equal(fallbackLines(log).length, 0);
+
+      clock.advance(1000);
+      await settle();
+
+      // The elapsed window counts the attempt, and the episode's next attempt dials direct.
+      assert.deepEqual(contexts.map((context) => context.attempts), [ 0, 1 ]);
+      assert.deepEqual(urls, [DIRECT_URL]);
+      assert.equal(fallbackLines(log).length, 0);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a preferDirect stream live on proxied that faults starts its recovering episode direct, and that episode falls back and logs it once", async () => {
+
+      const log = capturingLog();
+      const policy: RecoveryPolicy = (context) => (context.phase === "establishing") ? { awaitMs: 100000, kind: "reconnect" } : { awaitMs: 3000, kind: "reconnect" };
+      const { clock, pool, sockets, urls } = makePool({ log, recoveryPolicy: policy });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // Establishment: the direct attempt is refused, and the proxied attempt behind it establishes the stream.
+      at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+      await establish(at(sockets, 1));
+
+      assert.equal(sub.state, "live");
+      assert.equal(fallbackLines(log).length, 1);
+
+      log.reset();
+
+      // The proxied session drops, and the recovering episode begins on the direct route again, nothing remembered from the episode before it.
+      at(sockets, 1).emitClose(1000, "dropped");
+      await settle();
+
+      assert.equal(at(urls, 2), DIRECT_URL);
+
+      // Its direct attempt is refused, one proxied attempt elapses with no media, and the next proxied attempt recovers the stream.
+      at(sockets, 2).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+      clock.advance(3000);
+      await settle();
+      await establish(at(sockets, 4));
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL, DIRECT_URL, PROXIED_URL, PROXIED_URL ]);
+      assert.equal(sub.state, "live");
+      assert.equal(fallbackLines(log).length, 1, "the recovering episode holds exactly one fallback line, its own");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("subscribers differing only in route hold a socket each, and subscribers on one route share one", async () => {
+
+      const { pool, sockets } = makePool();
+
+      await using proxiedSubscription = pool.subscribe(SPEC);
+      await using directSubscription = pool.subscribe({ ...SPEC, route: "direct" });
+      await using sharingSubscription = pool.subscribe({ ...SPEC, route: "direct" });
+
+      await settle();
+
+      assert.equal(sockets.length, 2);
+    });
+
+    test("a direct stream whose socket fails retries direct with no fallback line", async () => {
+
+      const log = capturingLog();
+      const { clock, pool, sockets, urls } = makePool({ log, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe({ ...SPEC, route: "direct" });
+
+      await settle();
+
+      // The failed socket's death is absorbed, so the window runs its length before the next attempt, which dials direct again.
+      at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+
+      assert.deepEqual(urls, [DIRECT_URL]);
+
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, DIRECT_URL ]);
+      assert.equal(fallbackLines(log).length, 0);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("no log line, livestream payload or thrown error carries a minted alias, across the route terminal and every fallback", async () => {
+
+      const alias = "ZqXwVu";
+      const aliased = async (): Promise<LivestreamAddresses> => ({ direct: "wss://controller:7446/" + alias + "?camera=cam1",
+        proxied: "wss://controller/proxy/protect/" + alias + "?token=" + alias });
+      const proxiedAliased = async (): Promise<LivestreamAddresses> => ({ direct: null, proxied: (await aliased()).proxied });
+      const log = capturingLog();
+      const payloads: unknown[] = [];
+      const thrown: unknown[] = [];
+      const record = (message: unknown): void => void payloads.push(message);
+      const livestreamChannels = Object.values(channels).map((channel) => String(channel.name)).filter((name) => name.startsWith("unifi-protect:livestream:"));
+
+      for(const name of livestreamChannels) {
+
+        subscribe(name, record);
+      }
+
+      try {
+
+        // A direct stream offered no direct address: the route terminal every subscriber throws, collected as it arrives by the turn the scenarios settle on.
+        const terminal = makePool({ log, resolveUrl: proxiedAliased });
+
+        void terminal.pool.subscribe({ ...SPEC, route: "direct" })[Symbol.asyncIterator]().next().catch((error: unknown) => void thrown.push(error));
+
+        // A preferDirect stream offered no direct address, one whose direct socket fails, and one whose direct window elapses: each falls back with its line.
+        const missing = makePool({ log, resolveUrl: proxiedAliased });
+        const failing = makePool({ log, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }), resolveUrl: aliased });
+        const elapsing = makePool({ log, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }), resolveUrl: aliased });
+
+        missing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+        failing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+        elapsing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+        await settle();
+        at(failing.sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+        elapsing.clock.advance(1000);
+        await settle();
+
+        for(const pool of [ terminal.pool, missing.pool, failing.pool, elapsing.pool ]) {
+
+          // eslint-disable-next-line no-await-in-loop
+          await pool[Symbol.asyncDispose]();
+        }
+      } finally {
+
+        for(const name of livestreamChannels) {
+
+          unsubscribe(name, record);
+        }
+      }
+
+      // Every reading the scenarios raised was taken: the terminal, a fallback line for each preferDirect stream and every stream's payloads.
+      assert.equal(thrown.length, 1);
+      assert.equal(fallbackLines(log).length, 3);
+      assert.ok(payloads.length > 0);
+
+      for(const rendered of [ ...log.entries, ...payloads, ...thrown ].map((reading) => inspect(reading, { depth: Infinity }))) {
+
+        assert.ok(!rendered.includes(alias), "no reading may carry the minted alias: " + rendered);
+      }
+    });
+
+    test("disposing a preferDirect stream's only subscription, or its pool, during the direct attempt logs no fallback and builds no further socket", async () => {
+
+      const log = capturingLog();
+
+      // The subscription leaves while its direct attempt is still dialing.
+      const leaving = makePool({ log });
+      const sub = leaving.pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+      await sub[Symbol.asyncDispose]();
+      await settle();
+
+      // The pool is disposed while its stream's direct attempt is still dialing.
+      const disposing = makePool({ log });
+
+      disposing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+      await settle();
+      await disposing.pool[Symbol.asyncDispose]();
+      await settle();
+
+      // The direct attempt fails and the subscription leaves in the same turn, before the loop reads the failure, so the stream is over by the time it does.
+      const racing = makePool({ log });
+      const raced = racing.pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+      at(racing.sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      void raced[Symbol.asyncDispose]();
+      await settle();
+
+      assert.deepEqual([ leaving.urls, disposing.urls, racing.urls ], [ [DIRECT_URL], [DIRECT_URL], [DIRECT_URL] ]);
+      assert.equal(fallbackLines(log).length, 0, "a teardown is never read as a failed dial");
+    });
+
+    test("under a policy that waits after the counted direct elapse, the direct session's late close neither logs a second fallback nor ends the wait", async () => {
+
+      const contexts: RecoveryContext[] = [];
+      const log = capturingLog();
+      const policy: RecoveryPolicy = (context) => {
+
+        contexts.push(context);
+
+        return (context.attempts === 0) ? { awaitMs: 1000, kind: "reconnect" } : { forMs: 5000, kind: "wait" };
+      };
+      const { clock, pool, sockets, urls } = makePool({ log, recoveryPolicy: policy });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct attempt is still dialing when its window elapses: it is counted and falls back, and the policy then waits, leaving that session in place.
+      clock.advance(1000);
+      await settle();
+
+      assert.equal(fallbackLines(log).length, 1);
+      assert.equal(contexts.length, 2);
+
+      // The direct session's dial fails late, inside the wait: the episode has fallen back already, so the death is absorbed.
+      at(sockets, 0).emitError(new Error("connect ETIMEDOUT 10.0.0.9:7446"));
+      await settle();
+
+      assert.equal(fallbackLines(log).length, 1, "the episode logs its fallback once");
+      assert.equal(contexts.length, 2, "the wait was not ended early");
+      assert.deepEqual(urls, [DIRECT_URL]);
+
+      // The wait runs its full length before the policy is consulted again.
+      clock.advance(4999);
+      await settle();
+
+      assert.equal(contexts.length, 2);
+
+      clock.advance(1);
+      await settle();
+
+      assert.equal(contexts.length, 3);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("over a real peer, a strict preferDirect stream's direct upgrade carries no session header, and its proxied fallback refuses the certificate", async () => {
+
+      await using peer = await createLoopbackWebSocketPeer();
+
+      let calls = 0;
+      const log = capturingLog();
+      const getAuthHeaders = (): Record<string, string> => {
+
+        calls++;
+
+        return { cookie: "TOKEN=invented-session", "x-csrf-token": "invented-csrf" };
+      };
+
+      await using pool = new LivestreamPool({ clock: new TestClock(), getAuthHeaders, log,
+        resolveUrl: async (): Promise<LivestreamAddresses> => ({ direct: "wss://" + peer.host + "/direct-alias", proxied: "wss://" + peer.host + "/live" }),
+        verifyTls: true });
+      await using subscription = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      // Every wait on the peer is bounded, so a stream that never completes its direct upgrade or never falls back fails the row within the bound, which then
+      // disposes the pool and the peer rather than holding the test process open on a connection that never comes. The direct upgrade completes over the
+      // self-signed peer under strict verification, carrying no session header and never reading the hook.
+      const upgraded = peer.upgrade(0);
+
+      await expectAt(settlement(upgraded), { message: "the direct attempt completes its upgrade at the peer" });
+
+      const headers = await upgraded;
+
+      assert.equal(Object.hasOwn(headers, "cookie"), false);
+      assert.equal(Object.hasOwn(headers, "x-csrf-token"), false);
+      assert.equal(calls, 0);
+
+      // The peer resets the direct connection before any init, so the stream falls back at once, and the proxied attempt behind it verifies and refuses the peer. The
+      // direct connection was accepted ahead of its upgrade, so it is already in hand.
+      (await peer.connection(0)).reset();
+
+      const fallback = peer.connection(1);
+
+      await expectAt(settlement(fallback), { message: "the stream falls back to a proxied attempt" });
+
+      const handshakeSettled = Promise.race([ (await fallback).closed, peer.whenHandshakes(2) ]);
+
+      await expectAt(settlement(handshakeSettled), { message: "the proxied attempt refuses or completes its handshake" });
+
+      assert.equal(peer.handshakes, 1, "the proxied attempt refused the certificate before its handshake completed");
+      assert.equal(fallbackLines(log).length, 1);
+    });
+
+    test("a fallback with no subscriber publishes nothing and logs at debug, never as a warning", async () => {
+
+      const channel = channels.livestreamRouteFallback;
+      const log = capturingLog();
+
+      let published = 0;
+
+      /* The publish is counted through an own property shadowing the channel's, deleted after, so the channel reads as it did before the row. The test runner's
+       * mock restores a method by defining the original as an own property, which would leave the inactive channel's no-op publish in front of the active one
+       * once a later row subscribes.
+       */
+      channel.publish = (): void => {
+
+        published++;
+      };
+
+      try {
+
+        const { pool, sockets } = makePool({ log, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+        const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+        await settle();
+        at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+        await settle();
+
+        assert.equal(channel.hasSubscribers, false);
+        assert.equal(published, 0, "a channel nobody subscribes to is handed no payload");
+        assert.deepEqual(log.entries.filter((entry) => entry.message === FALLBACK).map((entry) => entry.level), ["debug"]);
+
+        await sub[Symbol.asyncDispose]();
+      } finally {
+
+        Reflect.deleteProperty(channel, "publish");
+      }
+    });
+
+    test("route:fallback fires once with reason unreachable and the dialed port when the direct socket fails before it opens", async () => {
+
+      const fallbacks: LivestreamRouteFallbackPayload[] = [];
+
+      using fallbackSubscription = subscribeToChannel(channels.livestreamRouteFallback, (payload) => void fallbacks.push(payload));
+
+      const { pool, sockets, urls } = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct dial is refused before its socket opens, so the direct connection was never established.
+      at(sockets, 0).emitError(new Error("connect ECONNREFUSED 10.0.0.9:7446"));
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL ]);
+      assert.deepEqual(fallbacks, [{ cameraId: "cam1", key: PREFER_DIRECT_KEY, port: 7446, reason: "unreachable" }]);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("route:fallback fires with reason noMedia when the direct socket opened and its window elapsed without media", async () => {
+
+      const fallbacks: LivestreamRouteFallbackPayload[] = [];
+
+      using fallbackSubscription = subscribeToChannel(channels.livestreamRouteFallback, (payload) => void fallbacks.push(payload));
+
+      const { clock, pool, sockets, urls } = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct socket opens, so the connection was established, and then sends nothing before the attempt's window elapses.
+      at(sockets, 0).emitOpen();
+      clock.advance(1000);
+      await settle();
+
+      assert.deepEqual(urls, [ DIRECT_URL, PROXIED_URL ]);
+      assert.deepEqual(fallbacks, [{ cameraId: "cam1", key: PREFER_DIRECT_KEY, port: 7446, reason: "noMedia" }]);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("route:fallback fires with reason noDirectAddress and a null port when the controller offers no direct address", async () => {
+
+      const fallbacks: LivestreamRouteFallbackPayload[] = [];
+
+      using fallbackSubscription = subscribeToChannel(channels.livestreamRouteFallback, (payload) => void fallbacks.push(payload));
+
+      const { pool, urls } = makePool({ resolveUrl: proxiedOnly });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+
+      // The direct attempt had no address to dial and built no socket, so the one socket is the proxied attempt behind it and the payload names no port.
+      assert.deepEqual(urls, [PROXIED_URL]);
+      assert.deepEqual(fallbacks, [{ cameraId: "cam1", key: PREFER_DIRECT_KEY, port: null, reason: "noDirectAddress" }]);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a failed negotiation, a disposal during the direct attempt and an Opus stream's route terminal publish no fallback", async () => {
+
+      const fallbacks: LivestreamRouteFallbackPayload[] = [];
+
+      using fallbackSubscription = subscribeToChannel(channels.livestreamRouteFallback, (payload) => void fallbacks.push(payload));
+
+      let negotiations = 0;
+
+      // A negotiation that fails says nothing of the direct route, so its attempt waits out its window, and the next attempt dials direct.
+      const negotiating = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }), resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        if(negotiations === 1) {
+
+          throw new ProtectNetworkError("The invented controller could not be reached.");
+        }
+
+        return { direct: DIRECT_URL, proxied: PROXIED_URL };
+      } });
+      const negotiated = negotiating.pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+      negotiating.clock.advance(1000);
+      await settle();
+
+      // The subscription leaves while its direct attempt is still dialing.
+      const leaving = makePool();
+      const left = leaving.pool.subscribe({ ...SPEC, route: "preferDirect" });
+
+      await settle();
+      await left[Symbol.asyncDispose]();
+      await settle();
+
+      // A stream asking for Opus that is offered no direct address ends on its direct attempt.
+      const opus = makePool({ resolveUrl: proxiedOnly });
+      const ended = opus.pool.subscribe({ ...SPEC, audio: "opus", route: "preferDirect" });
+
+      await settle();
+
+      assert.deepEqual([ negotiating.urls, leaving.urls, opus.urls ], [ [DIRECT_URL], [DIRECT_URL], [] ]);
+      assert.equal(await ended.whenEstablished(), false);
+      assert.deepEqual(fallbacks, []);
+
+      await negotiated[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("the UBV upstream and its terminals", () => {
+
+    // A pool whose resolver answers each negotiation from `answers` in turn, holding the last, and whose sockets are fakes, each offered by its receiving surface
+    // alone at the positions `receiveOnly` names. Every fake is captured in the order the pool's sessions built them, and the negotiations are counted.
+    function scriptedPool(opts: { answers: readonly LivestreamAddresses[]; log?: CapturingLogger; receiveOnly?: readonly number[] }): { negotiations: () => number;
+      pool: LivestreamPool; sockets: FakeWebSocket[]; } {
+
+      const sockets: FakeWebSocket[] = [];
+      let negotiations = 0;
+      const pool = new LivestreamPool({ clock: new TestClock(), log: opts.log ?? silentLog(), resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        return at([...opts.answers], Math.min(negotiations, opts.answers.length) - 1);
+      }, webSocket: (): FakeWebSocket | ReturnType<typeof receivingSurface> => {
+
+        const ws = new FakeWebSocket({ autoOpen: false });
+
+        sockets.push(ws);
+
+        return (opts.receiveOnly ?? []).includes(sockets.length - 1) ? receivingSurface(ws) : ws;
+      } });
+
+      return { negotiations: (): number => negotiations, pool, sockets };
+    }
+
+    // Read a stream's terminal: once `trigger` has run, by default nothing beyond a settle, its iterator's next read rejects with the error class with no clock
+    // advance, the session-closed diagnostic carries the reason, and the exhausted diagnostic a self-heal observer acts on never publishes.
+    async function expectTerminal(iterator: AsyncIterator<Segment>, expected: { error: abstract new (...args: never[]) => Error; reason: string },
+      trigger: () => Promise<void> = settle): Promise<void> {
+
+      const exhausted: LivestreamRecoveryExhaustedPayload[] = [];
+      const reasons: string[] = [];
+
+      using exhaustedSubscription = subscribeToChannel(channels.livestreamRecoveryExhausted, (payload) => void exhausted.push(payload));
+      using closedSubscription = subscribeToChannel(channels.livestreamSessionClosed, (payload) => void reasons.push(payload.reason));
+
+      const pending = iterator.next();
+      const settled = settlement(pending);
+
+      await trigger();
+      await settle();
+
+      assert.ok(settled(), "the terminal arrives with no clock advance");
+      await assert.rejects(pending, { constructor: expected.error });
+      assert.deepEqual(exhausted, []);
+      assert.deepEqual(reasons, [expected.reason]);
+    }
+
+    // Establish a UBV stream on a socket: open it and deliver an opening whose init and first media segment the subscriber then reads.
+    async function establishUbv(ws: FakeWebSocket, iterator: AsyncIterator<Segment>, audio: "aac" | "opus"): Promise<void> {
+
+      ws.emitOpen();
+      ws.emitMessage(ubvOpening(audio));
+      await settle();
+
+      assert.deepEqual([ (await nextSegment(iterator)).type, (await nextSegment(iterator)).type ], [ "init", "media" ]);
+    }
+
+    // A run of Opus frames 20 ms apart on the 48 kHz clock from `ticks`, lasting the audio wait, in a stream asking for AAC.
+    function opusRun(ticks: number): Buffer {
+
+      return Buffer.concat(Array.from({ length: 151 }, (_value, index) => ubvAudio("opus", ticks + (index * 960))));
+    }
+
+    // Advance a pool's clock a tick short of `window` and then onto it: the next socket is built exactly at the window, and none a tick before.
+    async function expectNextAt(opened: ReturnType<typeof makePool>, window: number, label: string): Promise<void> {
+
+      const built = opened.sockets.length;
+
+      opened.clock.advance(window - 1);
+      await settle();
+
+      assert.equal(opened.sockets.length, built, label + ", a tick before");
+
+      opened.clock.advance(1);
+      await settle();
+
+      assert.equal(opened.sockets.length, built + 1, label);
+    }
+
+    // Drive `ws`, a socket the pool has just built, as a camera that sends video alone: it opens once the clock has run `opensAfter` ms, and the clock then runs 40 ms
+    // at a time for `span` ms, the socket carrying a frame at each step, from a keyframe unless `keyframe` is false. Answers the clock time of each frame sent.
+    async function sendVideo(clock: TestClock, ws: FakeWebSocket,
+      { keyframe = true, opensAfter, span }: { keyframe?: boolean; opensAfter: number; span: number }): Promise<number[]> {
+
+      const sentAt: number[] = [];
+
+      clock.advance(opensAfter);
+      await settle();
+      ws.emitOpen();
+
+      for(let elapsed = 0; elapsed < span; elapsed += 40) {
+
+        ws.emitMessage(ubvVideo((elapsed / 40) * 3600, { keyframe: keyframe && (elapsed === 0) }));
+        sentAt.push(clock.now());
+        clock.advance(40);
+
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+      }
+
+      return sentAt;
+    }
+
+    const BOTH: LivestreamAddresses = { direct: DIRECT_URL, proxied: PROXIED_URL };
+    const NO_DIRECT: LivestreamAddresses = { direct: null, proxied: PROXIED_URL };
+
+    test("subscribers differing in audio or upstream hold a socket each, Opus resolves to UBV, and an unknown audio or upstream is refused at subscribe", async () => {
+
+      const { pool, sockets } = makePool();
+
+      // AAC from Protect's own fMP4, named or left to the default, AAC from UBV, and Opus, which reads UBV whether its spec names the upstream or not, so the first
+      // two share one socket and the last two another.
+      pool.subscribe(SPEC);
+      pool.subscribe({ ...SPEC, audio: "aac" });
+      pool.subscribe({ ...SPEC, upstream: "ubv" });
+      pool.subscribe({ ...SPEC, audio: "opus" });
+      pool.subscribe({ ...SPEC, audio: "opus", upstream: "ubv" });
+      await settle();
+
+      assert.equal(sockets.length, 3);
+      assert.throws(() => pool.subscribe({ ...SPEC, audio: "mp3" as never }), { constructor: ProtectProtocolError });
+      assert.throws(() => pool.subscribe({ ...SPEC, upstream: "fmp4" as never }), { constructor: ProtectProtocolError });
+
+      await pool[Symbol.asyncDispose]();
+    });
+
+    test("a stream asking for Opus offered no direct address ends on ProtectLivestreamRouteError at once, establishing and live, never through the give-up",
+      async () => {
+
+        const expected = { error: ProtectLivestreamRouteError, reason: "the controller offered no direct livestream address" };
+        const establishing = scriptedPool({ answers: [NO_DIRECT] });
+
+        await expectTerminal(establishing.pool.subscribe({ ...SPEC, audio: "opus" })[Symbol.asyncIterator](), expected);
+        assert.equal(establishing.sockets.length, 0);
+
+        // Live on an address that named its stream, then a reconnect whose negotiation offers none.
+        const live = scriptedPool({ answers: [ BOTH, NO_DIRECT ] });
+        const iterator = live.pool.subscribe({ ...SPEC, audio: "opus" })[Symbol.asyncIterator]();
+
+        await settle();
+        await establishUbv(at(live.sockets, 0), iterator, "opus");
+        await expectTerminal(iterator, expected, async () => at(live.sockets, 0).emitClose(1006, ""));
+      });
+
+    test("a UBV stream carrying another audio codec ends on ProtectLivestreamAudioError at once, establishing and live, never through the give-up", async () => {
+
+      const expected = { error: ProtectLivestreamAudioError, reason: "the controller streamed another audio codec" };
+      const establishing = scriptedPool({ answers: [BOTH] });
+      const first = establishing.pool.subscribe({ ...SPEC, upstream: "ubv" })[Symbol.asyncIterator]();
+
+      await settle();
+      at(establishing.sockets, 0).emitOpen();
+      await expectTerminal(first, expected, async () => at(establishing.sockets, 0).emitMessage(opusRun(0)));
+
+      const live = scriptedPool({ answers: [BOTH] });
+      const iterator = live.pool.subscribe({ ...SPEC, upstream: "ubv" })[Symbol.asyncIterator]();
+
+      await settle();
+      await establishUbv(at(live.sockets, 0), iterator, "aac");
+      await expectTerminal(iterator, expected, async () => at(live.sockets, 0).emitMessage(opusRun(9600)));
+    });
+
+    test("an Opus stream whose socket cannot send ends on ProtectConfigurationError at once, establishing and live, never through the give-up", async () => {
+
+      const expected = { error: ProtectConfigurationError, reason: "the livestream socket cannot send" };
+      const establishing = scriptedPool({ answers: [BOTH], receiveOnly: [0] });
+      const first = establishing.pool.subscribe({ ...SPEC, audio: "opus" })[Symbol.asyncIterator]();
+
+      await settle();
+      at(establishing.sockets, 0).emitOpen();
+      await expectTerminal(first, expected, async () => at(establishing.sockets, 0).emitMessage(ubvOpening("opus")));
+
+      // Live on a socket that sends, then a reconnect onto one that cannot.
+      const live = scriptedPool({ answers: [BOTH], receiveOnly: [1] });
+      const iterator = live.pool.subscribe({ ...SPEC, audio: "opus" })[Symbol.asyncIterator]();
+
+      await settle();
+      await establishUbv(at(live.sockets, 0), iterator, "opus");
+      await expectTerminal(iterator, expected, async () => {
+
+        at(live.sockets, 0).emitClose(1006, "");
+        await settle();
+        at(live.sockets, 1).emitOpen();
+        at(live.sockets, 1).emitMessage(ubvOpening("opus"));
+      });
+    });
+
+    test("a preferDirect Opus stream offered no direct address ends on ProtectLivestreamRouteError with one socket-less session, no fallback and no fallback line",
+      async () => {
+
+        const log = capturingLog();
+        const { negotiations, pool, sockets } = scriptedPool({ answers: [NO_DIRECT], log });
+
+        await expectTerminal(pool.subscribe({ ...SPEC, audio: "opus", route: "preferDirect" })[Symbol.asyncIterator](),
+          { error: ProtectLivestreamRouteError, reason: "the controller offered no direct livestream address" });
+
+        assert.equal(negotiations(), 1);
+        assert.equal(sockets.length, 0);
+        assert.deepEqual(fallbackLines(log), []);
+      });
+
+    test("a preferDirect AAC stream on upstream ubv offered no direct address dials proxied next and logs its fallback once", async () => {
+
+      const log = capturingLog();
+      const { pool, urls } = makePool({ log, resolveUrl: proxiedOnly });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect", upstream: "ubv" });
+
+      await settle();
+
+      // A stream asking for AAC names no stream by the direct address, so the direct attempt that had nothing to dial built no socket, and the one socket is the
+      // proxied attempt that followed it at once.
+      assert.deepEqual(urls, [PROXIED_URL]);
+      assert.equal(fallbackLines(log).length, 1);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a UBV spec whose segment length is not finite is refused at subscribe, before anything is negotiated", () => {
+
+      let negotiations = 0;
+      const { pool } = makePool({ resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        return BOTH;
+      } });
+
+      // A negotiation starts inside subscribe itself, so none having started is what shows the refusal came first.
+      assert.throws(() => pool.subscribe({ ...SPEC, segmentLength: Infinity, upstream: "ubv" }), { constructor: ProtectProtocolError,
+        message: "The UniFi Protect livestream's segment length is not a finite number of milliseconds." });
+      assert.equal(negotiations, 0);
+    });
+
+    test("a UBV stream that expects audio and receives none recovers on its first reconnect, with no urgency and with an urgency of 2000 ms", async () => {
+
+      const bound = PROTECT_LIVESTREAM_AUDIO_WAIT_MS + PROTECT_LIVESTREAM_AWAIT_MARGIN_MS;
+
+      // A camera with a working microphone that sends video alone. Each socket opens 200 ms after the pool builds it and streams a frame every 40 ms of the clock
+      // from a keyframe, so its writer holds the first segment until 3000 ms of video have passed, 3200 ms after the socket was built. Once the stream is live its
+      // socket closes, and the reconnect's frames keep its attempt while the writer waits, whatever window the policy answers, so its first media arrives on that
+      // attempt, inside the audio wait and the await margin.
+      const run = async (urgency?: () => number): Promise<void> => {
+
+        const recovered: LivestreamRecoveryRecoveredPayload[] = [];
+
+        using recoveredSubscription = subscribeToChannel(channels.livestreamRecoveryRecovered, (payload) => void recovered.push(payload));
+
+        const clock = new TestClock();
+        const { pool, sockets } = makePool({ clock });
+        const sub = pool.subscribe({ ...SPEC, upstream: "ubv" }, { ...((urgency !== undefined) && { urgency }) });
+        const builtAt: number[] = [];
+
+        // Run the clock 40 ms at a time for `span` ms, noting when each socket is built and driving the newest: its open 200 ms after it is built, then a frame at
+        // each step.
+        const stream = async (span: number): Promise<void> => {
+
+          for(let elapsed = 0; elapsed < span; elapsed += 40) {
+
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+
+            if(builtAt.length < sockets.length) {
+
+              builtAt.push(clock.now());
+            }
+
+            const age = clock.now() - at(builtAt, builtAt.length - 1);
+            const ws = at(sockets, sockets.length - 1);
+
+            if(age === 200) {
+
+              ws.emitOpen();
+            }
+
+            if(age >= 200) {
+
+              ws.emitMessage(ubvVideo(((age - 200) / 40) * 3600, { keyframe: age === 200 }));
+            }
+
+            clock.advance(40);
+          }
+
+          await settle();
+        };
+
+        await stream(3600);
+
+        assert.equal(sub.state, "live");
+
+        at(sockets, 0).emitClose(1006, "");
+        await stream(8000);
+
+        assert.equal(sub.state, "live");
+        assert.equal(sockets.length, 2);
+        assert.equal(recovered.length, 1);
+        assert.ok(at(recovered, 0).downtimeMs < bound, "recovered after " + String(at(recovered, 0).downtimeMs) + " ms");
+
+        await pool[Symbol.asyncDispose]();
+      };
+
+      await run();
+      await run(() => 2000);
+    });
+
+    test("an attempt whose frames keep arriving outlives its window until its first media, however late its socket opens", async () => {
+
+      const recovered: LivestreamRecoveryRecoveredPayload[] = [];
+
+      using recoveredSubscription = subscribeToChannel(channels.livestreamRecoveryRecovered, (payload) => void recovered.push(payload));
+
+      const { clock, pool, sockets } = makePool();
+      const sub = pool.subscribe({ ...SPEC, upstream: "ubv" }, { urgency: () => 2000 });
+
+      // A camera with a working microphone that sends video alone, so the stream establishes once its writer has waited out the audio wait in video.
+      await settle();
+      await sendVideo(clock, at(sockets, 0), { opensAfter: 0, span: PROTECT_LIVESTREAM_AUDIO_WAIT_MS + 40 });
+
+      assert.equal(sub.state, "live");
+
+      // The live stream closes, and its reconnect's socket opens 2500 ms after it is built, so its writer holds the first media until the audio wait has passed in
+      // video after that, past the window the urgency gives the policy. The attempt's frames keep it until then.
+      at(sockets, 0).emitClose(1006, "");
+      await settle();
+      await sendVideo(clock, at(sockets, 1), { opensAfter: 2500, span: 5500 });
+
+      assert.equal(sub.state, "live");
+      assert.equal(sockets.length, 2);
+      assert.equal(recovered.length, 1);
+
+      await pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt that has fanned no frame ends at its window", async () => {
+
+      const opened = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket opens and sends nothing. The frames the stream fanned arrived on the install before this one, so none
+      // keeps this attempt and the next socket is built at the policy's window.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+      at(opened.sockets, 1).emitOpen();
+
+      await expectNextAt(opened, 1000, "the policy's window");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt whose frames stop ends once their silence reaches the detection threshold", async () => {
+
+      const opened = makePool();
+      const urgency = 2000;
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" }, { urgency: () => urgency });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket streams video for 2000 ms and then falls silent, its writer still waiting for audio when the window the
+      // urgency gives the policy elapses. The attempt's frames keep it until their silence reaches the threshold the urgency sets.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+
+      const sentAt = await sendVideo(opened.clock, at(opened.sockets, 1), { opensAfter: 0, span: 2000 });
+
+      assert.equal(opened.sockets.length, 2);
+
+      await expectNextAt(opened, at(sentAt, sentAt.length - 1) + urgency - opened.clock.now(), "the detection threshold after the last frame");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt whose frames never yield media ends at the establish deadline from its first frame", async () => {
+
+      const opened = makePool();
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket streams video frames none of which is a keyframe, so its writer writes nothing while its frames never
+      // fall silent. The attempt is kept until the establish deadline from its first frame, and the next socket is built then.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+
+      const sentAt = await sendVideo(opened.clock, at(opened.sockets, 1), { keyframe: false, opensAfter: 0, span: PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS - 40 });
+
+      assert.equal(opened.sockets.length, 2);
+
+      await expectNextAt(opened, at(sentAt, 0) + PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS - opened.clock.now(), "the establish deadline from the first frame");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt whose session closes inside its window ends at the window, whatever frames it fanned", async () => {
+
+      const awaitMs = 3000;
+      const opened = makePool({ recoveryPolicy: () => ({ awaitMs, kind: "reconnect" }) });
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket streams video frames none of which is a keyframe and then closes, a third of the way into the policy's
+      // window. The close is absorbed while the window runs, and frames a closed socket sent keep nothing, so the next socket is built at the window.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+
+      const streamed = awaitMs / 3;
+
+      await sendVideo(opened.clock, at(opened.sockets, 1), { keyframe: false, opensAfter: 0, span: streamed });
+      at(opened.sockets, 1).emitClose(1006, "");
+      await settle();
+
+      await expectNextAt(opened, awaitMs - streamed, "the policy's window");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt its frames are keeping past its window ends when its session closes, and the next attempt's close waits out its window", async () => {
+
+      const awaitMs = 1000;
+      const attempts: number[] = [];
+      const log = capturingLog();
+      const opened = makePool({ log, recoveryPolicy: (context) => {
+
+        attempts.push(context.attempts);
+
+        return { awaitMs, kind: "reconnect" };
+      } });
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket streams video frames none of which is a keyframe until the policy's window has passed, so its frames are
+      // what keeps the attempt. The socket then closes with its latest frame a moment old, and the next socket is built at that close, with no further wait. The
+      // attempt is counted as any other that ended without media, and a stream on the proxied route logs no fallback.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+      await sendVideo(opened.clock, at(opened.sockets, 1), { keyframe: false, opensAfter: 0, span: awaitMs + 200 });
+
+      assert.equal(opened.sockets.length, 2, "kept past the window");
+
+      at(opened.sockets, 1).emitClose(1006, "");
+      await settle();
+
+      assert.equal(opened.sockets.length, 3, "ended at the close");
+      assert.deepEqual(attempts, [ 0, 0, 1 ]);
+      assert.deepEqual(fallbackLines(log), []);
+
+      // The attempt that follows is back inside the policy's own window, so its socket closing there is absorbed and the socket after it is built at that window.
+      at(opened.sockets, 2).emitOpen();
+      at(opened.sockets, 2).emitClose(1006, "");
+      await settle();
+
+      assert.equal(opened.sockets.length, 3, "absorbed inside the window");
+
+      await expectNextAt(opened, awaitMs, "the next attempt's window");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("a stream whose session closes in the same message as the media that recovered it recovers again, inside the policy's window and past it", async () => {
+
+      // A reconnect's socket delivers, in one message, an opening and then a video frame whose timestamp steps backward. The opening's first media recovers the
+      // stream, and the writer's refusal of the frame after it closes the session in that same stack, before the recovered window's cleanup has run. The stream
+      // recovers from that close as from any other: its next socket is built at once, and that socket's first media brings it live. `kept` holds the attempt
+      // past the policy's window first, on video alone, so the media that recovers it arrives in a wait its frames were keeping.
+      const run = async (kept: boolean): Promise<void> => {
+
+        const awaitMs = 1000;
+        const opened = makePool({ recoveryPolicy: () => ({ awaitMs, kind: "reconnect" }) });
+        const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+        await settle();
+        await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+        at(opened.sockets, 0).emitClose(1006, "");
+        await settle();
+
+        const span = kept ? (awaitMs + 200) : 0;
+
+        if(kept) {
+
+          await sendVideo(opened.clock, at(opened.sockets, 1), { opensAfter: 0, span });
+        } else {
+
+          at(opened.sockets, 1).emitOpen();
+        }
+
+        at(opened.sockets, 1).emitMessage(Buffer.concat([ ubvOpening("aac", (span / 40) * 3600), ubvVideo(0) ]));
+        await settle();
+
+        assert.equal(opened.sockets.length, 3, "the next socket is built at the close");
+
+        at(opened.sockets, 2).emitOpen();
+        at(opened.sockets, 2).emitMessage(ubvOpening("aac"));
+        await settle();
+
+        assert.equal(sub.state, "live");
+
+        await opened.pool[Symbol.asyncDispose]();
+      };
+
+      await run(false);
+      await run(true);
+    });
+
+    test("the attempt after a close in the stack of recovering media waits out its window when its negotiation is refused at once", async () => {
+
+      const awaitMs = 1000;
+      let negotiations = 0;
+      const opened = makePool({ recoveryPolicy: () => ({ awaitMs, kind: "reconnect" }), resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        // The attempt that follows the close is refused before its negotiation awaits anything, so its session closes ahead of everything the close queued.
+        if(negotiations === 3) {
+
+          throw new ProtectNetworkError("The invented controller could not be reached.");
+        }
+
+        return BOTH;
+      } });
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // A reconnect's frames keep its attempt past the policy's window, and the media that recovers it arrives in one message with a frame the writer refuses, so
+      // the session closes in that stack and the next attempt begins at once. That attempt's window is the policy's own, whatever the wait before it was: its
+      // refused negotiation's close is absorbed, and the attempt after it is made at the window.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+
+      const span = awaitMs + 200;
+
+      await sendVideo(opened.clock, at(opened.sockets, 1), { opensAfter: 0, span });
+      at(opened.sockets, 1).emitMessage(Buffer.concat([ ubvOpening("aac", (span / 40) * 3600), ubvVideo(0) ]));
+      await settle();
+
+      assert.equal(negotiations, 3, "the refused attempt is the only one made at the close");
+
+      opened.clock.advance(awaitMs - 1);
+      await settle();
+
+      assert.equal(negotiations, 3, "a tick before the window");
+
+      opened.clock.advance(1);
+      await settle();
+
+      assert.equal(negotiations, 4, "the next attempt at the window");
+
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("a UBV stream whose parameter sets change at a keyframe ends with ProtectCodecChangeError", async () => {
+
+      const { pool, sockets } = makePool();
+      const iterator = pool.subscribe({ ...SPEC, upstream: "ubv" })[Symbol.asyncIterator]();
+
+      await settle();
+      await establishUbv(at(sockets, 0), iterator, "aac");
+
+      // A keyframe at 18000 ticks carrying an SPS of level 3.1 closes the open segment and starts a new init in the writer, written as its first segment closes,
+      // which the codec gate then ends the stream on.
+      const changed = h264Sps({ constraints: 0, heightInMapUnitsMinus1: 14, levelIdc: 31, profileIdc: 77, widthInMbsMinus1: 19 });
+      const drained: string[] = [];
+
+      at(sockets, 0).emitMessage(Buffer.concat([ ubvVideo(14400), ubvVideo(18000, { keyframe: true, sps: changed }), ubvAudio("aac", 9600), ubvVideo(21600),
+        ubvVideo(25200), ubvVideo(28800) ]));
+      await settle();
+
+      await assert.rejects(async () => {
+
+        for(;;) {
+
+          // eslint-disable-next-line no-await-in-loop
+          drained.push((await nextSegment(iterator)).type);
+        }
+      }, (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.deepEqual([ error.from.codec, error.to.codec ], [ "avc1.4d001e,mp4a.40.2", "avc1.4d001f,mp4a.40.2" ]);
+
+        return true;
+      });
+      assert.deepEqual(drained, ["media"], "the segment the restart closed is delivered, and the new init never is");
+    });
+  });
+
+  describe("the frames output", () => {
+
+    // Pull `count` items from an iterator in order, asserting it yielded each.
+    async function take<T>(iterator: AsyncIterator<T>, count: number): Promise<T[]> {
+
+      const items: T[] = [];
+
+      for(let index = 0; index < count; index++) {
+
+        // eslint-disable-next-line no-await-in-loop
+        const result = await iterator.next();
+
+        assert.ok(result.done !== true, "expected an item at index " + index.toString());
+        items.push(result.value);
+      }
+
+      return items;
+    }
+
+    // The kind, codec and timestamp of each frame, the fields a row reads a frame stream by.
+    const shapes = (frames: readonly LivestreamFrame[]): [string, string, number][] => frames.map((frame) => [ frame.kind, frame.codec, frame.timestamp ]);
+
+    // The frames of `ubvOpening("aac", ticks)`: its keyframe, its AAC frame on the 48 kHz clock and the video frames after them.
+    const opening = (ticks = 0): [string, string, number][] => [ [ "video", "h264", ticks ], [ "audio", "aac", ((ticks * 8) / 15) + 960 ],
+      [ "video", "h264", ticks + 3600 ], [ "video", "h264", ticks + 7200 ], [ "video", "h264", ticks + 10800 ] ];
+
+    test("a frames subscriber receives every frame of the asked codec and no segment, and a segments subscriber beside it receives no frame", async () => {
+
+      const { pool, sockets } = makePool();
+      const segments = pool.subscribe({ ...SPEC, upstream: "ubv" });
+      const frames = pool.subscribe(SPEC, { output: "frames" });
+      const sibling = pool.subscribe(SPEC, { output: "frames" });
+
+      await settle();
+
+      // One socket serves the three. Its opening is followed by an Opus frame, which a stream asking for AAC drops before any subscriber.
+      assert.equal(sockets.length, 1);
+      at(sockets, 0).emitOpen();
+      at(sockets, 0).emitMessage(Buffer.concat([ ubvOpening("aac"), ubvAudio("opus", 2400) ]));
+      await settle();
+
+      assert.deepEqual([ segments.stats.queueDepth, frames.stats.queueDepth, sibling.stats.queueDepth ], [ 2, 5, 5 ]);
+
+      const received = await take(frames[Symbol.asyncIterator](), 5);
+      const siblings = await take(sibling[Symbol.asyncIterator](), 5);
+
+      assert.deepEqual(shapes(received), opening());
+      assert.ok(received.every((frame, index) => frame === siblings[index]), "each frames subscriber receives the same frame object");
+      assert.deepEqual((await take(segments[Symbol.asyncIterator](), 2)).map((segment) => segment.type), [ "init", "media" ]);
+
+      await pool[Symbol.asyncDispose]();
+    });
+
+    test("a frames subscriber shares one socket with an Opus segments subscriber, and holds its own beside an AAC segments subscriber naming no upstream",
+      async () => {
+
+        // A frames subscription reads UBV, so it shares with a segments subscriber whose Opus reads UBV too.
+        const shared = makePool();
+
+        shared.pool.subscribe({ ...SPEC, audio: "opus" }, { output: "frames" });
+        shared.pool.subscribe({ ...SPEC, audio: "opus" });
+        await settle();
+
+        assert.equal(shared.sockets.length, 1);
+
+        // A segments subscriber asking for AAC and naming no upstream reads Protect's own fMP4, a stream of its own.
+        const apart = makePool();
+
+        apart.pool.subscribe(SPEC, { output: "frames" });
+        apart.pool.subscribe(SPEC);
+        await settle();
+
+        assert.equal(apart.sockets.length, 2);
+
+        await shared.pool[Symbol.asyncDispose]();
+        await apart.pool[Symbol.asyncDispose]();
+      });
+
+    test("an unknown output, and an untyped fmp4 upstream on a frames subscription, are refused at subscribe with ProtectProtocolError before any session opens",
+      async () => {
+
+        const opened: LivestreamSessionOpenedPayload[] = [];
+
+        using openedSubscription = subscribeToChannel(channels.livestreamSessionOpened, (payload) => void opened.push(payload));
+
+        const { pool, sockets } = makePool();
+
+        // Each a value the types refuse at compile time, which an untyped caller can still pass.
+        assert.throws(() => pool.subscribe(SPEC, { output: "bytes" } as never), { constructor: ProtectProtocolError });
+        assert.throws(() => pool.subscribe({ ...SPEC, upstream: "fmp4" as never }, { output: "frames" }), { constructor: ProtectProtocolError });
+        await settle();
+
+        assert.deepEqual(opened, []);
+        assert.equal(sockets.length, 0);
+
+        await pool[Symbol.asyncDispose]();
+      });
+
+    test("the first frame after a reconnect, or after an establishing attempt that fanned frames and died before its media, carries discontinuity on a copy, once",
+      async () => {
+
+        const { pool, sockets } = makePool();
+        const frames = pool.subscribe(SPEC, { output: "frames" });
+        const iterator = frames[Symbol.asyncIterator]();
+
+        await settle();
+        at(sockets, 0).emitOpen();
+        at(sockets, 0).emitMessage(ubvOpening("aac"));
+        await settle();
+
+        // A cold start's frames begin the stream, so none is marked.
+        assert.ok((await take(iterator, 5)).every((frame) => !Object.hasOwn(frame, "discontinuity")));
+
+        // The controller closes the stream, and the reconnect's first frame is marked, on a copy whose payload is still a view of its message, and no frame after it.
+        at(sockets, 0).emitClose(1000, "the controller closed the stream");
+        await settle();
+        at(sockets, 1).emitOpen();
+        at(sockets, 1).emitMessage(ubvOpening("aac", 90000));
+        await settle();
+
+        const resumed = await take(iterator, 5);
+
+        assert.deepEqual(shapes(resumed), opening(90000));
+        assert.deepEqual(resumed.map((frame) => frame.discontinuity), [ true, undefined, undefined, undefined, undefined ]);
+        assert.equal(at(resumed, 0).data.buffer, at(resumed, 1).data.buffer);
+
+        await pool[Symbol.asyncDispose]();
+
+        // An establishing attempt fans a keyframe, which its writer holds, and the keyframe keeps the attempt past its window until its silence reaches the default
+        // detection threshold, before its first media. The attempt after it is still establishing, and its first frame is marked all the same.
+        const clock = new TestClock();
+        const attempts = makePool({ clock, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+        const establishing = attempts.pool.subscribe(SPEC, { output: "frames" });
+        const establishingIterator = establishing[Symbol.asyncIterator]();
+
+        await settle();
+        at(attempts.sockets, 0).emitOpen();
+        at(attempts.sockets, 0).emitMessage(ubvVideo(0, { keyframe: true }));
+        await settle();
+
+        assert.equal(Object.hasOwn(at(await take(establishingIterator, 1), 0), "discontinuity"), false);
+        assert.equal(establishing.state, "connecting");
+
+        clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
+        await settle();
+        at(attempts.sockets, 1).emitOpen();
+        at(attempts.sockets, 1).emitMessage(ubvOpening("aac"));
+        await settle();
+
+        assert.deepEqual((await take(establishingIterator, 5)).map((frame) => frame.discontinuity), [ true, undefined, undefined, undefined, undefined ]);
+        assert.equal(establishing.state, "live");
+
+        await attempts.pool[Symbol.asyncDispose]();
+      });
+
+    test("a frames joiner gets no init replay", async () => {
+
+      const { pool, sockets } = makePool();
+      const segments = pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      at(sockets, 0).emitOpen();
+      at(sockets, 0).emitMessage(ubvOpening("aac"));
+      await settle();
+
+      // The init is cached, and a frames joiner shares the stream yet is handed none of it: its first item is the stream's next frame.
+      const joiner = pool.subscribe(SPEC, { output: "frames" });
+
+      assert.equal(sockets.length, 1);
+      assert.equal(joiner.stats.queueDepth, 0);
+
+      at(sockets, 0).emitMessage(ubvVideo(14400));
+      await settle();
+
+      assert.deepEqual(shapes(await take(joiner[Symbol.asyncIterator](), 1)), [[ "video", "h264", 14400 ]]);
+      assert.equal(joiner.codec, segments.codec);
+
+      await pool[Symbol.asyncDispose]();
+    });
+
+    test("a frames-only stream establishes on its media, stays live while its media flows and, its clock run past the stall threshold with no media, recovers",
+      async () => {
+
+        const clock = new TestClock();
+        const { pool, sockets } = makePool({ clock });
+        const frames = pool.subscribe(SPEC, { output: "frames" });
+
+        await settle();
+        at(sockets, 0).emitOpen();
+        at(sockets, 0).emitMessage(ubvOpening("aac"));
+        await settle();
+
+        // The writer's first media segment establishes the stream though no subscriber iterates it.
+        assert.equal(frames.state, "live");
+        assert.equal(await frames.whenEstablished(), true);
+        assert.equal(frames.stats.queueDepth, 5);
+
+        // Just under the threshold the stream's next segment closes, its media refreshing the watchdog's clock though no subscriber iterates it, so the stream is
+        // still live past the threshold measured from its first media.
+        clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS - PROTECT_LIVESTREAM_STALL_POLL_MS);
+        at(sockets, 0).emitMessage(Buffer.concat([ ubvVideo(14400), ubvVideo(18000), ubvVideo(21600), ubvVideo(25200) ]));
+        await settle();
+        clock.advance(2 * PROTECT_LIVESTREAM_STALL_POLL_MS);
+        await settle();
+        await settle();
+
+        assert.equal(frames.state, "live");
+        assert.equal(sockets.length, 1);
+
+        // Media-silent past the default threshold while an audio frame keeps the socket's heartbeat alive and reaches the subscriber: a frame stamps nothing on the
+        // stream, so the media watchdog recovers it.
+        clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
+        at(sockets, 0).emitMessage(ubvAudio("aac", 9600));
+        await settle();
+        await settle();
+
+        assert.equal(frames.state, "recovering");
+        assert.equal(sockets.length, 2);
+        assert.equal(frames.stats.queueDepth, 10);
+
+        await pool[Symbol.asyncDispose]();
+      });
+  });
+
+  describe("resilient recovery", () => {
+
+    test("a controller close drives an invisible reconnect: the iterator survives and segments resume", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Establish keys on media: the init and the first media flow on the original socket, and it is the media that settles the stream `live`.
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      // The controller closes the stream. The pool recovers rather than failing the subscriber: a fresh session is created synchronously.
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      assert.equal(sockets.length, 2);
+
+      // The reconnected socket delivers the same stream, so its redundant init is suppressed and media resumes uninterrupted - no second init reaches the iterator. The
+      // reconnect settles `recovered` only when its first media flows, not on the suppressed init.
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
+
+      const resumed = await nextSegment(iterator);
+
+      assert.equal(resumed.type, "media");
+      assert.equal(sub.state, "live");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("the first media segment after a reconnect carries a discontinuity marker; establishment and steady-state segments do not", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      // Establishment is not a discontinuity: the timeline is beginning, not resuming, so neither the init nor the first media segment is marked. The first media is the
+      // one establish pushed - the segment that settles the stream `recovered` AND, were it a reconnect, would carry the marker; here it must not, because there is no
+      // prior timeline.
+      assert.equal((await nextSegment(iterator)).type, "init");
+
+      const established = await nextSegment(iterator);
+
+      assert.ok((established.type === "media") && (established.discontinuity === undefined), "establishment media must not be marked");
+
+      // The controller closes the stream; the pool reconnects on a fresh same-stream socket (its redundant init is suppressed and media resumes uninterrupted).
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      // The first media segment from the reconnected session is marked: its timeline restarted near zero, a backward jump the consumer must resynchronize on. The marker
+      // lands on the very segment that settles `recovered` (establish drives that first media), so recovered and the discontinuity coincide on one segment.
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
+
+      const resumed = await nextSegment(iterator);
+
+      assert.ok((resumed.type === "media") && (resumed.discontinuity === true), "the first media after a reconnect must be marked");
+
+      // The latch clears after one marked segment: steady-state media that follows is unmarked.
+      pushMedia(at(sockets, 1));
+
+      const steady = await nextSegment(iterator);
+
+      assert.ok((steady.type === "media") && (steady.discontinuity === undefined), "steady-state media after the marked segment must not be marked");
+
+      // A second reconnect re-arms the marker, again on its first (recovered-settling) media.
+      at(sockets, 1).emitClose(1000, "the controller closed the stream again");
+      await settle();
+      await establish(at(sockets, 2), { codec: "avc1.640028" });
+
+      const resumedAgain = await nextSegment(iterator);
+
+      assert.ok((resumedAgain.type === "media") && (resumedAgain.discontinuity === true), "the first media after a second reconnect must be marked again");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a multi-attempt initial establishment does not mark its first-ever media as a discontinuity", async () => {
+
+      const clock = new TestClock();
+
+      // A policy that always reconnects lets us drive a failed first establishment attempt deterministically by elapsing its window.
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Attempt 0's window elapses without a segment. No media has ever flowed, so the episode is still ESTABLISHING (a cold start), not recovering, and the pool retries
+      // on a fresh socket. This is exactly the case that arming on a non-null prior session object would have misread as a reconnect.
+      clock.advance(1000);
+      await settle();
+
+      assert.equal(sockets.length, 2);
+
+      // Attempt 1 succeeds and delivers the first-ever media - the segment that settles this still-establishing episode `recovered`. There is no prior timeline, so it
+      // must NOT be marked, even though this install replaced a prior failed session object (the case arming on a non-null prior would have misread).
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+
+      const firstMedia = await nextSegment(iterator);
+
+      assert.ok((firstMedia.type === "media") && (firstMedia.discontinuity === undefined), "the first-ever media of a multi-attempt cold start must not be marked");
+      assert.equal(sub.state, "live");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a heartbeat stall recovers rather than failing the subscriber", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+
+      // The subscriber opts out of media-stall detection, so the session heartbeat is the only detector and stays this row's subject. Left at the 10s default, the
+      // media watchdog would read the same silence on the same advance and close the session first.
+      const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
+
+      await settle();
+
+      // Fully establish on media (init + first media), so the stream is genuinely `live` before we stall it - liveness is media-keyed.
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      // The first session goes silent past its heartbeat window; its watchdog tears it down, and the pool begins recovery. The advance matches
+      // PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, the silence threshold the watchdog fires at.
+      clock.advance(10000);
+      await settle();
+      await settle();
+
+      assert.equal(sockets.length, 2);
+      assert.equal(sub.state, "recovering");
+
+      // The reconnected session restores the stream on its first media; the iterator never saw the stall error.
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a codec change across a reconnect terminates the iterator with ProtectCodecChangeError", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Fully establish on media so the close that follows begins a recovering episode (a close while live is a fault; a close while still establishing is absorbed).
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      // Drain the established init and media so the next pull surfaces the terminal rather than a queued segment.
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      // The reconnected session negotiates a different codec; the codec gate fires on the reconnect's INIT (before any media), so no fixed-codec consumer can adapt
+      // mid-stream and the iterator throws the terminal. Init-only: the change is terminal before media would ever flow.
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90" });
+
+      // The terminal carries the inits themselves, each the one init shape: its label, its bytes and its description, and nothing of the segment it came from.
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.deepEqual(error.from, { codec: "avc1.640028", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
+        assert.deepEqual(error.to, { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
+
+        return true;
+      });
+
+      assert.equal(sub.state, "closed");
+    });
+
+    test("a reconnect under the same codec label whose description changed terminates the iterator with ProtectCodecChangeError", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      // The reconnected session carries the same label over a different stream - 3024 by 4096 at level 180 where 3840 by 2160 at level 150 was in flight - so the
+      // label alone would let it through. Media follows the init, so a gate that let the stream through would hand the iterator that media rather than leave it parked.
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: DOORBELL_INIT });
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.equal(error.from.codec, error.to.codec);
+        assert.deepEqual(error.from.data, AI_PRO_INIT);
+        assert.deepEqual(error.to.data, DOORBELL_INIT);
+        assert.notDeepEqual(error.from.description, error.to.description);
+
+        return true;
+      });
+
+      assert.equal(sub.state, "closed");
+    });
+
+    test("a reconnect under the same codec label whose audio rate alone moved terminates the iterator with ProtectCodecChangeError", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      // The reconnected session carries the same label and the same video track, and its audio runs at 48000 Hz where 16000 Hz was in flight - a move no codec
+      // label carries, since a label names an audio track's object type and never its rate. Media follows the init, so a gate that let the stream through would hand
+      // the iterator that media rather than leave it parked.
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: AUDIO_RATE_CHANGED_INIT });
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.equal(error.from.codec, error.to.codec);
+        assert.deepEqual(error.from.description, AI_PRO_DESCRIPTION);
+        assert.deepEqual(error.to.description, { tracks: [ AI_PRO_DESCRIPTION.tracks[0], { channels: 1, codec: "aac", id: 2, kind: "audio", sampleRate: 48000 } ] });
+
+        return true;
+      });
+
+      assert.equal(sub.state, "closed");
+    });
+
+    test("a reconnect whose init differs only in its timestamps is the same stream, so its init is suppressed and media resumes", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+
+      // The captures share a label and a description and differ only in their creation and modification times, the difference every reconnect of one stream
+      // carries, so the reconnect's init is suppressed and the cache keeps the first init's bytes.
+      await establish(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: AI_PRO_RECONNECT_INIT });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+      assert.deepEqual(sub.initSegment?.data, AI_PRO_INIT);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a changed init on a live session ends the stream with ProtectCodecChangeError and the codec diagnostic", async () => {
+
+      const changed: LivestreamCodecChangedPayload[] = [];
+
+      using changedSubscription = subscribeToChannel(channels.livestreamCodecChanged, (payload) => void changed.push(payload));
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The live session sends a further init past its first media, of another stream, then media: the codec gate ends the stream on the init, so the media never
+      // reaches the iterator, the diagnostic publishes once, and the cache keeps the stream's first init.
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "hvc1.1.6.L180.90", data: DOORBELL_INIT }));
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(changed.length, 1);
+      assert.deepEqual(at(changed, 0).from, { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
+      assert.deepEqual(at(changed, 0).to.data, DOORBELL_INIT);
+
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectCodecChangeError);
+        assert.equal(error.message, "The UniFi Protect livestream changed its codec or format.");
+        assert.deepEqual(error.from.data, AI_PRO_INIT);
+        assert.equal(error.to.codec, "hvc1.1.6.L180.90");
+        assert.deepEqual(error.to.data, DOORBELL_INIT);
+
+        return true;
+      });
+
+      assert.equal(sub.state, "closed");
+      assert.deepEqual(sub.initSegment?.data, AI_PRO_INIT);
+      assert.equal(sockets.length, 1);
+    });
+
+    test("an identical init on a live session is swallowed", async () => {
+
+      const changed: LivestreamCodecChangedPayload[] = [];
+
+      using changedSubscription = subscribeToChannel(channels.livestreamCodecChanged, (payload) => void changed.push(payload));
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      const cached = sub.initSegment;
+
+      // The live session sends the stream's own init again past its first media, then media: the init reaches no subscriber, so the next segment the iterator
+      // yields is that media, and the cache keeps the first init's very object.
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "hev1.1.6.L150.90", data: AI_PRO_INIT }));
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.initSegment, cached);
+      assert.equal(sub.state, "live");
+      assert.equal(changed.length, 0);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("an init whose sample description changed under the same label and description is a changed stream, on a reconnect and on a live session", async () => {
+
+      const changedSets = changedSampleDescriptionInit();
+
+      // The changed init carries the stream's label and describes as the stream does, so the label and the description alone would read it as the same stream.
+      assert.deepEqual(describeInitSegment(changedSets), AI_PRO_DESCRIPTION);
+
+      // A stream established on `AI_PRO_INIT` meets the changed init either from its reconnect or on its live session, each followed by media, which a gate that let
+      // the stream through would hand the iterator rather than end it.
+      const follow = async (path: "live" | "reconnect"): Promise<void> => {
+
+        const { pool, sockets } = makePool();
+        const sub = pool.subscribe(SPEC);
+
+        await settle();
+        await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+        const iterator = sub[Symbol.asyncIterator]();
+
+        assert.equal((await nextSegment(iterator)).type, "init");
+        assert.equal((await nextSegment(iterator)).type, "media");
+
+        if(path === "reconnect") {
+
+          at(sockets, 0).emitClose(1000, "the controller closed the stream");
+          await settle();
+          at(sockets, 1).emitOpen();
+        }
+
+        const socket = at(sockets, sockets.length - 1);
+
+        socket.emitMessage(buildInitSegment({ codec: "hev1.1.6.L150.90", data: changedSets }));
+        pushMedia(socket);
+        await settle();
+
+        await assert.rejects(iterator.next(), ProtectCodecChangeError, path);
+        assert.equal(sub.state, "closed", path);
+      };
+
+      await follow("reconnect");
+      await follow("live");
+    });
+
+    test("an init whose audio track's sample description changed under the same label and description is a changed stream", async () => {
+
+      // The audio track's last byte lies in its esds past the AudioSpecificConfig the description reads, so the label and the description alone would read the
+      // changed init as the same stream, and the video track's sample description is the stream's own.
+      const changedAudio = changedSampleDescriptionInit(1);
+
+      assert.deepEqual(describeInitSegment(changedAudio), AI_PRO_DESCRIPTION);
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The reconnect's init is followed by media, which a gate that let the stream through would hand the iterator rather than end it.
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: changedAudio });
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      await assert.rejects(iterator.next(), ProtectCodecChangeError);
+      assert.equal(sub.state, "closed");
+    });
+
+    test("two inits that differ only in a creation time are one stream", async () => {
+
+      const later = laterCreationTimeInit();
+
+      assert.notDeepEqual(later, AI_PRO_INIT);
+
+      // A stream established on `AI_PRO_INIT` meets the init one second later in creation time from its reconnect and then on its live session: each is the same
+      // stream, so neither reaches the iterator, media resumes after each, and the cache keeps the first init.
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+      await establish(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: later });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 1).emitMessage(buildInitSegment({ codec: "hev1.1.6.L150.90", data: later }));
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+      assert.deepEqual(sub.initSegment?.data, AI_PRO_INIT);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("two AV1 inits that differ only in av1C's reserved bits are one stream, on a reconnect and on a live session", async () => {
+
+      // A stream established on `AV1_INIT` meets the init whose av1C sets every reserved bit, from its reconnect and then on its live session: the reserved bits are
+      // no part of a track's sample description, so each is the same stream, neither reaches the iterator, media resumes after each, and the cache keeps the first.
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "av01.0.13M.08", data: AV1_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+      await establish(at(sockets, 1), { codec: "av01.0.13M.08", data: AV1_RESERVED_BITS_INIT });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 1).emitMessage(buildInitSegment({ codec: "av01.0.13M.08", data: AV1_RESERVED_BITS_INIT }));
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+      assert.deepEqual(sub.initSegment?.data, AV1_INIT);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("an AV1 init that differs in a bit a decoder reads under the same label and description is a changed stream", async () => {
+
+      // `AV1_HIGH_BITDEPTH_INIT` sets av1C's `high_bitdepth`, which a decoder reads and the description does not, so the label and the description alone would read
+      // it as the same stream.
+      assert.deepEqual(describeInitSegment(AV1_HIGH_BITDEPTH_INIT), describeInitSegment(AV1_INIT));
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "av01.0.13M.08", data: AV1_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The reconnect's init is followed by media, which a gate that let the stream through would hand the iterator rather than end it.
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+      await establishInit(at(sockets, 1), { codec: "av01.0.13M.08", data: AV1_HIGH_BITDEPTH_INIT });
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      await assert.rejects(iterator.next(), ProtectCodecChangeError);
+      assert.equal(sub.state, "closed");
+    });
+
+    test("the recovery policy giving up terminates the iterator with ProtectLivestreamUnavailableError", async () => {
+
+      const { pool, sockets } = makePool({ recoveryPolicy: () => ({ kind: "giveUp" }) });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // A giveUp-first policy never even opens a socket: establishment is abandoned immediately.
+      assert.equal(sockets.length, 0);
+
+      await assert.rejects(sub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.equal(error.phase, "establishing");
+        assert.equal(error.attempts, 0);
+
+        return true;
+      });
+
+      assert.equal(await sub.whenEstablished(), false);
+    });
+
+    test("a recovery policy that throws is treated as a give-up, terminating the iterator without leaking an unhandled rejection", async () => {
+
+      // A consumer-supplied policy is arbitrary code; if it throws, the pool must neither wedge the stream nor surface an unhandled rejection on the detached recovery
+      // task. The throw is caught and treated exactly as an explicit giveUp - the stream tears down and the terminal reaches every subscriber - so a throwing policy
+      // fails closed, identically to the giveUp-first decision above: abandoned at establishment, before a socket is even opened.
+      const { pool, sockets } = makePool({ recoveryPolicy: () => { throw new Error("the recovery policy threw"); } });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      assert.equal(sockets.length, 0, "a policy that throws at the first consultation abandons establishment before opening a socket");
+
+      await assert.rejects(sub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.equal(error.phase, "establishing");
+        assert.equal(error.attempts, 0);
+
+        return true;
+      });
+
+      assert.equal(await sub.whenEstablished(), false);
+    });
+
+    test("bounded establishment: the policy gives up after its attempt budget, throwing the establishing terminal", async () => {
+
+      const clock = new TestClock();
+      const policy: RecoveryPolicy = (context) => (context.attempts >= 2) ? { kind: "giveUp" } : { awaitMs: 1000, kind: "reconnect" };
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Attempt 0 opened a socket and is waiting its window; elapse it twice to exhaust the budget. No socket ever delivers a segment.
+      clock.advance(1000);
+      await settle();
+      clock.advance(1000);
+      await settle();
+
+      assert.equal(sockets.length, 2);
+
+      await assert.rejects(sub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.equal(error.phase, "establishing");
+        assert.equal(error.attempts, 2);
+
+        return true;
+      });
+    });
+
+    test("a give-up carries what ended the last session as its cause, and nothing when that session closed plainly or is still open", async () => {
+
+      const policy: RecoveryPolicy = (context) => (context.attempts >= 1) ? { kind: "giveUp" } : { awaitMs: 1000, kind: "reconnect" };
+      const failing = makePool({ clock: new TestClock(), recoveryPolicy: policy });
+      const failingSub = failing.pool.subscribe(SPEC);
+      const boom = new Error("socket boom");
+
+      await settle();
+
+      // The one attempt's socket fails, which the session records as its closure's cause; the attempt's window then elapses and the policy gives up.
+      present(failing.sockets[0], "the attempt's socket").emitError(boom);
+      failing.clock.advance(1000);
+      await settle();
+
+      await assert.rejects(failingSub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.ok(error.cause instanceof ProtectNetworkError, "the give-up says why the stream could not be established");
+        assert.ok(Object.is(error.cause.cause, boom));
+
+        return true;
+      });
+
+      const quiet = makePool({ clock: new TestClock(), recoveryPolicy: policy });
+      const quietSub = quiet.pool.subscribe(SPEC);
+
+      await settle();
+
+      // This attempt's socket stays open and silent, so its session recorded no cause and the give-up has none to carry.
+      quiet.clock.advance(1000);
+      await settle();
+
+      await assert.rejects(quietSub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.equal(error.cause, undefined);
+
+        return true;
+      });
+    });
+
+    test("a give-up a throwing policy forces carries the policy's throw as its cause", async () => {
+
+      const thrown = new Error("the recovery policy threw");
+      const { pool } = makePool({ recoveryPolicy: () => { throw thrown; } });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      await assert.rejects(sub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.ok(Object.is(error.cause, thrown));
+
+        return true;
+      });
+    });
+
+    test("an init-then-no-media session is a failed attempt that gives up establishing at the deadline", async () => {
+
+      const clock = new TestClock();
+
+      // The library default policy: patient establishing curve (5s, 8s, 10s, holding) bounded by the 30s deadline.
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Each attempt: the controller acks with an init but then produces NO media, then we elapse the attempt's window. Because liveness is media-keyed, an init alone
+      // never settles the episode, so each such session is a failed media-establishment attempt - exactly the init-then-hang the establishment deadline bounds. We
+      // walk the full default curve (5s + 8s + 10s + 10s = 33s) until the deadline is crossed, emitting the init on each fresh socket and elapsing its window.
+      const windows = [ 5000, 8000, 10000, 10000 ];
+
+      for(const window of windows) {
+
+        const socket = at(sockets, sockets.length - 1);
+
+        // eslint-disable-next-line no-await-in-loop
+        await establishInit(socket, { codec: "avc1.640028" });
+        clock.advance(window);
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+      }
+
+      // The deadline (30s) is crossed, so the next consult gives up. Four patient attempts opened four sockets; the stream never established despite every init.
+      assert.equal(sockets.length, 4);
+
+      // The very first attempt's init was delivered (no prior cache) and is queued; subsequent same-stream re-inits were suppressed. Drain that one init so the next pull
+      // surfaces the establishing terminal rather than the queued init - proving the init was delivered yet the stream still never established (no media ever flowed).
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.equal(error.phase, "establishing");
+
+        return true;
+      });
+
+      assert.equal(await sub.whenEstablished(), false);
+    });
+
+    test("a braindead connection that never produces media gives up at the establishing deadline", async () => {
+
+      const clock = new TestClock();
+
+      // A socket that opens but never sends an init OR media must still be bounded by the time-based establishing deadline, never waiting forever.
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Open each fresh socket but emit nothing, then elapse its window. The deadline is time-based from the episode start, so a perennially-silent connection gives up.
+      const windows = [ 5000, 8000, 10000, 10000 ];
+
+      for(const window of windows) {
+
+        at(sockets, sockets.length - 1).emitOpen();
+        clock.advance(window);
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+      }
+
+      assert.equal(sockets.length, 4);
+
+      await assert.rejects(sub[Symbol.asyncIterator]().next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.equal(error.phase, "establishing");
+
+        return true;
+      });
+
+      assert.equal(await sub.whenEstablished(), false);
+    });
+
+    test("a give-up during recovery throws the recovering terminal with the attempt count", async () => {
+
+      const clock = new TestClock();
+
+      // Establish patiently, then let the recovering episode reconnect once and give up on its next consultation, so the terminal carries one failed attempt.
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        return (context.attempts < 1) ? { awaitMs: 3000, kind: "reconnect" } : { kind: "giveUp" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The controller drops the stream, and the recovering episode's one reconnect elapses its window with no media.
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+      clock.advance(3000);
+      await settle();
+
+      await assert.rejects(iterator.next(), (error: unknown) => {
+
+        assert.ok(error instanceof ProtectLivestreamUnavailableError);
+        assert.equal(error.phase, "recovering");
+        assert.equal(error.attempts, 1);
+
+        return true;
+      });
+    });
+
+    test("a recovering-phase init-then-no-media session reconnects on its first media", async () => {
+
+      const clock = new TestClock();
+
+      // Establish patiently, then on the recovering episode reconnect with a bounded window so an init-then-no-media recovery attempt elapses and retries until media
+      // flows.
+      const policy: RecoveryPolicy = (context) => (context.phase === "establishing") ? { awaitMs: 100000, kind: "reconnect" } : { awaitMs: 1000, kind: "reconnect" };
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The controller drops the stream, starting a recovering episode.
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      // The first recovery attempt acks with an init but produces no media; its window elapses, so it is a failed attempt and the pool reconnects again.
+      await establishInit(at(sockets, 1), { codec: "avc1.640028" });
+      clock.advance(1000);
+      await settle();
+
+      assert.equal(sockets.length, 3);
+      assert.equal(sub.state, "recovering");
+
+      // The next recovery attempt produces media: only now does the episode settle `recovered` and the stream return to live.
+      await establish(at(sockets, 2), { codec: "avc1.640028" });
+
+      const resumed = await nextSegment(iterator);
+
+      assert.ok((resumed.type === "media") && (resumed.discontinuity === true), "the recovering first media settles recovered and is marked");
+      assert.equal(sub.state, "live");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a second consecutive reconnect settles recovered on its first media, with no wedge in recovering", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // First reconnect: settles recovered on its first media.
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      // Second consecutive reconnect: it too must settle recovered on its own first media - the media latch re-arms per install, so the second recovery does not wedge in
+      // "recovering" waiting on a settle that the init alone would never deliver.
+      at(sockets, 1).emitClose(1000, "dropped again");
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+
+      await establish(at(sockets, 2), { codec: "avc1.640028" });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("cancellation during the init-to-media gap tears the stream down and resolves the establishment wait false", async () => {
+
+      const clock = new TestClock();
+      const attempts: number[] = [];
+
+      // Record the attempt count of each decision the policy is consulted for, so the row can read how many decisions the episode asked for.
+      const policy: RecoveryPolicy = (context) => {
+
+        attempts.push(context.attempts);
+
+        return { awaitMs: 100000, kind: "reconnect" };
+      };
+
+      const controller = new AbortController();
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC, { signal: controller.signal });
+
+      await settle();
+
+      // The stream inits but has NOT yet produced media: the episode is in flight in the init->media gap, the window cancellation must survive.
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "connecting");
+
+      // Cancel mid-gap. The subscription disposes, the last subscriber leaves, and teardown aborts the controller, which closes the socket and ends the episode.
+      controller.abort();
+      await settle();
+
+      assert.equal(sub.state, "closed");
+      assert.equal(at(sockets, 0).closeRequested, true);
+      assert.equal(await sub.whenEstablished(), false);
+
+      // Exactly one decision was consulted (the initial establish), and only its socket was ever opened.
+      assert.deepEqual(attempts, [0]);
+      assert.equal(sockets.length, 1);
+    });
+
+    test("reassess during the init-to-media gap does not reconnect while establishing", async () => {
+
+      const clock = new TestClock();
+      let consults = 0;
+
+      // The default-shaped establishing policy: a patient reconnect window. Count consults to prove the reassess did not re-consult and reinstall mid-establishment.
+      const policy: RecoveryPolicy = (context) => {
+
+        consults++;
+
+        return (context.phase === "establishing") ? { awaitMs: 100000, kind: "reconnect" } : { kind: "giveUp" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // The stream inits but has not produced media: the establishing episode is in flight in the init->media gap.
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "connecting");
+      assert.equal(consults, 1);
+
+      // A reassess in the gap must be inert: establishment is urgency-independent, so re-asking cannot change the window, and reinstalling would tear down a healthy
+      // connecting session about to produce media. No new socket, no second consult.
+      sub.reassess();
+      await settle();
+
+      assert.equal(sockets.length, 1);
+      assert.equal(consults, 1);
+      assert.equal(sub.state, "connecting");
+
+      // The in-flight session's first media still settles establishment normally - the reassess left it untouched.
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(sub.state, "live");
+      assert.equal(await sub.whenEstablished(), true);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("urgency is aggregated across subscribers by the minimum", async () => {
+
+      const clock = new TestClock();
+      const contexts: RecoveryContext[] = [];
+      const policy: RecoveryPolicy = (context) => {
+
+        contexts.push({ ...context });
+
+        // Establish patiently (a window long enough that the test never elapses it), then give up on the first recovery so the episode ends deterministically.
+        return (context.phase === "establishing") ? { awaitMs: 100000, kind: "reconnect" } : { kind: "giveUp" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub1 = pool.subscribe(SPEC, { urgency: () => 5000 });
+
+      await settle();
+
+      // Fully establish on media so the stream is live (liveness is media-keyed) before the drop begins a recovering episode the policy then gives up on.
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      // A second, more-urgent subscriber joins the live stream, then the controller drops it - so the recovery decision sees both subscribers.
+      const sub2 = pool.subscribe(SPEC, { urgency: () => 200 });
+
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      const recovering = contexts.find((context) => context.phase === "recovering");
+
+      assert.ok(recovering !== undefined);
+      assert.equal(recovering.toleranceMs, 200);
+
+      // The give-up tore the stream down; both subscribers reach the terminal once their queued segments drain.
+      assert.equal(sub1.state, "closed");
+      assert.equal(sub2.state, "closed");
+
+      await sub1[Symbol.asyncDispose]();
+      await sub2[Symbol.asyncDispose]();
+    });
+
+    test("reassess is a no-op on a healthy stream", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      // The stream is live: no recovery episode is in flight, so reassess must not reconnect a working stream.
+      sub.reassess();
+      await settle();
+
+      pushMedia(at(sockets, 0));
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sockets.length, 1);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("reassess re-decides an in-flight recovery episode", async () => {
+
+      const clock = new TestClock();
+      let recoveringCalls = 0;
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        recoveringCalls++;
+
+        // The first recovery decision parks on a long wait; the reassess must force a re-decision that this time reconnects.
+        return (recoveringCalls === 1) ? { forMs: 1000000000, kind: "wait" } : { awaitMs: 100000, kind: "reconnect" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      // The recovery episode is parked on a `wait` - no new socket yet.
+      assert.equal(sockets.length, 1);
+
+      sub.reassess();
+      await settle();
+
+      // The reassess re-consulted the policy, which now reconnected.
+      assert.equal(sockets.length, 2);
+      assert.equal(recoveringCalls, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a disposed subscriber's reassess cannot re-decide a shared in-flight recovery episode", async () => {
+
+      const clock = new TestClock();
+      let recoveringCalls = 0;
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        recoveringCalls++;
+
+        // The first recovery decision parks on a long wait; only a valid reassess should force the re-decision that reconnects.
+        return (recoveringCalls === 1) ? { forMs: 1000000000, kind: "wait" } : { awaitMs: 100000, kind: "reconnect" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+
+      // Both subscribers attach before the drop (sub1 at establishment, sub2 once live), so neither attach falls in the recovering phase where the joiner
+      // re-decision fires.
+      const sub1 = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const sub2 = pool.subscribe(SPEC);
+
+      // The controller drops the live stream, beginning a recovering episode the policy parks on a wait - no new socket yet.
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      assert.equal(sockets.length, 1);
+
+      // Dispose one subscriber; the sibling still owns the in-flight episode, and detach does not re-decide while a subscriber remains.
+      await sub1[Symbol.asyncDispose]();
+      await settle();
+
+      // The disposed subscriber's reassess must leave the parked episode untouched. Without the guard this call settles the episode early, reconnecting and incrementing
+      // recoveringCalls - so the assertions below (socket count and recoveringCalls) fail against the unguarded implementation.
+      sub1.reassess();
+      await settle();
+
+      assert.equal(sockets.length, 1);
+      assert.equal(recoveringCalls, 1);
+
+      // Positive control: the still-live sibling's reassess DOES settle the episode, proving the guard is scoped to the disposed subscription rather than disabling
+      // reassessment outright.
+      sub2.reassess();
+      await settle();
+
+      assert.equal(sockets.length, 2);
+      assert.equal(recoveringCalls, 2);
+
+      await sub2[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("recovery diagnostics", () => {
+
+    test("recovery:started and recovery:recovered fire across an invisible reconnect", async () => {
+
+      const started: LivestreamRecoveryStartedPayload[] = [];
+      const recovered: LivestreamRecoveryRecoveredPayload[] = [];
+
+      using startedSubscription = subscribeToChannel(channels.livestreamRecoveryStarted, (payload) => void started.push(payload));
+      using recoveredSubscription = subscribeToChannel(channels.livestreamRecoveryRecovered, (payload) => void recovered.push(payload));
+
+      const { clock, pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      // The stream runs a second past its last segment before the drop, and the reconnect's media lands a second and a half into the recovery, inside the 3s first
+      // recovery window, so each payload reports a duration of its own.
+      clock.advance(1000);
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+      clock.advance(1500);
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
+
+      assert.equal(started.length, 1);
+      assert.equal(recovered.length, 1);
+      assert.equal(at(started, 0).key.startsWith("cam1:0:"), true);
+      assert.equal(at(started, 0).cameraId, "cam1");
+      assert.equal(at(started, 0).sinceLastSegmentMs, 1000);
+      assert.equal(at(recovered, 0).downtimeMs, 1500);
+      assert.equal(at(recovered, 0).cameraId, "cam1");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("stall:detected fires with the silence and the last segment time on a heartbeat stall", async () => {
+
+      const stalls: LivestreamStallDetectedPayload[] = [];
+
+      using stallSubscription = subscribeToChannel(channels.livestreamStallDetected, (payload) => void stalls.push(payload));
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+
+      // The subscriber opts out of media-stall detection, so the stall the channel reports is the session heartbeat's. Left at the 10s default, the media watchdog
+      // would read the same silence on the same advance and close the session before the heartbeat could report it.
+      const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      // A media segment a second in moves the last segment time off the stamp the stream took at construction, then the session goes silent for its full heartbeat
+      // window, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, and its watchdog reports the stall.
+      clock.advance(1000);
+      pushMedia(at(sockets, 0));
+      await settle();
+      clock.advance(10000);
+      await settle();
+      await settle();
+
+      assert.equal(stalls.length, 1);
+      assert.equal(at(stalls, 0).cameraId, "cam1");
+      assert.equal(at(stalls, 0).lastSegmentAt, 1000);
+      assert.equal(at(stalls, 0).silentForMs, 10000);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("across backward steps of the time of day, the stall reports the time of day at the last segment and recovery the time that passed since it", async () => {
+
+      const stalls: LivestreamStallDetectedPayload[] = [];
+      const started: LivestreamRecoveryStartedPayload[] = [];
+
+      using stallSubscription = subscribeToChannel(channels.livestreamStallDetected, (payload) => void stalls.push(payload));
+      using startedSubscription = subscribeToChannel(channels.livestreamRecoveryStarted, (payload) => void started.push(payload));
+
+      const { clock, pool, sockets } = makePool();
+
+      // The subscriber opts out of media-stall detection, so the stall is the session heartbeat's, as in the row above.
+      const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      /* A second passes before the last segment, so its monotonic stamp is a second past every stamp taken before it, and a recovery measuring from an earlier one
+       * would read a second more. The time of day is then set back before the segment and again after it, and the heartbeat's wake is armed on the same timeline,
+       * so reaching it takes the steps as well as the window. The stall publishes the time of day the segment arrived at, a timestamp recorded as its event
+       * happened, while the recovery the stall starts reports the time that passed since that segment, which no step shrinks.
+       */
+      clock.advance(1000);
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      pushMedia(at(sockets, 0));
+      await settle();
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + (2 * TIME_OF_DAY_STEP_MS));
+      await settle();
+      await settle();
+
+      assert.equal(stalls.length, 1);
+      assert.equal(at(stalls, 0).lastSegmentAt, 1000 - TIME_OF_DAY_STEP_MS, "the stall carries the time of day the last segment arrived at");
+      assert.equal(at(stalls, 0).silentForMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + (2 * TIME_OF_DAY_STEP_MS));
+      assert.equal(started.length, 1);
+      assert.equal(at(started, 0).sinceLastSegmentMs, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT + (2 * TIME_OF_DAY_STEP_MS),
+        "the recovery reports the time that passed since the last segment");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a backward step of the time of day during a recovery episode leaves its elapsed time and its downtime the time that passed", async () => {
+
+      const recovered: LivestreamRecoveryRecoveredPayload[] = [];
+      const elapsed: number[] = [];
+
+      using recoveredSubscription = subscribeToChannel(channels.livestreamRecoveryRecovered, (payload) => void recovered.push(payload));
+
+      // Establish patiently, then reconnect on a three-second window each time the recovering episode consults, recording the elapsed time it is handed.
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        elapsed.push(context.elapsedMs);
+
+        return { awaitMs: 3000, kind: "reconnect" };
+      };
+
+      const { clock, pool, sockets } = makePool({ recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      /* The controller drops the stream and the episode begins. The time of day is set back while the first reconnect's window runs, and the window is armed on the
+       * same timeline, so reaching its end takes the step as well as the window; the second reconnect's media lands a second later. All of it is time that passed.
+       */
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      clock.advance(3000 + TIME_OF_DAY_STEP_MS);
+      await settle();
+      clock.advance(1000);
+      await establish(at(sockets, 2), { codec: "avc1.640028" });
+
+      assert.deepEqual(elapsed, [ 0, 3000 + TIME_OF_DAY_STEP_MS ], "the policy is handed the time that passed since the episode began");
+      assert.equal(recovered.length, 1);
+      assert.equal(at(recovered, 0).downtimeMs, 4000 + TIME_OF_DAY_STEP_MS, "the downtime is the time that passed, never shrunk by the step");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("recovery:exhausted fires and carries the attempt count when the policy gives up", async () => {
+
+      const exhausted: LivestreamRecoveryExhaustedPayload[] = [];
+
+      using exhaustedSubscription = subscribeToChannel(channels.livestreamRecoveryExhausted, (payload) => void exhausted.push(payload));
+
+      const clock = new TestClock();
+      const policy: RecoveryPolicy = (context) => (context.attempts >= 2) ? { kind: "giveUp" } : { awaitMs: 1000, kind: "reconnect" };
+      const { pool } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Each attempt elapses its window with no segment until the budget is spent, so the policy gives up on its next consultation and the payload carries every
+      // attempt made.
+      clock.advance(1000);
+      await settle();
+      clock.advance(1000);
+      await settle();
+
+      await assert.rejects(sub[Symbol.asyncIterator]().next(), ProtectLivestreamUnavailableError);
+
+      assert.equal(exhausted.length, 1);
+      assert.equal(at(exhausted, 0).attempts, 2);
+      assert.equal(at(exhausted, 0).cameraId, "cam1");
+    });
+
+    test("codec:changed fires with the prior and the reconnected init on a codec change", async () => {
+
+      const changed: LivestreamCodecChangedPayload[] = [];
+
+      using changedSubscription = subscribeToChannel(channels.livestreamCodecChanged, (payload) => void changed.push(payload));
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Fully establish on media so the close begins a recovering episode the codec change then terminates.
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      // Drain the established init and media so the next pull surfaces the terminal rather than a queued segment.
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      // The codec gate fires on the reconnect's init, before any media - init-only.
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90" });
+
+      assert.equal(changed.length, 1);
+      assert.deepEqual(at(changed, 0).from, { codec: "avc1.640028", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
+      assert.deepEqual(at(changed, 0).to, { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT, description: AI_PRO_DESCRIPTION });
+      assert.equal(at(changed, 0).cameraId, "cam1");
+
+      await assert.rejects(iterator.next(), ProtectCodecChangeError);
+    });
+
+    test("session and subscription lifecycle channels fire with the expected payloads", async () => {
+
+      const opened: LivestreamSessionOpenedPayload[] = [];
+      const created: LivestreamSubscriptionCreatedPayload[] = [];
+      const disposed: LivestreamSubscriptionDisposedPayload[] = [];
+
+      using openedSubscription = subscribeToChannel(channels.livestreamSessionOpened, (payload) => void opened.push(payload));
+      using createdSubscription = subscribeToChannel(channels.livestreamSubscriptionCreated, (payload) => void created.push(payload));
+      using disposedSubscription = subscribeToChannel(channels.livestreamSubscriptionDisposed, (payload) => void disposed.push(payload));
+
+      const { pool } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC);
+
+      await settle();
+      await sub1[Symbol.asyncDispose]();
+      await sub2[Symbol.asyncDispose]();
+
+      // One session opened for the shared stream, one created event per subscriber, one disposed event per subscriber.
+      assert.equal(opened.length, 1);
+      assert.equal(created.length, 2);
+      assert.equal(disposed.length, 2);
+      assert.equal(at(opened, 0).cameraId, "cam1");
+      assert.ok(typeof at(created, 0).subscriptionId === "string");
+    });
+
+    test("a subscriber's last segment time is the time of day the segment arrived at, in its stats and in its disposed payload", async () => {
+
+      const disposed: LivestreamSubscriptionDisposedPayload[] = [];
+
+      using disposedSubscription = subscribeToChannel(channels.livestreamSubscriptionDisposed, (payload) => void disposed.push(payload));
+
+      const { clock, pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // The time of day is set back before the segments are pushed, so the stamp reads that time of day, a timestamp recorded as its event happened.
+      clock.advance(-TIME_OF_DAY_STEP_MS);
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.stats.lastSegmentAt, -TIME_OF_DAY_STEP_MS, "the stats carry the time of day the last segment arrived at");
+
+      await sub[Symbol.asyncDispose]();
+
+      assert.equal(disposed.length, 1);
+      assert.equal(at(disposed, 0).stats.lastSegmentAt, -TIME_OF_DAY_STEP_MS, "and so does the disposed payload");
+    });
+
+    test("session:closed carries the reason for a last-subscriber dispose and for a pool disposal", async () => {
+
+      const reasons: string[] = [];
+
+      using closedSubscription = subscribeToChannel(channels.livestreamSessionClosed, (payload) => void reasons.push(payload.reason));
+
+      const { pool } = makePool();
+
+      // The first stream ends when its only subscriber leaves, and the second, opened fresh after it, ends with the pool.
+      const first = pool.subscribe(SPEC);
+
+      await settle();
+      await first[Symbol.asyncDispose]();
+
+      const second = pool.subscribe(SPEC);
+
+      await settle();
+      await pool[Symbol.asyncDispose]();
+
+      assert.deepEqual(reasons, [ "the last subscriber disposed", "the livestream pool was disposed" ]);
+
+      await second[Symbol.asyncDispose]();
+    });
+
+    test("an already-aborted subscribe publishes created then disposed and no session event", async () => {
+
+      // One ordered record across the session and subscription channels, each entry tagged by the channel that published it, so a read narrows its payload by the tag.
+      type LifecycleEvent = { payload: LivestreamSessionClosedPayload; tag: "closed" } | { payload: LivestreamSubscriptionCreatedPayload; tag: "created" } |
+        { payload: LivestreamSubscriptionDisposedPayload; tag: "disposed" } | { payload: LivestreamSessionOpenedPayload; tag: "opened" };
+      const events: LifecycleEvent[] = [];
+      const tags = (): string[] => events.map((event) => event.tag);
+
+      using openedSubscription = subscribeToChannel(channels.livestreamSessionOpened, (payload) => void events.push({ payload, tag: "opened" }));
+      using closedSubscription = subscribeToChannel(channels.livestreamSessionClosed, (payload) => void events.push({ payload, tag: "closed" }));
+      using createdSubscription = subscribeToChannel(channels.livestreamSubscriptionCreated, (payload) => void events.push({ payload, tag: "created" }));
+      using disposedSubscription = subscribeToChannel(channels.livestreamSubscriptionDisposed, (payload) => void events.push({ payload, tag: "disposed" }));
+
+      const { pool, sockets } = makePool();
+      const controller = new AbortController();
+
+      controller.abort();
+
+      // With no prior subscriber, the closed handle opens no session; its own pair publishes inside the subscribe call, in order.
+      pool.subscribe(SPEC, { signal: controller.signal });
+
+      assert.deepEqual(tags(), [ "created", "disposed" ]);
+
+      events.length = 0;
+
+      const first = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      events.length = 0;
+
+      // Beside a live stream with an init cached, the closed handle's pair is the same, and nothing was replayed into it.
+      const late = pool.subscribe(SPEC, { signal: controller.signal });
+      const [ created, disposed ] = events;
+
+      assert.deepEqual(tags(), [ "created", "disposed" ]);
+      assert.ok((created?.tag === "created") && (disposed?.tag === "disposed"));
+      assert.equal(created.payload.subscriptionId, late.id);
+      assert.equal(disposed.payload.subscriptionId, late.id);
+      assert.deepEqual(disposed.payload.stats, { delivered: 0, discarded: 0, lastSegmentAt: 0, peakQueueDepth: 0, queueDepth: 0 });
+
+      await first[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("whenEstablished", () => {
+
+    test("resolves true once the first MEDIA segment arrives, not on the init", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // Drive the init ONLY. Liveness is media-keyed, so the init alone does not establish: whenEstablished() stays pending and the stream is still "connecting".
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "connecting");
+
+      // Probe whenEstablished() across a short settle: it must not have resolved on the init alone.
+      const established = settlement(sub.whenEstablished());
+
+      await settle();
+      assert.equal(established(), false, "whenEstablished() must not resolve on the init alone");
+
+      // The first media settles establishment: the stream goes live and whenEstablished() resolves true.
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(sub.state, "live");
+      assert.equal(await sub.whenEstablished(), true);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("resolves false when establishment is abandoned", async () => {
+
+      const { pool } = makePool({ recoveryPolicy: () => ({ kind: "giveUp" }) });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      assert.equal(await sub.whenEstablished(), false);
+    });
+
+    test("a disposed subscriber's establishment wait resolves false while a sibling's stays pending until media", async () => {
+
+      const { pool, sockets } = makePool();
+      const controller = new AbortController();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC, { signal: controller.signal });
+
+      await settle();
+
+      // Drive the shared session to the init-only point: both subscribers are mid-establishment (whenEstablished() pending, no media yet).
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      // Start sub2's wait, then abort its own signal. The wait must resolve false promptly - it routes through this subscription's own disposal - while sub1's wait stays
+      // pending because the shared session lives on (sub1 is still attached).
+      const sub2Wait = sub2.whenEstablished();
+
+      controller.abort();
+      await settle();
+
+      assert.equal(await sub2Wait, false);
+
+      const established = settlement(sub1.whenEstablished());
+
+      await settle();
+      assert.equal(established(), false, "the sibling's wait must stay pending while its own session is still establishing");
+
+      // The first media settles the sibling's wait true, exactly as it would have without the disposal.
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(await sub1.whenEstablished(), true);
+
+      await sub1[Symbol.asyncDispose]();
+    });
+
+    test("an explicit dispose mid-wait resolves the wait false with no signal involved", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC);
+
+      await settle();
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      // No signal here: start sub2's wait, then dispose it explicitly. The disposal deferred - not an abort listener - settles the wait false, and the shared session
+      // stays up because sub1 is still attached, so this false cannot be the give-up path. This tells the disposal-deferred design apart from a signal-only race.
+      const sub2Wait = sub2.whenEstablished();
+
+      await sub2[Symbol.asyncDispose]();
+
+      assert.equal(await sub2Wait, false);
+
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(await sub1.whenEstablished(), true);
+
+      await sub1[Symbol.asyncDispose]();
+    });
+
+    test("every overlapping whenEstablished() wait resolves false when the subscription is disposed, and a call made after disposal answers false", async () => {
+
+      const { pool, sockets } = makePool();
+      const sub1 = pool.subscribe(SPEC);
+      const sub2 = pool.subscribe(SPEC);
+
+      await settle();
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      // Overlapping waits on the same subscription: disposing it once must settle each of them false.
+      const firstWait = sub2.whenEstablished();
+      const secondWait = sub2.whenEstablished();
+
+      await sub2[Symbol.asyncDispose]();
+
+      assert.equal(await firstWait, false);
+      assert.equal(await secondWait, false);
+
+      // A further call after disposal takes the guarded path and still answers false, identically.
+      assert.equal(await sub2.whenEstablished(), false);
+
+      await sub1[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("media-stall watchdog", () => {
+
+    test("steady media under the threshold never trips; a media gap at the default 10s threshold fires one recovery", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+
+      // No urgency declared: the media-stall watchdog runs at the 10s default, the fail-safe analog of the byte heartbeat.
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      // Steady media keeps refreshing `#lastMediaAt`, so the watchdog never trips: advance a little under the threshold, push media to refresh, let the loops wake, and
+      // stay live.
+      clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS - PROTECT_LIVESTREAM_STALL_POLL_MS);
+      pushMedia(at(sockets, 0));
+      await settle();
+      await settle();
+
+      assert.equal(sub.state, "live");
+      assert.equal(sockets.length, 1);
+
+      // Now go media-silent past the default threshold while keeping the byte heartbeat alive with a non-media frame, so the recovery can ONLY be the media watchdog (the
+      // byte watchdog cannot trip - it just saw a frame). The media watchdog compares the media-silence duration against the aggregated detection threshold, 10s by
+      // default here, and recovers into a fresh session.
+      clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: AI_PRO_INIT }));
+      await settle();
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("the watchdog wakes at its period and not before", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "live");
+
+      // The watchdog arms at the first media, and its wakes are the earliest deadlines on the timeline: the session heartbeat comes due a full heartbeat window out.
+      assert.equal(clock.nextDeadline, PROTECT_LIVESTREAM_STALL_POLL_MS, "the first wake comes due one poll period after the watchdog arms");
+
+      // Media just short of the first wake leaves it reading a millisecond of silence, and the loop parks for one more period from the moment it woke.
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS - 1);
+      pushMedia(at(sockets, 0));
+      clock.advance(1);
+      await settle();
+
+      assert.equal(sub.state, "live");
+      assert.equal(clock.nextDeadline, 2 * PROTECT_LIVESTREAM_STALL_POLL_MS, "the second wake comes due one poll period after the first");
+
+      // The second wake reads a second of silence. The silence reaches the 2s threshold a millisecond short of the third wake, yet nothing reads it until that wake, so
+      // detection lands inside the [threshold, threshold + poll period) window rather than at the threshold itself.
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS);
+      await settle();
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS - 1);
+      await settle();
+
+      assert.equal(sub.state, "live", "no wake comes between the deadlines");
+      assert.equal(sockets.length, 1);
+
+      clock.advance(1);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a backward step of the time of day leaves the media silence the watchdog reads the time that passed", async () => {
+
+      const log = capturingLog();
+      const { clock, pool, sockets } = makePool({ log });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      /* The first media arms the watchdog, its wakes a poll period apart on the same timeline as the time of day. That is set back half a period, so reaching the
+       * first wake takes the step as well as the period, and the second wake a period more. The silence the second wake reads is all of it, past the 2s threshold
+       * however it is read, and the figure is the time that passed.
+       */
+      clock.advance(-(PROTECT_LIVESTREAM_STALL_POLL_MS / 2));
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS + (PROTECT_LIVESTREAM_STALL_POLL_MS / 2));
+      await settle();
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS);
+      await settle();
+
+      const silences = log.entries.filter((entry) => entry.message === MEDIA_SILENT).map(({ args }) => (args[0] as { silentForMs: number }).silentForMs);
+
+      assert.deepEqual(silences, [(2 * PROTECT_LIVESTREAM_STALL_POLL_MS) + (PROTECT_LIVESTREAM_STALL_POLL_MS / 2)], "the silence is the time that passed");
+      assert.equal(sub.state, "recovering");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a backward step of the time of day past the rest of the threshold trips the watchdog at its next wake", async () => {
+
+      const { clock, pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      /* Media lands halfway to the first wake, and the time of day is then set back the whole 2s threshold. Reaching the wake takes the rest of the period and the
+       * step, all of it media silence and together past the threshold, though the time of day at the wake reads only half a period on from the media.
+       */
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS / 2);
+      pushMedia(at(sockets, 0));
+      clock.advance(-2000);
+      clock.advance((PROTECT_LIVESTREAM_STALL_POLL_MS / 2) + 2000);
+      await settle();
+
+      assert.equal(sub.state, "recovering", "the wake trips on the silence that passed");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a tighter declared urgency detects the stall at that value, well before the 10s heartbeat", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+
+      // A 2s urgency is the consumer-declared detection deadline; it is below the 10s session heartbeat, so the media watchdog must catch the stall first.
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      // Go silent for exactly the declared 2s. The heartbeat (10s, keyed on any byte) is nowhere near tripping, so only the media watchdog can fire here.
+      clock.advance(2000);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a pathologically tiny declared urgency is clamped up to the floor", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+
+      // A near-zero urgency would, unclamped, trip on ordinary inter-segment jitter. The floor clamp keeps the effective threshold at PROTECT_LIVESTREAM_STALL_FLOOR_MS.
+      const sub = pool.subscribe(SPEC, { urgency: () => 1 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      /* The watchdog reads the silence only when it wakes, once per poll period from the first media, so each advance below ends on that grid. Media 1 ms into a period
+       * is read at the wake that ends the next advance as 1 ms under the floor: the watchdog must NOT fire even though the declared urgency (1 ms) was crossed long ago -
+       * the clamp governs.
+       */
+      clock.advance(1);
+      pushMedia(at(sockets, 0));
+      await settle();
+      clock.advance(PROTECT_LIVESTREAM_STALL_FLOOR_MS - 1);
+      await settle();
+
+      assert.equal(sub.state, "live");
+      assert.equal(sockets.length, 1);
+
+      // Media on the grid is read at the wake that ends the next advance as exactly the floor: now it fires.
+      pushMedia(at(sockets, 0));
+      await settle();
+      clock.advance(PROTECT_LIVESTREAM_STALL_FLOOR_MS);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a subscriber declaring Infinity opts out; a stream where every subscriber opts out is never media-watched", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+
+      // Every subscriber opts out of media-stall detection: the MIN is Infinity, so the per-pass `>= Infinity` comparison never fires and only the byte backstop watches.
+      const sub = pool.subscribe(SPEC, { urgency: () => Infinity });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+
+      // Go media-silent FAR past the 10s default (12s) while keeping the byte heartbeat alive with non-media frames (the stream's own init again, which the codec gate
+      // swallows, refreshes `#lastSegmentAt` but not `#lastMediaAt`). If the opt-out aggregated to the 10s default instead of Infinity, the media watchdog would fire
+      // here; an opted-out stream must stay live, proving the threshold is genuinely Infinity, not capped at the default.
+      for(let step = 0; step < 12; step++) {
+
+        clock.advance(1000);
+        at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: AI_PRO_INIT }));
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+      }
+
+      assert.equal(sub.state, "live");
+      assert.equal(sockets.length, 1);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("the MIN across subscribers governs: a live-view opt-out and a 2s HKSV share a session detected at 2s", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+
+      // A live-view subscriber opts out (Infinity); an HKSV subscriber declares 2s on the same shared session. The MIN (2s) governs the shared media watchdog.
+      const optOut = pool.subscribe(SPEC, { urgency: () => Infinity });
+      const hksv = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(optOut.state, "live");
+      assert.equal(hksv.state, "live");
+
+      // The shared stream goes silent for the HKSV deadline; the MIN pulls detection to 2s even though one subscriber opted out.
+      clock.advance(2000);
+      await settle();
+
+      assert.equal(optOut.state, "recovering");
+      assert.equal(hksv.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await optOut[Symbol.asyncDispose]();
+      await hksv[Symbol.asyncDispose]();
+    });
+
+    test("the threshold is re-read live on each wake: a tighten mid-live is honored on the next wake", async () => {
+
+      const clock = new TestClock();
+      let toleranceMs = PROTECT_LIVESTREAM_STALL_DEFAULT_MS;
+      const { pool, sockets } = makePool({ clock });
+
+      // The urgency closure is pulled fresh on each wake, so mutating it mid-live re-tightens detection with no explicit re-arm.
+      const sub = pool.subscribe(SPEC, { urgency: () => toleranceMs });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // Under the original 10s, a 3s silence does not trip. Refresh media (so the clock is fresh) then tighten the policy to 2s.
+      clock.advance(3000);
+      pushMedia(at(sockets, 0));
+      await settle();
+      await settle();
+
+      assert.equal(sub.state, "live");
+
+      toleranceMs = 2000;
+
+      // A 2s silence now trips because the wake re-reads the tightened threshold - no re-subscribe, no re-arm.
+      clock.advance(2000);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("the watchdog is keyed on media, not any segment: non-media frames do not refresh its clock", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      /* Drive a non-media frame mid-silence. The stream's own init again reaches `#onSegment` and refreshes `#lastSegmentAt` (the any-byte clock), and the codec gate
+       * swallows it rather than fanning it out as media, so it must NOT refresh `#lastMediaAt`. The media watchdog therefore still sees the original media as the
+       * last picture. The watchdog wakes once per poll period from the first media, so the advances step along that grid: the first wake reads a second of silence,
+       * and the init lands between wakes.
+       */
+      clock.advance(PROTECT_LIVESTREAM_STALL_POLL_MS);
+      await settle();
+      clock.advance(500);
+      at(sockets, 0).emitMessage(buildInitSegment({ codec: "avc1.640028", data: AI_PRO_INIT }));
+      await settle();
+
+      // The next wake, at 2s, crosses the media threshold relative to the LAST MEDIA (not the init). The watchdog fires because the non-media frame did not reset its
+      // media clock.
+      clock.advance(500);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 2);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("the watchdog is armed only at first media, never during establishing", async () => {
+
+      const clock = new TestClock();
+
+      // A long reconnect window keeps the recovery loop's own timer from elapsing while we test that NO media watchdog is armed during establishing - so any close or
+      // reconnect here could only come from a (non-existent) media watchdog, not the establishing window's natural elapse.
+      const policy: RecoveryPolicy = () => ({ awaitMs: 100000, kind: "reconnect" });
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+
+      // Drive the init ONLY (no media). The episode is still establishing, no media has flowed, so the watchdog is NOT armed. Advancing well past the 2s media threshold
+      // (but under the 100000 establishing window) must not fire a media watchdog - there is none to arm during establishing.
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "connecting");
+
+      clock.advance(5000);
+      await settle();
+
+      // Still connecting on the same single socket, which nothing asked to close: no media watchdog fired (it never armed), and the heartbeat is keyed on the init we
+      // just sent so it did not trip.
+      assert.equal(sub.state, "connecting");
+      assert.equal(sockets.length, 1);
+      assert.equal(at(sockets, 0).closeRequested, false);
+
+      // The first media now arms the watchdog and goes live.
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(sub.state, "live");
+
+      // From here the armed watchdog detects a stall at 2s.
+      clock.advance(2000);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("the watchdog disarms on reconnect and re-arms on the reconnect's first media", async () => {
+
+      const clock = new TestClock();
+      const { pool, sockets } = makePool({ clock });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The controller drops the stream: `#installSession` disarms the watchdog before the recovering episode's fresh session. While recovering the watchdog is unarmed.
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+
+      // Past the 2s detection threshold but inside the 3s recovery window this urgency yields, the advance leaves the reconnect's socket open: no watchdog survived
+      // the reconnect to close it.
+      clock.advance(2500);
+      await settle();
+
+      assert.equal(sockets.length, 2);
+      assert.equal(at(sockets, 1).closeRequested, false);
+
+      // The reconnect's first media re-arms the watchdog. A subsequent stall on the new session detects again at 2s, proving the re-arm.
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "live");
+
+      clock.advance(2000);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+      assert.equal(sockets.length, 3);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a multi-attempt establishment disarms before any arm as a safe no-op", async () => {
+
+      const clock = new TestClock();
+
+      // A policy that always reconnects lets a failed first establishment attempt reinstall - exercising `#installSession`'s disarm before any media ever armed it.
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+
+      // Attempt 0's window elapses with no segment; the still-establishing episode reinstalls. The disarm in that reinstall is a safe no-op (no watchdog was ever armed).
+      clock.advance(1000);
+      await settle();
+
+      assert.equal(sockets.length, 2);
+
+      // Attempt 1 delivers media and arms the watchdog cleanly; a later stall detects at 2s.
+      await establish(at(sockets, 1), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "live");
+
+      clock.advance(2000);
+      await settle();
+
+      assert.equal(sub.state, "recovering");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a watchdog pass already due at teardown does not fire on the dead session", async () => {
+
+      const clock = new TestClock();
+      const log = capturingLog();
+      const { pool, sockets } = makePool({ clock, log });
+      const sub = pool.subscribe(SPEC, { urgency: () => 2000 });
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub.state, "live");
+
+      // Advance past the threshold so a wake WOULD fire, then dispose the pool, which tears the stream down and aborts the watchdog controller. Pool disposal closes the
+      // subscription without detaching it, so its 2s urgency still sets a finite threshold a straggler pass could act on.
+      clock.advance(5000);
+      await pool[Symbol.asyncDispose]();
+
+      assert.equal(sub.state, "closed");
+
+      // The pass the advance released runs inside the disposal, so whether it acted on the dead session is read before the teardown's own lines are cleared: a pass
+      // that slipped past the guard would have logged the silence it found.
+      assert.equal(log.entries.some((entry) => entry.message.includes("media went silent")), false, "the pass due at teardown must not act on the dead session");
+
+      // The torn-down session must not act on a wake: the abort already ended the loop, and the `#torndown` guard would no-op a straggler, so with the teardown's own
+      // lines cleared, the yield logs nothing.
+      log.reset();
+      await settle();
+
+      assert.deepEqual(log.entries, []);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("recovery-await is unchanged: an undeclared-urgency stream still reports Infinity tolerance, the 10s detection default does not leak", async () => {
+
+      const clock = new TestClock();
+      const contexts: RecoveryContext[] = [];
+      const policy: RecoveryPolicy = (context) => {
+
+        contexts.push({ ...context });
+
+        // Establish patiently, then give up on the first recovery so the episode ends deterministically and we can inspect the recovering context's toleranceMs.
+        return (context.phase === "establishing") ? { awaitMs: 100000, kind: "reconnect" } : { kind: "giveUp" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+
+      // No urgency declared. The DETECTION default is 10s, but the recovery-await aggregate must still be Infinity - the detection default and the recovery-await
+      // default are separate and must not leak into one another.
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      const recovering = contexts.find((context) => context.phase === "recovering");
+
+      assert.ok(recovering !== undefined);
+      assert.equal(recovering.toleranceMs, Infinity, "the recovery-await tolerance must stay Infinity for an undeclared subscriber");
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a tighter joiner re-decides a parked recovery window", async () => {
+
+      const clock = new TestClock();
+      let recoveringCalls = 0;
+      const policy: RecoveryPolicy = (context) => {
+
+        if(context.phase === "establishing") {
+
+          return { awaitMs: 100000, kind: "reconnect" };
+        }
+
+        recoveringCalls++;
+
+        // The first recovery decision parks on a long wait; the attach-retighten must force a re-decision that this time reconnects.
+        return (recoveringCalls === 1) ? { forMs: 1000000000, kind: "wait" } : { awaitMs: 100000, kind: "reconnect" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub1 = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "avc1.640028" });
+
+      at(sockets, 0).emitClose(1000, "dropped");
+      await settle();
+
+      // The recovery episode is parked on a long `wait` - no new socket yet.
+      assert.equal(sockets.length, 1);
+
+      // A second, more-urgent subscriber joins the parked (recovering) window: the recovering-gated attach hook re-decides it, which now reconnects.
+      const sub2 = pool.subscribe(SPEC, { urgency: () => 200 });
+
+      await settle();
+
+      assert.equal(sockets.length, 2);
+      assert.equal(recoveringCalls, 2);
+
+      await sub1[Symbol.asyncDispose]();
+      await sub2[Symbol.asyncDispose]();
+    });
+
+    test("a join or reassess during the establishing init-to-media gap does not tear down the connecting session", async () => {
+
+      const clock = new TestClock();
+      let consults = 0;
+      const policy: RecoveryPolicy = (context) => {
+
+        consults++;
+
+        return (context.phase === "establishing") ? { awaitMs: 100000, kind: "reconnect" } : { kind: "giveUp" };
+      };
+
+      const { pool, sockets } = makePool({ clock, recoveryPolicy: policy });
+      const sub1 = pool.subscribe(SPEC);
+
+      await settle();
+
+      // The stream inits but has not produced media: the establishing episode is in flight in the init->media gap.
+      await establishInit(at(sockets, 0), { codec: "avc1.640028" });
+
+      assert.equal(sub1.state, "connecting");
+      assert.equal(consults, 1);
+
+      // A tighter joiner in the gap must NOT settle the urgency-independent establishing window (the attach hook's recovering gate spares it); neither does a reassess.
+      const sub2 = pool.subscribe(SPEC, { urgency: () => 200 });
+
+      sub2.reassess();
+      await settle();
+
+      assert.equal(sockets.length, 1);
+      assert.equal(consults, 1);
+      assert.equal(sub1.state, "connecting");
+
+      // The in-flight session's first media still settles establishment normally - the join and reassess left it untouched.
+      pushMedia(at(sockets, 0));
+      await settle();
+
+      assert.equal(sub1.state, "live");
+
+      await sub1[Symbol.asyncDispose]();
+      await sub2[Symbol.asyncDispose]();
+    });
+  });
+
+  describe("defaultLivestreamRecoveryPolicy", () => {
+
+    // Read the reconnect window out of a decision, asserting it was a reconnect.
+    const awaitOf = (context: RecoveryContext): number => {
+
+      const decision = defaultLivestreamRecoveryPolicy(context);
+
+      assert.equal(decision.kind, "reconnect");
+
+      return (decision as { awaitMs: number }).awaitMs;
+    };
+
+    test("establishment is urgency-independent, follows the patient curve, and gives up past the deadline", () => {
+
+      // The establishment window is the fixed patient curve (5s, 8s, 10s, holding at 10s) regardless of how urgent any subscriber is - the camera mints at its own pace.
+      assert.equal(awaitOf({ attempts: 0, cameraId: "cam1", elapsedMs: 0, phase: "establishing", toleranceMs: Infinity }), 5000);
+      assert.equal(awaitOf({ attempts: 0, cameraId: "cam1", elapsedMs: 0, phase: "establishing", toleranceMs: 0 }), 5000);
+      assert.equal(awaitOf({ attempts: 1, cameraId: "cam1", elapsedMs: 0, phase: "establishing", toleranceMs: 0 }), 8000);
+      assert.equal(awaitOf({ attempts: 2, cameraId: "cam1", elapsedMs: 0, phase: "establishing", toleranceMs: 0 }), 10000);
+      assert.equal(awaitOf({ attempts: 9, cameraId: "cam1", elapsedMs: 0, phase: "establishing", toleranceMs: Infinity }), 10000);
+
+      // Once the establishment deadline has elapsed it gives up (the 5+8+10+10 cadence reaches it at ~33s).
+      const pastDeadline = defaultLivestreamRecoveryPolicy({ attempts: 4, cameraId: "cam1", elapsedMs: PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, phase: "establishing",
+        toleranceMs: Infinity });
+
+      assert.deepEqual(pastDeadline, { kind: "giveUp" });
+    });
+
+    test("live recovery is unbounded and headroom-clamped", () => {
+
+      // Unbounded: even at an enormous elapsed time and attempt count it keeps reconnecting, never giving up.
+      assert.equal(defaultLivestreamRecoveryPolicy({ attempts: 50, cameraId: "cam1", elapsedMs: 1000000000, phase: "recovering", toleranceMs: Infinity }).kind,
+        "reconnect");
+
+      // A maximally-urgent subscriber (tolerance 0) recovers at the flat floor regardless of attempt - the floor protects a fresh stream's first-segment mint.
+      assert.equal(awaitOf({ attempts: 0, cameraId: "cam1", elapsedMs: 0, phase: "recovering", toleranceMs: 0 }), PROTECT_LIVESTREAM_AWAIT_MIN_MS);
+      assert.equal(awaitOf({ attempts: 3, cameraId: "cam1", elapsedMs: 0, phase: "recovering", toleranceMs: 0 }), PROTECT_LIVESTREAM_AWAIT_MIN_MS);
+      assert.equal(PROTECT_LIVESTREAM_AWAIT_MIN_MS, 3000);
+
+      // A finite tolerance clamps the window to its headroom, the tolerance less the await margin: 5s of tolerance holds attempt 2's 10s stage to 4s.
+      assert.equal(awaitOf({ attempts: 2, cameraId: "cam1", elapsedMs: 0, phase: "recovering", toleranceMs: 5000 }), 4000);
+
+      // A patient stream (no reported urgency) walks the recovery curve 3s -> 5s -> 10s and holds at the ceiling.
+      assert.equal(awaitOf({ attempts: 0, cameraId: "cam1", elapsedMs: 0, phase: "recovering", toleranceMs: Infinity }), 3000);
+      assert.equal(awaitOf({ attempts: 1, cameraId: "cam1", elapsedMs: 0, phase: "recovering", toleranceMs: Infinity }), 5000);
+      assert.equal(awaitOf({ attempts: 2, cameraId: "cam1", elapsedMs: 0, phase: "recovering", toleranceMs: Infinity }), 10000);
+      assert.equal(awaitOf({ attempts: 50, cameraId: "cam1", elapsedMs: 0, phase: "recovering", toleranceMs: Infinity }), PROTECT_LIVESTREAM_AWAIT_MAX_MS);
+    });
+  });
+
+  describe("Camera.livestream", () => {
+
+    test("delegates to the pool with the camera's id, the supplied options, and the urgency closure", () => {
+
+      const calls: { opts: LivestreamSubscribeOptions; spec: LivestreamSpec }[] = [];
+      const controller = new AbortController();
+      const urgency = (): number => 0;
+      const record = makeCamera({ featureFlags: { hasMic: true }, id: "cam-xyz", isMicEnabled: true });
+      const state = reduce(createInitialState(), { data: record, id: record.id, kind: "deviceAdded", modelKey: "camera" });
+
+      // This fixture implements only the DeviceContext members that Camera.livestream() touches - livestreamPool.subscribe() to capture its arguments, and the store's
+      // selector catalog, which the camera reads its record selector from as it is constructed - plus stub log/transport fields to satisfy the shape. Neither the
+      // subscribe() return value nor the store and transport fields resemble their real interfaces, so both casts route through unknown rather than claiming a genuine
+      // match.
+      const context = {
+
+        host: "10.0.0.1",
+        livestreamPool: { subscribe: (spec: LivestreamSpec, opts: LivestreamSubscribeOptions) => {
+
+          calls.push({ opts, spec });
+
+          return {} as unknown;
+        } },
+        log: silentLog(),
+        store: { selectors: createDeviceSelectors(), snapshot: () => state },
+        transport: {}
+      } as unknown as DeviceContext;
+
+      const camera = new Camera(context, "cam-xyz");
+
+      camera.livestream({ route: "direct", signal: controller.signal, source: { channel: 2, type: "channel" }, timestamps: true, urgency });
+
+      const captured = calls.at(-1);
+
+      assert.ok(captured !== undefined);
+      assert.deepEqual(captured.spec, { audioExpected: true, cameraId: "cam-xyz", route: "direct", source: { channel: 2, type: "channel" }, timestamps: true });
+      assert.equal(captured.opts.signal, controller.signal);
+      assert.equal(captured.opts.urgency, urgency);
+
+      // A call asking to discard on dispose hands that option to the pool and keeps it out of the stream spec.
+      camera.livestream({ discardOnDispose: true, source: { channel: 2, type: "channel" } });
+
+      const discarding = calls.at(-1);
+
+      assert.ok(discarding !== undefined);
+      assert.deepEqual(discarding.spec, { audioExpected: true, cameraId: "cam-xyz", source: { channel: 2, type: "channel" } });
+      assert.equal(discarding.opts.discardOnDispose, true);
+    });
+
+    test("the camera states that audio is expected only when it has a microphone and the microphone is enabled, whatever its recording settings say", () => {
+
+      // A camera over a store whose snapshot is the state given, recording the spec each livestream() hands the pool.
+      const specs: LivestreamSpec[] = [];
+      const cameraOver = (state: ReturnType<typeof createInitialState>): Camera => new Camera({ livestreamPool: { subscribe: (spec: LivestreamSpec) => {
+
+        specs.push(spec);
+
+        return {} as unknown;
+      } }, log: silentLog(), store: { selectors: createDeviceSelectors(), snapshot: () => state }, transport: {} } as unknown as DeviceContext, "cam-xyz");
+
+      for(const hasMic of [ true, false ]) {
+
+        for(const isMicEnabled of [ true, false ]) {
+
+          for(const recordAudio of [ true, false ]) {
+
+            const record = makeCamera({ featureFlags: { hasMic }, id: "cam-xyz", isMicEnabled, recordingSettings: { recordAudio } });
+
+            cameraOver(reduce(createInitialState(), { data: record, id: record.id, kind: "deviceAdded", modelKey: "camera" })).livestream({});
+
+            assert.equal(specs.at(-1)?.audioExpected, hasMic && isMicEnabled, JSON.stringify({ hasMic, isMicEnabled, recordAudio }));
+          }
+        }
+      }
+
+      // A handle whose camera has left the state states nothing, so the spec's own default applies.
+      cameraOver(createInitialState()).livestream({});
+
+      assert.equal(Object.hasOwn(specs.at(-1) ?? {}, "audioExpected"), false);
+    });
+
+    test("the output a call asks for reaches the pool's options and never the stream spec", () => {
+
+      // A camera with no record in the state, so each spec holds only what the call names, recording what each livestream() hands the pool.
+      const calls: { opts: LivestreamSubscribeOptions & { output?: LivestreamOutput }; spec: LivestreamSpec }[] = [];
+      const context = { livestreamPool: { subscribe: (spec: LivestreamSpec, opts: LivestreamSubscribeOptions & { output?: LivestreamOutput }) => {
+
+        calls.push({ opts, spec });
+
+        return {} as unknown;
+      } }, log: silentLog(), store: { selectors: createDeviceSelectors(), snapshot: () => createInitialState() }, transport: {} } as unknown as DeviceContext;
+      const camera = new Camera(context, "cam-xyz");
+
+      camera.livestream({ output: "frames", source: { channel: 1, type: "channel" } });
+      camera.livestream({ output: "segments" });
+      camera.livestream({});
+
+      assert.deepEqual(calls.map(({ opts }) => opts.output), [ "frames", "segments", undefined ]);
+      assert.deepEqual(calls.map(({ spec }) => spec), [ { cameraId: "cam-xyz", source: { channel: 1, type: "channel" } }, { cameraId: "cam-xyz" },
+        { cameraId: "cam-xyz" } ]);
+    });
+  });
+});

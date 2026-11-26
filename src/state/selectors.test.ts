@@ -3,13 +3,13 @@
  * selectors.test.ts: Unit tests for the memoized config-record selectors - the identity-stability that makes observer dedup work, the online filter, and by-id lookup -
  * plus the session-identity selectors (selectAuthUser, selectIsAdmin, selectNvr, selectControllerName, selectControllerUpSince).
  */
-import { applyBootstrap, createInitialState, reduce } from "../protocol/reducer.ts";
+import { applyBootstrap, createInitialState, reduce } from "../protocol/realtime/reducer.ts";
 import { createDeviceSelectors, isDeviceAdopted, isDeviceOnline, selectAuthUser, selectControllerName, selectControllerUpSince, selectIsAdmin, selectLiveview,
   selectLiveviews, selectNvr, selectRingtone, selectRingtones } from "./selectors.ts";
 import { describe, test } from "node:test";
 import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone, makeSensor, makeUser,
-  makeViewer } from "../fixtures.helpers.ts";
-import { DEVICE_COLLECTION_KEYS } from "../protocol/events.ts";
+  makeViewer } from "../shared/fixtures.helpers.ts";
+import { DEVICE_COLLECTION_KEYS } from "../protocol/realtime/events.ts";
 import assert from "node:assert/strict";
 import { plainStore } from "./store.helpers.ts";
 

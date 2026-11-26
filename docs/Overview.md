@@ -39,7 +39,7 @@ for await (const event of client.events({ signal })) {
 }
 ```
 
-The [`ufp` CLI](https://github.com/hjdhjd/unifi-protect/tree/main/src/util/cli) is the canonical reference consumer - it exercises every API surface against real hardware. Read it to see the library in practice.
+The [`ufp` CLI](https://github.com/hjdhjd/unifi-protect/tree/main/src/cli) is the canonical reference consumer - it exercises every API surface against real hardware. Read it to see the library in practice.
 
 ## Why use this library for UniFi Protect support?
 In short - because I use it every day to support a very popular [Homebridge](https://homebridge.io) plugin named [homebridge-unifi-protect](https://www.npmjs.com/package/homebridge-unifi-protect) that I maintain. I have been occasionally asked if I would consider packaging the core API library separately from the plugin so that other open source projects can take advantage of the work that's been done here to understand and decode the UniFi Protect API.

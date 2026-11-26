@@ -4,26 +4,26 @@
  * auto-recovery sequence (verify -> re-bootstrap -> relaunch). Driven with a `TestClock`, a fake throttle source, and injected events-stream/verify/re-bootstrap hooks,
  * so every path is exercised without a live controller.
  */
-import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
+import type { CapturedLogEntry, CapturingLogger } from "../shared/testing.helpers.ts";
 import type { ConnectionState, ConnectionTransition, ThrottleSource } from "./connection.ts";
 import { PROTECT_EVENTS_WATCHDOG_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
-  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../settings.ts";
+  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "../shared/settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectError,
-  ProtectNetworkError, ProtectRequestError } from "../errors.ts";
-import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
+  ProtectNetworkError, ProtectRequestError } from "../shared/errors.ts";
+import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../shared/testing.helpers.ts";
 import { TestClock, advanceThroughSchedule, errnoError, present } from "homebridge-plugin-utils/testing";
-import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
-import { channels, subscribeToChannel } from "../diagnostics.ts";
+import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/realtime/packet.helpers.ts";
+import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
 import { describe, test } from "node:test";
-import { makeBootstrap, makeNvr } from "../fixtures.helpers.ts";
+import { makeBootstrap, makeNvr } from "../shared/fixtures.helpers.ts";
 import { ConnectionMonitor } from "./connection.ts";
-import { EventBus } from "../event-bus.ts";
+import { EventBus } from "../shared/event-bus.ts";
 import { EventStream } from "../transport/events-stream.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
-import type { ProtectLogging } from "../logging.ts";
-import type { RawPacket } from "../protocol/packet.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
+import type { RawPacket } from "../protocol/realtime/packet.ts";
 import { StateStore } from "../state/store.ts";
-import type { TypedEvent } from "../protocol/events.ts";
+import type { TypedEvent } from "../protocol/realtime/events.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { errors } from "undici";

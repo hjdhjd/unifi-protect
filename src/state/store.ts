@@ -27,21 +27,21 @@
  *
  * @module StateStore
  */
-import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
+import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../shared/diagnostics.ts";
 import type { DeepPartial, ProtectNvrBootstrap, ProtectNvrConfig, ProtectStateRecord } from "../types/index.ts";
 import { MAP_BACKED_STATE_MODEL_KEYS, adoptedByOtherAssertion, adoptionView, createInitialState, isAdoptionContradiction, mapFieldFor,
-  reduce } from "../protocol/reducer.ts";
-import type { MapBackedStateModelKey, ProtectState } from "../protocol/reducer.ts";
-import type { StateModelKey, TypedEvent } from "../protocol/events.ts";
-import type { Clock } from "../clock.ts";
+  reduce } from "../protocol/realtime/reducer.ts";
+import type { MapBackedStateModelKey, ProtectState } from "../protocol/realtime/reducer.ts";
+import type { StateModelKey, TypedEvent } from "../protocol/realtime/events.ts";
+import type { Clock } from "../shared/clock.ts";
 import type { DeviceSelectors } from "./selectors.ts";
-import { PROTECT_BOOTSTRAP_REFRESH_INTERVAL } from "../settings.ts";
-import type { ProtectLogging } from "../logging.ts";
-import { channels } from "../diagnostics.ts";
+import { PROTECT_BOOTSTRAP_REFRESH_INTERVAL } from "../shared/settings.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
+import { channels } from "../shared/diagnostics.ts";
 import { createDeviceSelectors } from "./selectors.ts";
-import { findUnmodeledDeviceCollections } from "../protocol/events.ts";
-import { noopLog } from "../logging.ts";
-import { wallClock } from "../clock.ts";
+import { findUnmodeledDeviceCollections } from "../protocol/realtime/events.ts";
+import { noopLog } from "../shared/logging.ts";
+import { wallClock } from "../shared/clock.ts";
 
 /**
  * Construction options for {@link StateStore}.

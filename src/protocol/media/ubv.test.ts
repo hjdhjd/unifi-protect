@@ -4,11 +4,11 @@
  * payload's padding, the zero-copy views and the copy a cut header is held as, a stream cut anywhere, and each refusal.
  */
 import { AV1_FRAME, H264_IDR, H264_NON_IDR, H265_TRAIL_R, adtsFrame, h264Unit, h265Unit, lengthPrefixed, obu, opusPacket,
-  temporalDelimiter } from "./codecs.helpers.ts";
+  temporalDelimiter } from "./codecs/codecs.helpers.ts";
 import { UBV_AAC, UBV_AV1, UBV_CLOCK, UBV_H264, UBV_H265, UBV_OPUS, ubvRecord } from "./ubv.helpers.ts";
 import { describe, test } from "node:test";
 import type { MediaFrame } from "./frames.ts";
-import { ProtectProtocolError } from "../../errors.ts";
+import { ProtectProtocolError } from "../../shared/errors.ts";
 import { UbvReader } from "./ubv.ts";
 import assert from "node:assert/strict";
 

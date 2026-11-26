@@ -2,7 +2,7 @@
  *
  * endpoints.ts: The single source of truth for Protect device REST endpoint URLs.
  */
-import type { DeviceModelKey } from "../protocol/events.ts";
+import type { DeviceModelKey } from "../protocol/realtime/events.ts";
 import { PROTECT_PROXY_PATH } from "../transport/url-host.ts";
 
 // The Protect application REST path segment for each device model key. Declared once here so a path typo is impossible at the call site and a future controller path

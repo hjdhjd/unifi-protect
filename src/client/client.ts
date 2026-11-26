@@ -22,42 +22,42 @@
  * @module ProtectClient
  */
 import { PROTECT_PROXY_PATH, controllerAuthority } from "../transport/url-host.ts";
-import { ProtectAbortedError, ProtectBootstrapError } from "../errors.ts";
+import { ProtectAbortedError, ProtectBootstrapError } from "../shared/errors.ts";
 import type { ProtectNvrBootstrap, ProtectNvrLiveviewConfig, ProtectRingtoneConfig } from "../types/index.ts";
-import type { StreamClassifier, TypedEvent } from "../protocol/events.ts";
-import { classifyPacket, eventSubjects } from "../protocol/events.ts";
-import { decodePacket, parsePacket } from "../protocol/packet.ts";
+import type { StreamClassifier, TypedEvent } from "../protocol/realtime/events.ts";
+import { classifyPacket, eventSubjects } from "../protocol/realtime/events.ts";
+import { decodePacket, parsePacket } from "../protocol/realtime/packet.ts";
 import { livestreamUrlResolver, talkbackUrlResolver } from "../transport/ws-endpoint.ts";
 import { selectControllerName, selectIsAdmin, selectLiveviews, selectRingtones } from "../state/selectors.ts";
 import { AuthSession } from "../transport/auth.ts";
 import type { Camera } from "../devices/camera.ts";
 import type { Chime } from "../devices/chime.ts";
-import type { Clock } from "../clock.ts";
+import type { Clock } from "../shared/clock.ts";
 import { ConnectionMonitor } from "./connection.ts";
 import type { DeviceContext } from "../devices/context.ts";
 import { DeviceRegistry } from "../devices/registry.ts";
 import type { Dispatcher } from "undici";
-import { EventBus } from "../event-bus.ts";
+import { EventBus } from "../shared/event-bus.ts";
 import { EventStream } from "../transport/events-stream.ts";
 import type { Fob } from "../devices/fob.ts";
 import type { Light } from "../devices/light.ts";
-import type { LivestreamDescription } from "../protocol/media/init-segment.ts";
-import { LivestreamPool } from "./livestream-pool.ts";
+import type { LivestreamDescription } from "../protocol/media/fmp4/init-segment.ts";
+import { LivestreamPool } from "../livestream/pool.ts";
 import type { Nvr } from "../devices/nvr.ts";
-import type { ProtectLogging } from "../logging.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
 import type { ProtectWebSocket } from "../transport/ws.ts";
-import type { RawPacket } from "../protocol/packet.ts";
-import type { RecoveryPolicy } from "./livestream-pool.ts";
+import type { RawPacket } from "../protocol/realtime/packet.ts";
+import type { RecoveryPolicy } from "../livestream/pool.ts";
 import type { Relay } from "../devices/relay.ts";
 import type { Sensor } from "../devices/sensor.ts";
 import { StateStore } from "../state/store.ts";
-import type { StreamOptions } from "../event-bus.ts";
-import { TalkbackSession } from "../transport/talkback-session.ts";
+import type { StreamOptions } from "../shared/event-bus.ts";
+import { TalkbackSession } from "../talkback/session.ts";
 import { Transport } from "../transport/http.ts";
 import type { Viewer } from "../devices/viewer.ts";
-import { describeInitSegment } from "../protocol/media/init-segment.ts";
-import { noopLog } from "../logging.ts";
-import { wallClock } from "../clock.ts";
+import { describeInitSegment } from "../protocol/media/fmp4/init-segment.ts";
+import { noopLog } from "../shared/logging.ts";
+import { wallClock } from "../shared/clock.ts";
 
 /**
  * Options for {@link ProtectClient.connect}. `host`, `username`, and `password` are the required controller address and credentials.

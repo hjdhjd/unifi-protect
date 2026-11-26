@@ -6,7 +6,7 @@
  * and the device suite backs its projections with a real store seeded by an explicit dispatch. The helper is specific to the store, so it sits beside the store as
  * the cross-cutting helpers' placement rule asks, and it is excluded from the build emit by the helpers exclude pattern in tsconfig.build.json.
  */
-import type { ProtectLogging } from "../logging.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
 import { StateStore } from "./store.ts";
 import { TestClock } from "homebridge-plugin-utils/testing";
 

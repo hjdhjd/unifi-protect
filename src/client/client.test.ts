@@ -6,31 +6,31 @@
  * here too: the single-packet decode and lift, the recorded-packet reader, and the classifier factory, held to the class and the occurrence limit the events
  * stream lifts through.
  */
-import type { ConnectionTransitionPayload, HttpRequestStartPayload } from "../diagnostics.ts";
-import { PROTECT_API_ERROR_LIMIT, PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../settings.ts";
+import type { ConnectionTransitionPayload, HttpRequestStartPayload } from "../shared/diagnostics.ts";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_RECOVERY_BACKOFF_KNOWN_MS } from "../shared/settings.ts";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectConfigurationError, ProtectNetworkError,
-  ProtectProtocolError } from "../errors.ts";
+  ProtectProtocolError } from "../shared/errors.ts";
 import { TestClock, errnoError, present, settle } from "homebridge-plugin-utils/testing";
-import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/packet.helpers.ts";
-import { channels, subscribeToChannel } from "../diagnostics.ts";
+import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/realtime/packet.helpers.ts";
+import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
 import { describe, test } from "node:test";
-import { expectAt, settlement, silentLog } from "../testing.helpers.ts";
+import { expectAt, settlement, silentLog } from "../shared/testing.helpers.ts";
 import { makeAudioDetectAdd, makeAudioDetectUpdate, makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone,
-  makeSensor, makeUser, makeViewer } from "../fixtures.helpers.ts";
-import { DOORBELL_INIT } from "../protocol/media/init-segment.fixtures.ts";
+  makeSensor, makeUser, makeViewer } from "../shared/fixtures.helpers.ts";
+import { DOORBELL_INIT } from "../protocol/media/fmp4/init-segment.fixtures.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
 import { ProtectClient } from "./client.ts";
-import type { RawPacket } from "../protocol/packet.ts";
-import { StreamClassifier } from "../protocol/events.ts";
+import type { RawPacket } from "../protocol/realtime/packet.ts";
+import { StreamClassifier } from "../protocol/realtime/events.ts";
 import { Transport } from "../transport/http.ts";
-import type { TypedEvent } from "../protocol/events.ts";
+import type { TypedEvent } from "../protocol/realtime/events.ts";
 import assert from "node:assert/strict";
 import { createLoopbackHttpsPeer } from "../transport/tls-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
-import { describeInitSegment } from "../protocol/media/init-segment.ts";
-import { parsePacket } from "../protocol/packet.ts";
+import { describeInitSegment } from "../protocol/media/fmp4/init-segment.ts";
+import { parsePacket } from "../protocol/realtime/packet.ts";
 
 const HOST = "10.0.0.1";
 const LOGIN_PATH = "/api/auth/login";

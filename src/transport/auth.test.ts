@@ -6,12 +6,12 @@
  * Driven against an undici MockAgent so the handshake exercises the real transport path, and over a loopback peer where a row reads what the owned pool's retry
  * decision hands the handshake, which a MockAgent never reaches.
  */
-import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../settings.ts";
-import { ProtectAuthError, ProtectNetworkError, ProtectRequestError, ProtectThrottledError } from "../errors.ts";
-import { channels, subscribeToChannel } from "../diagnostics.ts";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL } from "../shared/settings.ts";
+import { ProtectAuthError, ProtectNetworkError, ProtectRequestError, ProtectThrottledError } from "../shared/errors.ts";
+import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
 import { describe, test } from "node:test";
 import { makeMockTransport, url } from "./mock-controller.helpers.ts";
-import type { AuthReloginPayload } from "../diagnostics.ts";
+import type { AuthReloginPayload } from "../shared/diagnostics.ts";
 import { AuthSession } from "./auth.ts";
 import type { ChannelListener } from "node:diagnostics_channel";
 import type { Interceptable } from "undici";

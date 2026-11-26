@@ -5,7 +5,7 @@
 import type { DeviceContext } from "./context.ts";
 import { Projection } from "./device.ts";
 import type { ProtectNvrConfig } from "../types/index.ts";
-import type { ProtectState } from "../protocol/reducer.ts";
+import type { ProtectState } from "../protocol/realtime/reducer.ts";
 import { selectNvr } from "../state/selectors.ts";
 
 /**

@@ -5,13 +5,13 @@
  * self-contradiction diagnostics (the ENTER/CLEAR episode tracking and the adoptionContradiction channel publish), and disposal. Driven through a fake refresh hook
  * with no network: the store's refresh loop runs on a `TestClock`, and the suite yields with short real delays only to let observers register and settle.
  */
-import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../diagnostics.ts";
+import type { AdoptionContradictionPayload, SchemaUnmodeledCollectionPayload } from "../shared/diagnostics.ts";
 import { StateStore, createStateStore } from "./store.ts";
 import { TestClock, settle } from "homebridge-plugin-utils/testing";
-import { capturingLog, expectAt, settlement } from "../testing.helpers.ts";
-import { channels, subscribeToChannel } from "../diagnostics.ts";
+import { capturingLog, expectAt, settlement } from "../shared/testing.helpers.ts";
+import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
 import { describe, test } from "node:test";
-import { makeBootstrap, makeCamera, makeNvr, makeSensor } from "../fixtures.helpers.ts";
+import { makeBootstrap, makeCamera, makeNvr, makeSensor } from "../shared/fixtures.helpers.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";

@@ -169,7 +169,7 @@ socket.emitClose(1006, "");
 - **[Diagnostics channels](https://github.com/hjdhjd/unifi-protect/blob/main/docs/variables/channels.md)** - the `node:diagnostics_channel` observability surface: every named channel and its payload shape.
 - **[Migrating from v4](https://github.com/hjdhjd/unifi-protect/blob/main/docs/Changelog.md#500-2026-07-08)** - the 5.0.0 changelog entry enumerates every breaking change and what to do instead.
 
-The [`ufp` CLI](https://github.com/hjdhjd/unifi-protect/tree/main/src/util/cli) is the canonical reference consumer - it exercises every API surface against real hardware using the exact idioms above (`await using`, `AbortSignal` for Ctrl-C, typed errors, async iteration). Read it to see the library in practice; `ufp doctor` is also the quickest "is my install healthy?" probe.
+The [`ufp` CLI](https://github.com/hjdhjd/unifi-protect/tree/main/src/cli) is the canonical reference consumer - it exercises every API surface against real hardware using the exact idioms above (`await using`, `AbortSignal` for Ctrl-C, typed errors, async iteration). Read it to see the library in practice; `ufp doctor` is also the quickest "is my install healthy?" probe.
 
 ## Why use this library for UniFi Protect support?
 
@@ -193,7 +193,7 @@ The UniFi Protect API is undocumented, and implementing a library like this one 
 
 So...how does UniFi Protect provide realtime events? On UniFi OS-based controllers, it uses a websocket called `updates`. This connection provides a realtime stream of health, status, and events that the cameras encounter - including motion events and doorbell ring events.
 
-The library handles this for you: `ProtectClient.connect()` opens the websocket, and `client.events()` hands you a typed, decoded event stream. The notes below document the binary protocol the library decodes, for the curious and for anyone exploring the API themselves. The decoder lives in [`src/protocol/packet.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/protocol/packet.ts), the event classifier in [`src/protocol/events.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/protocol/events.ts), and the wire/configuration types in [`src/types/`](https://github.com/hjdhjd/unifi-protect/tree/main/src/types).
+The library handles this for you: `ProtectClient.connect()` opens the websocket, and `client.events()` hands you a typed, decoded event stream. The notes below document the binary protocol the library decodes, for the curious and for anyone exploring the API themselves. The decoder lives in [`src/protocol/realtime/packet.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/protocol/realtime/packet.ts), the event classifier in [`src/protocol/realtime/events.ts`](https://github.com/hjdhjd/unifi-protect/blob/main/src/protocol/realtime/events.ts), and the wire/configuration types in [`src/types/`](https://github.com/hjdhjd/unifi-protect/tree/main/src/types).
 
 The `updates` websocket uses a binary protocol to encode data, largely to minimize bandwidth and to allow more than JSON data if needed. Cameras continuously stream updates to the controller containing camera health, statistics, and - crucially - events such as motion and doorbell rings. A complete update packet is composed of four frames:
 

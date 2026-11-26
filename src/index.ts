@@ -23,24 +23,24 @@
 export { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectBootstrapError, ProtectCertificateError, ProtectCodecChangeError,
   ProtectConfigurationError, ProtectError, ProtectLivestreamAudioError, ProtectLivestreamRouteError, ProtectLivestreamUnavailableError, ProtectNetworkError,
   ProtectProtocolError, ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError,
-  RecoverableError } from "./errors.ts";
-export type { ProtectBootstrapStage } from "./errors.ts";
+  RecoverableError } from "./shared/errors.ts";
+export type { ProtectBootstrapStage } from "./shared/errors.ts";
 
 // The rendering a consumer logs a failure through, so the diagnosis a wrapped error carries below the sentence that was caught reaches an operator, and the
 // readings of a controller's refusal, each opening the bootstrap wrapper: isControllerRefusal, a refused sign-in or a rate limit alike, which a consumer's own
 // connect retry chooses its schedule by as recovery does, and the narrower isSignInRefusal, which tells a refused sign-in apart and chooses how a loss is announced.
-export { formatErrorChain, isControllerRefusal, isSignInRefusal } from "./errors.ts";
+export { formatErrorChain, isControllerRefusal, isSignInRefusal } from "./shared/errors.ts";
 
 // The mask a consumer names a controller address through in its own log, so a line naming the address carries none of the userinfo it can hold. It is the rule each
 // refusal that names the address quotes it by, published so a consumer applies the library's own rule rather than restating it.
 export { maskAddressCredentials } from "./transport/url-host.ts";
 
 // Logging - the consumer-injectable logger interface and the silent default a consumer may pass to suppress output.
-export { noopLog } from "./logging.ts";
-export type { ProtectLogging } from "./logging.ts";
+export { noopLog } from "./shared/logging.ts";
+export type { ProtectLogging } from "./shared/logging.ts";
 
 // Event bus - only the options type appears in a public signature (`stream(event, opts)`); the EventBus facade itself is internal machinery.
-export type { StreamOptions } from "./event-bus.ts";
+export type { StreamOptions } from "./shared/event-bus.ts";
 
 // Transport - the documented `client.transport` escape hatch. Its instance type and the types in its method signatures are public; the class is never constructed by a
 // consumer (ProtectClient.connect() builds it), so it is a type-only export.
@@ -51,8 +51,8 @@ export type { ProtectResponse, RequestOptions, SendOptions, Transport, Transport
 export type { ProtectWebSocket } from "./transport/ws.ts";
 
 // Clock - the time abstraction (injected through ConnectOptions) and its production implementation a consumer may reuse.
-export { wallClock } from "./clock.ts";
-export type { Clock } from "./clock.ts";
+export { wallClock } from "./shared/clock.ts";
+export type { Clock } from "./shared/clock.ts";
 
 // Protocol - the realtime event taxonomy a consumer reads off the firehose. The pure codec/classifier/reducer functions stay internal; the static `ProtectClient`
 // .decodePacket() / .parsePacket() / .classifyPacket() / .createClassifier() methods are the consumer-facing codec entries: the single-packet decode and lift the
@@ -62,28 +62,28 @@ export type { Clock } from "./clock.ts";
 // `RawPacket` is the element type of the raw firehose (`client.rawPackets()`) and the input/output of those codec statics: the decoded-but-unclassified frame,
 // header plus payload, including ones the classifier drops. `ProtectEventHeader` is the type of that frame's own `header` field, so it travels on the public surface
 // alongside `RawPacket`.
-export type { ProtectEventHeader, RawPacket } from "./protocol/packet.ts";
-export type { LivestreamFrame, LivestreamRoute, LivestreamSource, Segment } from "./transport/livestream-session.ts";
+export type { ProtectEventHeader, RawPacket } from "./protocol/realtime/packet.ts";
+export type { LivestreamFrame, LivestreamRoute, LivestreamSource, Segment } from "./livestream/session.ts";
 // The livestream init a `Segment`'s init arm, a subscription's cached init and a codec change all carry, and the description read from its bytes. The free reader
 // stays internal; the static `ProtectClient.describeInitSegment()` is the consumer-facing entry for init bytes a consumer holds of its own.
-export type { LivestreamDescription, LivestreamInit, LivestreamTrack } from "./protocol/media/init-segment.ts";
+export type { LivestreamDescription, LivestreamInit, LivestreamTrack } from "./protocol/media/fmp4/init-segment.ts";
 // The codecs a livestream carries: the audio codec a consumer asks for, and the video codec a described track names.
-export type { LivestreamAudioCodec, LivestreamVideoCodec } from "./protocol/media/codecs.ts";
+export type { LivestreamAudioCodec, LivestreamVideoCodec } from "./protocol/media/codecs/codecs.ts";
 // The id-keyed device-collection vocabulary - the category key set the selector catalog and every per-category consumer iterate over. A value export (a consumer iterates
 // the runtime array to reach a category's selectors) plus its type; `DeviceModelKey` stays internal, since the collection vocabulary is the consumer-facing surface.
-export { DEVICE_COLLECTION_KEYS } from "./protocol/events.ts";
-export type { AuthMethod, DeviceCollectionKey, SmartDetectType, StateModelKey, StreamClassifier, TypedEvent } from "./protocol/events.ts";
+export { DEVICE_COLLECTION_KEYS } from "./protocol/realtime/events.ts";
+export type { AuthMethod, DeviceCollectionKey, SmartDetectType, StateModelKey, StreamClassifier, TypedEvent } from "./protocol/realtime/events.ts";
 // The hardware-address vocabulary - the test for whether a value is a device address at all, and the fold that spells one address one way. Value exports: a
 // consumer calls both as free functions. A consumer keys its own devices by the folded spelling because the controller varies the case of one device's address
 // from one record to the next, so a map keyed on the text as it arrived splits a single device in two the first time the case changes.
-export { isMacAddress, normalizeMacAddress } from "./protocol/address.ts";
+export { isMacAddress, normalizeMacAddress } from "./protocol/realtime/address.ts";
 // The plain-object test - whether a value is a record with fields to read, the shape parsed JSON gives an object, so an array, a Buffer or a class instance never
 // reads as one. A value export: a consumer calls it as a free function over a payload, a bootstrap or a file it parsed, as the CLI does.
-export { isPlainObject } from "./protocol/plain-object.ts";
+export { isPlainObject } from "./protocol/realtime/plain-object.ts";
 // Talkback - the send-direction two-way-audio session a consumer receives from `camera.talkback()` and its lifecycle-state type. Type-only: a consumer never constructs
 // one (the camera factory does), drives it through `send`/`close`/dispose, and reads `state`.
-export type { TalkbackSession, TalkbackState } from "./transport/talkback-session.ts";
-export type { ProtectState } from "./protocol/reducer.ts";
+export type { TalkbackSession, TalkbackState } from "./talkback/session.ts";
+export type { ProtectState } from "./protocol/realtime/reducer.ts";
 
 // State - the observable store a consumer receives from `client.state`, and the memoized selectors a consumer passes to `observe` (or calls directly). The store owns
 // the category-keyed catalog, typed `DeviceSelectors`: `client.state.selectors.<category>` exposes that collection's quartet (`all`, `byId`, `online`, `adoptedIds`),
@@ -115,20 +115,20 @@ export type { ConnectOptions, ProtectClientEvents } from "./client/client.ts";
 export type { ConnectionEvents, ConnectionMonitor, ConnectionState, ConnectionTransition, ThrottleSource } from "./client/connection.ts";
 // Livestream pool - the subscription handle a consumer receives and the output it asks it to iterate (types), the recovery-policy contract a consumer's injected
 // `recoveryPolicy` is written against (types), and the library's default policy a consumer may delegate to when composing its own (a value).
-export { defaultLivestreamRecoveryPolicy } from "./client/livestream-pool.ts";
+export { defaultLivestreamRecoveryPolicy } from "./livestream/pool.ts";
 export type { LivestreamOutput, LivestreamSubscribeOptions, LivestreamSubscription, LivestreamSubscriptionState, LivestreamSubscriptionStats, RecoveryContext,
-  RecoveryDecision, RecoveryPolicy } from "./client/livestream-pool.ts";
+  RecoveryDecision, RecoveryPolicy } from "./livestream/pool.ts";
 
 // Diagnostics - the named observability channels (subscribed by a consumer through `subscribeToChannel`), the typed channel shape they are declared with, and their
 // payload types. Part of the public contract.
-export { channels, subscribeToChannel } from "./diagnostics.ts";
+export { channels, subscribeToChannel } from "./shared/diagnostics.ts";
 export type { AdoptionContradictionPayload, AnyProtectDiagnosticsChannel, AuthReloginPayload, ConnectionRebootDetectedPayload, ConnectionTransitionPayload,
   EventsClosedPayload, EventsPacketPayload,
   EventsReconnectingPayload,
   HttpRequestEndPayload, HttpRequestStartPayload, HttpThrottleEnteredPayload, LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload,
   LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload, LivestreamRouteFallbackPayload, LivestreamRouteFallbackReason, LivestreamSessionClosedPayload,
   LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload, LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload, ProtectDiagnosticsChannel,
-  SchemaUnknownModelKeyPayload, SchemaUnmodeledCollectionPayload, TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "./diagnostics.ts";
+  SchemaUnknownModelKeyPayload, SchemaUnmodeledCollectionPayload, TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "./shared/diagnostics.ts";
 
 // Settings - the externally observable timing and retry constants behind the ConnectOptions defaults, exposed as documented reference values.
 export { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_EVENTS_WATCHDOG_TIMEOUT,
@@ -136,7 +136,7 @@ export { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOU
   PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS,
   PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
   PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS,
-  PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
+  PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./shared/settings.ts";
 
 // Domain types - the Protect wire/configuration shapes. Every export here is intentionally public; consumers type their controller interactions against these.
 export type { DeepPartial, Nullable, ProtectAirQualityMetric, ProtectAirQualityMetricInterface, ProtectAirQualityThresholdSettings,

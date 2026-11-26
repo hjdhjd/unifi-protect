@@ -3,13 +3,13 @@
  * camera.ts: The Camera device projection - read-through config plus the camera-specific commands (snapshot, livestream, talkback, and the sensor and accessory
  * operations).
  */
-import type { LivestreamFrame, LivestreamSpec } from "../transport/livestream-session.ts";
-import type { LivestreamOutput, LivestreamSubscribeOptions, LivestreamSubscription } from "../client/livestream-pool.ts";
-import { ProtectProtocolError, ProtectUnsupportedError } from "../errors.ts";
+import type { LivestreamFrame, LivestreamSpec } from "../livestream/session.ts";
+import type { LivestreamOutput, LivestreamSubscribeOptions, LivestreamSubscription } from "../livestream/pool.ts";
+import { ProtectProtocolError, ProtectUnsupportedError } from "../shared/errors.ts";
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { ProtectCameraConfig } from "../types/index.ts";
-import type { TalkbackSession } from "../transport/talkback-session.ts";
+import type { TalkbackSession } from "../talkback/session.ts";
 
 /**
  * Options for {@link Camera.snapshot}. Width and height request a specific output size; omit both for the controller's default. Set `packageCamera` to capture from the

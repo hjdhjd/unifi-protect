@@ -4,23 +4,23 @@
  * write-through commands (snapshot, update, reboot) including the contract that a command never folds its response back into the store.
  */
 import { FatalError, ProtectAbortedError, ProtectAuthorizationError, ProtectError, ProtectProtocolError, ProtectRequestError,
-  ProtectUnsupportedError } from "../errors.ts";
+  ProtectUnsupportedError } from "../shared/errors.ts";
 import { describe, test } from "node:test";
-import { expectAt, silentLog } from "../testing.helpers.ts";
-import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeNvr, makeRelay } from "../fixtures.helpers.ts";
+import { expectAt, silentLog } from "../shared/testing.helpers.ts";
+import { makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeNvr, makeRelay } from "../shared/fixtures.helpers.ts";
 import { Camera } from "./camera.ts";
 import { Chime } from "./chime.ts";
 import type { DeviceContext } from "./context.ts";
 import { DeviceRegistry } from "./registry.ts";
 import { Fob } from "./fob.ts";
 import { Light } from "./light.ts";
-import { LivestreamPool } from "../client/livestream-pool.ts";
+import { LivestreamPool } from "../livestream/pool.ts";
 import type { MockTransport } from "../transport/mock-controller.helpers.ts";
 import { Nvr } from "./nvr.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import { Relay } from "./relay.ts";
 import type { StateStore } from "../state/store.ts";
-import { TalkbackSession } from "../transport/talkback-session.ts";
+import { TalkbackSession } from "../talkback/session.ts";
 import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";

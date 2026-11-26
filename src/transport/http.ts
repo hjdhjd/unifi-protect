@@ -3,23 +3,23 @@
  * http.ts: The HTTP transport for the UniFi Protect library - undici pooling, signal composition, typed-error classification, and the throttle circuit breaker.
  */
 import type { Dispatcher, RetryHandler } from "undici";
-import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../diagnostics.ts";
-import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../settings.ts";
+import type { HttpRequestEndPayload, HttpRequestStartPayload } from "../shared/diagnostics.ts";
+import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT } from "../shared/settings.ts";
 import { Pool, errors, interceptors, request } from "undici";
 import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError,
-  ProtectThrottledError, ProtectTimeoutError, assertNever } from "../errors.ts";
-import { armDeadline, millisecondsSince, wallClock } from "../clock.ts";
+  ProtectThrottledError, ProtectTimeoutError, assertNever } from "../shared/errors.ts";
+import { armDeadline, millisecondsSince, wallClock } from "../shared/clock.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
-import type { Clock } from "../clock.ts";
-import { EventBus } from "../event-bus.ts";
-import type { FatalError } from "../errors.ts";
+import type { Clock } from "../shared/clock.ts";
+import { EventBus } from "../shared/event-bus.ts";
+import type { FatalError } from "../shared/errors.ts";
 import type { IncomingHttpHeaders } from "node:http";
 import type { OwnedDispatcher } from "./connector.ts";
-import type { ProtectLogging } from "../logging.ts";
-import type { StreamOptions } from "../event-bus.ts";
-import { channels } from "../diagnostics.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
+import type { StreamOptions } from "../shared/event-bus.ts";
+import { channels } from "../shared/diagnostics.ts";
 import { classifyTransportError } from "./failure.ts";
-import { noopLog } from "../logging.ts";
+import { noopLog } from "../shared/logging.ts";
 import { randomUUID } from "node:crypto";
 
 // The transient-failure status codes the undici retry interceptor retries before `send` observes the controller's last answer, except an answer carrying a

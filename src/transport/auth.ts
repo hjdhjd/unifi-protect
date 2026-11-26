@@ -3,13 +3,13 @@
  * auth.ts: The authentication session for the UniFi Protect library - the UniFi OS credential handshake, CSRF rotation, and the 401-triggered relogin hook.
  */
 import { isTransientStatus, responseOk } from "./http.ts";
-import type { AuthReloginPayload } from "../diagnostics.ts";
+import type { AuthReloginPayload } from "../shared/diagnostics.ts";
 import type { IncomingHttpHeaders } from "node:http";
-import { ProtectAuthError } from "../errors.ts";
-import type { ProtectLogging } from "../logging.ts";
+import { ProtectAuthError } from "../shared/errors.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
 import type { Transport } from "./http.ts";
-import { channels } from "../diagnostics.ts";
-import { noopLog } from "../logging.ts";
+import { channels } from "../shared/diagnostics.ts";
+import { noopLog } from "../shared/logging.ts";
 
 /**
  * The credentials for a Protect controller. `host` is the controller's URL authority, the address without a scheme as a URL carries it: an IPv6 literal bracketed and

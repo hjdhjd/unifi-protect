@@ -4,7 +4,7 @@
  * own talkback suites hold against the real session.
  */
 import * as testing from "./testing.ts";
-import { TestTalkbackFactory, TestTalkbackSocket } from "./transport/talkback-session-double.ts";
+import { TestTalkbackFactory, TestTalkbackSocket } from "./talkback/double.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 

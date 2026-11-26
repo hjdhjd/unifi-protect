@@ -22,7 +22,7 @@ import type { OwnedConnector } from "./connector.ts";
 import type { Socket } from "node:net";
 import assert from "node:assert/strict";
 import { classifyTransportError } from "./failure.ts";
-import { resolveErrnoCause } from "../errors.ts";
+import { resolveErrnoCause } from "../shared/errors.ts";
 
 describe("createOwnedConnector", () => {
 

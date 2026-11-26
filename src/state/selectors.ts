@@ -29,8 +29,8 @@
  */
 import type { ProtectCameraConfig, ProtectChimeConfig, ProtectFobConfig, ProtectLightConfig, ProtectNvrConfig, ProtectNvrLiveviewConfig, ProtectNvrUserConfig,
   ProtectRelayConfig, ProtectRingtoneConfig, ProtectSensorConfig, ProtectViewerConfig } from "../types/index.ts";
-import type { DeviceCollectionKey } from "../protocol/events.ts";
-import type { ProtectState } from "../protocol/reducer.ts";
+import type { DeviceCollectionKey } from "../protocol/realtime/events.ts";
+import type { ProtectState } from "../protocol/realtime/reducer.ts";
 
 // The device-lifecycle string that marks a device reachable. Every device carries this `state` enum, whereas the boolean `isConnected` is present only on the wired
 // device classes (camera/chime/light/sensor/viewer) and is optional/absent on the LoRa devices (relay, fob) per base.ts; we read the universal enum because it is the

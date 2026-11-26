@@ -32,25 +32,25 @@
  * @module EventStream
  */
 import { Agent, WebSocket } from "undici";
-import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../diagnostics.ts";
-import { PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../settings.ts";
-import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, assertNever } from "../errors.ts";
+import type { EventsClosedPayload, EventsPacketPayload, SchemaUnknownModelKeyPayload } from "../shared/diagnostics.ts";
+import { PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_EVENTS_WATCHDOG_TIMEOUT } from "../shared/settings.ts";
+import { ProtectAbortedError, ProtectError, ProtectNetworkError, ProtectProtocolError, ProtectStallError, assertNever } from "../shared/errors.ts";
 import type { ProtectWebSocket, ProtectWebSocketCloseEvent, ProtectWebSocketErrorEvent, ProtectWebSocketMessageEvent, SocketFaultLine, SocketTeardown } from "./ws.ts";
-import { StreamClassifier, isKnownModelKey } from "../protocol/events.ts";
+import { StreamClassifier, isKnownModelKey } from "../protocol/realtime/events.ts";
 import { closeFrameText, socketFault, teardownCode, toBuffer } from "./ws.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
-import { millisecondsSince, wallClock } from "../clock.ts";
-import type { Clock } from "../clock.ts";
-import { EventBus } from "../event-bus.ts";
+import { millisecondsSince, wallClock } from "../shared/clock.ts";
+import type { Clock } from "../shared/clock.ts";
+import { EventBus } from "../shared/event-bus.ts";
 import type { OwnedDispatcher } from "./connector.ts";
 import { PROTECT_PROXY_PATH } from "./url-host.ts";
-import type { ProtectLogging } from "../logging.ts";
-import type { RawPacket } from "../protocol/packet.ts";
-import type { StreamOptions } from "../event-bus.ts";
-import type { TypedEvent } from "../protocol/events.ts";
-import { channels } from "../diagnostics.ts";
-import { decodePacket } from "../protocol/packet.ts";
-import { noopLog } from "../logging.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
+import type { RawPacket } from "../protocol/realtime/packet.ts";
+import type { StreamOptions } from "../shared/event-bus.ts";
+import type { TypedEvent } from "../protocol/realtime/events.ts";
+import { channels } from "../shared/diagnostics.ts";
+import { decodePacket } from "../protocol/realtime/packet.ts";
+import { noopLog } from "../shared/logging.ts";
 
 /**
  * Construction options for {@link EventStream}.

@@ -3,16 +3,16 @@
  * generate-manifest.test.ts: Unit tests for the schema-manifest generator, run against the library's real type tier so the checker-level resolutions a syntax walk
  * would get wrong are asserted on the actual declarations rather than on a synthetic stand-in.
  */
-import type { SchemaManifest, SchemaNode } from "../util/cli/manifest.ts";
+import type { SchemaManifest, SchemaNode } from "../cli/commands/capture/manifest.ts";
 import { buildSchemaManifest, writeSchemaManifest } from "./generate-manifest.ts";
 import { describe, test } from "node:test";
 import fs, { readFileSync } from "node:fs";
-import { loadSchemaManifest, schemaManifestLocation } from "../util/cli/manifest.ts";
+import { loadSchemaManifest, schemaManifestLocation } from "../cli/commands/capture/manifest.ts";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
-import { withTempDir } from "../testing.helpers.ts";
+import { withTempDir } from "../shared/testing.helpers.ts";
 
 // The generator builds a TypeScript program, so it is built once here and shared by every assertion below rather than per test.
 const manifest: SchemaManifest = buildSchemaManifest();

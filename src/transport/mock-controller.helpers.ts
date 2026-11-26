@@ -5,7 +5,7 @@
  */
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
-import type { ProtectLogging } from "../logging.ts";
+import type { ProtectLogging } from "../shared/logging.ts";
 import { TestClock } from "homebridge-plugin-utils/testing";
 import { Transport } from "./http.ts";
 

@@ -3,7 +3,7 @@
  * endpoints.test.ts: Unit tests for the device endpoint builder - the per-device and whole-collection URL forms.
  */
 import { describe, test } from "node:test";
-import { DEVICE_COLLECTION_KEYS } from "../protocol/events.ts";
+import { DEVICE_COLLECTION_KEYS } from "../protocol/realtime/events.ts";
 import assert from "node:assert/strict";
 import { deviceEndpoint } from "./endpoints.ts";
 
