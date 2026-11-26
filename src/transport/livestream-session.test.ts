@@ -4,7 +4,7 @@
  * (init/media/reassembly/timestamps), the FSM, the silence watchdog, and teardown. Driven through an injected fake WebSocket, a fake resolver, and a `TestClock`, so
  * the session is exercised deterministically without a live controller.
  */
-import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
+import { AMCREST_INIT, DOORBELL_INIT } from "../protocol/media/init-segment.fixtures.ts";
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "./tls-peer.helpers.ts";

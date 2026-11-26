@@ -65,7 +65,7 @@ export type { ProtectEventHeader, RawPacket } from "./protocol/packet.ts";
 export type { LivestreamRoute, LivestreamSource, Segment } from "./transport/livestream-session.ts";
 // The livestream init a `Segment`'s init arm, a subscription's cached init and a codec change all carry, and the description read from its bytes. The free reader
 // stays internal; the static `ProtectClient.describeInitSegment()` is the consumer-facing entry for init bytes a consumer holds of its own.
-export type { LivestreamDescription, LivestreamInit, LivestreamTrack } from "./protocol/init-segment.ts";
+export type { LivestreamDescription, LivestreamInit, LivestreamTrack } from "./protocol/media/init-segment.ts";
 // The id-keyed device-collection vocabulary - the category key set the selector catalog and every per-category consumer iterate over. A value export (a consumer iterates
 // the runtime array to reach a category's selectors) plus its type; `DeviceModelKey` stays internal, since the collection vocabulary is the consumer-facing surface.
 export { DEVICE_COLLECTION_KEYS } from "./protocol/events.ts";

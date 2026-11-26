@@ -17,7 +17,7 @@ import { describe, test } from "node:test";
 import { expectAt, settlement, silentLog } from "../testing.helpers.ts";
 import { makeAudioDetectAdd, makeAudioDetectUpdate, makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone,
   makeSensor, makeUser, makeViewer } from "../fixtures.helpers.ts";
-import { DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
+import { DOORBELL_INIT } from "../protocol/media/init-segment.fixtures.ts";
 import { FakeWebSocket } from "../transport/events-stream.helpers.ts";
 import type { Interceptable } from "undici";
 import { MockAgent } from "undici";
@@ -29,7 +29,7 @@ import type { TypedEvent } from "../protocol/events.ts";
 import assert from "node:assert/strict";
 import { createLoopbackHttpsPeer } from "../transport/tls-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
-import { describeInitSegment } from "../protocol/init-segment.ts";
+import { describeInitSegment } from "../protocol/media/init-segment.ts";
 import { parsePacket } from "../protocol/packet.ts";
 
 const HOST = "10.0.0.1";

@@ -11,10 +11,10 @@ import { FatalError, ProtectAbortedError, ProtectAuthError, ProtectAuthorization
   ProtectRequestError, ProtectStallError, ProtectThrottledError, ProtectTimeoutError, ProtectUnsupportedError, RecoverableError, assertNever, causeChain,
   isControllerRefusal, isSignInRefusal, resolveErrnoCause } from "./errors.ts";
 import { describe, test } from "node:test";
-import { DOORBELL_INIT } from "./protocol/init-segment.fixtures.ts";
+import { DOORBELL_INIT } from "./protocol/media/init-segment.fixtures.ts";
 import assert from "node:assert/strict";
 import { isControllerRefusal as barrelIsControllerRefusal } from "./index.ts";
-import { describeInitSegment } from "./protocol/init-segment.ts";
+import { describeInitSegment } from "./protocol/media/init-segment.ts";
 import { errnoError } from "homebridge-plugin-utils/testing";
 
 // A livestream init, the shape the codec-change error carries on both sides of the change, shared by the hierarchy rows and the cause row.

@@ -7,6 +7,7 @@ import { ProtectCertificateError, ProtectNetworkError, ProtectTimeoutError, asse
 import type { ConnectionFaultLevel } from "./connection-fault.ts";
 import type { ProtectError } from "../errors.ts";
 import type { TransportFailure } from "./failure.ts";
+import { asBuffer } from "../protocol/buffer.ts";
 import { classifyTransportError } from "./failure.ts";
 import { connectionFaultLevel } from "./connection-fault.ts";
 
@@ -129,7 +130,7 @@ export function toBuffer(data: unknown): Buffer | null {
 
   if(ArrayBuffer.isView(data)) {
 
-    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    return asBuffer(data);
   }
 
   return null;

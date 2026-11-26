@@ -42,11 +42,11 @@ import { millisecondsSince, wallClock } from "../clock.ts";
 import { socketFault, teardownCode, toBuffer } from "./ws.ts";
 import type { Clock } from "../clock.ts";
 import { EventBus } from "../event-bus.ts";
-import type { LivestreamInit } from "../protocol/init-segment.ts";
+import type { LivestreamInit } from "../protocol/media/init-segment.ts";
 import type { OwnedDispatcher } from "./connector.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { StreamOptions } from "../event-bus.ts";
-import { describeInitSegment } from "../protocol/init-segment.ts";
+import { describeInitSegment } from "../protocol/media/init-segment.ts";
 import { noopLog } from "../logging.ts";
 
 // The frame-type identifier byte that prefixes every UniFi Protect livestream WebSocket payload. The single byte tells us how to read the body that follows it. An

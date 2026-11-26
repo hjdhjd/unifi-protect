@@ -45,7 +45,7 @@ import { PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_AWAIT_MAX_MS, PR
 import { ProtectCodecChangeError, ProtectLivestreamRouteError, ProtectLivestreamUnavailableError, ProtectStallError } from "../errors.ts";
 import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
-import type { LivestreamInit } from "../protocol/init-segment.ts";
+import type { LivestreamInit } from "../protocol/media/init-segment.ts";
 import type { ProtectError } from "../errors.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWebSocket } from "../transport/ws.ts";

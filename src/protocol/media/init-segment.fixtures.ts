@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * init-segment.fixtures.ts: Livestream init segments for the init-segment reader's suite - the inits captured from the wire, and a box builder composing the shapes
- * the wire does not exercise.
+ * init-segment.fixtures.ts: Livestream init segments for the init-segment reader's suite - the inits captured from the wire, and the shapes the wire does not
+ * exercise, composed through the shared box module.
  */
 
 /* The captured inits are the real header, byte for byte, and they are what the dimensions, rates and channel counts are asserted from. They come from Protect
@@ -9,9 +9,10 @@
  * sample-table boxes and no serial, MAC, name or address, so embedding them exposes nothing about the site they came from. `AI_PRO_INIT` and `AI_PRO_RECONNECT_INIT`
  * differ only in their creation and modification timestamps, which makes them a realistic pair for a reconnect that delivers the same stream.
  *
- * The composed inits are built through the box builder below rather than written as byte arrays, so each states its shape in the vocabulary of the format - a box,
- * a full box, a sample entry - and each corner's configuration bits are spelled out beside it.
+ * The composed inits are built through the shared box module's box and field writers rather than written as byte arrays, so each states its shape in the vocabulary
+ * of the format - a box, a full box, a sample entry - and each corner's configuration bits are spelled out beside it.
  */
+import { box, fixed16, fullBox, u16, u32, u8 } from "./boxes.ts";
 
 // Captured inits.
 
@@ -104,30 +105,7 @@ export const PROTECT_AV1_INIT = capture([
   "FHN0c3oAAAAAAAAAAAAAAAAAAAAQc3RjbwAAAAAAAAAA"
 ]);
 
-// Box builder.
-
-// A plain box: a 32-bit size covering the 8-byte header and the payloads, then the four-character type, then the payloads in order.
-export function box(type: string, ...payloads: Uint8Array[]): Buffer {
-
-  const body = Buffer.concat(payloads);
-  const header = Buffer.alloc(8);
-
-  header.writeUInt32BE(8 + body.length, 0);
-  header.write(type, 4, 4, "latin1");
-
-  return Buffer.concat([ header, body ]);
-}
-
-// A full box: a plain box whose payload opens with a version byte and 24 bits of flags.
-export function fullBox(type: string, version: number, flags: number, ...payloads: Uint8Array[]): Buffer {
-
-  const prefix = Buffer.alloc(4);
-
-  prefix.writeUInt8(version, 0);
-  prefix.writeUIntBE(flags, 1, 3);
-
-  return box(type, prefix, ...payloads);
-}
+// Builders composing the init shapes through the shared box module.
 
 // A box with a 64-bit size: the 32-bit size reads 1, and the true size follows the type as a 64-bit `largesize` covering the 16-byte header and the payloads.
 export function largeBox(type: string, ...payloads: Uint8Array[]): Buffer {
@@ -150,36 +128,6 @@ function toEndBox(type: string, ...payloads: Uint8Array[]): Buffer {
   header.write(type, 4, 4, "latin1");
 
   return Buffer.concat([ header, ...payloads ]);
-}
-
-// Big-endian unsigned fields of each width the boxes use.
-function u8(value: number): Buffer {
-
-  return Buffer.from([value]);
-}
-
-function u16(value: number): Buffer {
-
-  const field = Buffer.alloc(2);
-
-  field.writeUInt16BE(value, 0);
-
-  return field;
-}
-
-function u32(value: number): Buffer {
-
-  const field = Buffer.alloc(4);
-
-  field.writeUInt32BE(value, 0);
-
-  return field;
-}
-
-// A 16.16 fixed-point field, the form `tkhd` and the audio sample entry write their dimensions and sample rate in.
-function fixed16(value: number): Buffer {
-
-  return u32(value * 65536);
 }
 
 // A 64-bit floating-point field, the form a QuickTime sound description at version 2 writes its sample rate in.

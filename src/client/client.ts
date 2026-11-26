@@ -41,7 +41,7 @@ import { EventBus } from "../event-bus.ts";
 import { EventStream } from "../transport/events-stream.ts";
 import type { Fob } from "../devices/fob.ts";
 import type { Light } from "../devices/light.ts";
-import type { LivestreamDescription } from "../protocol/init-segment.ts";
+import type { LivestreamDescription } from "../protocol/media/init-segment.ts";
 import { LivestreamPool } from "./livestream-pool.ts";
 import type { Nvr } from "../devices/nvr.ts";
 import type { ProtectLogging } from "../logging.ts";
@@ -55,7 +55,7 @@ import type { StreamOptions } from "../event-bus.ts";
 import { TalkbackSession } from "../transport/talkback-session.ts";
 import { Transport } from "../transport/http.ts";
 import type { Viewer } from "../devices/viewer.ts";
-import { describeInitSegment } from "../protocol/init-segment.ts";
+import { describeInitSegment } from "../protocol/media/init-segment.ts";
 import { noopLog } from "../logging.ts";
 import { wallClock } from "../clock.ts";
 

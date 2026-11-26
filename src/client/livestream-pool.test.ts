@@ -5,7 +5,7 @@
  * terminal, and the recovery layer: invisible reconnect (same-stream init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the
  * establishing and recovering regimes, reassess, and whenEstablished.
  */
-import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AUDIO_RATE_CHANGED_INIT, DOORBELL_INIT } from "../protocol/init-segment.fixtures.ts";
+import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AUDIO_RATE_CHANGED_INIT, DOORBELL_INIT } from "../protocol/media/init-segment.fixtures.ts";
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import type { LivestreamAddresses, LivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,

@@ -2,7 +2,7 @@
  *
  * diagnostics.ts: Named node:diagnostics_channel publishers for the UniFi Protect library.
  */
-import type { LivestreamInit } from "./protocol/init-segment.ts";
+import type { LivestreamInit } from "./protocol/media/init-segment.ts";
 import type { LivestreamSubscriptionStats } from "./client/livestream-pool.ts";
 import diagnosticsChannel from "node:diagnostics_channel";
 

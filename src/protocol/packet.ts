@@ -42,6 +42,7 @@
  * @module ProtectPacket
  */
 import { ProtectProtocolError } from "../errors.ts";
+import { asBuffer } from "./buffer.ts";
 import { inflateSync } from "node:zlib";
 import { isPlainObject } from "./plain-object.ts";
 
@@ -352,11 +353,4 @@ function isProtectEventHeader(value: unknown): value is ProtectEventHeader {
 
   return (typeof candidate["action"] === "string") && (typeof candidate["id"] === "string") &&
     (typeof candidate["modelKey"] === "string") && (typeof candidate["newUpdateId"] === "string");
-}
-
-// View a Uint8Array as a Buffer without copying its bytes, so the decoder can use Buffer's big-endian readers and zero-copy subarray slicing. A fresh Buffer header is
-// always allocated over the same backing memory - even when the input is already a Buffer - so the bytes are shared and only the wrapper object is new.
-function asBuffer(buf: Uint8Array): Buffer {
-
-  return Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
 }

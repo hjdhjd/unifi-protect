@@ -2,7 +2,7 @@
  *
  * errors.ts: The typed error hierarchy for the UniFi Protect library.
  */
-import type { LivestreamInit } from "./protocol/init-segment.ts";
+import type { LivestreamInit } from "./protocol/media/init-segment.ts";
 
 /**
  * The error model in one sentence: every failure the library raises is a subclass of {@link ProtectError}, and the *first* level of the hierarchy answers the only

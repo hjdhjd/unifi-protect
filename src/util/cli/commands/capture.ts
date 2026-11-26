@@ -12,6 +12,7 @@ import { compareCodeUnit, fileStamp, formatDuration, serializeJson } from "../ou
 import { createScrubContext, scrub } from "../scrub.ts";
 import { diffBootstrap, diffEventType, diffRecord, eventTypeOf, loadSchemaManifest, noveltyKey, snapshotUndeclared, snapshotUnmodeled } from "../manifest.ts";
 import { DEVICE_CATEGORIES } from "../lookup.ts";
+import { asBuffer } from "../../../protocol/buffer.ts";
 import { parseArgs } from "node:util";
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
@@ -347,8 +348,7 @@ function assembleBundle(window: Window, client: ProtectClient, manifest: SchemaM
 function encodeBinaryPayloads(packets: readonly RawPacket[]): RawPacket[] {
 
   return packets.map((packet) => ArrayBuffer.isView(packet.payload) ?
-    { header: packet.header, payload: { bytes: Buffer.from(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength).toString("base64"),
-      encoding: "base64" } } : packet);
+    { header: packet.header, payload: { bytes: asBuffer(packet.payload).toString("base64"), encoding: "base64" } } : packet);
 }
 
 /**

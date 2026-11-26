@@ -45,6 +45,13 @@
  *
  * @module ProtectInitSegment
  */
+import { AAC_LC_OBJECT_TYPE, CHANNEL_COUNTS, SAMPLING_FREQUENCIES } from "./aac.ts";
+import { AUDIO_FORMATS, VIDEO_FORMATS } from "./codecs.ts";
+import type { AudioCodec, VideoCodec } from "./codecs.ts";
+import type { Box, Span } from "./boxes.ts";
+import { children, findChild, readFourCc, readUInt } from "./boxes.ts";
+import { BitReader } from "./bits.ts";
+import { OPUS_DECODE_RATE } from "./opus.ts";
 
 /**
  * What a livestream's init segment says about the stream: every track in its `moov`, in file order, or none when the bytes carry no readable `moov`. A stream with no
@@ -66,9 +73,9 @@ export interface LivestreamDescription {
  * @category Transport
  */
 export type LivestreamTrack =
-  | { readonly codec: "av1" | "h264" | "h265"; readonly height: number; readonly id: number; readonly kind: "video"; readonly level: number;
+  | { readonly codec: VideoCodec; readonly height: number; readonly id: number; readonly kind: "video"; readonly level: number;
     readonly profile: number; readonly width: number; } |
-  { readonly channels: number; readonly codec: "aac" | "opus"; readonly id: number; readonly kind: "audio"; readonly sampleRate: number } |
+  { readonly channels: number; readonly codec: AudioCodec; readonly id: number; readonly kind: "audio"; readonly sampleRate: number } |
   { readonly codec: "unknown"; readonly id: number; readonly kind: "audio" | "unknown" | "video"; readonly sampleEntry: string };
 
 /**
@@ -87,27 +94,9 @@ export interface LivestreamInit {
   readonly description: LivestreamDescription;
 }
 
-// A byte range within the init, from `start` up to `end`. Every box and descriptor the walk reads is one, and every field it reads is bounded by the range holding it.
-interface Span {
-
-  readonly end: number;
-  readonly start: number;
-}
-
-// One box: its four-character type and the span of its payload, which begins past the 8- or 16-byte header and ends at the box's end clamped to its parent's, and
-// whether that clamp cut the box short.
-interface Box extends Span {
-
-  readonly clamped: boolean;
-  readonly type: string;
-}
-
-// One video sample entry the reader describes: the codec it reads as, the child box holding its decoder configuration record, and where in that record the profile
-// and level sit.
+// Where one video codec's decoder configuration record holds the profile and level the reader describes.
 interface VideoFormat {
 
-  readonly codec: "av1" | "h264" | "h265";
-  readonly config: string;
   readonly level: ConfigField;
   readonly profile: ConfigField;
 }
@@ -119,17 +108,6 @@ interface ConfigField {
   readonly byte: number;
   readonly shift: number;
 }
-
-// A box header's two sizes: the compact form carries a 32-bit size and the type, and a size of 1 adds a 64-bit `largesize` after the type.
-const BOX_HEADER_SIZE = 8;
-const LARGE_BOX_HEADER_SIZE = 16;
-
-// The declared sizes that carry a meaning of their own: zero runs the box to the end of its parent, and one defers to the 64-bit `largesize`.
-const BoxSize = {
-
-  LARGE: 1,
-  TO_END: 0
-} as const;
 
 // Field offsets within a box's payload. A full box opens with a version byte and three flag bytes; `tkhd` places its track id after the creation and modification
 // times, 32-bit at version 0 and 64-bit at version 1; `hdlr` places its handler type after a pre-defined word; and `stsd` lists its entries after an entry count.
@@ -158,22 +136,27 @@ const SampleEntryOffset = {
   VISUAL_WIDTH: 24
 } as const;
 
-// The video sample entries the reader describes. The entries in each pair differ only in where the stream's parameter sets travel, so both read the same record:
-// `hvcC` holds `general_profile_idc` in the low five bits of its byte 1 and `general_level_idc` in its byte 12, `avcC` holds `AVCProfileIndication` and
-// `AVCLevelIndication` in its bytes 1 and 3, and `av1C` holds `seq_profile` in the high three bits of its byte 1 and `seq_level_idx_0` in the low five.
-const AV1: VideoFormat = { codec: "av1", config: "av1C", level: { bits: 5, byte: 1, shift: 0 }, profile: { bits: 3, byte: 1, shift: 5 } };
-const H264: VideoFormat = { codec: "h264", config: "avcC", level: { bits: 8, byte: 3, shift: 0 }, profile: { bits: 8, byte: 1, shift: 0 } };
-const H265: VideoFormat = { codec: "h265", config: "hvcC", level: { bits: 8, byte: 12, shift: 0 }, profile: { bits: 5, byte: 1, shift: 0 } };
+// Where each video codec's record holds its profile and level, the media group's shared map naming the sample entries the reader describes and the box holding
+// each one's record: `hvcC` holds `general_profile_idc` in the low five bits of its byte 1 and `general_level_idc` in its byte 12, `avcC` holds
+// `AVCProfileIndication` and `AVCLevelIndication` in its bytes 1 and 3, and `av1C` holds `seq_profile` in the high three bits of its byte 1 and `seq_level_idx_0` in
+// the low five.
+const VIDEO_RECORD_FIELDS: Readonly<Record<VideoCodec, VideoFormat>> = {
 
-const VIDEO_FORMATS: ReadonlyMap<string, VideoFormat> = new Map([ [ "av01", AV1 ], [ "avc1", H264 ], [ "avc3", H264 ], [ "hev1", H265 ], [ "hvc1", H265 ] ]);
+  av1: { level: { bits: 5, byte: 1, shift: 0 }, profile: { bits: 3, byte: 1, shift: 5 } },
+  h264: { level: { bits: 8, byte: 3, shift: 0 }, profile: { bits: 8, byte: 1, shift: 0 } },
+  h265: { level: { bits: 8, byte: 12, shift: 0 }, profile: { bits: 5, byte: 1, shift: 0 } }
+};
 
-// The MPEG-4 Systems descriptor tags on the path from `esds` to the `AudioSpecificConfig`, and the fields of the elementary stream descriptor that decide where its
-// nested descriptors begin: three optional fields follow its 16-bit id and its flags byte, each present when its flag bit is set.
-const DescriptorTag = {
+// The MPEG-4 Systems descriptor tags an `esds` carries: the elementary stream descriptor, its decoder configuration descriptor and that descriptor's
+// decoder-specific info, which is the path from `esds` to the `AudioSpecificConfig` the reader walks, and the SL configuration descriptor that follows the decoder
+// configuration in a written `esds`. Then the fields of the elementary stream descriptor that decide where its nested descriptors begin: three optional fields
+// follow its 16-bit id and its flags byte, each present when its flag bit is set.
+export const DescriptorTag = {
 
   DECODER_CONFIG: 4,
   DECODER_SPECIFIC_INFO: 5,
-  ELEMENTARY_STREAM: 3
+  ELEMENTARY_STREAM: 3,
+  SL_CONFIG: 6
 } as const;
 
 const EsDescriptorFlag = {
@@ -188,32 +171,25 @@ const DESCRIPTOR_LENGTH_MAX_BYTES = 4;
 
 // The fixed fields of a decoder configuration descriptor that precede its nested descriptors: the object type indication, the stream type byte, a 24-bit buffer
 // size and two 32-bit bitrates.
-const DECODER_CONFIG_FIXED_SIZE = 13;
+export const DECODER_CONFIG_FIXED_SIZE = 13;
 
 // The object type indication of MPEG-4 audio, whose decoder-specific info is an `AudioSpecificConfig`. Any other indication, the MPEG-2 AAC ones included, carries a
 // configuration this reader does not interpret.
-const OBJECT_TYPE_MPEG4_AUDIO = 0x40;
+export const OBJECT_TYPE_MPEG4_AUDIO = 0x40;
 
 // The AudioSpecificConfig vocabulary. An audio object type of 31 escapes to 32 plus the next six bits. AAC-LC is the core codec; SBR and PS extend it, each signalling an
-// extension sampling frequency and then the core's own object type. A sampling-frequency index indexes the table below, 15 escaping to an explicit 24-bit rate and 13
-// and 14 being reserved. A channel configuration of 1 to 6 is that many channels, 7 is eight, 0 defers to the program config element, and 8 to 15 are reserved.
+// extension sampling frequency and then the core's own object type. A sampling-frequency index names a rate from the shared table, 15 escaping to an explicit 24-bit
+// rate and 13 and 14 being reserved. A channel configuration names its channel count from the shared table, 0 deferring to the program config element.
 const AudioObjectType = {
 
-  AAC_LC: 2,
   ESCAPE: 31,
   ESCAPE_BASE: 32,
   PS: 29,
   SBR: 5
 } as const;
 
-const SAMPLING_FREQUENCIES: readonly number[] = [ 96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350 ];
 const SAMPLING_FREQUENCY_ESCAPE = 15;
 const CHANNEL_CONFIGURATION_FROM_PCE = 0;
-const CHANNEL_CONFIGURATION_DIRECT_MAX = 6;
-const CHANNEL_CONFIGURATION_EIGHT = 7;
-
-// The rate every Opus stream decodes at. The `dOps` box's input sample rate names the encoder's source and not the playback rate, so it is never the rate reported.
-const OPUS_DECODE_RATE = 48000;
 
 /**
  * Describe a livestream's fMP4 initialization segment: every track in its `moov`, each with the format a decoder is configured from.
@@ -330,19 +306,19 @@ function readSampleEntry(bytes: Buffer, opts: { entry: Box; id: number; stsdVers
 
   if(video !== undefined) {
 
-    return readVideoEntry(bytes, { entry, format: video, id });
+    return readVideoEntry(bytes, { ...video, entry, id });
   }
 
-  switch(entry.type) {
+  switch(AUDIO_FORMATS.get(entry.type)) {
 
-    case "mp4a": {
+    case "aac": {
 
       const format = readAacFormat(bytes, findEsds(bytes, audioChildren(bytes, entry, stsdVersion)));
 
       return (format === undefined) ? undefined : { channels: format.channels, codec: "aac", id, kind: "audio", sampleRate: format.sampleRate };
     }
 
-    case "Opus": {
+    case "opus": {
 
       const channels = readUInt(bytes, findChild(bytes, audioChildren(bytes, entry, stsdVersion), "dOps"), 1, 1);
 
@@ -355,22 +331,24 @@ function readSampleEntry(bytes: Buffer, opts: { entry: Box; id: number; stsdVers
   }
 }
 
-// Read a video sample entry: its dimensions from the entry's own fields and its profile and level from the decoder configuration record among its children.
-function readVideoEntry(bytes: Buffer, opts: { entry: Box; format: VideoFormat; id: number }): LivestreamTrack | undefined {
+// Read a video sample entry of a codec: its dimensions from the entry's own fields and its profile and level from the decoder configuration record its `config`
+// child box holds.
+function readVideoEntry(bytes: Buffer, opts: { codec: VideoCodec; config: string; entry: Box; id: number }): LivestreamTrack | undefined {
 
-  const { entry, format, id } = opts;
+  const { codec, config, entry, id } = opts;
+  const format = VIDEO_RECORD_FIELDS[codec];
   const width = readUInt(bytes, entry, SampleEntryOffset.VISUAL_WIDTH, 2);
   const height = readUInt(bytes, entry, SampleEntryOffset.VISUAL_HEIGHT, 2);
-  const config = findChild(bytes, { end: entry.end, start: entry.start + SampleEntryOffset.VISUAL_CHILDREN }, format.config);
-  const profile = readConfigField(bytes, config, format.profile);
-  const level = readConfigField(bytes, config, format.level);
+  const record = findChild(bytes, { end: entry.end, start: entry.start + SampleEntryOffset.VISUAL_CHILDREN }, config);
+  const profile = readConfigField(bytes, record, format.profile);
+  const level = readConfigField(bytes, record, format.level);
 
   if((width === undefined) || (height === undefined) || (profile === undefined) || (level === undefined)) {
 
     return undefined;
   }
 
-  return { codec: format.codec, height, id, kind: "video", level, profile, width };
+  return { codec, height, id, kind: "video", level, profile, width };
 }
 
 // Read one field of a decoder configuration record, or undefined when the record is absent or too short to hold it.
@@ -442,7 +420,7 @@ function readAacFormat(bytes: Buffer, esds: Box | undefined): { channels: number
 
     sampleRate = readSamplingFrequency(reader);
     readAudioObjectType(reader);
-  } else if(objectType !== AudioObjectType.AAC_LC) {
+  } else if(objectType !== AAC_LC_OBJECT_TYPE) {
 
     return undefined;
   }
@@ -531,12 +509,7 @@ function readChannelCount(reader: BitReader, channelConfiguration: number): numb
     return readProgramConfigChannels(reader);
   }
 
-  if(channelConfiguration <= CHANNEL_CONFIGURATION_DIRECT_MAX) {
-
-    return channelConfiguration;
-  }
-
-  return (channelConfiguration === CHANNEL_CONFIGURATION_EIGHT) ? 8 : undefined;
+  return CHANNEL_COUNTS.get(channelConfiguration);
 }
 
 /* Count the channels a program config element declares. It follows the `GASpecificConfig`'s own fields, which the reader steps over first: the frame length flag,
@@ -580,122 +553,6 @@ function readProgramConfigChannels(reader: BitReader): number {
   return channels;
 }
 
-/* A big-endian bit reader over a span, for the `AudioSpecificConfig`'s packed fields.
- *
- * A read that runs past the span answers zero and marks the reader overrun, rather than answering undefined at each call: the configuration's later fields depend
- * on its earlier ones, so a caller reads the whole configuration and checks `overrun` once, and a cut configuration reads as unknown instead of throwing.
- */
-class BitReader {
-
-  readonly #bytes: Buffer;
-  readonly #end: number;
-  #overrun = false;
-  #position: number;
-
-  constructor(bytes: Buffer, span: Span) {
-
-    this.#bytes = bytes;
-    this.#end = span.end * 8;
-    this.#position = span.start * 8;
-  }
-
-  // Whether any read ran past the span.
-  get overrun(): boolean {
-
-    return this.#overrun;
-  }
-
-  // Read the next `bits` bits as an unsigned integer, most significant bit first.
-  read(bits: number): number {
-
-    if((this.#position + bits) > this.#end) {
-
-      this.#overrun = true;
-      this.#position = this.#end;
-
-      return 0;
-    }
-
-    let value = 0;
-
-    for(let index = 0; index < bits; index++) {
-
-      const bit = (this.#bytes.readUInt8(this.#position >> 3) >> (7 - (this.#position & 7))) & 1;
-
-      value = (value * 2) + bit;
-      this.#position++;
-    }
-
-    return value;
-  }
-
-  // Step over the next `bits` bits.
-  skip(bits: number): void {
-
-    this.read(bits);
-  }
-}
-
-// Iterate the boxes within a span. A size of one reads the 64-bit `largesize`, a size of zero runs to the span's end, a size past the span's end is clamped to it and
-// the box still yielded marked as clamped, and a size smaller than its own header, or a header the span cannot hold, ends the walk.
-function *children(bytes: Buffer, parent: Span): Generator<Box> {
-
-  let offset = parent.start;
-
-  while((parent.end - offset) >= BOX_HEADER_SIZE) {
-
-    const declared = bytes.readUInt32BE(offset);
-    const type = bytes.toString("latin1", offset + 4, offset + 8);
-
-    let headerSize = BOX_HEADER_SIZE;
-    let size = declared;
-
-    if(declared === BoxSize.TO_END) {
-
-      size = parent.end - offset;
-    } else if(declared === BoxSize.LARGE) {
-
-      if((parent.end - offset) < LARGE_BOX_HEADER_SIZE) {
-
-        return;
-      }
-
-      headerSize = LARGE_BOX_HEADER_SIZE;
-      size = Number(bytes.readBigUInt64BE(offset + BOX_HEADER_SIZE));
-    }
-
-    if(size < headerSize) {
-
-      return;
-    }
-
-    const end = Math.min(offset + size, parent.end);
-
-    yield { clamped: (offset + size) > parent.end, end, start: offset + headerSize, type };
-
-    offset = end;
-  }
-}
-
-// The first child box of a type within a span, or undefined when the span is absent or holds none.
-function findChild(bytes: Buffer, parent: Span | undefined, type: string): Box | undefined {
-
-  if(parent === undefined) {
-
-    return undefined;
-  }
-
-  for(const box of children(bytes, parent)) {
-
-    if(box.type === type) {
-
-      return box;
-    }
-  }
-
-  return undefined;
-}
-
 // The first descriptor of a tag within a span, as the span of its body, or undefined when the span holds none. A descriptor is a tag byte, an expandable length, then
 // its body; a body that runs past the span is clamped to its end, as a box is, and a length that never ends within its four bytes ends the walk.
 function findDescriptor(bytes: Buffer, parent: Span, tag: number): Span | undefined {
@@ -733,28 +590,4 @@ function findDescriptor(bytes: Buffer, parent: Span, tag: number): Span | undefi
   }
 
   return undefined;
-}
-
-// Read an unsigned big-endian integer `width` bytes wide at `offset` within a span, or undefined when the span is absent or the field runs past its end. Every read the
-// walk makes is bounded by its span before it is made, which keeps a truncated or malformed init from ever throwing; this reader is that bound for a fixed-width
-// integer field.
-function readUInt(bytes: Buffer, span: Span | undefined, offset: number, width: 1 | 2 | 4): number | undefined {
-
-  if((span === undefined) || ((span.start + offset + width) > span.end)) {
-
-    return undefined;
-  }
-
-  return bytes.readUIntBE(span.start + offset, width);
-}
-
-// Read a four-character code at `offset` within a span, or undefined when the span is absent or the code runs past its end.
-function readFourCc(bytes: Buffer, span: Span | undefined, offset: number): string | undefined {
-
-  if((span === undefined) || ((span.start + offset + 4) > span.end)) {
-
-    return undefined;
-  }
-
-  return bytes.toString("latin1", span.start + offset, span.start + offset + 4);
 }
