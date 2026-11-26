@@ -63,7 +63,7 @@ export type { Clock } from "./clock.ts";
 // header plus payload, including ones the classifier drops. `ProtectEventHeader` is the type of that frame's own `header` field, so it travels on the public surface
 // alongside `RawPacket`.
 export type { ProtectEventHeader, RawPacket } from "./protocol/packet.ts";
-export type { LivestreamRoute, LivestreamSource, Segment } from "./transport/livestream-session.ts";
+export type { LivestreamFrame, LivestreamRoute, LivestreamSource, Segment } from "./transport/livestream-session.ts";
 // The livestream init a `Segment`'s init arm, a subscription's cached init and a codec change all carry, and the description read from its bytes. The free reader
 // stays internal; the static `ProtectClient.describeInitSegment()` is the consumer-facing entry for init bytes a consumer holds of its own.
 export type { LivestreamDescription, LivestreamInit, LivestreamTrack } from "./protocol/media/init-segment.ts";
@@ -113,11 +113,11 @@ export type { Viewer } from "./devices/viewer.ts";
 export { ProtectClient } from "./client/client.ts";
 export type { ConnectOptions, ProtectClientEvents } from "./client/client.ts";
 export type { ConnectionEvents, ConnectionMonitor, ConnectionState, ConnectionTransition, ThrottleSource } from "./client/connection.ts";
-// Livestream pool - the subscription handle a consumer receives (a type), the recovery-policy contract a consumer's injected `recoveryPolicy` is written against (types),
-// and the library's default policy a consumer may delegate to when composing its own (a value).
+// Livestream pool - the subscription handle a consumer receives and the output it asks it to iterate (types), the recovery-policy contract a consumer's injected
+// `recoveryPolicy` is written against (types), and the library's default policy a consumer may delegate to when composing its own (a value).
 export { defaultLivestreamRecoveryPolicy } from "./client/livestream-pool.ts";
-export type { LivestreamSubscribeOptions, LivestreamSubscription, LivestreamSubscriptionState, LivestreamSubscriptionStats, RecoveryContext, RecoveryDecision,
-  RecoveryPolicy } from "./client/livestream-pool.ts";
+export type { LivestreamOutput, LivestreamSubscribeOptions, LivestreamSubscription, LivestreamSubscriptionState, LivestreamSubscriptionStats, RecoveryContext,
+  RecoveryDecision, RecoveryPolicy } from "./client/livestream-pool.ts";
 
 // Diagnostics - the named observability channels (subscribed by a consumer through `subscribeToChannel`), the typed channel shape they are declared with, and their
 // payload types. Part of the public contract.

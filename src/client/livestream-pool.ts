@@ -7,7 +7,8 @@
 /**
  * `LivestreamPool` is the library-owned fan-out *and recovery* layer over {@link LivestreamSession}. Two consumers that ask for the same stream on the same route share
  * one underlying WebSocket; each receives every segment through its own unbounded queue, so a slow consumer never backs up a fast one. Reference counting tears the
- * underlying session down when the last subscriber disposes, and the cached init segment is replayed automatically to any late joiner.
+ * underlying session down when the last subscriber disposes, and the cached init segment is replayed automatically to any late joiner. A subscriber of a UBV stream
+ * may ask for its frames instead of its segments, and receives every frame the same way, with no init replayed; the output never decides which stream it shares.
  *
  * **Resilient by default; recovery lives where sharing lives.** A subscription's iterator survives stalls and reconnects - it pauses during the gap and resumes when
  * segments flow again. Because there is exactly one underlying socket per stream, the recover-or-give-up decision is inherently per-shared-stream, so it lives in the one
@@ -36,7 +37,7 @@
  *
  * @module LivestreamPool
  */
-import type { LivestreamAddresses, LivestreamDialRoute, LivestreamSessionEvents, LivestreamSpec, ResolvedLivestreamSpec,
+import type { LivestreamAddresses, LivestreamDialRoute, LivestreamFrame, LivestreamSessionEvents, LivestreamSpec, ResolvedLivestreamSpec,
   Segment } from "../transport/livestream-session.ts";
 import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   LivestreamRouteFallbackPayload, LivestreamRouteFallbackReason, LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload,
@@ -46,10 +47,11 @@ import { PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_AWAIT_MAX_MS, PR
   PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_RECOVERY_BACKOFF_MS, PROTECT_LIVESTREAM_STALL_DEFAULT_MS,
   PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
 import { ProtectCodecChangeError, ProtectConfigurationError, ProtectLivestreamAudioError, ProtectLivestreamRouteError, ProtectLivestreamUnavailableError,
-  ProtectStallError } from "../errors.ts";
+  ProtectStallError, assertNever } from "../errors.ts";
 import { millisecondsSince, wallClock } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import type { LivestreamInit } from "../protocol/media/init-segment.ts";
+import type { MediaFrame } from "../protocol/media/frames.ts";
 import type { ProtectError } from "../errors.ts";
 import type { ProtectLogging } from "../logging.ts";
 import type { ProtectWebSocket } from "../transport/ws.ts";
@@ -103,7 +105,10 @@ export interface RecoveryContext {
  * - `reconnect` tears down any socket and connects fresh; the attempt is treated as failed if no media segment arrives within `awaitMs`, then the policy is re-consulted.
  *   `awaitMs` doubles as the inter-attempt spacing (a fast-failing attempt still occupies its full window, except a `"preferDirect"` stream's direct attempt that fails
  *   at its dial or is offered no direct address, which falls back to the proxied route at once, or ends the stream when it asks for Opus and was offered no direct
- *   address), so the single policy governs both disposition and timing.
+ *   address), so the single policy governs both disposition and timing. The pool keeps an attempt past `awaitMs` while its frames keep arriving - until its first
+ *   media, until its frames fall silent for the stream's media-stall detection threshold, until its session closes, or until
+ *   {@link PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS} has passed since its first frame - because a UBV stream's writer can hold the stream's first media while it
+ *   waits for audio.
  * - `wait` does nothing for `forMs`, then re-consults - unifying defer-soak (a still-connecting session's late media segment cancels it early) and inter-attempt backoff.
  *   A `"preferDirect"` stream's direct attempt that had not reached its dial when its window elapsed, and so did not fall back then, ends the wait early if its dial
  *   then fails or it is offered no direct address, and the stream falls back to the proxied route, or ends when it asks for Opus and was offered no direct address.
@@ -178,27 +183,38 @@ export function defaultLivestreamRecoveryPolicy(context: RecoveryContext): Recov
 
 /**
  * The delivery counters a {@link LivestreamSubscription} exposes, so a consumer can monitor its own slowness (a growing `queueDepth` / `peakQueueDepth`) and respond -
- * the only backpressure mechanism, since the queue itself is unbounded.
+ * the only backpressure mechanism, since the queue itself is unbounded. An item is whatever the subscription iterates: a segment, or a frame for a frames
+ * subscription.
  *
  * @category Client
  */
 export interface LivestreamSubscriptionStats {
 
-  /** Segments handed to the iterator over this subscription's life. */
+  /** Items handed to the iterator over this subscription's life. */
   delivered: number;
 
-  /** Segments dropped undelivered when this subscription was disposed under `discardOnDispose`; `0` for a default drain-on-dispose subscription. */
+  /** Items dropped undelivered when this subscription was disposed under `discardOnDispose`; `0` for a default drain-on-dispose subscription. */
   discarded: number;
 
-  /** The `clock.now()` timestamp of the most recent segment enqueued for this subscriber. */
+  /** The `clock.now()` timestamp of the most recent item enqueued for this subscriber. */
   lastSegmentAt: number;
 
   /** The historical high-water mark of `queueDepth`. Monotonic: it records the peak backlog this subscriber ever accrued, which a later discard does not lower. */
   peakQueueDepth: number;
 
-  /** Segments queued but not yet delivered right now - the live backlog. Reads `0` immediately after a `discardOnDispose` disposal clears the queue. */
+  /** Items queued but not yet delivered right now - the live backlog. Reads `0` immediately after a `discardOnDispose` disposal clears the queue. */
   queueDepth: number;
 }
+
+/**
+ * What a subscription iterates: `"segments"`, the default, the stream's fMP4 initialization and media segments, or `"frames"`, the media frames a UBV stream
+ * carries, each a {@link LivestreamFrame} as the camera sent it. A frames subscription reads UBV whatever its spec names, so it shares a stream with the segments
+ * subscribers that read UBV with the same audio, and the output itself never joins the stream's identity. It is named by the overloads of `LivestreamPool.subscribe`
+ * and {@link Camera.livestream} beside the shared option types, so a value typed as those keeps answering segments.
+ *
+ * @category Client
+ */
+export type LivestreamOutput = "frames" | "segments";
 
 /**
  * Per-subscription options for `LivestreamPool.subscribe` (reached through the {@link Camera.livestream} consumer entry point). All optional: a bare `subscribe(spec)`
@@ -209,7 +225,7 @@ export interface LivestreamSubscriptionStats {
 export interface LivestreamSubscribeOptions {
 
   /**
-   * Discard any still-queued, undelivered segments the instant this subscription is disposed, so a consumer mid-iteration receives the terminal rather than draining
+   * Discard any still-queued, undelivered items the instant this subscription is disposed, so a consumer mid-iteration receives the terminal rather than draining
    * stale bytes first. Off by default: a disposed subscription normally drains its queue before ending. Scoped to the consumer's own disposal alone; a pool-forced
    * terminal (codec change, a missing direct address, another audio codec, a socket that cannot send, give-up, last-subscriber detach, pool disposal) still drains
    * the queue before the terminal surfaces, exactly as it does without this option.
@@ -281,8 +297,10 @@ const detachedHost: SubscriptionHost = {
 };
 
 /**
- * A consumer's handle into a pooled livestream. It is an `AsyncIterable<Segment>` (the iterator *is* the surface - no callback rail) and `AsyncDisposable`. Each
- * subscription has its **own unbounded queue**: the pool pushes every segment to every subscriber, so one slow consumer cannot stall a fast one, and nothing is dropped.
+ * A consumer's handle into a pooled livestream. It is an `AsyncIterable` of what the subscriber asked for (the iterator *is* the surface - no callback rail) and
+ * `AsyncDisposable`: fMP4 {@link Segment}s by default, or, for a frames subscription, the {@link LivestreamFrame}s of a UBV stream, which need no init and are
+ * replayed none. Each subscription has its **own unbounded queue**: the pool pushes every item of its output to every subscriber of that output, so one slow
+ * consumer cannot stall a fast one, and nothing is dropped.
  *
  * The stream is **resilient by default**: a recoverable stall or reconnect is invisible to the iterator - it pauses while the underlying session is re-established and
  * resumes uninterrupted when segments flow again (a reconnect to the same stream, whose init carries the same codec label, description and sample descriptions,
@@ -291,11 +309,14 @@ const detachedHost: SubscriptionHost = {
  * {@link ProtectCodecChangeError}), a `"direct"` stream or one asking for Opus whose negotiation offered no direct address (it throws
  * {@link ProtectLivestreamRouteError}), a UBV stream carrying an audio codec other than the one it asked for (it throws {@link ProtectLivestreamAudioError}), an
  * Opus stream whose socket cannot send its play command (it throws {@link ProtectConfigurationError}), and the recovery policy giving up (it throws
- * {@link ProtectLivestreamUnavailableError}). A recoverable stall is *not* one of them.
+ * {@link ProtectLivestreamUnavailableError}). A recoverable stall is *not* one of them. A frames subscription meets the same terminals, the codec gate reading the
+ * stream's segments for it.
+ *
+ * @typeParam T - What the subscription iterates: {@link Segment}, the default, or {@link LivestreamFrame} for a frames subscription.
  *
  * @category Client
  */
-export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisposable {
+export class LivestreamSubscription<T = Segment> implements AsyncIterable<T>, AsyncDisposable {
 
   /** This subscription's unique id, correlated with the `subscription:created` / `:disposed` diagnostics. */
   readonly id: string;
@@ -310,11 +331,11 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   // subscription.
   readonly #disposalDeferred = Promise.withResolvers<false>();
   readonly #host: SubscriptionHost;
-  readonly #onDispose: (subscription: LivestreamSubscription) => void;
+  readonly #onDispose: (subscription: LivestreamSubscription<T>) => void;
   // This queue is a policy-bearing media backlog on the library's hottest path - it carries the per-subscriber delivery statistics, the consumer-disposal discard, and
   // the drain-before-terminal guarantee - kept deliberately separate from the generic `EventBus` rail, which is built on Node's own async iterator and carries no
   // per-consumer policy.
-  readonly #queue: Segment[] = [];
+  readonly #queue: T[] = [];
   readonly #signal: AbortSignal | undefined;
 
   #abortHandler: (() => void) | null = null;
@@ -328,7 +349,7 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   // The resolver of a pending `next()` that is waiting for the queue to fill or the stream to terminate. Cleared each time it is fired.
   #wake: (() => void) | null = null;
 
-  constructor(opts: { clock: Clock; discardOnDispose: boolean; host: SubscriptionHost; onDispose: (subscription: LivestreamSubscription) => void;
+  constructor(opts: { clock: Clock; discardOnDispose: boolean; host: SubscriptionHost; onDispose: (subscription: LivestreamSubscription<T>) => void;
     signal?: AbortSignal; }) {
 
     this.id = randomUUID();
@@ -377,13 +398,13 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   }
 
   /**
-   * Iterate the segments of this subscription. The iterator yields every queued segment, then either ends (clean close / disposal) or throws the terminal error (a codec
-   * change, a missing direct address, another audio codec, a socket that cannot send, or a give-up). A recoverable stall is invisible - the iterator parks and
-   * resumes. Breaking out of the loop disposes the subscription.
+   * Iterate this subscription's items: its segments, or its frames for a frames subscription. The iterator yields every queued item, then either ends (clean close /
+   * disposal) or throws the terminal error (a codec change, a missing direct address, another audio codec, a socket that cannot send, or a give-up). A recoverable
+   * stall is invisible - the iterator parks and resumes. Breaking out of the loop disposes the subscription.
    *
-   * @returns An async iterator of segments.
+   * @returns An async iterator of the subscription's items.
    */
-  [Symbol.asyncIterator](): AsyncIterator<Segment> {
+  [Symbol.asyncIterator](): AsyncIterator<T> {
 
     return this.#drain();
   }
@@ -450,7 +471,8 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
    * establishing or ended on a terminal first, or this subscription itself was disposed - its own signal aborting, an explicit `await using` exit, or breaking its
    * iterator - so a departed subscriber's own wait ends with the subscription rather than hanging on the shared establishment latch until the remaining subscribers
    * happen to settle it. The boolean deliberately does not distinguish these outcomes because every consumer's correct reaction is identical: stop waiting and clean
-   * up.
+   * up. A frames subscription is established by the same media: a UBV stream always writes its segments, whether or not a subscriber iterates them, so its first
+   * media segment, not its first frame, resolves the wait.
    *
    * @returns A promise resolving `true` once the first media segment flows, `false` if establishment was abandoned or this subscription was disposed first.
    */
@@ -470,12 +492,13 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
   }
 
   /**
-   * Push a segment to this subscriber. Records liveness, tracks the peak queue depth (the consumer's slowness signal), enqueues, and wakes a pending next(). Codec reads
-   * through to the shared session's cached init, so nothing codec-specific is tracked here. Package-internal: the ManagedSession calls this.
+   * Push an item, a segment or a frame, to this subscriber. Records liveness, tracks the peak queue depth (the consumer's slowness signal), enqueues, and wakes a
+   * pending next(). Codec reads through to the shared session's cached init, so nothing codec-specific is tracked here. Package-internal: the ManagedSession calls
+   * this.
    *
    * @internal
    */
-  push(segment: Segment): void {
+  push(item: T): void {
 
     if(this.#done) {
 
@@ -483,7 +506,7 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
     }
 
     this.#lastSegmentAt = this.#clock.now();
-    this.#queue.push(segment);
+    this.#queue.push(item);
     this.#peakQueueDepth = Math.max(this.#peakQueueDepth, this.#queue.length);
     this.#fireWake();
   }
@@ -522,21 +545,21 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
     this.#fireWake();
   }
 
-  // The pull loop. Drains every queued segment, then surfaces the terminal condition: a stored error (thrown) or completion (return). When neither is ready, it awaits
+  // The pull loop. Drains every queued item, then surfaces the terminal condition: a stored error (thrown) or completion (return). When neither is ready, it awaits
   // the next push/terminate. The finally block disposes, so breaking the consumer's loop releases the reference exactly as an explicit dispose would.
-  async *#drain(): AsyncGenerator<Segment> {
+  async *#drain(): AsyncGenerator<T> {
 
     try {
 
       for(;;) {
 
-        const segment = this.#queue.shift();
+        const item = this.#queue.shift();
 
-        if(segment !== undefined) {
+        if(item !== undefined) {
 
           this.#delivered++;
 
-          yield segment;
+          yield item;
 
           continue;
         }
@@ -585,20 +608,79 @@ export class LivestreamSubscription implements AsyncIterable<Segment>, AsyncDisp
 // route behind it should not wait out a window the direct route has already answered; a failed negotiation is shared by every route and says nothing of the direct one.
 type RecoveryOutcome = "aborted" | "directFailed" | "elapsed" | "reassess" | "recovered";
 
-// The per-install one-shot latches that must move in lockstep with every freshly-installed session, consolidated into one object so the lockstep is enforced by
-// structure rather than by separate booleans a future edit could desynchronize. They are all reset atomically in `#installSession` and consumed at most once over
-// that session's life:
+// A subscription of any output, as the pool holds it apart from its tag: where it is detached, disposed and reported.
+type PooledSubscription = LivestreamSubscription | LivestreamSubscription<LivestreamFrame>;
+
+// A managed stream's subscriber, tagged by the output it asked for, so each fan-out reaches the subscribers of its own output alone and the compiler holds every
+// item to the type its subscription iterates. The urgency closure, which a subscriber may leave out, feeds the recovery and the media watchdog whatever the output.
+type Subscriber =
+  | { output: "frames"; subscription: LivestreamSubscription<LivestreamFrame>; urgency: (() => number) | undefined } |
+  { output: "segments"; subscription: LivestreamSubscription; urgency: (() => number) | undefined };
+
+// Resolve the output a subscription asks for: an omitted output is segments, and a value outside the outputs, which only an untyped caller can pass, is refused here
+// as the spec's resolution refuses an unknown route, before any session is built.
+function resolveOutput(output: LivestreamOutput | undefined): LivestreamOutput {
+
+  if(output === undefined) {
+
+    return "segments";
+  }
+
+  switch(output) {
+
+    case "frames":
+    case "segments": {
+
+      return output;
+    }
+
+    default: {
+
+      return assertNever(output);
+    }
+  }
+}
+
+// Build a subscriber of the output asked for, its subscription typed by what it iterates and built from the options every output takes. An output added without
+// an arm here leaves the function's end reachable, which fails to compile.
+function subscriberOf(output: LivestreamOutput, options: { clock: Clock; discardOnDispose: boolean; host: SubscriptionHost;
+  onDispose: (subscription: PooledSubscription) => void; signal?: AbortSignal; }, urgency?: () => number): Subscriber {
+
+  switch(output) {
+
+    case "frames": {
+
+      return { output, subscription: new LivestreamSubscription<LivestreamFrame>(options), urgency };
+    }
+
+    case "segments": {
+
+      return { output, subscription: new LivestreamSubscription<Segment>(options), urgency };
+    }
+  }
+}
+
+// The per-install state that must move in lockstep with every freshly-installed session, consolidated into one object so the lockstep is enforced by structure
+// rather than by separate fields a future edit could desynchronize. It is all reset atomically in `#installSession`; each latch is consumed at most once over that
+// session's life, and the frame times are stamped on every frame it fans:
 //
 // - `awaitingFirstSegment` gates the codec-gate / init point: the very first segment of a freshly-installed session (normally the init) routes to `#handleFirstSegment`.
 // - `awaitingFirstMedia` gates the recovery point: the first MEDIA segment of the install settles the episode `recovered` (establishment / live recovery both key on
 //   media, not the init - "a stream is alive when media is flowing, not when the controller acked with an init").
+// - `firstFrameAt` and `lastFrameAt` are when this install fanned its first and its latest frame, as the clock's monotonic readings, null until it fans one. They
+//   judge only whether an attempt still waiting for its first media is kept past its window (see `#aliveMs`).
 // - `pendingDiscontinuity` arms the post-reconnect timeline-discontinuity marker for the first fanned media; armed only in the recovering phase (a cold start has no
 //   prior timeline to resynchronize).
+// - `pendingFrameDiscontinuity` arms the same marker for the first fanned frame, by its own rule: armed whenever an earlier install has fanned a frame, whatever the
+//   phase, because frames arrive ahead of the media an attempt is judged by, so an establishing attempt can fan frames and end before its first media.
 interface SessionInstallState {
 
   awaitingFirstMedia: boolean;
   awaitingFirstSegment: boolean;
+  firstFrameAt: number | null;
+  lastFrameAt: number | null;
   pendingDiscontinuity: boolean;
+  pendingFrameDiscontinuity: boolean;
 }
 
 /* Whether a later init carries the same stream as the cached one, on a reconnect or on a live session: the same codec label, the same description by value, and
@@ -606,7 +688,8 @@ interface SessionInstallState {
  * names the codec family, profile, level and audio object type, the description the sample rate, channels and dimensions the label says nothing about, and a
  * track's sample description holds exactly what a decoder is configured from, its parameter sets among it, which can change while neither of the others moves. An
  * init never compares whole, because its creation times differ on every connection, while a track's sample description reads the same on every connection of one
- * stream. The sample descriptions are read here, at the gate, and never stored.
+ * stream. The reserved bits of an AV1 track's `av1C` record are no part of its sample description, because the format reserves them and no decoder reads them, so
+ * the reader answers them cleared. The sample descriptions are read here, at the gate, and never stored.
  */
 function isSameStream(prior: LivestreamInit, next: LivestreamInit): boolean {
 
@@ -643,8 +726,9 @@ class ManagedSession implements SubscriptionHost {
   readonly #onTeardown: (key: string) => void;
   readonly #policy: RecoveryPolicy;
   readonly #resolved: ResolvedLivestreamSpec;
-  // Subscribers mapped to their (optional) urgency closure, so the recovery loop aggregates delay tolerance across the stream by the minimum at each decision point.
-  readonly #subscribers = new Map<LivestreamSubscription, (() => number) | undefined>();
+  // Each subscription mapped to its subscriber, tagged by output and carrying its (optional) urgency closure, so each fan-out reaches its own output's subscribers
+  // and the recovery loop aggregates delay tolerance across the stream by the minimum at each decision point.
+  readonly #subscribers = new Map<PooledSubscription, Subscriber>();
 
   // The in-flight underlying session and its rail subscriptions. Both are replaced wholesale on each reconnect; disposing the rails before closing the old session
   // guarantees a dying socket's late frames never leak into the new attempt.
@@ -662,8 +746,11 @@ class ManagedSession implements SubscriptionHost {
   // when a decodable media segment is fanned, so a stream producing only non-media frames (an init the codec gate swallows, the negotiated timestamp frames) reads
   // stalled to the watchdog even while the any-segment stamps stay fresh. The any-segment and media stamps are deliberately separate, measuring two different
   // liveness notions - any byte vs. a picture. `#watchdogController` is the media watchdog's lifecycle handle: non-null only while the watchdog is armed (between the
-  // first media of an install and the next reconnect / teardown), aborting it ends the poll loop.
+  // first media of an install and the next reconnect / teardown), aborting it ends the poll loop. `#framesFanned` records that some install of the stream has fanned a
+  // frame, which arms the frame discontinuity marker at every later install; nothing clears it, because once a stream's frames have begun, every later connection
+  // leaves a gap in them.
   #establishedSettled = false;
+  #framesFanned = false;
   #initSegmentCache: LivestreamInit | null = null;
   #lastError: ProtectError | null = null;
   #lastMediaAt = 0;
@@ -674,12 +761,17 @@ class ManagedSession implements SubscriptionHost {
   #watchdogController: AbortController | null = null;
 
   // The current recovery episode's bookkeeping: which regime, how many attempts have failed, when it began as the clock's monotonic reading, the lockstep
-  // per-install latches (see the SessionInstallState type - the codec-gate point, the media-keyed recovery point, and the post-reconnect discontinuity marker, reset
-  // as a unit per install), the route the episode's attempts dial, and the resolver of the window the loop is currently awaiting (the single point the rails and
-  // reassess() settle). The route is set as each episode begins and moves only when a "preferDirect" episode falls back, so it is never carried into the next one.
+  // per-install state (see the SessionInstallState type - the codec-gate point, the media-keyed recovery point, the post-reconnect discontinuity marker and the
+  // install's frame times, reset as a unit per install), whether the window being awaited is one an attempt's frames are keeping past the policy's own (stated
+  // by every window as it begins, beside its resolver, and read only while a window is awaited, which is how the session's close tells it from the policy's
+  // window), the route the episode's attempts dial, and the resolver of the window the loop is currently awaiting (the single point the rails and reassess()
+  // settle). The route is set as each episode begins and moves only when a "preferDirect" episode falls back, so it is never carried into the next one.
   #attempts = 0;
   #episodeStartedAt = 0;
-  #install: SessionInstallState = { awaitingFirstMedia: false, awaitingFirstSegment: false, pendingDiscontinuity: false };
+  #install: SessionInstallState = { awaitingFirstMedia: false, awaitingFirstSegment: false, firstFrameAt: null, lastFrameAt: null, pendingDiscontinuity: false,
+    pendingFrameDiscontinuity: false };
+
+  #keptByFrames = false;
   #phase: "establishing" | "recovering" = "establishing";
   #route: LivestreamDialRoute = "proxied";
   #settleOutcome: ((outcome: RecoveryOutcome) => void) | null = null;
@@ -717,17 +809,18 @@ class ManagedSession implements SubscriptionHost {
     return this.#state;
   }
 
-  // Attach a new subscriber, recording its urgency closure. A late joiner (the init is already cached) is replayed that cached init as its first segment; the very first
-  // subscriber kicks off the bounded establishment episode. Synchronous, so no live segment can interleave ahead of the replay.
-  attach(subscription: LivestreamSubscription, urgency?: () => number): void {
+  // Attach a new subscriber, recording its output and its urgency closure. A late segments joiner (the init is already cached) is replayed that cached init as its first
+  // segment, and a frames joiner, which iterates no init, is replayed nothing; the very first subscriber kicks off the bounded establishment episode. Synchronous, so no
+  // live segment can interleave ahead of the replay.
+  attach(subscriber: Subscriber): void {
 
     const first = (this.#subscribers.size === 0);
 
-    this.#subscribers.set(subscription, urgency);
+    this.#subscribers.set(subscriber.subscription, subscriber);
 
-    if(this.#initSegmentCache !== null) {
+    if((this.#initSegmentCache !== null) && (subscriber.output === "segments")) {
 
-      subscription.push({ ...this.#initSegmentCache, type: "init" });
+      subscriber.subscription.push({ ...this.#initSegmentCache, type: "init" });
     }
 
     if(first) {
@@ -745,7 +838,7 @@ class ManagedSession implements SubscriptionHost {
   }
 
   // Detach a subscriber. When the last one leaves, tear the stream down (which ends the recovery loop if one is running).
-  detach(subscription: LivestreamSubscription): void {
+  detach(subscription: PooledSubscription): void {
 
     if(!this.#subscribers.delete(subscription)) {
 
@@ -859,14 +952,23 @@ class ManagedSession implements SubscriptionHost {
         const isReconnect = (decision.kind === "reconnect");
 
         // A reconnect tears down any in-flight socket and connects fresh; a wait leaves the socket untouched. Either way we then wait out the decision's window for a
-        // media segment (which restores the stream) or the window's elapse.
+        // media segment (which restores the stream) or the window's elapse. A reconnect's attempt still receiving frames when its window elapses is waited on for as
+        // long as its frames keep it (see `#aliveMs`), each further wait read fresh as the last one elapses, so the attempt ends at its first media, once its frames
+        // fall silent, when its session closes, or at the deadline from its first frame. Each such wait is marked as it begins, which is how the session's close
+        // ends it at once where it leaves the policy's own window to elapse (see `#onSessionClosed`). A wait is never kept past its window.
         if(isReconnect) {
 
           this.#installSession();
         }
 
         // eslint-disable-next-line no-await-in-loop
-        const outcome = await this.#raceOutcome(isReconnect ? decision.awaitMs : decision.forMs, signal);
+        let outcome = await this.#raceOutcome(isReconnect ? decision.awaitMs : decision.forMs, signal);
+
+        for(let aliveMs = isReconnect ? this.#aliveMs() : 0; (outcome === "elapsed") && (aliveMs > 0); aliveMs = this.#aliveMs()) {
+
+          // eslint-disable-next-line no-await-in-loop
+          outcome = await this.#raceOutcome(aliveMs, signal, { keptByFrames: true });
+        }
 
         if((outcome === "recovered") || (outcome === "aborted")) {
 
@@ -888,14 +990,15 @@ class ManagedSession implements SubscriptionHost {
           continue;
         }
 
-        // A reconnect whose window elapsed without a recovering MEDIA segment is a failed attempt; a wait that simply elapsed is not (it was deliberate backoff/defer). A
-        // reassess on either re-consults immediately without counting an attempt. Because the recovery point keys on media, an init-then-no-media session - the
-        // controller acked with an init then went silent - elapses its window exactly like a session that never connected, and counts as a failed media-establishment
-        // attempt: a fresh socket is a legitimate recovery for a per-socket controller bug, bounded by the establishment deadline (establishing) and by the injected
-        // policy's giveUp -> self-heal (recovering). We deliberately do NOT keep-the-session-and-wait. The residual edge is a near-good session that inits at
-        // `awaitMs - e` and would have produced media at `awaitMs + e`: this tears it down to reconnect. The default establishing windows are patient enough that a
-        // real first-media latency lands well inside the window, so this near-miss is low-probability and acceptable; keeping the session and waiting indefinitely on a
-        // stalled init would never terminate, which the reconnect-on-elapse design forecloses.
+        // A reconnect whose window elapsed without a recovering MEDIA segment, with no frames still keeping it, is a failed attempt; a wait that simply elapsed is
+        // not (it was deliberate backoff/defer). A reassess on either re-consults immediately without counting an attempt. Because the recovery point keys on media,
+        // an init-then-no-media session - the controller acked with an init then went silent - elapses its window exactly like a session that never connected, and
+        // counts as a failed media-establishment attempt: a fresh socket is a legitimate recovery for a per-socket controller bug, bounded by the establishment
+        // deadline (establishing) and by the injected policy's giveUp -> self-heal (recovering). We deliberately do NOT keep a silent session and wait. The residual
+        // edge is a near-good session carrying no frames that inits at `awaitMs - e` and would have produced media at `awaitMs + e`: this tears it down to
+        // reconnect. The default establishing windows are patient enough that a real first-media latency lands well inside the window, so this near-miss is
+        // low-probability and acceptable; keeping the session and waiting indefinitely on a stalled init would never terminate, which the reconnect-on-elapse design
+        // forecloses.
         if(isReconnect && (outcome === "elapsed")) {
 
           this.#attempts++;
@@ -972,7 +1075,7 @@ class ManagedSession implements SubscriptionHost {
 
     let tolerance = Infinity;
 
-    for(const urgency of this.#subscribers.values()) {
+    for(const { urgency } of this.#subscribers.values()) {
 
       if(urgency !== undefined) {
 
@@ -998,7 +1101,7 @@ class ManagedSession implements SubscriptionHost {
     // MIN to the default seed) - the default is a per-subscriber contribution, not the aggregate's ceiling.
     let threshold = Infinity;
 
-    for(const urgency of this.#subscribers.values()) {
+    for(const { urgency } of this.#subscribers.values()) {
 
       threshold = Math.min(threshold, urgency === undefined ? PROTECT_LIVESTREAM_STALL_DEFAULT_MS : urgency());
     }
@@ -1006,6 +1109,30 @@ class ManagedSession implements SubscriptionHost {
     // An all-opted-out stream (every subscriber declared Infinity, or there are no subscribers) leaves the MIN at Infinity, which we pass through unclamped so the
     // watchdog never fires; a finite MIN is clamped up to the floor.
     return Number.isFinite(threshold) ? Math.max(threshold, PROTECT_LIVESTREAM_STALL_FLOOR_MS) : Infinity;
+  }
+
+  /* How much longer the current install's frames keep its attempt once the policy's window has elapsed with no media: 0 when the install has fanned no frame, when
+   * its session has closed, when its latest frame is as old as the media-stall detection threshold, or when its first frame is as old as
+   * PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, and otherwise the time left until the sooner of that silence and that deadline. Frames count here and nowhere else
+   * because a UBV stream's writer can hold its first media while it waits for audio, a wait counted in the stream's own video, so an attempt whose frames arrive
+   * with no media yet is a stream starting, not a failed one. The silence that ends it is the one the watchdog calls a live stream stalled by, and the deadline
+   * bounds a stream whose frames never yield media. A closed session sends nothing more, so the frames it sent keep nothing, and its closure is read from the
+   * session itself rather than recorded here. The clock and the threshold are read fresh on every call, so a subscriber that joins or leaves moves the answer, and
+   * an infinite threshold leaves the session's close or the deadline to end it.
+   */
+  #aliveMs(): number {
+
+    const { firstFrameAt, lastFrameAt } = this.#install;
+
+    if((firstFrameAt === null) || (lastFrameAt === null) || (this.#current?.state === "closed")) {
+
+      return 0;
+    }
+
+    const untilSilent = this.#detectionThresholdMs() - millisecondsSince(lastFrameAt, { clock: this.#clock });
+    const untilDeadline = PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS - millisecondsSince(firstFrameAt, { clock: this.#clock });
+
+    return Math.max(Math.min(untilSilent, untilDeadline), 0);
   }
 
   // Tear down the in-flight session and build a fresh one for the next attempt. Disposing the old rails before closing the old session means its late frames and its own
@@ -1032,18 +1159,23 @@ class ManagedSession implements SubscriptionHost {
     // a reconnect's fresh session restarts the fMP4 timeline near zero, Protect's own fMP4 by renegotiating rebaseTimestampsToZero and UBV by a fresh writer counting
     // from its first keyframe, a backward jump from the delivered timeline the first fanned media must announce. We gate the marker on the phase, not on a non-null
     // prior - a multi-attempt INITIAL establishment also installs over a prior failed session object, yet no media has ever flowed and there is no timeline to
-    // resynchronize, so a cold start must never arm. A defer/wait that resumes the existing session never installs at all.
-    this.#install = { awaitingFirstMedia: true, awaitingFirstSegment: true, pendingDiscontinuity: (this.#phase === "recovering") };
+    // resynchronize, so a cold start must never arm. A defer/wait that resumes the existing session never installs at all. The frame marker arms on what the frames
+    // themselves have done rather than on the phase: any install that follows a fanned frame leaves a gap in the frames, an establishing one included. Every
+    // install starts with no frame times, so only an attempt's own frames keep it past its window.
+    this.#install = { awaitingFirstMedia: true, awaitingFirstSegment: true, firstFrameAt: null, lastFrameAt: null, pendingDiscontinuity: (this.#phase === "recovering"),
+      pendingFrameDiscontinuity: this.#framesFanned };
 
     // Each session is handed its managed stream's lifetime signal and the route the episode's attempts dial. When the stream is torn down, whatever the cause, that
     // signal closes the current session and cancels any URL negotiation still in flight, a replaced session's included. A recovery retry aborts nothing: it closes
-    // the session it replaces, whose negotiation runs to its own outcome, so the request still reports what the controller did with it.
+    // the session it replaces, whose negotiation runs to its own outcome, so the request still reports what the controller did with it. The frame rail is bridged
+    // whether or not a frames subscriber is attached, so one that joins later needs no rewiring; a session reading Protect's own fMP4 never emits on it.
     const session = this.#createSession(this.#controller.signal, this.#route);
 
     this.#current = session;
     this.#currentRails = [
 
       session.on("segment", (segment: Segment): void => this.#onSegment(segment)),
+      session.on("frame", (frame: LivestreamSessionEvents["frame"][0]): void => this.#onFrame(frame)),
       session.on("error", (error: LivestreamSessionEvents["error"][0]): void => this.#onSessionError(error)),
       session.on("closed", (): void => this.#onSessionClosed())
     ];
@@ -1056,8 +1188,12 @@ class ManagedSession implements SubscriptionHost {
 
   // Await the outcome of one decision's window. A media segment restores the stream (settled `recovered` by the segment handler), the timer elapses (`elapsed`), a
   // consumer reassesses (`reassess`), or teardown aborts the controller (`aborted`). The single settle point is `#settleOutcome`; every settler routes through `#settle`,
-  // so the first to fire wins and the rest are no-ops. The timer's own controller is aborted in the finally so a settled window cancels its pending wait.
-  async #raceOutcome(timeoutMs: number, signal: AbortSignal): Promise<RecoveryOutcome> {
+  // so the first to fire wins and the rest are no-ops. The timer's own controller is aborted in the finally so a settled window cancels its pending wait. The
+  // resolver is cleared by `#settle` alone, as the window ends, and never by the cleanup here: a session that closes in the same stack as the media that settled a
+  // window begins the next episode at once, so that episode's window is already awaited when this one's cleanup runs, and a cleanup that cleared the resolver
+  // would clear the newer window's and leave nothing that could end it. Each window states as it begins whether an attempt's frames are keeping it, beside its
+  // resolver, so that mark always describes the window being awaited.
+  async #raceOutcome(timeoutMs: number, signal: AbortSignal, { keptByFrames = false }: { keptByFrames?: boolean } = {}): Promise<RecoveryOutcome> {
 
     if(signal.aborted) {
 
@@ -1066,6 +1202,7 @@ class ManagedSession implements SubscriptionHost {
 
     const { promise, resolve } = Promise.withResolvers<RecoveryOutcome>();
 
+    this.#keptByFrames = keptByFrames;
     this.#settleOutcome = resolve;
 
     const timerController = new AbortController();
@@ -1080,7 +1217,6 @@ class ManagedSession implements SubscriptionHost {
       return await promise;
     } finally {
 
-      this.#settleOutcome = null;
       signal.removeEventListener("abort", onAbort);
       timerController.abort();
     }
@@ -1401,8 +1537,10 @@ class ManagedSession implements SubscriptionHost {
    * stream's direct attempt that failed at its dial, or was offered no direct address, before its first media settles its window `directFailed`, which the loop reads
    * as a fallback with no attempt counted. Any other death during a recovery episode (a window is being awaited) is absorbed - the window simply times out as
    * `elapsed`, keeping failure uniform - a direct attempt whose negotiation failed included, and one after the episode fell back, inside a policy's wait as much as
-   * an attempt's window. While the stream is `live` (no episode running), a close is a fault, so we begin a recovery episode. A close between episodes with no live
-   * stream is ignored.
+   * an attempt's window, except inside a wait an attempt's frames are keeping past its window: that wait stands only on frames still arriving, and a closed
+   * session sends none, so it settles `elapsed` at once and the loop counts the attempt as it counts any other that ended without media. An attempt whose session
+   * closed inside its window is never kept past it (see `#aliveMs`). While the stream is `live` (no episode running), a close is a fault, so we begin a recovery
+   * episode. A close between episodes with no live stream is ignored.
    */
   #onSessionClosed(): void {
 
@@ -1420,6 +1558,11 @@ class ManagedSession implements SubscriptionHost {
 
     if(this.#settleOutcome !== null) {
 
+      if(this.#keptByFrames) {
+
+        this.#settle("elapsed");
+      }
+
       return;
     }
 
@@ -1429,7 +1572,8 @@ class ManagedSession implements SubscriptionHost {
     }
   }
 
-  // Fan one segment out to every subscriber's own unbounded queue.
+  // Fan one segment out to every segments subscriber's own unbounded queue. It runs whether or not one is attached, because the segments are what the stream is
+  // judged by: a frames-only stream is established, watched and gated by them all the same.
   #fanOut(segment: Segment): void {
 
     // Stamp the media-keyed liveness clock on every media segment fanned (the first via `#handleRecoveryMedia`, and every steady-state media here), and only on media -
@@ -1452,9 +1596,45 @@ class ManagedSession implements SubscriptionHost {
       outgoing = { ...segment, discontinuity: true };
     }
 
-    for(const subscription of this.#subscribers.keys()) {
+    for(const subscriber of this.#subscribers.values()) {
 
-      subscription.push(outgoing);
+      if(subscriber.output === "segments") {
+
+        subscriber.subscription.push(outgoing);
+      }
+    }
+  }
+
+  /* Fan one frame of a UBV stream out to every frames subscriber's own unbounded queue, the same object to each, and to no segments subscriber. A frame establishes
+   * nothing, marks nothing live and arms no watchdog: liveness, establishment, the media watchdog and the codec gate stay keyed on the segments the stream's writer
+   * always writes, so frames of a reconnect can reach a frames subscriber before that connection's init meets the gate. Each frame stamps the install's frame times
+   * before its fan-out, whether or not a frames subscriber is attached, and those times are read only to judge an attempt still waiting for its first media (see
+   * `#aliveMs`). The first frame of an install that follows a fanned frame is marked as a discontinuity on a copy, never on the emitted frame, and the latch clears
+   * so only that frame is marked.
+   */
+  #onFrame(frame: MediaFrame): void {
+
+    const now = this.#clock.monotonic();
+
+    this.#install.firstFrameAt ??= now;
+    this.#install.lastFrameAt = now;
+
+    let outgoing: LivestreamFrame = frame;
+
+    if(this.#install.pendingFrameDiscontinuity) {
+
+      this.#install.pendingFrameDiscontinuity = false;
+      outgoing = { ...frame, discontinuity: true };
+    }
+
+    this.#framesFanned = true;
+
+    for(const subscriber of this.#subscribers.values()) {
+
+      if(subscriber.output === "frames") {
+
+        subscriber.subscription.push(outgoing);
+      }
     }
   }
 
@@ -1552,6 +1732,19 @@ export class LivestreamPool implements AsyncDisposable {
   }
 
   /**
+   * Subscribe to a camera livestream's frames. Returns immediately with a {@link LivestreamSubscription} of {@link LivestreamFrame}s, which begin flowing once the
+   * underlying session connects, with no init replayed to a late joiner. A frames subscription reads UBV whatever its spec names, so it shares one underlying
+   * WebSocket with every subscriber asking for the same stream on the same route from UBV with the same audio, segments subscribers among them, and it meets the
+   * same recovery and the same terminals as they do.
+   *
+   * @param spec - The stream to subscribe to.
+   * @param opts - Per-subscription {@link LivestreamSubscribeOptions}, with `output: "frames"`.
+   *
+   * @returns The subscription: live, or already disposed when its signal had already aborted.
+   */
+  subscribe(spec: LivestreamSpec, opts: LivestreamSubscribeOptions & { output: "frames" }): LivestreamSubscription<LivestreamFrame>;
+
+  /**
    * Subscribe to a camera livestream. Returns immediately with a {@link LivestreamSubscription}; segments begin flowing once the underlying session connects (or
    * immediately, replayed from the cached init, for a shared session already live). Subscribers asking for the same stream on the same route, from the same
    * upstream with the same audio, share one underlying WebSocket, and the shared session recovers under the pool's policy, failing its subscribers only on a
@@ -1559,13 +1752,21 @@ export class LivestreamPool implements AsyncDisposable {
    *
    * @param spec - The stream to subscribe to.
    * @param opts - Per-subscription {@link LivestreamSubscribeOptions}: an optional abort signal that disposes this subscription (and only this one), an
-   *               optional `urgency` closure feeding the resilient recovery, and `discardOnDispose` dropping the undelivered queue on this consumer's own disposal.
+   *               optional `urgency` closure feeding the resilient recovery, and `discardOnDispose` dropping the undelivered queue on this consumer's own disposal,
+   *               with `output: "segments"`, the default.
    *
    * @returns The subscription: live, or already disposed when its signal had already aborted.
    */
-  subscribe(spec: LivestreamSpec, opts: LivestreamSubscribeOptions = {}): LivestreamSubscription {
+  subscribe(spec: LivestreamSpec, opts?: LivestreamSubscribeOptions & { output?: "segments" }): LivestreamSubscription;
 
-    const resolved = resolveLivestreamSpec(spec);
+  subscribe(spec: LivestreamSpec, opts: LivestreamSubscribeOptions & { output?: LivestreamOutput } = {}): PooledSubscription {
+
+    // The output is resolved first, so one outside the union is refused before anything is resolved, joined or built. A frames subscription reads UBV, the one
+    // upstream that carries frames, so its spec names it before the key is read and the stream it shares is one every subscriber resolving to UBV with the same
+    // audio shares too. An upstream the spec names already is left for the resolution to judge.
+    const output = resolveOutput(opts.output);
+    const stream: LivestreamSpec = (output === "frames") ? { ...spec, upstream: spec.upstream ?? "ubv" } : spec;
+    const resolved = resolveLivestreamSpec(stream);
     const key = livestreamKey(resolved);
     const discardOnDispose = opts.discardOnDispose ?? false;
 
@@ -1574,8 +1775,8 @@ export class LivestreamPool implements AsyncDisposable {
     // construction - and the created and disposed diagnostics publish in that order, the lifecycle an observer pairing them by id sees for every subscription.
     if(opts.signal?.aborted === true) {
 
-      const closed = new LivestreamSubscription({ clock: this.#clock, discardOnDispose, host: detachedHost,
-        onDispose: (disposed): void => this.#publishDisposed(key, disposed) });
+      const closed = subscriberOf(output, { clock: this.#clock, discardOnDispose, host: detachedHost,
+        onDispose: (disposed): void => this.#publishDisposed(key, disposed) }).subscription;
 
       this.#publishCreated(key, closed);
 
@@ -1598,7 +1799,7 @@ export class LivestreamPool implements AsyncDisposable {
         log: this.#log,
         resolveUrl: this.#resolveUrl,
         signal,
-        spec: { ...spec, route },
+        spec: { ...stream, route },
         ...((this.#verifyTls !== undefined) && { verifyTls: this.#verifyTls }),
         ...((this.#webSocketFactory !== undefined) && { webSocket: this.#webSocketFactory })
       });
@@ -1609,13 +1810,13 @@ export class LivestreamPool implements AsyncDisposable {
     }
 
     const session = managed;
-    const subscription = new LivestreamSubscription({ clock: this.#clock, discardOnDispose, host: session,
-      onDispose: (disposed): void => this.#onSubscriptionDisposed(key, session, disposed), ...((opts.signal !== undefined) && { signal: opts.signal }) });
+    const subscriber = subscriberOf(output, { clock: this.#clock, discardOnDispose, host: session,
+      onDispose: (disposed): void => this.#onSubscriptionDisposed(key, session, disposed), ...((opts.signal !== undefined) && { signal: opts.signal }) }, opts.urgency);
 
-    session.attach(subscription, opts.urgency);
-    this.#publishCreated(key, subscription);
+    session.attach(subscriber);
+    this.#publishCreated(key, subscriber.subscription);
 
-    return subscription;
+    return subscriber.subscription;
   }
 
   /**
@@ -1634,14 +1835,14 @@ export class LivestreamPool implements AsyncDisposable {
 
   // A subscription was disposed. Detach it from its session (decrementing the reference count, which tears the session down if it was the last) and publish the disposed
   // diagnostic with its final stats.
-  #onSubscriptionDisposed(key: string, session: ManagedSession, subscription: LivestreamSubscription): void {
+  #onSubscriptionDisposed(key: string, session: ManagedSession, subscription: PooledSubscription): void {
 
     session.detach(subscription);
     this.#publishDisposed(key, subscription);
   }
 
   // Publish the subscription-created diagnostic, which carries the new subscription's id.
-  #publishCreated(key: string, subscription: LivestreamSubscription): void {
+  #publishCreated(key: string, subscription: PooledSubscription): void {
 
     if(channels.livestreamSubscriptionCreated.hasSubscribers) {
 
@@ -1650,7 +1851,7 @@ export class LivestreamPool implements AsyncDisposable {
   }
 
   // Publish the subscription-disposed diagnostic, which carries the subscription's final stats.
-  #publishDisposed(key: string, subscription: LivestreamSubscription): void {
+  #publishDisposed(key: string, subscription: PooledSubscription): void {
 
     if(channels.livestreamSubscriptionDisposed.hasSubscribers) {
 

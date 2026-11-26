@@ -112,9 +112,7 @@ for await (const segment of live) {
 
 A stream's `route` decides how it reaches the controller. `"proxied"`, the default, goes through the UniFi OS proxy, as every other connection does. `"direct"` dials the controller's media server itself, on a port of its own that the controller names, skipping the proxy, and since that server presents its own self-signed certificate, a direct stream never verifies it even when `verifyTls` is on, carrying no session credentials to protect. `"preferDirect"` tries the direct route first and falls back to the proxied one when the direct route fails before its first media, publishing the reason on the `livestreamRouteFallback` diagnostics channel.
 
-A stream's `audio` decides its audio codec: `"aac"`, the default, or `"opus"`. Protect's own fMP4 carries AAC alone, so a stream asking for Opus reads the
-camera's UBV record stream instead, which the library writes as fMP4 itself, on every route. `upstream: "ubv"` reads UBV for an AAC stream too. Either way a
-subscriber iterates the same fMP4 segments, and subscribers share a stream only when they ask for the same audio from the same upstream.
+A stream's `audio` decides its audio codec: `"aac"`, the default, or `"opus"`. Protect's own fMP4 carries AAC alone, so a stream asking for Opus reads the camera's UBV record stream instead, which the library writes as fMP4 itself, on every route. `upstream: "ubv"` reads UBV for an AAC stream too. Either way a subscriber iterates the same fMP4 segments, and subscribers share a stream only when they ask for the same audio from the same upstream.
 
 ```ts
 await using opus = camera.livestream({ audio: "opus", signal, source: { channel: 0, type: "channel" } });
@@ -125,8 +123,18 @@ for await (const segment of opus) {
 }
 ```
 
-A stream that asked for Opus and cannot get it ends at once rather than retrying: on `ProtectLivestreamRouteError` when the controller offers no direct address
-to name the stream by, and on `ProtectLivestreamAudioError` when the controller streams another audio codec.
+A stream that asked for Opus and cannot get it ends at once rather than retrying: on `ProtectLivestreamRouteError` when the controller offers no direct address to name the stream by, and on `ProtectLivestreamAudioError` when the controller streams another audio codec.
+
+A subscription asks for `output: "frames"` to iterate the stream's frames instead of its segments: each video and audio frame as the camera sent it, with its codec, its timestamp in ticks at its `rate`, and on video whether it is a keyframe. Frames come from the UBV stream, so a frames subscription reads it whatever `upstream` says and shares it with segments subscribers reading UBV with the same audio. A frames subscriber receives no init, and the first frame after a reconnect carries `discontinuity: true`.
+
+```ts
+await using frames = camera.livestream({ audio: "opus", output: "frames", signal });
+
+for await (const frame of frames) {
+
+  console.log(frame.kind, frame.codec, frame.timestamp, frame.data.length);
+}
+```
 
 ## Testing
 

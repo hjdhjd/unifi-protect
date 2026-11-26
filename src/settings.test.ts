@@ -9,9 +9,9 @@
 import * as settings from "./settings.ts";
 import { PROTECT_API_ERROR_LIMIT, PROTECT_API_RETRY_INTERVAL, PROTECT_API_TIMEOUT, PROTECT_BOOTSTRAP_REFRESH_INTERVAL, PROTECT_CAPTURE_DEFAULT_DURATION,
   PROTECT_CAPTURE_SNAPSHOT_EXEMPLARS, PROTECT_CLI_DURATION_MAX_MS, PROTECT_EVENTS_OCCURRENCE_LIMIT, PROTECT_EVENTS_WATCHDOG_TIMEOUT,
-  PROTECT_LIVESTREAM_AUDIO_WAIT_MS, PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT,
-  PROTECT_REBOOT_ANTICIPATION_WINDOW_MS, PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS,
-  PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS, PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
+  PROTECT_LIVESTREAM_AUDIO_WAIT_MS, PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_REBOOT_ANTICIPATION_WINDOW_MS,
+  PROTECT_REBOOT_DETECTION_THRESHOLD, PROTECT_RECOVERY_BACKOFF_KNOWN_MS, PROTECT_RECOVERY_BACKOFF_UNKNOWN_MS, PROTECT_RECOVERY_REFUSAL_SCHEDULE_MS,
+  PROTECT_RECOVERY_STEADY_INTERVAL_MS } from "./settings.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -62,16 +62,15 @@ describe("settings", () => {
     assert.equal(PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, 10000, "livestream heartbeat timeout must be 10000 ms");
   });
 
-  // A UBV stream still waiting for its audio has written no media, and the pool's floor holds each of its reconnect windows, in recovery as while establishing, to
-  // the wait plus the await margin. The sum fits the first establishing window, so the floor never lengthens the default policy's establishing windows.
-  test("PROTECT_LIVESTREAM_AUDIO_WAIT_MS with the await margin fits the first establishing window", () => {
+  // A UBV stream still waiting for its audio has written no media, and the pool keeps an attempt whose frames keep arriving past its window while it waits. The
+  // wait fits the first establishing window all the same, so on the default policy an establishing attempt needs its frames to keep it only when its setup is slow.
+  test("PROTECT_LIVESTREAM_AUDIO_WAIT_MS fits the first establishing window", () => {
 
     // The constant's literal type makes the linter read a direct comparison as always true, and a number-typed local changes only how the linter reads it, leaving the
     // comparison itself unchanged.
     const wait: number = PROTECT_LIVESTREAM_AUDIO_WAIT_MS;
 
-    assert.ok((wait + PROTECT_LIVESTREAM_AWAIT_MARGIN_MS) <= (PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS[0] ?? 0),
-      "the audio wait with the await margin must fit the first establishing window");
+    assert.ok(wait <= (PROTECT_LIVESTREAM_ESTABLISH_BACKOFF_MS[0] ?? 0), "the audio wait must fit the first establishing window");
   });
 
   // The reboot-detection threshold sits far above the controller's observed millisecond upSince jitter and far below any realistic reboot delta (the prior uptime,

@@ -229,6 +229,16 @@ describe("LivestreamSession", () => {
       assert.equal(livestreamKey(resolveLivestreamSpec({ audioExpected: false, cameraId: "cam1", upstream: "ubv" })),
         livestreamKey(resolveLivestreamSpec({ cameraId: "cam1", upstream: "ubv" })));
     });
+
+    test("a UBV spec whose segment length is not finite is refused, and a spec of Protect's own fMP4 resolves it as before", () => {
+
+      const refusal = { constructor: ProtectProtocolError, message: "The UniFi Protect livestream's segment length is not a finite number of milliseconds." };
+
+      // A spec naming UBV and one asking for Opus, which reads UBV, each refused; and the same length on Protect's own fMP4, floored and passed on as it is.
+      assert.throws(() => resolveLivestreamSpec({ cameraId: "cam1", segmentLength: Infinity, upstream: "ubv" }), refusal);
+      assert.throws(() => resolveLivestreamSpec({ audio: "opus", cameraId: "cam1", segmentLength: NaN }), refusal);
+      assert.equal(resolveLivestreamSpec({ cameraId: "cam1", segmentLength: Infinity }).segmentLength, Infinity);
+    });
   });
 
   describe("connection and frame decode", () => {

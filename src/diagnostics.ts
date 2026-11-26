@@ -480,8 +480,8 @@ export interface LivestreamSubscriptionCreatedPayload {
 }
 
 /**
- * Payload published on {@link channels.livestreamSubscriptionDisposed}. `stats` carries the subscription's final delivery counters, including any segments discarded on
- * disposal.
+ * Payload published on {@link channels.livestreamSubscriptionDisposed}. `stats` carries the subscription's final delivery counters, including any items, segments or
+ * frames, discarded on disposal.
  *
  * @category Diagnostics
  */

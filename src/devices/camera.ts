@@ -3,11 +3,11 @@
  * camera.ts: The Camera device projection - read-through config plus the camera-specific commands (snapshot, livestream, talkback, and the sensor and accessory
  * operations).
  */
-import type { LivestreamSubscribeOptions, LivestreamSubscription } from "../client/livestream-pool.ts";
+import type { LivestreamFrame, LivestreamSpec } from "../transport/livestream-session.ts";
+import type { LivestreamOutput, LivestreamSubscribeOptions, LivestreamSubscription } from "../client/livestream-pool.ts";
 import { ProtectProtocolError, ProtectUnsupportedError } from "../errors.ts";
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
-import type { LivestreamSpec } from "../transport/livestream-session.ts";
 import type { ProtectCameraConfig } from "../types/index.ts";
 import type { TalkbackSession } from "../transport/talkback-session.ts";
 
@@ -37,7 +37,8 @@ export interface SnapshotOptions {
  * the `route` the stream is dialed on (`"proxied"` by default, `"direct"` or `"preferDirect"`), the `audio` codec it carries (`"aac"` by default, or `"opus"`) and
  * the `upstream` it reads (`"ubv"` to read UBV even for AAC), without `cameraId` (the camera supplies its own id) and without `audioExpected` (the camera states
  * it from its record), plus the per-subscription {@link LivestreamSubscribeOptions} (an abort signal that disposes the returned subscription, an `urgency` closure
- * feeding the pool's resilient recovery, and `discardOnDispose`).
+ * feeding the pool's resilient recovery, and `discardOnDispose`). The `output` a subscription iterates is named beside these by the overloads of
+ * {@link Camera.livestream} and never by this type, so a value typed as it answers segments.
  *
  * @category Devices
  */
@@ -203,6 +204,19 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
   }
 
   /**
+   * Subscribe to this camera's livestream as frames. Delegates to the library-owned pool, as a segments subscription does, and reads the camera's UBV record stream
+   * whatever `upstream` says: the returned subscription is an `AsyncIterable<LivestreamFrame>` and `AsyncDisposable`, yielding each video and audio frame as the
+   * camera sent it, with no init. It shares one underlying WebSocket with every consumer asking for the same stream on the same route from UBV with the same audio,
+   * segments consumers among them, and the camera states whether to expect audio as it does for segments.
+   *
+   * @param opts - The stream source, tuning, route and audio codec, the per-subscription options (abort signal, urgency, and discard-on-dispose), and
+   *   `output: "frames"`.
+   *
+   * @returns The subscription: live, or already disposed when its signal had already aborted.
+   */
+  livestream(opts: LivestreamOptions & { output: "frames" }): LivestreamSubscription<LivestreamFrame>;
+
+  /**
    * Subscribe to a live fMP4 stream from this camera. Delegates to the library-owned pool, which shares one underlying WebSocket across every consumer asking for the
    * same stream on the same route and replays the cached init segment to late joiners. The returned subscription is an `AsyncIterable<Segment>` and `AsyncDisposable`;
    * iterate it for segments, dispose it (or abort its signal) to leave - the underlying session closes once the last subscriber departs.
@@ -211,18 +225,24 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
    * has a microphone and the microphone is enabled. Its recording settings govern what is recorded and leave the live stream's audio as it was, so they are not
    * read. A handle whose camera has left the controller state states nothing, and the spec's own default applies.
    *
-   * @param opts - The stream source, tuning, route, audio codec and upstream, plus the per-subscription options (abort signal, urgency, and discard-on-dispose).
+   * @param opts - The stream source, tuning, route, audio codec and upstream, plus the per-subscription options (abort signal, urgency, and discard-on-dispose), with
+   *   `output: "segments"`, the default.
    *
    * @returns The subscription: live, or already disposed when its signal had already aborted.
    */
-  livestream(opts: LivestreamOptions): LivestreamSubscription {
+  livestream(opts: LivestreamOptions & { output?: "segments" }): LivestreamSubscription;
 
-    const { discardOnDispose, signal, urgency, ...spec } = opts;
+  livestream(opts: LivestreamOptions & { output?: LivestreamOutput }): LivestreamSubscription<LivestreamFrame> | LivestreamSubscription {
+
+    const { discardOnDispose, output, signal, urgency, ...spec } = opts;
     const record = this.peek();
+    const stream: LivestreamSpec = { ...((record !== undefined) && { audioExpected: record.featureFlags.hasMic && record.isMicEnabled }), cameraId: this.id, ...spec };
+    const options: LivestreamSubscribeOptions = { ...((discardOnDispose !== undefined) && { discardOnDispose }), ...((signal !== undefined) && { signal }),
+      ...((urgency !== undefined) && { urgency }) };
 
-    return this.ctx.livestreamPool.subscribe({ ...((record !== undefined) && { audioExpected: record.featureFlags.hasMic && record.isMicEnabled }),
-      cameraId: this.id, ...spec }, { ...((discardOnDispose !== undefined) && { discardOnDispose }), ...((signal !== undefined) && { signal }),
-      ...((urgency !== undefined) && { urgency }) });
+    // The output picks the pool's overload, so a frames request reaches the pool through the one that answers frames.
+    return (output === "frames") ? this.ctx.livestreamPool.subscribe(stream, { ...options, output }) :
+      this.ctx.livestreamPool.subscribe(stream, { ...options, ...((output !== undefined) && { output }) });
   }
 
   /**

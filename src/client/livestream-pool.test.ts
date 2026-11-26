@@ -5,17 +5,19 @@
  * terminal, and the recovery layer: invisible reconnect (same-stream init suppression), the codec-change terminal, policy give-up, urgency aggregation by minimum, the
  * establishing and recovering regimes, reassess, and whenEstablished.
  */
-import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AUDIO_RATE_CHANGED_INIT, DOORBELL_INIT } from "../protocol/media/init-segment.fixtures.ts";
+import { AI_PRO_INIT, AI_PRO_RECONNECT_INIT, AUDIO_RATE_CHANGED_INIT, AV1_HIGH_BITDEPTH_INIT, AV1_INIT, AV1_RESERVED_BITS_INIT,
+  DOORBELL_INIT } from "../protocol/media/init-segment.fixtures.ts";
 import type { CapturedLogEntry, CapturingLogger } from "../testing.helpers.ts";
 import { FakeWebSocket, receivingSurface } from "../transport/events-stream.helpers.ts";
-import type { LivestreamAddresses, LivestreamSpec, Segment } from "../transport/livestream-session.ts";
+import type { LivestreamAddresses, LivestreamFrame, LivestreamSpec, Segment } from "../transport/livestream-session.ts";
 import type { LivestreamCodecChangedPayload, LivestreamRecoveryExhaustedPayload, LivestreamRecoveryRecoveredPayload, LivestreamRecoveryStartedPayload,
   LivestreamRouteFallbackPayload, LivestreamSessionClosedPayload, LivestreamSessionOpenedPayload, LivestreamStallDetectedPayload,
   LivestreamSubscriptionCreatedPayload, LivestreamSubscriptionDisposedPayload } from "../diagnostics.ts";
+import type { LivestreamOutput, LivestreamPoolOptions, LivestreamSubscribeOptions, RecoveryContext, RecoveryPolicy } from "./livestream-pool.ts";
 import { LivestreamPool, defaultLivestreamRecoveryPolicy } from "./livestream-pool.ts";
-import type { LivestreamPoolOptions, LivestreamSubscribeOptions, RecoveryContext, RecoveryPolicy } from "./livestream-pool.ts";
-import { PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS, PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT,
-  PROTECT_LIVESTREAM_STALL_DEFAULT_MS, PROTECT_LIVESTREAM_STALL_FLOOR_MS, PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
+import { PROTECT_LIVESTREAM_AUDIO_WAIT_MS, PROTECT_LIVESTREAM_AWAIT_MARGIN_MS, PROTECT_LIVESTREAM_AWAIT_MAX_MS, PROTECT_LIVESTREAM_AWAIT_MIN_MS,
+  PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS, PROTECT_LIVESTREAM_HEARTBEAT_TIMEOUT, PROTECT_LIVESTREAM_STALL_DEFAULT_MS, PROTECT_LIVESTREAM_STALL_FLOOR_MS,
+  PROTECT_LIVESTREAM_STALL_POLL_MS } from "../settings.ts";
 import { ProtectAbortedError, ProtectCodecChangeError, ProtectConfigurationError, ProtectLivestreamAudioError, ProtectLivestreamRouteError,
   ProtectLivestreamUnavailableError, ProtectNetworkError, ProtectProtocolError } from "../errors.ts";
 import { TIME_OF_DAY_STEP_MS, capturingLog, expectAt, settlement, silentLog } from "../testing.helpers.ts";
@@ -52,15 +54,16 @@ const AI_PRO_DESCRIPTION = {
   ]
 };
 
-// `AI_PRO_INIT` with the last byte of its video track's sample description changed, the last byte of its `hvcC` record, which neither the codec label nor the
-// description reads: the same label and description over parameter sets a decoder is configured from differently.
-function changedSampleDescriptionInit(): Buffer {
+// `AI_PRO_INIT` with the last byte of one track's sample description changed, the video track's unless another index is named: for the video track the last byte
+// of its `hvcC` record, which neither the codec label nor the description reads, so the same label and description sit over parameter sets a decoder is configured
+// from differently. Each description is a view of the init, so the change is written through it.
+function changedSampleDescriptionInit(track = 0): Buffer {
 
   const init = Buffer.from(AI_PRO_INIT);
-  const [video] = readSampleDescriptions(init);
+  const description = readSampleDescriptions(init)[track];
 
-  assert.ok(video !== undefined);
-  video.writeUInt8(video.readUInt8(video.length - 1) ^ 0x01, video.length - 1);
+  assert.ok(description !== undefined);
+  description.writeUInt8(description.readUInt8(description.length - 1) ^ 0x01, description.length - 1);
 
   return init;
 }
@@ -1376,6 +1379,46 @@ describe("LivestreamPool", () => {
       return Buffer.concat(Array.from({ length: 151 }, (_value, index) => ubvAudio("opus", ticks + (index * 960))));
     }
 
+    // Advance a pool's clock a tick short of `window` and then onto it: the next socket is built exactly at the window, and none a tick before.
+    async function expectNextAt(opened: ReturnType<typeof makePool>, window: number, label: string): Promise<void> {
+
+      const built = opened.sockets.length;
+
+      opened.clock.advance(window - 1);
+      await settle();
+
+      assert.equal(opened.sockets.length, built, label + ", a tick before");
+
+      opened.clock.advance(1);
+      await settle();
+
+      assert.equal(opened.sockets.length, built + 1, label);
+    }
+
+    // Drive `ws`, a socket the pool has just built, as a camera that sends video alone: it opens once the clock has run `opensAfter` ms, and the clock then runs 40 ms
+    // at a time for `span` ms, the socket carrying a frame at each step, from a keyframe unless `keyframe` is false. Answers the clock time of each frame sent.
+    async function sendVideo(clock: TestClock, ws: FakeWebSocket,
+      { keyframe = true, opensAfter, span }: { keyframe?: boolean; opensAfter: number; span: number }): Promise<number[]> {
+
+      const sentAt: number[] = [];
+
+      clock.advance(opensAfter);
+      await settle();
+      ws.emitOpen();
+
+      for(let elapsed = 0; elapsed < span; elapsed += 40) {
+
+        ws.emitMessage(ubvVideo((elapsed / 40) * 3600, { keyframe: keyframe && (elapsed === 0) }));
+        sentAt.push(clock.now());
+        clock.advance(40);
+
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+      }
+
+      return sentAt;
+    }
+
     const BOTH: LivestreamAddresses = { direct: DIRECT_URL, proxied: PROXIED_URL };
     const NO_DIRECT: LivestreamAddresses = { direct: null, proxied: PROXIED_URL };
 
@@ -1474,6 +1517,359 @@ describe("LivestreamPool", () => {
         assert.deepEqual(fallbackLines(log), []);
       });
 
+    test("a preferDirect AAC stream on upstream ubv offered no direct address dials proxied next and logs its fallback once", async () => {
+
+      const log = capturingLog();
+      const { pool, urls } = makePool({ log, resolveUrl: proxiedOnly });
+      const sub = pool.subscribe({ ...SPEC, route: "preferDirect", upstream: "ubv" });
+
+      await settle();
+
+      // A stream asking for AAC names no stream by the direct address, so the direct attempt that had nothing to dial built no socket, and the one socket is the
+      // proxied attempt that followed it at once.
+      assert.deepEqual(urls, [PROXIED_URL]);
+      assert.equal(fallbackLines(log).length, 1);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("a UBV spec whose segment length is not finite is refused at subscribe, before anything is negotiated", () => {
+
+      let negotiations = 0;
+      const { pool } = makePool({ resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        return BOTH;
+      } });
+
+      // A negotiation starts inside subscribe itself, so none having started is what shows the refusal came first.
+      assert.throws(() => pool.subscribe({ ...SPEC, segmentLength: Infinity, upstream: "ubv" }), { constructor: ProtectProtocolError,
+        message: "The UniFi Protect livestream's segment length is not a finite number of milliseconds." });
+      assert.equal(negotiations, 0);
+    });
+
+    test("a UBV stream that expects audio and receives none recovers on its first reconnect, with no urgency and with an urgency of 2000 ms", async () => {
+
+      const bound = PROTECT_LIVESTREAM_AUDIO_WAIT_MS + PROTECT_LIVESTREAM_AWAIT_MARGIN_MS;
+
+      // A camera with a working microphone that sends video alone. Each socket opens 200 ms after the pool builds it and streams a frame every 40 ms of the clock
+      // from a keyframe, so its writer holds the first segment until 3000 ms of video have passed, 3200 ms after the socket was built. Once the stream is live its
+      // socket closes, and the reconnect's frames keep its attempt while the writer waits, whatever window the policy answers, so its first media arrives on that
+      // attempt, inside the audio wait and the await margin.
+      const run = async (urgency?: () => number): Promise<void> => {
+
+        const recovered: LivestreamRecoveryRecoveredPayload[] = [];
+
+        using recoveredSubscription = subscribeToChannel(channels.livestreamRecoveryRecovered, (payload) => void recovered.push(payload));
+
+        const clock = new TestClock();
+        const { pool, sockets } = makePool({ clock });
+        const sub = pool.subscribe({ ...SPEC, upstream: "ubv" }, { ...((urgency !== undefined) && { urgency }) });
+        const builtAt: number[] = [];
+
+        // Run the clock 40 ms at a time for `span` ms, noting when each socket is built and driving the newest: its open 200 ms after it is built, then a frame at
+        // each step.
+        const stream = async (span: number): Promise<void> => {
+
+          for(let elapsed = 0; elapsed < span; elapsed += 40) {
+
+            // eslint-disable-next-line no-await-in-loop
+            await settle();
+
+            if(builtAt.length < sockets.length) {
+
+              builtAt.push(clock.now());
+            }
+
+            const age = clock.now() - at(builtAt, builtAt.length - 1);
+            const ws = at(sockets, sockets.length - 1);
+
+            if(age === 200) {
+
+              ws.emitOpen();
+            }
+
+            if(age >= 200) {
+
+              ws.emitMessage(ubvVideo(((age - 200) / 40) * 3600, { keyframe: age === 200 }));
+            }
+
+            clock.advance(40);
+          }
+
+          await settle();
+        };
+
+        await stream(3600);
+
+        assert.equal(sub.state, "live");
+
+        at(sockets, 0).emitClose(1006, "");
+        await stream(8000);
+
+        assert.equal(sub.state, "live");
+        assert.equal(sockets.length, 2);
+        assert.equal(recovered.length, 1);
+        assert.ok(at(recovered, 0).downtimeMs < bound, "recovered after " + String(at(recovered, 0).downtimeMs) + " ms");
+
+        await pool[Symbol.asyncDispose]();
+      };
+
+      await run();
+      await run(() => 2000);
+    });
+
+    test("an attempt whose frames keep arriving outlives its window until its first media, however late its socket opens", async () => {
+
+      const recovered: LivestreamRecoveryRecoveredPayload[] = [];
+
+      using recoveredSubscription = subscribeToChannel(channels.livestreamRecoveryRecovered, (payload) => void recovered.push(payload));
+
+      const { clock, pool, sockets } = makePool();
+      const sub = pool.subscribe({ ...SPEC, upstream: "ubv" }, { urgency: () => 2000 });
+
+      // A camera with a working microphone that sends video alone, so the stream establishes once its writer has waited out the audio wait in video.
+      await settle();
+      await sendVideo(clock, at(sockets, 0), { opensAfter: 0, span: PROTECT_LIVESTREAM_AUDIO_WAIT_MS + 40 });
+
+      assert.equal(sub.state, "live");
+
+      // The live stream closes, and its reconnect's socket opens 2500 ms after it is built, so its writer holds the first media until the audio wait has passed in
+      // video after that, past the window the urgency gives the policy. The attempt's frames keep it until then.
+      at(sockets, 0).emitClose(1006, "");
+      await settle();
+      await sendVideo(clock, at(sockets, 1), { opensAfter: 2500, span: 5500 });
+
+      assert.equal(sub.state, "live");
+      assert.equal(sockets.length, 2);
+      assert.equal(recovered.length, 1);
+
+      await pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt that has fanned no frame ends at its window", async () => {
+
+      const opened = makePool({ recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket opens and sends nothing. The frames the stream fanned arrived on the install before this one, so none
+      // keeps this attempt and the next socket is built at the policy's window.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+      at(opened.sockets, 1).emitOpen();
+
+      await expectNextAt(opened, 1000, "the policy's window");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt whose frames stop ends once their silence reaches the detection threshold", async () => {
+
+      const opened = makePool();
+      const urgency = 2000;
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" }, { urgency: () => urgency });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket streams video for 2000 ms and then falls silent, its writer still waiting for audio when the window the
+      // urgency gives the policy elapses. The attempt's frames keep it until their silence reaches the threshold the urgency sets.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+
+      const sentAt = await sendVideo(opened.clock, at(opened.sockets, 1), { opensAfter: 0, span: 2000 });
+
+      assert.equal(opened.sockets.length, 2);
+
+      await expectNextAt(opened, at(sentAt, sentAt.length - 1) + urgency - opened.clock.now(), "the detection threshold after the last frame");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt whose frames never yield media ends at the establish deadline from its first frame", async () => {
+
+      const opened = makePool();
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket streams video frames none of which is a keyframe, so its writer writes nothing while its frames never
+      // fall silent. The attempt is kept until the establish deadline from its first frame, and the next socket is built then.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+
+      const sentAt = await sendVideo(opened.clock, at(opened.sockets, 1), { keyframe: false, opensAfter: 0, span: PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS - 40 });
+
+      assert.equal(opened.sockets.length, 2);
+
+      await expectNextAt(opened, at(sentAt, 0) + PROTECT_LIVESTREAM_ESTABLISH_DEADLINE_MS - opened.clock.now(), "the establish deadline from the first frame");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt whose session closes inside its window ends at the window, whatever frames it fanned", async () => {
+
+      const awaitMs = 3000;
+      const opened = makePool({ recoveryPolicy: () => ({ awaitMs, kind: "reconnect" }) });
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket streams video frames none of which is a keyframe and then closes, a third of the way into the policy's
+      // window. The close is absorbed while the window runs, and frames a closed socket sent keep nothing, so the next socket is built at the window.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+
+      const streamed = awaitMs / 3;
+
+      await sendVideo(opened.clock, at(opened.sockets, 1), { keyframe: false, opensAfter: 0, span: streamed });
+      at(opened.sockets, 1).emitClose(1006, "");
+      await settle();
+
+      await expectNextAt(opened, awaitMs - streamed, "the policy's window");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("an attempt its frames are keeping past its window ends when its session closes, and the next attempt's close waits out its window", async () => {
+
+      const awaitMs = 1000;
+      const attempts: number[] = [];
+      const log = capturingLog();
+      const opened = makePool({ log, recoveryPolicy: (context) => {
+
+        attempts.push(context.attempts);
+
+        return { awaitMs, kind: "reconnect" };
+      } });
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // The live stream closes, and its reconnect's socket streams video frames none of which is a keyframe until the policy's window has passed, so its frames are
+      // what keeps the attempt. The socket then closes with its latest frame a moment old, and the next socket is built at that close, with no further wait. The
+      // attempt is counted as any other that ended without media, and a stream on the proxied route logs no fallback.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+      await sendVideo(opened.clock, at(opened.sockets, 1), { keyframe: false, opensAfter: 0, span: awaitMs + 200 });
+
+      assert.equal(opened.sockets.length, 2, "kept past the window");
+
+      at(opened.sockets, 1).emitClose(1006, "");
+      await settle();
+
+      assert.equal(opened.sockets.length, 3, "ended at the close");
+      assert.deepEqual(attempts, [ 0, 0, 1 ]);
+      assert.deepEqual(fallbackLines(log), []);
+
+      // The attempt that follows is back inside the policy's own window, so its socket closing there is absorbed and the socket after it is built at that window.
+      at(opened.sockets, 2).emitOpen();
+      at(opened.sockets, 2).emitClose(1006, "");
+      await settle();
+
+      assert.equal(opened.sockets.length, 3, "absorbed inside the window");
+
+      await expectNextAt(opened, awaitMs, "the next attempt's window");
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
+    test("a stream whose session closes in the same message as the media that recovered it recovers again, inside the policy's window and past it", async () => {
+
+      // A reconnect's socket delivers, in one message, an opening and then a video frame whose timestamp steps backward. The opening's first media recovers the
+      // stream, and the writer's refusal of the frame after it closes the session in that same stack, before the recovered window's cleanup has run. The stream
+      // recovers from that close as from any other: its next socket is built at once, and that socket's first media brings it live. `kept` holds the attempt
+      // past the policy's window first, on video alone, so the media that recovers it arrives in a wait its frames were keeping.
+      const run = async (kept: boolean): Promise<void> => {
+
+        const awaitMs = 1000;
+        const opened = makePool({ recoveryPolicy: () => ({ awaitMs, kind: "reconnect" }) });
+        const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+        await settle();
+        await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+        at(opened.sockets, 0).emitClose(1006, "");
+        await settle();
+
+        const span = kept ? (awaitMs + 200) : 0;
+
+        if(kept) {
+
+          await sendVideo(opened.clock, at(opened.sockets, 1), { opensAfter: 0, span });
+        } else {
+
+          at(opened.sockets, 1).emitOpen();
+        }
+
+        at(opened.sockets, 1).emitMessage(Buffer.concat([ ubvOpening("aac", (span / 40) * 3600), ubvVideo(0) ]));
+        await settle();
+
+        assert.equal(opened.sockets.length, 3, "the next socket is built at the close");
+
+        at(opened.sockets, 2).emitOpen();
+        at(opened.sockets, 2).emitMessage(ubvOpening("aac"));
+        await settle();
+
+        assert.equal(sub.state, "live");
+
+        await opened.pool[Symbol.asyncDispose]();
+      };
+
+      await run(false);
+      await run(true);
+    });
+
+    test("the attempt after a close in the stack of recovering media waits out its window when its negotiation is refused at once", async () => {
+
+      const awaitMs = 1000;
+      let negotiations = 0;
+      const opened = makePool({ recoveryPolicy: () => ({ awaitMs, kind: "reconnect" }), resolveUrl: async (): Promise<LivestreamAddresses> => {
+
+        negotiations++;
+
+        // The attempt that follows the close is refused before its negotiation awaits anything, so its session closes ahead of everything the close queued.
+        if(negotiations === 3) {
+
+          throw new ProtectNetworkError("The invented controller could not be reached.");
+        }
+
+        return BOTH;
+      } });
+      const sub = opened.pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      await establishUbv(at(opened.sockets, 0), sub[Symbol.asyncIterator](), "aac");
+
+      // A reconnect's frames keep its attempt past the policy's window, and the media that recovers it arrives in one message with a frame the writer refuses, so
+      // the session closes in that stack and the next attempt begins at once. That attempt's window is the policy's own, whatever the wait before it was: its
+      // refused negotiation's close is absorbed, and the attempt after it is made at the window.
+      at(opened.sockets, 0).emitClose(1006, "");
+      await settle();
+
+      const span = awaitMs + 200;
+
+      await sendVideo(opened.clock, at(opened.sockets, 1), { opensAfter: 0, span });
+      at(opened.sockets, 1).emitMessage(Buffer.concat([ ubvOpening("aac", (span / 40) * 3600), ubvVideo(0) ]));
+      await settle();
+
+      assert.equal(negotiations, 3, "the refused attempt is the only one made at the close");
+
+      opened.clock.advance(awaitMs - 1);
+      await settle();
+
+      assert.equal(negotiations, 3, "a tick before the window");
+
+      opened.clock.advance(1);
+      await settle();
+
+      assert.equal(negotiations, 4, "the next attempt at the window");
+
+      await opened.pool[Symbol.asyncDispose]();
+    });
+
     test("a UBV stream whose parameter sets change at a keyframe ends with ProtectCodecChangeError", async () => {
 
       const { pool, sockets } = makePool();
@@ -1507,6 +1903,230 @@ describe("LivestreamPool", () => {
       });
       assert.deepEqual(drained, ["media"], "the segment the restart closed is delivered, and the new init never is");
     });
+  });
+
+  describe("the frames output", () => {
+
+    // Pull `count` items from an iterator in order, asserting it yielded each.
+    async function take<T>(iterator: AsyncIterator<T>, count: number): Promise<T[]> {
+
+      const items: T[] = [];
+
+      for(let index = 0; index < count; index++) {
+
+        // eslint-disable-next-line no-await-in-loop
+        const result = await iterator.next();
+
+        assert.ok(result.done !== true, "expected an item at index " + index.toString());
+        items.push(result.value);
+      }
+
+      return items;
+    }
+
+    // The kind, codec and timestamp of each frame, the fields a row reads a frame stream by.
+    const shapes = (frames: readonly LivestreamFrame[]): [string, string, number][] => frames.map((frame) => [ frame.kind, frame.codec, frame.timestamp ]);
+
+    // The frames of `ubvOpening("aac", ticks)`: its keyframe, its AAC frame on the 48 kHz clock and the video frames after them.
+    const opening = (ticks = 0): [string, string, number][] => [ [ "video", "h264", ticks ], [ "audio", "aac", ((ticks * 8) / 15) + 960 ],
+      [ "video", "h264", ticks + 3600 ], [ "video", "h264", ticks + 7200 ], [ "video", "h264", ticks + 10800 ] ];
+
+    test("a frames subscriber receives every frame of the asked codec and no segment, and a segments subscriber beside it receives no frame", async () => {
+
+      const { pool, sockets } = makePool();
+      const segments = pool.subscribe({ ...SPEC, upstream: "ubv" });
+      const frames = pool.subscribe(SPEC, { output: "frames" });
+      const sibling = pool.subscribe(SPEC, { output: "frames" });
+
+      await settle();
+
+      // One socket serves the three. Its opening is followed by an Opus frame, which a stream asking for AAC drops before any subscriber.
+      assert.equal(sockets.length, 1);
+      at(sockets, 0).emitOpen();
+      at(sockets, 0).emitMessage(Buffer.concat([ ubvOpening("aac"), ubvAudio("opus", 2400) ]));
+      await settle();
+
+      assert.deepEqual([ segments.stats.queueDepth, frames.stats.queueDepth, sibling.stats.queueDepth ], [ 2, 5, 5 ]);
+
+      const received = await take(frames[Symbol.asyncIterator](), 5);
+      const siblings = await take(sibling[Symbol.asyncIterator](), 5);
+
+      assert.deepEqual(shapes(received), opening());
+      assert.ok(received.every((frame, index) => frame === siblings[index]), "each frames subscriber receives the same frame object");
+      assert.deepEqual((await take(segments[Symbol.asyncIterator](), 2)).map((segment) => segment.type), [ "init", "media" ]);
+
+      await pool[Symbol.asyncDispose]();
+    });
+
+    test("a frames subscriber shares one socket with an Opus segments subscriber, and holds its own beside an AAC segments subscriber naming no upstream",
+      async () => {
+
+        // A frames subscription reads UBV, so it shares with a segments subscriber whose Opus reads UBV too.
+        const shared = makePool();
+
+        shared.pool.subscribe({ ...SPEC, audio: "opus" }, { output: "frames" });
+        shared.pool.subscribe({ ...SPEC, audio: "opus" });
+        await settle();
+
+        assert.equal(shared.sockets.length, 1);
+
+        // A segments subscriber asking for AAC and naming no upstream reads Protect's own fMP4, a stream of its own.
+        const apart = makePool();
+
+        apart.pool.subscribe(SPEC, { output: "frames" });
+        apart.pool.subscribe(SPEC);
+        await settle();
+
+        assert.equal(apart.sockets.length, 2);
+
+        await shared.pool[Symbol.asyncDispose]();
+        await apart.pool[Symbol.asyncDispose]();
+      });
+
+    test("an unknown output, and an untyped fmp4 upstream on a frames subscription, are refused at subscribe with ProtectProtocolError before any session opens",
+      async () => {
+
+        const opened: LivestreamSessionOpenedPayload[] = [];
+
+        using openedSubscription = subscribeToChannel(channels.livestreamSessionOpened, (payload) => void opened.push(payload));
+
+        const { pool, sockets } = makePool();
+
+        // Each a value the types refuse at compile time, which an untyped caller can still pass.
+        assert.throws(() => pool.subscribe(SPEC, { output: "bytes" } as never), { constructor: ProtectProtocolError });
+        assert.throws(() => pool.subscribe({ ...SPEC, upstream: "fmp4" as never }, { output: "frames" }), { constructor: ProtectProtocolError });
+        await settle();
+
+        assert.deepEqual(opened, []);
+        assert.equal(sockets.length, 0);
+
+        await pool[Symbol.asyncDispose]();
+      });
+
+    test("the first frame after a reconnect, or after an establishing attempt that fanned frames and died before its media, carries discontinuity on a copy, once",
+      async () => {
+
+        const { pool, sockets } = makePool();
+        const frames = pool.subscribe(SPEC, { output: "frames" });
+        const iterator = frames[Symbol.asyncIterator]();
+
+        await settle();
+        at(sockets, 0).emitOpen();
+        at(sockets, 0).emitMessage(ubvOpening("aac"));
+        await settle();
+
+        // A cold start's frames begin the stream, so none is marked.
+        assert.ok((await take(iterator, 5)).every((frame) => !Object.hasOwn(frame, "discontinuity")));
+
+        // The controller closes the stream, and the reconnect's first frame is marked, on a copy whose payload is still a view of its message, and no frame after it.
+        at(sockets, 0).emitClose(1000, "the controller closed the stream");
+        await settle();
+        at(sockets, 1).emitOpen();
+        at(sockets, 1).emitMessage(ubvOpening("aac", 90000));
+        await settle();
+
+        const resumed = await take(iterator, 5);
+
+        assert.deepEqual(shapes(resumed), opening(90000));
+        assert.deepEqual(resumed.map((frame) => frame.discontinuity), [ true, undefined, undefined, undefined, undefined ]);
+        assert.equal(at(resumed, 0).data.buffer, at(resumed, 1).data.buffer);
+
+        await pool[Symbol.asyncDispose]();
+
+        // An establishing attempt fans a keyframe, which its writer holds, and the keyframe keeps the attempt past its window until its silence reaches the default
+        // detection threshold, before its first media. The attempt after it is still establishing, and its first frame is marked all the same.
+        const clock = new TestClock();
+        const attempts = makePool({ clock, recoveryPolicy: () => ({ awaitMs: 1000, kind: "reconnect" }) });
+        const establishing = attempts.pool.subscribe(SPEC, { output: "frames" });
+        const establishingIterator = establishing[Symbol.asyncIterator]();
+
+        await settle();
+        at(attempts.sockets, 0).emitOpen();
+        at(attempts.sockets, 0).emitMessage(ubvVideo(0, { keyframe: true }));
+        await settle();
+
+        assert.equal(Object.hasOwn(at(await take(establishingIterator, 1), 0), "discontinuity"), false);
+        assert.equal(establishing.state, "connecting");
+
+        clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
+        await settle();
+        at(attempts.sockets, 1).emitOpen();
+        at(attempts.sockets, 1).emitMessage(ubvOpening("aac"));
+        await settle();
+
+        assert.deepEqual((await take(establishingIterator, 5)).map((frame) => frame.discontinuity), [ true, undefined, undefined, undefined, undefined ]);
+        assert.equal(establishing.state, "live");
+
+        await attempts.pool[Symbol.asyncDispose]();
+      });
+
+    test("a frames joiner gets no init replay", async () => {
+
+      const { pool, sockets } = makePool();
+      const segments = pool.subscribe({ ...SPEC, upstream: "ubv" });
+
+      await settle();
+      at(sockets, 0).emitOpen();
+      at(sockets, 0).emitMessage(ubvOpening("aac"));
+      await settle();
+
+      // The init is cached, and a frames joiner shares the stream yet is handed none of it: its first item is the stream's next frame.
+      const joiner = pool.subscribe(SPEC, { output: "frames" });
+
+      assert.equal(sockets.length, 1);
+      assert.equal(joiner.stats.queueDepth, 0);
+
+      at(sockets, 0).emitMessage(ubvVideo(14400));
+      await settle();
+
+      assert.deepEqual(shapes(await take(joiner[Symbol.asyncIterator](), 1)), [[ "video", "h264", 14400 ]]);
+      assert.equal(joiner.codec, segments.codec);
+
+      await pool[Symbol.asyncDispose]();
+    });
+
+    test("a frames-only stream establishes on its media, stays live while its media flows and, its clock run past the stall threshold with no media, recovers",
+      async () => {
+
+        const clock = new TestClock();
+        const { pool, sockets } = makePool({ clock });
+        const frames = pool.subscribe(SPEC, { output: "frames" });
+
+        await settle();
+        at(sockets, 0).emitOpen();
+        at(sockets, 0).emitMessage(ubvOpening("aac"));
+        await settle();
+
+        // The writer's first media segment establishes the stream though no subscriber iterates it.
+        assert.equal(frames.state, "live");
+        assert.equal(await frames.whenEstablished(), true);
+        assert.equal(frames.stats.queueDepth, 5);
+
+        // Just under the threshold the stream's next segment closes, its media refreshing the watchdog's clock though no subscriber iterates it, so the stream is
+        // still live past the threshold measured from its first media.
+        clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS - PROTECT_LIVESTREAM_STALL_POLL_MS);
+        at(sockets, 0).emitMessage(Buffer.concat([ ubvVideo(14400), ubvVideo(18000), ubvVideo(21600), ubvVideo(25200) ]));
+        await settle();
+        clock.advance(2 * PROTECT_LIVESTREAM_STALL_POLL_MS);
+        await settle();
+        await settle();
+
+        assert.equal(frames.state, "live");
+        assert.equal(sockets.length, 1);
+
+        // Media-silent past the default threshold while an audio frame keeps the socket's heartbeat alive and reaches the subscriber: a frame stamps nothing on the
+        // stream, so the media watchdog recovers it.
+        clock.advance(PROTECT_LIVESTREAM_STALL_DEFAULT_MS);
+        at(sockets, 0).emitMessage(ubvAudio("aac", 9600));
+        await settle();
+        await settle();
+
+        assert.equal(frames.state, "recovering");
+        assert.equal(sockets.length, 2);
+        assert.equal(frames.stats.queueDepth, 10);
+
+        await pool[Symbol.asyncDispose]();
+      });
   });
 
   describe("resilient recovery", () => {
@@ -1920,6 +2540,36 @@ describe("LivestreamPool", () => {
       await follow("live");
     });
 
+    test("an init whose audio track's sample description changed under the same label and description is a changed stream", async () => {
+
+      // The audio track's last byte lies in its esds past the AudioSpecificConfig the description reads, so the label and the description alone would read the
+      // changed init as the same stream, and the video track's sample description is the stream's own.
+      const changedAudio = changedSampleDescriptionInit(1);
+
+      assert.deepEqual(describeInitSegment(changedAudio), AI_PRO_DESCRIPTION);
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "hev1.1.6.L150.90", data: AI_PRO_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The reconnect's init is followed by media, which a gate that let the stream through would hand the iterator rather than end it.
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+      await establishInit(at(sockets, 1), { codec: "hev1.1.6.L150.90", data: changedAudio });
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      await assert.rejects(iterator.next(), ProtectCodecChangeError);
+      assert.equal(sub.state, "closed");
+    });
+
     test("two inits that differ only in a creation time are one stream", async () => {
 
       const later = laterCreationTimeInit();
@@ -1954,6 +2604,66 @@ describe("LivestreamPool", () => {
       assert.deepEqual(sub.initSegment?.data, AI_PRO_INIT);
 
       await sub[Symbol.asyncDispose]();
+    });
+
+    test("two AV1 inits that differ only in av1C's reserved bits are one stream, on a reconnect and on a live session", async () => {
+
+      // A stream established on `AV1_INIT` meets the init whose av1C sets every reserved bit, from its reconnect and then on its live session: the reserved bits are
+      // no part of a track's sample description, so each is the same stream, neither reaches the iterator, media resumes after each, and the cache keeps the first.
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "av01.0.13M.08", data: AV1_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+      await establish(at(sockets, 1), { codec: "av01.0.13M.08", data: AV1_RESERVED_BITS_INIT });
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      at(sockets, 1).emitMessage(buildInitSegment({ codec: "av01.0.13M.08", data: AV1_RESERVED_BITS_INIT }));
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      assert.equal((await nextSegment(iterator)).type, "media");
+      assert.equal(sub.state, "live");
+      assert.deepEqual(sub.initSegment?.data, AV1_INIT);
+
+      await sub[Symbol.asyncDispose]();
+    });
+
+    test("an AV1 init that differs in a bit a decoder reads under the same label and description is a changed stream", async () => {
+
+      // `AV1_HIGH_BITDEPTH_INIT` sets av1C's `high_bitdepth`, which a decoder reads and the description does not, so the label and the description alone would read
+      // it as the same stream.
+      assert.deepEqual(describeInitSegment(AV1_HIGH_BITDEPTH_INIT), describeInitSegment(AV1_INIT));
+
+      const { pool, sockets } = makePool();
+      const sub = pool.subscribe(SPEC);
+
+      await settle();
+      await establish(at(sockets, 0), { codec: "av01.0.13M.08", data: AV1_INIT });
+
+      const iterator = sub[Symbol.asyncIterator]();
+
+      assert.equal((await nextSegment(iterator)).type, "init");
+      assert.equal((await nextSegment(iterator)).type, "media");
+
+      // The reconnect's init is followed by media, which a gate that let the stream through would hand the iterator rather than end it.
+      at(sockets, 0).emitClose(1000, "the controller closed the stream");
+      await settle();
+      await establishInit(at(sockets, 1), { codec: "av01.0.13M.08", data: AV1_HIGH_BITDEPTH_INIT });
+      pushMedia(at(sockets, 1));
+      await settle();
+
+      await assert.rejects(iterator.next(), ProtectCodecChangeError);
+      assert.equal(sub.state, "closed");
     });
 
     test("the recovery policy giving up terminates the iterator with ProtectLivestreamUnavailableError", async () => {
@@ -3715,6 +4425,27 @@ describe("LivestreamPool", () => {
       cameraOver(createInitialState()).livestream({});
 
       assert.equal(Object.hasOwn(specs.at(-1) ?? {}, "audioExpected"), false);
+    });
+
+    test("the output a call asks for reaches the pool's options and never the stream spec", () => {
+
+      // A camera with no record in the state, so each spec holds only what the call names, recording what each livestream() hands the pool.
+      const calls: { opts: LivestreamSubscribeOptions & { output?: LivestreamOutput }; spec: LivestreamSpec }[] = [];
+      const context = { livestreamPool: { subscribe: (spec: LivestreamSpec, opts: LivestreamSubscribeOptions & { output?: LivestreamOutput }) => {
+
+        calls.push({ opts, spec });
+
+        return {} as unknown;
+      } }, log: silentLog(), store: { selectors: createDeviceSelectors(), snapshot: () => createInitialState() }, transport: {} } as unknown as DeviceContext;
+      const camera = new Camera(context, "cam-xyz");
+
+      camera.livestream({ output: "frames", source: { channel: 1, type: "channel" } });
+      camera.livestream({ output: "segments" });
+      camera.livestream({});
+
+      assert.deepEqual(calls.map(({ opts }) => opts.output), [ "frames", "segments", undefined ]);
+      assert.deepEqual(calls.map(({ spec }) => spec), [ { cameraId: "cam-xyz", source: { channel: 1, type: "channel" } }, { cameraId: "cam-xyz" },
+        { cameraId: "cam-xyz" } ]);
     });
   });
 });

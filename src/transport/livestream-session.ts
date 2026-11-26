@@ -168,7 +168,8 @@ export interface LivestreamSpec {
 
   /**
    * Optional fMP4 segment length, in milliseconds, which the controller writes to on Protect's own fMP4 and the library on UBV. Floored at
-   * `PROTECT_LIVESTREAM_SEGMENT_LENGTH` (100), which is also the default.
+   * `PROTECT_LIVESTREAM_SEGMENT_LENGTH` (100), which is also the default. A stream reading UBV refuses a length that is not a finite number of milliseconds with
+   * `ProtectProtocolError`.
    */
   segmentLength?: number;
 
@@ -237,6 +238,19 @@ export interface ResolvedLivestreamSpec {
 export type Segment =
   | ({ type: "init" } & LivestreamInit) |
   { type: "media"; data: Buffer; moof: Buffer; mdat: Buffer; timestamps?: number[]; discontinuity?: true };
+
+/**
+ * One frame of a livestream's frames output: a media frame a UBV stream carries, video or audio, told apart by `kind`, with its codec, its payload exactly as the
+ * camera sent it (a view of the socket message it arrived in, never a copy), its timestamp in ticks at its `rate` on the camera's own timeline, and on video whether
+ * it is a keyframe. Audio of a codec other than the one the stream asked for never arrives.
+ *
+ * `discontinuity` is present (and `true`) only on the first frame delivered after a reconnect, or after an establishing attempt that delivered frames and ended
+ * before its media, and absent otherwise. It marks a gap: the frames the camera sent between the last one delivered and the marked one never arrived, so a consumer
+ * that decodes across frames treats a marked frame as a splice point. The session itself never sets it: the pool stamps it on a copy as it hands the frame out.
+ *
+ * @category Transport
+ */
+export type LivestreamFrame = MediaFrame & { readonly discontinuity?: true };
 
 /**
  * The events {@link LivestreamSession} publishes on its three-rail surface.
@@ -419,13 +433,28 @@ function resolveUpstream(upstream: "ubv" | undefined, audio: LivestreamAudioCode
   }
 }
 
+// Resolve a stream's segment length, floored at PROTECT_LIVESTREAM_SEGMENT_LENGTH. On UBV the library's writer closes each segment at that length, so a length that
+// is not a finite number of milliseconds, which a number can still hold, is refused here as an unknown route is, before anything is negotiated. Protect's own fMP4
+// hands the length to the controller as it is.
+function resolveSegmentLength(segmentLength: number | undefined, upstream: LivestreamUpstream): number {
+
+  const floored = Math.max(segmentLength ?? PROTECT_LIVESTREAM_SEGMENT_LENGTH, PROTECT_LIVESTREAM_SEGMENT_LENGTH);
+
+  if((upstream === "ubv") && !Number.isFinite(floored)) {
+
+    throw new ProtectProtocolError("The UniFi Protect livestream's segment length is not a finite number of milliseconds.");
+  }
+
+  return floored;
+}
+
 /**
  * Apply every {@link LivestreamSpec} default in one place, so the session and the pool agree on the resolved stream identity. The segment length is floored at
  * {@link PROTECT_LIVESTREAM_SEGMENT_LENGTH}: a shorter request would only add controller load for no downstream benefit. An omitted route is `"proxied"`, a route
  * outside {@link LivestreamRoute} is refused with {@link ProtectProtocolError} as an unknown source type is, and the resolved route keeps whatever narrower route type
  * the spec carries, so a session's spec, which admits only the routes a session dials, resolves to one of those. An omitted audio codec is AAC, the upstream is UBV
- * when the spec names it or asks for Opus and Protect's own fMP4 otherwise, and an audio codec or an upstream outside its union is refused as a route is. An
- * omitted `audioExpected` is `true`.
+ * when the spec names it or asks for Opus and Protect's own fMP4 otherwise, and an audio codec or an upstream outside its union is refused as a route is, as is a
+ * segment length that is not a finite number of milliseconds on a spec resolving to UBV, whose writer the length paces. An omitted `audioExpected` is `true`.
  *
  * @typeParam Route - The routes the spec's own type admits.
  *
@@ -439,9 +468,10 @@ export function resolveLivestreamSpec<Route extends LivestreamRoute = Livestream
   ResolvedLivestreamSpec & { route: Route | "proxied" } {
 
   // Resolve the source selector to its wire (channel, lens) pair first, so the resolved channel is available both as a field and for the requestId label default
-  // below, and the audio codec ahead of the upstream it decides.
+  // below, the audio codec ahead of the upstream it decides, and the upstream ahead of the segment length it judges.
   const { channel, lens } = resolveSource(spec.source);
   const audio = resolveAudio(spec.audio);
+  const upstream = resolveUpstream(spec.upstream, audio);
 
   return {
 
@@ -453,9 +483,9 @@ export function resolveLivestreamSpec<Route extends LivestreamRoute = Livestream
     lens: lens,
     requestId: spec.requestId ?? (spec.cameraId + "-" + channel.toString()),
     route: resolveRoute(spec.route),
-    segmentLength: Math.max(spec.segmentLength ?? PROTECT_LIVESTREAM_SEGMENT_LENGTH, PROTECT_LIVESTREAM_SEGMENT_LENGTH),
+    segmentLength: resolveSegmentLength(spec.segmentLength, upstream),
     timestamps: spec.timestamps ?? false,
-    upstream: resolveUpstream(spec.upstream, audio)
+    upstream
   };
 }
 
@@ -593,7 +623,7 @@ export class LivestreamSession implements AsyncDisposable {
     }
 
     // Begin connecting. Unlike EventStream (whose URL is immediate), we must negotiate the URL first, so the connect is an async task whose failures land on the error
-    // rail. It is launched detached; the constructor never throws and never blocks.
+    // rail. The connect is launched detached, so nothing it does throws into the constructor or blocks it.
     void this.#connect(options.signal);
   }
 
