@@ -4,10 +4,11 @@
  * decode command runs over files and stdin in each of its modes: one frame's bytes lifted on their own, and a recording of the raw firehose replayed line by
  * line through one classifier. On stdin, each mode ends quietly when the command's signal aborts.
  */
-import type { LivestreamDescription, LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment, TypedEvent } from "../../../index.ts";
+import type { LivestreamDescription, LivestreamFrame, LivestreamSubscriptionStats, ProtectClient, ProtectStateRecord, RawPacket, Segment,
+  TypedEvent } from "../../../index.ts";
 import { PassThrough, Readable } from "node:stream";
-import { ProtectAbortedError, ProtectAuthError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectUnsupportedError,
-  channels } from "../../../index.ts";
+import { ProtectAbortedError, ProtectAuthError, ProtectLivestreamAudioError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectUnsupportedError,
+  channels, formatErrorChain } from "../../../index.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../../protocol/packet.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, settlement, withTempDir } from "../../../testing.helpers.ts";
@@ -1184,7 +1185,7 @@ describe("watch livestream", () => {
           async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
 
             channels.livestreamCodecChanged.publish({ cameraId: "c1", from: { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION },
-              key: "c1:0:0:100:4096:false:proxied", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
+              key: "c1:0:0:100:4096:false:proxied:fmp4:aac", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
 
             yield { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION, type: "init" };
           },
@@ -1342,6 +1343,126 @@ describe("watch livestream", () => {
 
     await assert.rejects(watchLivestream.run(ctx), { constructor: CliError, exitCode: 2,
       message: "The --route value must be one of direct, preferDirect, proxied, but received \"nope\"." });
+    assert.equal(opened, false);
+  });
+
+  test("--audio, --upstream and --output reach the library as typed, and each is left out of the stream's options when unset", async () => {
+
+    // --json with no scripted segments keeps the run off the real stdout and away from the subscription stats the basic fake camera leaves out.
+    const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
+
+    await watchLivestream.run(makeCommandContext({ args: [ "c1", "--audio", "opus", "--upstream", "ubv", "--output", "segments", "--json" ], client }).ctx);
+    await watchLivestream.run(makeCommandContext({ args: [ "c1", "--json" ], client }).ctx);
+
+    const [ named, unset ] = calls.livestreams.map((call) => call.opts);
+
+    assert.deepEqual([ named?.audio, named?.upstream, named?.output ], [ "opus", "ubv", "segments" ]);
+    assert.deepEqual([ "audio", "output", "upstream" ].filter((option) => Object.hasOwn(present(unset, "the run naming no flag"), option)), []);
+  });
+
+  test("an unknown --audio, --upstream or --output is a usage error before the client opens", async () => {
+
+    for(const [ flag, value, choices ] of [ [ "--audio", "mp3", "aac, opus" ], [ "--upstream", "fmp4", "ubv" ], [ "--output", "bytes", "frames, segments" ] ] as const) {
+
+      const { client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
+      const { ctx } = makeCommandContext({ args: [ "c1", flag, value ], client });
+
+      let opened = false;
+
+      ctx.openClient = (): Promise<ProtectClient> => {
+
+        opened = true;
+
+        return Promise.resolve(client);
+      };
+
+      // eslint-disable-next-line no-await-in-loop
+      await assert.rejects(watchLivestream.run(ctx), { constructor: CliError, exitCode: 2,
+        message: "The " + flag + " value must be one of " + choices + ", but received \"" + value + "\"." });
+      assert.equal(opened, false, flag);
+    }
+  });
+
+  // Frames as a UBV stream carries them, each with its payload, its rate and its timestamp: a video keyframe, an audio frame, and a video frame that is not a
+  // keyframe and carries the discontinuity marker the pool sets on the first frame after a gap.
+  const FRAMES: LivestreamFrame[] = [
+
+    { codec: "h264", data: Buffer.from([ 1, 2, 3 ]), keyframe: true, kind: "video", rate: 90000, timestamp: 0 },
+    { codec: "aac", data: Buffer.from([ 4, 5 ]), kind: "audio", rate: 48000, timestamp: 960 },
+    { codec: "h264", data: Buffer.from([ 6, 7, 8, 9 ]), discontinuity: true, keyframe: false, kind: "video", rate: 90000, timestamp: 3600 }
+  ];
+
+  test("--output frames prints a line per frame, to a pipe as to a terminal, and closes with the frame count and bytes", async () => {
+
+    // Run the frames output with stdout a terminal or a pipe, reading the command's lines with the time each opens with cut away.
+    const run = async (isTTY: boolean): Promise<string[]> => {
+
+      const { calls, client } = makeFakeClient({ cameras: [{ frames: FRAMES, id: "c1", name: "Cam" }] });
+      const { ctx, stdout } = makeCommandContext({ args: [ "c1", "--output", "frames" ], client });
+      const savedTTY = process.stdout.isTTY;
+
+      try {
+
+        process.stdout.isTTY = isTTY;
+
+        await watchLivestream.run(ctx);
+      } finally {
+
+        process.stdout.isTTY = savedTTY;
+      }
+
+      assert.equal(present(calls.livestreams[0], "the one livestream opened").opts.output, "frames");
+
+      return stdout().split("\n").filter((line) => line.length > 0).map((line) => line.replace(/^\d{2}:\d{2}:\d{2}\.\d{3} {2}/, ""));
+    };
+
+    const expected = [ "video  h264  3 B  ts=0  key", "audio  aac  2 B  ts=960", "video  h264  4 B  ts=3600", "Received 3 frame(s), 9 B." ];
+
+    assert.deepEqual(await run(true), expected);
+    assert.deepEqual(await run(false), expected);
+  });
+
+  test("--output frames --json prints one JSON object per frame, and --count stops at that many frames", async () => {
+
+    const { client } = makeFakeClient({ cameras: [{ frames: FRAMES, id: "c1", name: "Cam" }] });
+    const { ctx, stdout } = makeCommandContext({ args: [ "c1", "--output", "frames", "--json", "--count", "1" ], client });
+
+    await watchLivestream.run(ctx);
+
+    assert.deepEqual(stdout().split("\n").filter((line) => line.length > 0).map((line) => JSON.parse(line) as unknown),
+      [{ bytes: 3, codec: "h264", keyframe: true, kind: "video", rate: 90000, timestamp: 0 }]);
+  });
+
+  test("--output frames --json carries a video frame's keyframe flag, set or not, and a frame's discontinuity", async () => {
+
+    const { client } = makeFakeClient({ cameras: [{ frames: FRAMES, id: "c1", name: "Cam" }] });
+    const { ctx, stdout } = makeCommandContext({ args: [ "c1", "--output", "frames", "--json" ], client });
+
+    await watchLivestream.run(ctx);
+
+    assert.deepEqual(stdout().split("\n").filter((line) => line.length > 0).map((line) => JSON.parse(line) as unknown), [
+      { bytes: 3, codec: "h264", keyframe: true, kind: "video", rate: 90000, timestamp: 0 },
+      { bytes: 2, codec: "aac", kind: "audio", rate: 48000, timestamp: 960 },
+      { bytes: 4, codec: "h264", discontinuity: true, keyframe: false, kind: "video", rate: 90000, timestamp: 3600 }
+    ]);
+  });
+
+  test("--output frames refuses --out before the client opens", async () => {
+
+    const { client } = makeFakeClient({ cameras: [{ frames: FRAMES, id: "c1", name: "Cam" }] });
+    const { ctx } = makeCommandContext({ args: [ "c1", "--output", "frames", "--out", "clip.mp4" ], client });
+
+    let opened = false;
+
+    ctx.openClient = (): Promise<ProtectClient> => {
+
+      opened = true;
+
+      return Promise.resolve(client);
+    };
+
+    await assert.rejects(watchLivestream.run(ctx), { constructor: CliError, exitCode: 2,
+      message: "The --out option writes fMP4 bytes, which --output frames does not produce." });
     assert.equal(opened, false);
   });
 
@@ -2097,6 +2218,70 @@ describe("doctor", () => {
     assert.equal(exitCode, 0);
   });
 
+  // The Opus check's fixtures: an init whose audio track is Opus, one whose audio track is AAC, a media segment, and a camera with a working microphone that encodes
+  // Opus, whose stream asking for Opus yields the script given.
+  const OPUS_INIT: Segment = { codec: "avc1.640028,Opus", data: Buffer.from([1]), description: { tracks: [ { codec: "h264", height: 1080, id: 1, kind: "video",
+    level: 40, profile: 100, width: 1920 }, { channels: 1, codec: "opus", id: 2, kind: "audio", sampleRate: 48000 } ] }, type: "init" };
+  const AAC_INIT: Segment = { codec: "avc1", data: Buffer.from([1]), description: STREAM_DESCRIPTION, type: "init" };
+  const MEDIA: Segment = { data: Buffer.from([2]), mdat: Buffer.alloc(0), moof: Buffer.alloc(0), type: "media" };
+  const opusCamera = (id: string, name: string, opus: Error | Segment[]): FakeCameraSpec => ({ id, microphone: { audioCodecs: [ "aac", "opus" ], enabled: true },
+    name, opus, segments: [ AAC_INIT, MEDIA ] });
+  const opusCheck = (results: { detail?: string; name: string; status: string }[]): { detail?: string; name: string; status: string } => {
+
+    return present(results.find((result) => result.name === "Livestream Opus over UBV (proxied route)"), "the Opus check");
+  };
+
+  // A connected, healthy run over the cameras given, as `healthyContext` builds one over its own camera, with the calls the run makes against its fake.
+  const opusContext = (cameras: FakeCameraSpec[]): { calls: ReturnType<typeof makeFakeClient>["calls"]; context: ReturnType<typeof makeCommandContext> } => {
+
+    const { calls, client } = makeFakeClient({ authUser: { id: "u1", name: "admin" }, cameras, events: [{ at: 0, cameraId: "c1", eventId: "e1",
+      kind: "motionDetected" }] });
+
+    return { calls, context: makeCommandContext({ args: ["--json"], client }) };
+  };
+
+  test("the Opus check passes on the first online camera that streams Opus, passing over one whose microphone is off", async () => {
+
+    const muted: FakeCameraSpec = { ...opusCamera("c1", "Muted", [ OPUS_INIT, MEDIA ]), microphone: { audioCodecs: [ "aac", "opus" ], enabled: false } };
+    const { calls, context } = opusContext([ muted, opusCamera("c2", "Porch", [ OPUS_INIT, MEDIA ]) ]);
+    const { exitCode, results } = await runDoctor(context);
+    const opus = opusCheck(results);
+
+    assert.equal(opus.status, "pass");
+    assert.equal(opus.detail, "Porch: init=true, media=true, codec avc1.640028,Opus (h264 1920x1080 L40, opus 48000 Hz mono)");
+    assert.deepEqual(calls.livestreams.filter((call) => call.opts.audio === "opus").map((call) => [ call.camera, call.opts.route ]), [[ "c2", "proxied" ]]);
+    assert.equal(exitCode, 0);
+  });
+
+  test("the Opus check warns on an init carrying no Opus and on a terminal with its cause chain, and the run exits zero", async () => {
+
+    const aac = await runDoctor(opusContext([opusCamera("c1", "Cam", [ AAC_INIT, MEDIA ])]).context);
+
+    assert.deepEqual([ opusCheck(aac.results).status, opusCheck(aac.results).detail ], [ "warn",
+      "Cam: init=true, media=true, codec avc1 (h264 1920x1080 L40, aac 16000 Hz mono)" ]);
+    assert.equal(aac.exitCode, 0);
+
+    const terminal = new ProtectLivestreamAudioError("The UniFi Protect controller is streaming an audio codec other than the one the livestream asked for.");
+    const ended = await runDoctor(opusContext([opusCamera("c1", "Cam", terminal)]).context);
+
+    assert.deepEqual([ opusCheck(ended.results).status, opusCheck(ended.results).detail ], [ "warn", formatErrorChain(terminal) ]);
+    assert.equal(ended.exitCode, 0);
+  });
+
+  test("the Opus check skips without an online camera that streams Opus, passing over one with no microphone, one muted, one with no Opus and one offline",
+    async () => {
+
+      const { calls, context } = opusContext([ { id: "c1", name: "Silent", segments: [ AAC_INIT, MEDIA ] },
+        { ...opusCamera("c2", "Muted", [ OPUS_INIT, MEDIA ]), microphone: { audioCodecs: [ "aac", "opus" ], enabled: false } },
+        { ...opusCamera("c3", "Aac", [ OPUS_INIT, MEDIA ]), microphone: { audioCodecs: ["aac"], enabled: true } },
+        { ...opusCamera("c4", "Away", [ OPUS_INIT, MEDIA ]), online: false } ]);
+      const { exitCode, results } = await runDoctor(context);
+
+      assert.deepEqual([ opusCheck(results).status, opusCheck(results).detail ], [ "skip", "no online camera with an enabled microphone that encodes Opus" ]);
+      assert.deepEqual(calls.livestreams.filter((call) => call.opts.audio === "opus"), []);
+      assert.equal(exitCode, 0);
+    });
+
   test("a connect failure fails fast with its whole cause chain, runs no later checks, and exits one", async () => {
 
     const { client } = makeFakeClient();
@@ -2237,7 +2422,7 @@ describe("diagnostics", () => {
     ctx.openClient = (opts?: { debug?: boolean; refreshIntervalMs?: number | false; signal?: AbortSignal }): Promise<ProtectClient> => {
 
       channels.livestreamCodecChanged.publish({ cameraId: "c1", from: { codec: "avc1.640028", data: Buffer.from([ 1, 2, 3 ]), description: STREAM_DESCRIPTION },
-        key: "c1:0:0:100:4096:false:proxied", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
+        key: "c1:0:0:100:4096:false:proxied:fmp4:aac", to: { codec: "hev1.1.6.L150.90", data: Buffer.from([ 4, 5 ]), description: { tracks: [] } } });
 
       return realOpen(opts);
     };

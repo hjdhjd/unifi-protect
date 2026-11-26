@@ -2,7 +2,8 @@
  *
  * fake-client.helpers.ts: A minimal, configurable fake ProtectClient and command-context harness for unit-testing CLI commands through the injected openClient hook.
  */
-import type { LivestreamOptions, LivestreamRoute, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment, TypedEvent } from "../../index.ts";
+import type { LivestreamFrame, LivestreamOptions, LivestreamOutput, LivestreamRoute, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment,
+  TypedEvent } from "../../index.ts";
 import { ProtectAbortedError, createStateStore } from "../../index.ts";
 import type { CommandContext } from "./shared.ts";
 import { Output } from "./output/format.ts";
@@ -30,6 +31,16 @@ export interface FakeDeviceSpec {
 }
 
 export interface FakeCameraSpec extends FakeDeviceSpec {
+
+  // The frames a livestream opened with `output: "frames"` yields, whatever else the spec scripts.
+  frames?: LivestreamFrame[];
+
+  // The camera's microphone: present when stated, enabled as stated, and the audio codecs the camera encodes, which the config's feature flags and microphone
+  // setting report. A camera that states none has no microphone and encodes no audio codec.
+  microphone?: { audioCodecs: readonly string[]; enabled: boolean };
+
+  // The segments a livestream asking for Opus yields, which replaces the route's script and `segments`. An Error script throws at the first read, as a route's does.
+  opus?: Error | Segment[];
 
   // A per-route livestream script, which replaces `segments` for a livestream opened on that route, an absent route reading as "proxied". An Error script throws at
   // the first read, the way a stream that ends on a terminal does.
@@ -147,7 +158,7 @@ export interface FakeCalls {
 
   disposed: number;
   flashlights: string[];
-  livestreams: { camera: string; opts: LivestreamOptions }[];
+  livestreams: { camera: string; opts: LivestreamOptions & { output?: LivestreamOutput } }[];
   playBuzzers: string[];
   playSpeakers: { chime: string; opts: PlaySpeakerOptions }[];
   reboots: string[];
@@ -262,9 +273,10 @@ function makeDevice(spec: FakeDeviceSpec, modelKey: string, calls: FakeCalls, ob
   return device;
 }
 
-// Build a fake camera: a device plus snapshot bytes and a livestream that records the options it was opened with, then yields the route's scripted segments, or the
-// camera's own when its route has no script, and ends, or throws a route's scripted error at the first read. The `observations` count is threaded into the device
-// beneath so the camera's `observe` yields the same fixed number of times.
+// Build a fake camera: a device whose config reports its microphone, plus snapshot bytes and a livestream that records the options it was opened with, then yields
+// the camera's scripted frames for a frames subscription, its Opus script for a stream asking for Opus, the route's scripted segments, or the camera's own when
+// none of those has a script, and ends, or throws a scripted error at the first read. The `observations` count is threaded into the device beneath so the camera's
+// `observe` yields the same fixed number of times.
 function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number): Record<string, unknown> {
 
   const device = makeDevice(spec, "camera", calls, observations);
@@ -273,24 +285,27 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
   return {
 
     ...device,
-    livestream: (opts: LivestreamOptions): AsyncIterable<Segment> & AsyncDisposable => {
+    config: { ...(device["config"] as Record<string, unknown>), featureFlags: { audioCodecs: [...(spec.microphone?.audioCodecs ?? [])],
+      hasMic: spec.microphone !== undefined }, isMicEnabled: spec.microphone?.enabled ?? false },
+    livestream: (opts: LivestreamOptions & { output?: LivestreamOutput }): AsyncIterable<LivestreamFrame | Segment> & AsyncDisposable => {
 
       calls.livestreams.push({ camera: spec.id, opts });
 
-      const script = spec.routes?.[opts.route ?? "proxied"] ?? segments;
+      const script = (opts.output === "frames") ? (spec.frames ?? []) : (((opts.audio === "opus") ? spec.opus : undefined) ??
+        spec.routes?.[opts.route ?? "proxied"] ?? segments);
 
       return {
 
-        async *[Symbol.asyncIterator](): AsyncGenerator<Segment> {
+        async *[Symbol.asyncIterator](): AsyncGenerator<LivestreamFrame | Segment> {
 
           if(script instanceof Error) {
 
             throw script;
           }
 
-          for(const segment of script) {
+          for(const item of script) {
 
-            yield segment;
+            yield item;
           }
         },
         [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve()
