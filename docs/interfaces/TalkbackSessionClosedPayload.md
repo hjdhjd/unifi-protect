@@ -6,8 +6,8 @@
 
 # Interface: TalkbackSessionClosedPayload
 
-Payload published on [channels.talkbackSessionClosed](../variables/channels.md#property-talkbacksessionclosed). `reason` mirrors the WebSocket close frame's reason (or the teardown cause when the session closed
-itself).
+Payload published on [channels.talkbackSessionClosed](../variables/channels.md#property-talkbacksessionclosed). `reason` mirrors a WebSocket close frame's reason when the controller closed the session's WebSocket,
+and is the teardown cause otherwise: when the session closed itself, and always for an RTP socket, which has no peer that closes it.
 
 ## Properties
 

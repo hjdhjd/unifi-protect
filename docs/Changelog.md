@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 5.7.0 (2026-11-27)
+  * New feature: Opus talkback. `camera.talkback({ audio: "opus" })` sends your Opus audio straight to the camera - send it a packet at a time, in real time - and the session's `samplingRate` tells you the rate the camera plays at, for AAC too.
+  * New feature: `ufp camera talkback` gains `--audio opus`, for Ogg Opus files and pipes.
+  * Fix: `ufp camera talkback` now sends audio in real time, so playing a file with `--file` now works.
+  * Fix: JSON parse errors now say where the text went wrong without echoing any of it.
+  * Housekeeping.
+
 ## 5.6.0 (2026-11-26)
   * New feature: livestream routes. `camera.livestream({ route })` chooses how a stream reaches the controller: `"proxied"`, the default, goes through UniFi OS as before; `"direct"` goes straight to the controller's media server, at a fraction of the controller's CPU cost, without certificate verification; and `"preferDirect"` tries direct first and falls back to proxied with a warning. Each stream's diagnostics `key` now ends in its route, upstream, and audio codec, `:proxied:fmp4:aac` by default.
   * New feature: Opus livestream audio. `camera.livestream({ audio: "opus" })` gives you Opus in the same fMP4 segments, on every route, read from the camera's UBV stream, and `upstream: "ubv"` reads that stream for AAC too.
