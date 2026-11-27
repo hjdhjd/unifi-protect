@@ -1,7 +1,7 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * session.ts: The send-direction return-audio WebSocket - negotiate, open atomically, and drain a consumer-supplied audio source to the camera speaker. The
- * reverse-direction counterpart of the livestream, structurally the send-direction sibling of EventStream.
+ * session.ts: The send-direction return-audio session - negotiate, open the write socket the negotiated endpoint names atomically, and drain a consumer-supplied
+ * audio source to the camera speaker. The reverse-direction counterpart of the livestream, structurally the send-direction sibling of EventStream.
  */
 
 /**
@@ -10,20 +10,28 @@
  * constructed non-atomically only because its pool needs synchronous map registration so concurrent early subscribers can share one in-flight session, a constraint
  * talkback (per call, never shared) does not have. So talkback follows `EventStream`'s atomic `static connect()`: ready or throws, no half-open. It is *simpler* than
  * both siblings: no frame decoder, no init-segment cache, no segment rail, and **no `EventBus`, no watchdog, no timer, no recovery loop** - its injected `Clock` is
- * read only to time a connection attempt, never on the write path. The channel is write-only, the bytes are opaque, and there is no inbound stream to time out or
- * reconnect mid-sentence (silently replaying stale buffered audio into a live conversation is worse than a clean end).
+ * read only to time a connection attempt, never on the write path. The channel is write-only, the session hands each chunk to its socket as it arrives, and there
+ * is no inbound stream to time out or reconnect mid-sentence (silently replaying stale buffered audio into a live conversation is worse than a clean end).
+ *
+ * **One session, one write socket the endpoint names.** A camera takes talkback audio as AAC through the controller or as Opus straight from the client, and the
+ * negotiated endpoint names which: a `webSocket` endpoint is the controller's talkback WebSocket through the UniFi OS proxy, which relays an ADTS stream to the
+ * camera, and an `rtp` endpoint is the camera's own RTP listener, which the session's RTP socket sends one datagram per Opus packet to. Every socket satisfies the one
+ * write surface, so the session holds no codec of its own, and the drain, the ceiling, the teardown order and the diagnostics have one home whichever it dials. The
+ * endpoint also states the rate the camera plays at, which {@link TalkbackSession.samplingRate} reports.
  *
  * **The write API is the dual of the receive channel.** The livestream's consumer surface is `AsyncIterable<Segment>` - the library is the source, the consumer pulls.
  * The honest mirror inverts that: the consumer is the source and the library pulls. So the single write entry, {@link TalkbackSession.send}, drains a consumer-supplied
  * `AsyncIterable<Uint8Array>`. Pacing comes from the source itself - a real-time producer only yields its next chunk as fast as it generates audio, keeping the socket
  * buffer near zero - so there is no `bufferedAmount` getter the consumer must poll. A Node `Readable` (ffmpeg's `stdout`) already implements `Symbol.asyncIterator` over
- * `Buffer`s, so `await session.send(ffmpeg.stdout)` just works, no adapter. The `send` promise *is* the entire async contract: resolve means the source was exhausted,
- * reject means a typed failure. The only active bound is a safety ceiling, `PROTECT_TALKBACK_MAX_BUFFERED_BYTES`: a real-time source keeps the socket buffer near zero
- * and never approaches it, but a non-real-time source fed faster than the wire drains would otherwise balloon the socket buffer, so crossing the ceiling rejects rather
- * than buffering unboundedly. It is a tripwire, not a timer.
+ * `Buffer`s, so an AAC session's `await session.send(ffmpeg.stdout)` just works, no adapter, while an Opus session takes one whole packet per chunk, which a source
+ * splits out of its container itself. The `send` promise *is* the entire async contract: resolve means the source was exhausted, reject means a typed failure. The
+ * only active bound is a safety ceiling, `PROTECT_TALKBACK_MAX_BUFFERED_BYTES`: a real-time source keeps the socket buffer near zero and never approaches it, but a
+ * non-real-time source fed faster than the wire drains would otherwise balloon the WebSocket's buffer, so crossing the ceiling rejects rather than buffering
+ * unboundedly. It is a tripwire, not a timer. An RTP socket's send queue drains straight to the network and stays near zero however fast its source runs, so the
+ * ceiling never catches an unpaced Opus source: an Opus source yields each packet no sooner than the audio before it has played.
  *
- * **Write-only.** The Protect controller emits nothing inbound on the talkback channel - it accepts the audio and relays it to the camera speaker, with no acks or codec
- * negotiation to drain - so `TalkbackSession` registers `open` / `close` / `error` but never attaches a `message` listener.
+ * **Write-only.** Nothing arrives inbound on any talkback channel - the controller accepts AAC and relays it to the camera speaker, and the camera's RTP listener plays
+ * Opus, each with no acks or codec negotiation to drain - so `TalkbackSession` registers `open` / `close` / `error` but never attaches a `message` listener.
  *
  * **Two phases - `connect` then `send` - mandated by resource ownership.** The socket is a long-lived resource the consumer holds as an `await using` disposable, so the
  * handle (the static `connect()` returns it) is separate from the streaming operation ({@link TalkbackSession.send}); leak-safety is structural, not dependent
@@ -34,7 +42,7 @@
  */
 import { Agent, WebSocket } from "undici";
 import { ProtectAbortedError, ProtectError, ProtectNetworkError, assertNever } from "../shared/errors.ts";
-import type { ProtectWebSocketCloseEvent, ProtectWebSocketErrorEvent, ProtectWritableWebSocket, SocketTeardown } from "../transport/ws.ts";
+import type { ProtectWebSocketCloseEvent, ProtectWebSocketErrorEvent, ProtectWritableSocket, SocketTeardown } from "../transport/ws.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../shared/diagnostics.ts";
 import { closeFrameText, socketFault, teardownCode } from "../transport/ws.ts";
 import { createOwnedConnector, releaseOwned } from "../transport/connector.ts";
@@ -43,37 +51,98 @@ import type { Clock } from "../shared/clock.ts";
 import type { OwnedDispatcher } from "../transport/connector.ts";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../shared/settings.ts";
 import type { ProtectLogging } from "../shared/logging.ts";
+import { RtpTalkbackSocket } from "../transport/rtp-socket.ts";
 import { channels } from "../shared/diagnostics.ts";
+import { formatUrlHost } from "../transport/url-host.ts";
 import { noopLog } from "../shared/logging.ts";
 
 /**
- * The deterministic lifecycle of a talkback session. The transitions are: construction begins connecting (`connecting`); WebSocket `open` advances to `live` (and the
- * static `connect()`'s promise resolves); every teardown path - an error, the caller's abort, an explicit `close()`, or a peer-initiated close - moves to `closed`
- * synchronously, the release of the owned connection starting in that same step, ahead of anything the teardown reports, and `close()`'s promise settling once the
- * release completes. `closing` is a momentary arm set inside the teardown call just before `closed`, so a reader of `state` never observes it. There is no
- * `handshaking` arm - talkback has no init segment.
+ * The deterministic lifecycle of a talkback session. The transitions are: construction begins connecting (`connecting`); the socket's `open` advances to `live` (and
+ * the static `connect()`'s promise resolves); every teardown path - an error, the caller's abort, an explicit `close()`, or a peer-initiated close, which only a
+ * WebSocket's peer can make - moves to `closed` synchronously, the release of the owned connection starting in that same step, ahead of anything the teardown
+ * reports, and `close()`'s promise settling once the release completes. `closing` is a momentary arm set inside the teardown call just before `closed`, so a reader
+ * of `state` never observes it. There is no `handshaking` arm - talkback has no init segment.
  *
  * @category Transport
  */
 export type TalkbackState = "closed" | "closing" | "connecting" | "live";
 
 /**
+ * The audio codecs a camera takes talkback in: `"aac"`, an ADTS stream relayed through the controller, and `"opus"`, Opus packets sent straight to the camera. The
+ * set is the talkback channel's own, independent of {@link LivestreamAudioCodec}, which names what a livestream carries from the camera.
+ *
+ * @category Transport
+ */
+export type TalkbackAudioCodec = "aac" | "opus";
+
+/**
+ * What a talkback negotiation answers: the write socket's address, tagged by `kind`, and the camera's talkback sampling rate in hertz. A `webSocket` endpoint is the
+ * controller's talkback WebSocket URL, and an `rtp` endpoint is the camera's own RTP listener, its host without an IPv6 literal's brackets.
+ *
+ * @category Transport
+ */
+export type TalkbackEndpoint = { readonly kind: "webSocket"; readonly samplingRate: number; readonly url: string } |
+  { readonly host: string; readonly kind: "rtp"; readonly port: number; readonly samplingRate: number };
+
+/* The sentences a session reports its connection in, one set for each kind of endpoint, chosen once the endpoint resolves: a WebSocket's name the controller's
+ * talkback API it reaches through the proxy, and an RTP socket's the talkback audio connection to the camera, which the controller is not on. Until its endpoint
+ * resolves, a session is waiting on the controller's talkback API whichever codec it asked for, so it reports in the WebSocket's words, as the negotiation failure
+ * does. The entries that name a close frame are stems the frame and the period complete.
+ */
+interface ConnectionVocabulary {
+
+  readonly closed: string;
+  readonly connected: string;
+  readonly failed: string;
+  readonly reported: string;
+  readonly timedOut: string;
+  readonly unexpectedClose: string;
+  readonly unopened: string;
+}
+
+const CONNECTION_VOCABULARY = {
+
+  rtp: {
+
+    closed: "The UniFi Protect talkback audio connection to the camera closed.",
+    connected: "Opened the UniFi Protect talkback audio connection to the camera.",
+    failed: "The UniFi Protect talkback audio connection to the camera failed.",
+    reported: "The UniFi Protect talkback audio connection to the camera reported an error.",
+    timedOut: "The UniFi Protect talkback audio connection to the camera timed out.",
+    unexpectedClose: "The UniFi Protect talkback audio connection to the camera closed unexpectedly",
+    unopened: "The UniFi Protect talkback audio connection to the camera closed before it finished connecting"
+  },
+  webSocket: {
+
+    closed: "The UniFi Protect talkback API connection closed.",
+    connected: "Connected to the UniFi Protect talkback API.",
+    failed: "The UniFi Protect talkback API connection failed.",
+    reported: "The UniFi Protect talkback API reported an error.",
+    timedOut: "The UniFi Protect talkback API connection timed out.",
+    unexpectedClose: "The UniFi Protect talkback API connection closed unexpectedly",
+    unopened: "The UniFi Protect talkback API closed before it finished connecting"
+  }
+} satisfies Record<TalkbackEndpoint["kind"], ConnectionVocabulary>;
+
+/**
  * Construction options for {@link TalkbackSession}.
  *
- * - `cameraId` is the camera whose speaker receives the audio - the only negotiation param.
+ * - `cameraId` is the camera whose speaker receives the audio, which the session hands its negotiation.
  * - `clock` is the time source a connection attempt that times out is measured on; it defaults to the wall clock, and tests inject a fake. It is read only for that
  *   measure, never on the write path.
  * - `log` receives the session's diagnostics logging; it defaults to a no-op logger.
- * - `resolveUrl` is the negotiation hook: given the request params it returns the WebSocket URL on the controller authority. The composition root wires it to a
- *   transport-backed GET (see `talkbackUrlResolver`); tests pass a one-line fake.
+ * - `resolveEndpoint` is the negotiation hook: called with the session's own camera id, it returns the {@link TalkbackEndpoint} the session dials. The composition
+ *   root binds it to the transport-backed endpoint resolver, which composes each codec's negotiation and then the rate read (see `talkbackEndpointResolver`);
+ *   tests pass a one-line fake.
  * - `getAuthHeaders` is the cookie hook, wired to {@link AuthSession} at the composition root (the same dependency inversion the {@link Transport} uses). The session
- *   reads it when it builds its socket, after its negotiation, so a relogin the negotiation triggered reaches the upgrade; an injected `webSocket` factory receives
- *   the URL alone.
- * - `webSocket` is the injected I/O dependency - the write-direction `ProtectWritableWebSocket`, distinct from the receive-direction interface {@link EventStream} /
- *   {@link LivestreamSession} share; omit it for the default undici-backed factory, inject it in tests.
+ *   reads it when it builds a WebSocket, after its negotiation, so a relogin the negotiation triggered reaches the upgrade; an RTP socket carries no headers, and an
+ *   injected `socket` factory receives the endpoint alone.
+ * - `socket` is the injected I/O dependency - a factory of the write-direction {@link ProtectWritableSocket} for the endpoint the negotiation answered, distinct from
+ *   the receive-direction interface {@link EventStream} / {@link LivestreamSession} share; omit it for the default, undici's WebSocket for a `webSocket` endpoint and
+ *   the {@link RtpTalkbackSocket} for an `rtp` one, and inject it in tests.
  * - `signal` cancels the connect attempt and, once live, the session - if it aborts, the session tears down and an in-flight `send` rejects.
- * - `verifyTls` opts the owned connection into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. An injected
- *   `webSocket` factory builds no agent here, so the option is inert alongside one.
+ * - `verifyTls` opts the owned connection into strict TLS certificate verification; it defaults to `false` for the controller's self-signed certificate. It reaches
+ *   the WebSocket alone: an RTP socket carries no TLS, and an injected `socket` factory builds no agent here, so the option is inert for each.
  *
  * @category Transport
  */
@@ -83,16 +152,16 @@ export interface TalkbackSessionOptions {
   clock?: Clock;
   getAuthHeaders?: () => Record<string, string>;
   log?: ProtectLogging;
-  resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+  resolveEndpoint: (params: { cameraId: string }, opts: { signal?: AbortSignal }) => Promise<TalkbackEndpoint>;
   signal?: AbortSignal;
+  socket?: (endpoint: TalkbackEndpoint) => ProtectWritableSocket;
   verifyTls?: boolean;
-  webSocket?: (url: string) => ProtectWritableWebSocket;
 }
 
 /**
- * One talkback WebSocket, write-only. Constructed atomically via the static `connect()` (the constructor is private): it negotiates the URL, opens the socket, and
- * resolves to a live session or throws a typed `ProtectError` - there is no half-open session. Feed it audio with {@link TalkbackSession.send} and dispose it (or abort
- * its signal) to close.
+ * One talkback channel, write-only. Constructed atomically via the static `connect()` (the constructor is private): it negotiates the endpoint, opens the socket
+ * the endpoint names, and resolves to a live session or throws a typed `ProtectError` - there is no half-open session. Feed it audio with
+ * {@link TalkbackSession.send} and dispose it (or abort its signal) to close.
  *
  * @category Transport
  */
@@ -108,9 +177,9 @@ export class TalkbackSession implements AsyncDisposable {
   readonly #fault: { promise: Promise<never>; reject: (reason: ProtectError) => void };
   readonly #getAuthHeaders: (() => Record<string, string>) | undefined;
   readonly #log: ProtectLogging;
-  readonly #resolveUrl: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
+  readonly #resolveEndpoint: (params: { cameraId: string }, opts: { signal?: AbortSignal }) => Promise<TalkbackEndpoint>;
+  readonly #socketFactory: ((endpoint: TalkbackEndpoint) => ProtectWritableSocket) | undefined;
   readonly #verifyTls: boolean;
-  readonly #webSocketFactory: ((url: string) => ProtectWritableWebSocket) | undefined;
 
   // The socket's handlers and the handler bound to the caller's signal, built once and held so the teardown removes each by the identity it was registered under, as
   // EventStream holds its own: on every Node before the fix for nodejs/node#63954 (all of 22, 24 before 24.22, 25, and 26 before 26.9) the `signal` registration
@@ -124,7 +193,7 @@ export class TalkbackSession implements AsyncDisposable {
     open: (): void => this.#onOpen()
   };
 
-  /* The open handshake, settled exactly once: resolved on the WebSocket `open` event, rejected if the socket closes (or negotiation fails, or the caller's signal
+  /* The open handshake, settled exactly once: resolved on the socket's `open` event, rejected if the socket closes (or negotiation fails, or the caller's signal
    * aborts) before opening. Settling once is a property of the lifecycle rather than a check of its own, as it is for EventStream: the `open` listener fires once, a
    * teardown removes it before it reports and leaves the connect registering none, #onOpen marks the session live before it resolves, and the teardown runs once
    * and rejects only a session that never opened.
@@ -133,14 +202,17 @@ export class TalkbackSession implements AsyncDisposable {
   readonly #rejectOpen: (error: ProtectError) => void;
   readonly #resolveOpen: (value: undefined) => void;
 
-  // The agent and the connector we own only when we built the default WebSocket, travelling as one value; null when a factory was injected. Mirrors EventStream /
-  // LivestreamSession: we never destroy what we did not create. The socket itself is built only after the URL is negotiated, so it is null through the connecting
-  // phase, and so are the address it dials and the stamp of when its connection attempt began, the clock's monotonic reading, which a certificate refusal and a
-  // timeout read.
+  // The agent and the connector we own only when we built the default WebSocket, travelling as one value; null for an RTP socket, which dials no HTTP connection, and
+  // when a factory was injected. Mirrors EventStream / LivestreamSession: we never destroy what we did not create. The socket itself is built only after the
+  // endpoint is negotiated, so it is null through the connecting phase, and so are the address it dials and the stamp of when its connection attempt began, the
+  // clock's monotonic reading, which a certificate refusal and a timeout read. The endpoint also sets the rate the session reports and the words it reports its
+  // connection in, which hold the WebSocket's until then.
   #owned: OwnedDispatcher | null = null;
-  #ws: ProtectWritableWebSocket | null = null;
+  #socket: ProtectWritableSocket | null = null;
   #address = "";
   #connectStartedAt = 0;
+  #samplingRate = 0;
+  #vocabulary: ConnectionVocabulary = CONNECTION_VOCABULARY.webSocket;
 
   // The release of the connection the session owns, which the single teardown starts and close()/dispose await, null until the teardown runs, so it is also the gate
   // that runs the teardown once; the typed failure an in-flight or subsequent send rejects with, which the teardown stores once from the reason it ran for; and
@@ -157,9 +229,9 @@ export class TalkbackSession implements AsyncDisposable {
     this.#clock = options.clock ?? wallClock;
     this.#getAuthHeaders = options.getAuthHeaders;
     this.#log = options.log ?? noopLog;
-    this.#resolveUrl = options.resolveUrl;
+    this.#resolveEndpoint = options.resolveEndpoint;
+    this.#socketFactory = options.socket;
     this.#verifyTls = options.verifyTls ?? false;
-    this.#webSocketFactory = options.webSocket;
 
     const opened = Promise.withResolvers<undefined>();
 
@@ -191,23 +263,24 @@ export class TalkbackSession implements AsyncDisposable {
       }
     }
 
-    // Begin connecting. Like LivestreamSession (and unlike EventStream, whose URL is immediate), we must negotiate the URL first, so the connect is an async task whose
-    // failures settle the open handshake as a rejection. It is launched detached; the constructor never throws and never blocks.
+    // Begin connecting. Like LivestreamSession (and unlike EventStream, whose URL is immediate), we must negotiate the endpoint first, so the connect is an async task
+    // whose failures settle the open handshake as a rejection. It is launched detached; the constructor never throws and never blocks.
     void this.#connect(options.signal);
   }
 
   /**
-   * Open a talkback session and wait for it to connect. Atomic: it negotiates the WebSocket URL, opens the socket, and returns a live session, or throws a typed
-   * `ProtectError` - there is no half-open session a caller must clean up. The capability guard lives on `Camera.talkback`, so this method never checks whether the
-   * camera supports talkback.
+   * Open a talkback session and wait for it to connect. Atomic: it negotiates the endpoint, opens the socket the endpoint names, and returns a live session, or
+   * throws a typed `ProtectError` - there is no half-open session a caller must clean up. The capability guard lives on `Camera.talkback`, so this method never
+   * checks whether the camera supports talkback.
    *
    * @param options - The session options.
    *
    * @returns A connected {@link TalkbackSession}.
    *
    * @throws The classified `FatalError` negotiation surfaces on a non-2xx (typically {@link ProtectRequestError}), the socket's classified failure when it fails
-   *   to open - a {@link ProtectNetworkError}, a {@link ProtectCertificateError} when the controller's certificate is refused, or a {@link ProtectTimeoutError}
-   *   when the connection attempt timed out - and {@link ProtectAbortedError} when the caller's signal aborts the connect.
+   *   to open - a {@link ProtectNetworkError}, which a socket that cannot be built also rejects with, a {@link ProtectCertificateError} when the controller's
+   *   certificate is refused, or a {@link ProtectTimeoutError} when the connection attempt timed out - and {@link ProtectAbortedError} when the caller's signal
+   *   aborts the connect.
    */
   static async connect(options: TalkbackSessionOptions): Promise<TalkbackSession> {
 
@@ -216,6 +289,16 @@ export class TalkbackSession implements AsyncDisposable {
     await session.#opened;
 
     return session;
+  }
+
+  /**
+   * The sampling rate, in hertz, the camera's talkback settings name, read from the controller once the negotiation had switched the camera to this session's codec,
+   * so it is the rate the camera plays at while the session is live. An AAC source is encoded at it; an Opus stream decodes at 48000 whatever rate its encoder took,
+   * so for an Opus source it is the rate the camera is set to, which an encoder may take as its own.
+   */
+  get samplingRate(): number {
+
+    return this.#samplingRate;
   }
 
   /** The session's current lifecycle state, for diagnostics and tests. */
@@ -230,19 +313,22 @@ export class TalkbackSession implements AsyncDisposable {
    * {@link ProtectError} if the socket errors or closes mid-drain, if the caller's `signal` aborts, or if the socket's send buffer crosses the
    * `PROTECT_TALKBACK_MAX_BUFFERED_BYTES` safety ceiling (a non-real-time source the wire cannot keep up with). On a socket fault, an abort, or the source's own error,
    * the source's cleanup (its `return()`) is requested and not awaited, so the rejection arrives at once and a generator's `finally` runs once its parked pull settles.
-   * The bytes are opaque - whatever audio format the camera expects (read `camera.config.talkbackSettings`); the library neither inspects nor transcodes them.
+   *
+   * What a chunk holds is the codec's contract, and the library transcodes nothing. An AAC session passes its chunks through as bytes, in the ADTS stream the camera
+   * plays at {@link TalkbackSession.samplingRate}, cut anywhere. An Opus session takes each chunk as exactly one raw Opus packet, the packet an Ogg or WebM container
+   * carries with the container removed, and refuses a chunk that is not one. Every source paces itself, yielding audio no faster than it plays.
    *
    * Await one drain before starting the next. Nothing serializes concurrent calls, so overlapping drains interleave their audio on the shared socket.
    *
-   * @param source - The audio source to drain. A Node `Readable` (e.g. `ffmpeg.stdout`) is an `AsyncIterable<Buffer>` and feeds in directly.
+   * @param source - The audio source to drain. A Node `Readable` (e.g. `ffmpeg.stdout`) is an `AsyncIterable<Buffer>` and feeds an AAC session directly.
    * @param opts   - An optional abort signal that ends this drain.
    *
    * @returns A promise that resolves when the source is exhausted.
    *
    * @throws {@link ProtectNetworkError} on a socket failure mid-drain, a buffer-ceiling overrun, or a call made while the session is not live (never
    *   connected, or already closed/faulted); {@link ProtectAbortedError} when the per-send `opts.signal` aborts, the session's own caller signal aborts
-   *   mid-drain, or when send() is called after an earlier caller-signal abort already tore the session down; any error the source itself raises
-   *   propagates unwrapped.
+   *   mid-drain, or when send() is called after an earlier caller-signal abort already tore the session down; {@link ProtectProtocolError} when an Opus session is
+   *   handed a chunk that is not one Opus packet, which ends the drain and leaves the session live; any error the source itself raises propagates unwrapped.
    */
   async send(source: AsyncIterable<Uint8Array>, opts: { signal?: AbortSignal } = {}): Promise<void> {
 
@@ -259,9 +345,9 @@ export class TalkbackSession implements AsyncDisposable {
     }
 
     // The socket is non-null while live (built once in #connect, never re-nulled). Capture it so the hot loop reads a stable, narrowed reference.
-    const ws = this.#ws;
+    const socket = this.#socket;
 
-    if(ws === null) {
+    if(socket === null) {
 
       throw this.#failure ?? new ProtectNetworkError("The UniFi Protect talkback session is not connected.");
     }
@@ -306,11 +392,13 @@ export class TalkbackSession implements AsyncDisposable {
           return;
         }
 
-        ws.send(result.value);
+        // An Opus session's socket refuses a chunk that is not one Opus packet by throwing before it writes anything, which ends the drain through the cleanup below
+        // with that refusal and leaves the session live, as the ceiling's refusal does.
+        socket.send(result.value);
 
         // The lone active backpressure bound. A producer-paced source keeps bufferedAmount near zero; a source the wire cannot keep up with would balloon it, so we
         // refuse rather than buffer without limit or inject stale audio into a live channel.
-        if(ws.bufferedAmount > PROTECT_TALKBACK_MAX_BUFFERED_BYTES) {
+        if(socket.bufferedAmount > PROTECT_TALKBACK_MAX_BUFFERED_BYTES) {
 
           throw new ProtectNetworkError("The UniFi Protect talkback socket could not keep up with the audio source; its send buffer exceeded the safety ceiling.");
         }
@@ -341,7 +429,7 @@ export class TalkbackSession implements AsyncDisposable {
   }
 
   /**
-   * Close the session: detach every listener, request the WebSocket close, and release the connection the session owns. Safe to call more than once, and awaitable.
+   * Close the session: detach every listener, request the socket's close, and release the connection the session owns. Safe to call more than once, and awaitable.
    * An in-flight {@link TalkbackSession.send} rejects.
    */
   async close(): Promise<void> {
@@ -359,10 +447,10 @@ export class TalkbackSession implements AsyncDisposable {
     await this.close();
   }
 
-  // Negotiate the URL and open the socket. This is the connecting phase: a negotiation (4xx/5xx) or network failure tears down as a fault, whose teardown settles the
-  // open handshake as a rejection, and a caller-signal abort does too but as the typed ProtectAbortedError the teardown stores as the session's failure. Either way
-  // connect() throws for the whole connect attempt, with no half-open session. The upgrade carries the session's auth headers, read after the negotiation as the
-  // livestream reads its own, because UniFi OS's proxy refuses a media upgrade without the session even when the minted token is valid.
+  // Negotiate the endpoint and open the socket it names. This is the connecting phase: a negotiation (4xx/5xx) or network failure tears down as a fault, whose
+  // teardown settles the open handshake as a rejection, and a caller-signal abort does too but as the typed ProtectAbortedError the teardown stores as the session's
+  // failure. In each case connect() throws for the whole connect attempt, with no half-open session. A WebSocket's upgrade carries the session's auth headers, read
+  // after the negotiation as the livestream reads its own, because UniFi OS's proxy refuses a media upgrade without the session even when the minted token is valid.
   async #connect(signal?: AbortSignal): Promise<void> {
 
     // An already-aborted caller signal tears us down in the constructor before this runs; bail without touching state so we never negotiate or build a socket.
@@ -371,11 +459,11 @@ export class TalkbackSession implements AsyncDisposable {
       return;
     }
 
-    let url: string;
+    let endpoint: TalkbackEndpoint;
 
     try {
 
-      url = await this.#resolveUrl(new URLSearchParams({ camera: this.#cameraId }), (signal !== undefined) ? { signal } : {});
+      endpoint = await this.#resolveEndpoint({ cameraId: this.#cameraId }, (signal !== undefined) ? { signal } : {});
     } catch(error) {
 
       // A teardown that already fired (caller abort during negotiation) has settled everything; do not also settle. We read the controller's abort state rather than
@@ -397,38 +485,71 @@ export class TalkbackSession implements AsyncDisposable {
       return;
     }
 
-    /* Build the socket: an injected factory in tests, otherwise undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its
-     * certificate posture following `verifyTls`, which is permissive by default for the controller's self-signed certificate. HTTP/2 is off and pipelining disabled
-     * because a WebSocket upgrade can use neither, and `allowH2` reaches the connector and the agent alike. undici's WebSocket structurally satisfies the minimal
-     * ProtectWritableWebSocket surface, so it assigns directly - no cast. Building the socket is where the connection attempt begins, so the address and the attempt's
-     * start are read immediately ahead of it, the address parsed without a throw because an injected factory may be handed a URL undici would refuse, and this runs
-     * detached.
+    // The endpoint names what the session reports from here on: the rate it states, and the words of the kind of connection it dials.
+    this.#samplingRate = endpoint.samplingRate;
+    this.#vocabulary = CONNECTION_VOCABULARY[endpoint.kind];
+
+    /* Building the socket is where the connection attempt begins, so the address and the attempt's start are read immediately ahead of it, and this runs detached:
+     * a build or a listener registration that throws, a URL undici refuses or an injected factory that fails, would otherwise leave the open handshake unsettled
+     * and its rejection unhandled, so it tears the session down as a fault the handshake rejects with, the build's own error as its cause. A socket built before
+     * the throw is closed by that teardown, and the connection the session owns released by it.
      */
-    this.#address = URL.parse(url)?.host ?? url;
-    this.#connectStartedAt = this.#clock.monotonic();
+    try {
 
-    if(this.#webSocketFactory !== undefined) {
+      this.#address = socketAddress(endpoint);
+      this.#connectStartedAt = this.#clock.monotonic();
+      this.#socket = this.#buildSocket(endpoint);
 
-      this.#ws = this.#webSocketFactory(url);
-    } else {
+      // The socket's handlers register with no `signal` option, since the teardown removes each itself. open / close / error are `once` - a socket reports each
+      // terminal condition a single time. There is deliberately no `message` listener and no `binaryType`: the channel is write-only - nothing arrives inbound on
+      // it - so the session never reads frames.
+      this.#socket.addEventListener("open", this.#socketListeners.open, { once: true });
+      this.#socket.addEventListener("close", this.#socketListeners.close, { once: true });
+      this.#socket.addEventListener("error", this.#socketListeners.error, { once: true });
+    } catch(error) {
 
-      const allowH2 = false;
-      const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
-      const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
-
-      this.#owned = { connector, dispatcher: agent };
-      this.#ws = new WebSocket(url, { dispatcher: agent, headers: this.#getAuthHeaders?.() ?? {} });
+      this.#shutdown({ error: new ProtectNetworkError(this.#vocabulary.failed, { cause: error }), kind: "fault", line: null,
+        reason: "the talkback socket could not be built" });
     }
-
-    // The socket's handlers register with no `signal` option, since the teardown removes each itself. open / close / error are `once` - a socket reports each terminal
-    // condition a single time. There is deliberately no `message` listener and no `binaryType`: the channel is write-only - the controller emits nothing inbound on
-    // it - so the session never reads frames.
-    this.#ws.addEventListener("open", this.#socketListeners.open, { once: true });
-    this.#ws.addEventListener("close", this.#socketListeners.close, { once: true });
-    this.#ws.addEventListener("error", this.#socketListeners.error, { once: true });
   }
 
-  // The WebSocket opened. Advance to live, settle the open handshake, and publish the opened diagnostic, all ahead of the debug line, so a logger that throws on the
+  /* Build the socket the endpoint names: an injected factory in tests, otherwise the RTP socket to the camera for an `rtp` endpoint, and for a `webSocket` one
+   * undici's WebSocket over an owned HTTP/1.1 agent that dials through an owned connector, its certificate posture following `verifyTls`, which is permissive by
+   * default for the controller's self-signed certificate. HTTP/2 is off and pipelining disabled because a WebSocket upgrade can use neither, and `allowH2` reaches
+   * the connector and the agent alike. undici's WebSocket structurally satisfies the minimal ProtectWritableSocket surface, so it assigns directly - no cast.
+   */
+  #buildSocket(endpoint: TalkbackEndpoint): ProtectWritableSocket {
+
+    if(this.#socketFactory !== undefined) {
+
+      return this.#socketFactory(endpoint);
+    }
+
+    switch(endpoint.kind) {
+
+      case "rtp":
+
+        return new RtpTalkbackSocket({ host: endpoint.host, port: endpoint.port });
+
+      case "webSocket": {
+
+        const allowH2 = false;
+        const connector = createOwnedConnector({ allowH2, verifyTls: this.#verifyTls });
+        const agent = new Agent({ allowH2, connect: connector.connect, pipelining: 0 });
+
+        this.#owned = { connector, dispatcher: agent };
+
+        return new WebSocket(endpoint.url, { dispatcher: agent, headers: this.#getAuthHeaders?.() ?? {} });
+      }
+
+      default:
+
+        // Exhaustiveness guard. A new endpoint kind joining the union without a case above stops `endpoint` being `never` here, and this fails to compile.
+        return assertNever(endpoint);
+    }
+  }
+
+  // The socket opened. Advance to live, settle the open handshake, and publish the opened diagnostic, all ahead of the debug line, so a logger that throws on the
   // line leaves the handshake settled and the diagnostic published. send() now flows.
   #onOpen(): void {
 
@@ -441,7 +562,7 @@ export class TalkbackSession implements AsyncDisposable {
       channels.talkbackSessionOpened.publish({ cameraId: this.#cameraId } satisfies TalkbackSessionOpenedPayload);
     }
 
-    this.#log.debug("Connected to the UniFi Protect talkback API.", { camera: this.#cameraId });
+    this.#log.debug(this.#vocabulary.connected, { camera: this.#cameraId });
   }
 
   /* The socket reported an error. The cause is read once, from the connector ahead of the event, as the sibling sessions read it: a failed upgrade reports a
@@ -456,9 +577,8 @@ export class TalkbackSession implements AsyncDisposable {
     const connector = this.#owned?.connector;
     const cause = connector?.lastDialFailure ?? connector?.lastConnectionFailure ?? event.error;
 
-    this.#shutdown(socketFault({ cause, elapsed: millisecondsSince(this.#connectStartedAt, { clock: this.#clock }),
-      failed: "The UniFi Protect talkback API connection failed.", host: this.#address, open: this.#live, reason: "the talkback connection errored",
-      reported: "The UniFi Protect talkback API reported an error.", timedOut: "The UniFi Protect talkback API connection timed out." }));
+    this.#shutdown(socketFault({ cause, elapsed: millisecondsSince(this.#connectStartedAt, { clock: this.#clock }), failed: this.#vocabulary.failed,
+      host: this.#address, open: this.#live, reason: "the talkback connection errored", reported: this.#vocabulary.reported, timedOut: this.#vocabulary.timedOut }));
   }
 
   /* The single teardown, run once whether the socket's close event, an error, the caller's abort or an explicit close starts it, with the reason it ran. The removal
@@ -507,7 +627,7 @@ export class TalkbackSession implements AsyncDisposable {
       this.#log[teardown.line.level](teardown.line.message, teardown.line.context);
     }
 
-    this.#log.debug("The UniFi Protect talkback API connection closed.", { camera: this.#cameraId, code, reason });
+    this.#log.debug(this.#vocabulary.closed, { camera: this.#cameraId, code, reason });
 
     if(channels.talkbackSessionClosed.hasSubscribers) {
 
@@ -538,8 +658,7 @@ export class TalkbackSession implements AsyncDisposable {
 
       case "peer":
 
-        return this.#live ? new ProtectNetworkError("The UniFi Protect talkback API connection closed unexpectedly (" + closeFrameText(teardown.code, teardown.reason) +
-          ").") : null;
+        return this.#live ? new ProtectNetworkError(this.#vocabulary.unexpectedClose + " (" + closeFrameText(teardown.code, teardown.reason) + ").") : null;
 
       default:
 
@@ -554,10 +673,10 @@ export class TalkbackSession implements AsyncDisposable {
 
     if(teardown.kind === "peer") {
 
-      return new ProtectNetworkError("The UniFi Protect talkback API closed before it finished connecting (" + closeFrameText(teardown.code, teardown.reason) + ").");
+      return new ProtectNetworkError(this.#vocabulary.unopened + " (" + closeFrameText(teardown.code, teardown.reason) + ").");
     }
 
-    return new ProtectNetworkError("The UniFi Protect talkback API closed before it finished connecting.", { cause: teardown.reason });
+    return new ProtectNetworkError(this.#vocabulary.unopened + ".", { cause: teardown.reason });
   }
 
   // The caller's own signal fired. Naming the caller's signal as the teardown's reason is what has the teardown store the typed ProtectAbortedError as the session's
@@ -567,10 +686,10 @@ export class TalkbackSession implements AsyncDisposable {
     this.#shutdown({ kind: "callerSignal", reason: "the talkback session was aborted by the caller's signal" });
   }
 
-  // Request a graceful WebSocket close, then run teardown with the reason it was asked for. Calling close() on the socket is best-effort - releasing the owned
-  // connection (in #onClose) is what guarantees it is let go even if the close frame never completes. A teardown before the socket was built (a negotiation abort) has
-  // nothing to release: the owned agent and connector are created together with the socket, so none exists yet. A call after the teardown has run still asks any
-  // socket the session built to close, which does nothing on a socket already closing or closed.
+  // Request a graceful close of the socket, then run teardown with the reason it was asked for. Calling close() on the socket is best-effort - releasing the owned
+  // connection (in #onClose) is what guarantees it is let go even if a WebSocket's close frame never completes. A teardown before the socket was built (a negotiation
+  // abort) has nothing to release: the owned agent and connector are created together with the socket, so none exists yet. A call after the teardown has run still
+  // asks any socket the session built to close, which does nothing on a socket already closing or closed.
   #shutdown(teardown: SocketTeardown): void {
 
     if(this.#released === null) {
@@ -586,7 +705,7 @@ export class TalkbackSession implements AsyncDisposable {
 
     try {
 
-      this.#ws?.close();
+      this.#socket?.close();
     } catch {
 
       // A socket that never opened (or a fake that rejects a premature close) must not block teardown; #onClose below releases everything regardless.
@@ -599,9 +718,16 @@ export class TalkbackSession implements AsyncDisposable {
   // of the socket's to remove, and removing one a `once` dispatch already took off is quiet.
   #detachListeners(): void {
 
-    this.#ws?.removeEventListener("close", this.#socketListeners.close);
-    this.#ws?.removeEventListener("error", this.#socketListeners.error);
-    this.#ws?.removeEventListener("open", this.#socketListeners.open);
+    this.#socket?.removeEventListener("close", this.#socketListeners.close);
+    this.#socket?.removeEventListener("error", this.#socketListeners.error);
+    this.#socket?.removeEventListener("open", this.#socketListeners.open);
     this.#callerSignal?.removeEventListener("abort", this.#onCallerAbort);
   }
+}
+
+// The address a socket dials, which a certificate refusal names and a failure reports: a WebSocket URL's host and port, parsed without a throw because an injected
+// factory may be handed a URL undici would refuse, or the camera's host, an IPv6 literal bracketed, and its port.
+function socketAddress(endpoint: TalkbackEndpoint): string {
+
+  return (endpoint.kind === "webSocket") ? (URL.parse(endpoint.url)?.host ?? endpoint.url) : (formatUrlHost(endpoint.host) + ":" + String(endpoint.port));
 }

@@ -27,7 +27,7 @@ import type { ProtectNvrBootstrap, ProtectNvrLiveviewConfig, ProtectRingtoneConf
 import type { StreamClassifier, TypedEvent } from "../protocol/realtime/events.ts";
 import { classifyPacket, eventSubjects } from "../protocol/realtime/events.ts";
 import { decodePacket, parsePacket } from "../protocol/realtime/packet.ts";
-import { livestreamUrlResolver, talkbackUrlResolver } from "../transport/ws-endpoint.ts";
+import { livestreamUrlResolver, talkbackEndpointResolver } from "../transport/media-endpoint.ts";
 import { selectControllerName, selectIsAdmin, selectLiveviews, selectRingtones } from "../state/selectors.ts";
 import { AuthSession } from "../transport/auth.ts";
 import type { Camera } from "../devices/camera.ts";
@@ -52,10 +52,12 @@ import type { Relay } from "../devices/relay.ts";
 import type { Sensor } from "../devices/sensor.ts";
 import { StateStore } from "../state/store.ts";
 import type { StreamOptions } from "../shared/event-bus.ts";
+import type { TalkbackEndpoint } from "../talkback/session.ts";
 import { TalkbackSession } from "../talkback/session.ts";
 import { Transport } from "../transport/http.ts";
 import type { Viewer } from "../devices/viewer.ts";
 import { describeInitSegment } from "../protocol/media/fmp4/init-segment.ts";
+import { deviceEndpoint } from "../devices/endpoints.ts";
 import { noopLog } from "../shared/logging.ts";
 import { wallClock } from "../shared/clock.ts";
 
@@ -141,7 +143,7 @@ interface ProtectClientParts {
   reBootstrap: (signal?: AbortSignal) => Promise<string>;
   signal?: AbortSignal;
   store: StateStore;
-  talkback: (params: { cameraId: string }, opts?: { signal?: AbortSignal }) => Promise<TalkbackSession>;
+  talkback: DeviceContext["talkback"];
   transport: Transport;
   verify: (signal?: AbortSignal) => Promise<void>;
 }
@@ -403,20 +405,23 @@ export class ProtectClient implements AsyncDisposable {
       ...((opts.webSocket !== undefined) && { webSocket: opts.webSocket })
     });
 
-    // The talkback factory, bound to the transport-backed talkback URL resolver. Unlike the livestream pool, talkback is exclusive and per-call, so this mints an
-    // independent atomic TalkbackSession per invocation rather than fanning out a shared one; the projection passes only its camera id and an optional signal, and the
-    // WebSocket wire knowledge (negotiation path, the auth headers, the agent and its certificate posture) stays here in Layer 2. The resolver is built once and
-    // closed over. The talkback session uses its own default (writable) WebSocket factory: the `opts.webSocket` ConnectOptions hook is the receive-direction socket
-    // factory (ProtectWebSocket, for the events stream and livestream pool) and does not fit the write-direction ProtectWritableWebSocket talkback needs, so it is
-    // deliberately not threaded here - the send socket is faked at the TalkbackSession level, not through the full client.
-    const resolveTalkbackUrl = talkbackUrlResolver(transport, authority);
-    const talkback = (params: { cameraId: string }, callOpts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> => TalkbackSession.connect({
+    /* The talkback factory, bound to the transport-backed talkback endpoint resolver. Unlike the livestream pool, talkback is exclusive and per-call, so this mints
+     * an independent atomic TalkbackSession per invocation rather than fanning out a shared one; the projection passes only its camera id, the codec it asked for and
+     * an optional signal, and the wire knowledge (each codec's negotiation, the auth headers, the agent and its certificate posture) stays here in Layer 2. The
+     * resolver is built once and closed over, and composes each session's endpoint from its codec, AAC when none is named, and the rate read from the camera's
+     * record, whose URL the one device endpoint builder gives. The talkback session uses its own default write sockets: the `opts.webSocket` ConnectOptions hook is
+     * the receive-direction socket factory (ProtectWebSocket, for the events stream and livestream pool) and does not fit the write-direction ProtectWritableSocket
+     * talkback needs, so it is deliberately not threaded here - the send socket is faked at the TalkbackSession level, not through the full client.
+     */
+    const talkbackEndpoint = talkbackEndpointResolver({ host: authority, recordUrl: (cameraId) => deviceEndpoint(authority, "camera", cameraId), transport });
+
+    const talkback: DeviceContext["talkback"] = async (params, callOpts = {}) => TalkbackSession.connect({
 
       cameraId: params.cameraId,
       clock,
       getAuthHeaders,
       log,
-      resolveUrl: resolveTalkbackUrl,
+      resolveEndpoint: async ({ cameraId }, resolveOpts): Promise<TalkbackEndpoint> => talkbackEndpoint({ audio: params.audio ?? "aac", cameraId }, resolveOpts),
       ...((callOpts.signal !== undefined) && { signal: callOpts.signal }),
       ...((opts.verifyTls !== undefined) && { verifyTls: opts.verifyTls })
     });

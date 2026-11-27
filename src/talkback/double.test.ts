@@ -1,14 +1,15 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * double.test.ts: Tests for the shipped talkback doubles - the factory connects a real TalkbackSession over the socket its call records, records the
- * call before it awaits, hands the caller's signal and its socket options to every session it connects, and rejects a call's socket with the connect's own error.
- * Every promise a broken factory would leave pending is read through a settlement probe, so a regression fails within the poll's deadline.
+ * double.test.ts: Tests for the shipped talkback doubles - the factory connects a real TalkbackSession in any codec over the socket its call records, records the
+ * call before it awaits, hands the caller's signal and its socket options to every session it connects, and rejects a call's socket with the connect's own error,
+ * and a socket its session closed discards what it is sent. Every promise a broken factory would leave pending is read through a settlement probe, so a regression
+ * fails within the poll's deadline.
  */
+import { ProtectAbortedError, ProtectProtocolError } from "../shared/errors.ts";
 import { assertNoUnhandledRejections, expectAt, settlement } from "../shared/testing.helpers.ts";
 import { describe, test } from "node:test";
 import { present, settle } from "homebridge-plugin-utils/testing";
 import type { Camera } from "../devices/camera.ts";
-import { ProtectAbortedError } from "../shared/errors.ts";
 import { TalkbackSession } from "./session.ts";
 import { TestTalkbackFactory } from "./double.ts";
 import assert from "node:assert/strict";
@@ -123,6 +124,64 @@ describe("TestTalkbackFactory", () => {
       await assert.rejects(factory.connect({ signal: AbortSignal.abort() }), ProtectAbortedError);
       await settle();
     });
+  });
+
+  test("a connect naming no codec records aac and connects a session at the WebSocket endpoint's 22050 Hz, which passes any chunk through", async () => {
+
+    const factory = new TestTalkbackFactory();
+
+    await using session = await factory.connect();
+    const call = present(factory.connectCalls[0], "the recorded connect call");
+    const socket = await call.socket;
+
+    assert.equal(call.audio, "aac");
+    assert.equal(session.samplingRate, 22050);
+
+    await session.send(audioSource(new Uint8Array(), Uint8Array.of(0xff, 0xf1)));
+
+    assert.deepEqual(socket.sent, [ new Uint8Array(), Uint8Array.of(0xff, 0xf1) ], "an AAC session's socket records every chunk as handed over");
+  });
+
+  test("an Opus connect records opus and connects a session at the RTP endpoint's 24000 Hz, whose socket refuses a chunk that is not one Opus packet", async () => {
+
+    const factory = new TestTalkbackFactory();
+
+    await using session = await factory.connect({ audio: "opus" });
+    const call = present(factory.connectCalls[0], "the recorded connect call");
+    const socket = await call.socket;
+
+    // A CELT-only 20 ms packet, its TOC byte and filler.
+    const packet = Uint8Array.of(19 << 3, 0x5a);
+
+    assert.equal(call.audio, "opus");
+    assert.equal(session.samplingRate, 24000);
+
+    await session.send(audioSource(packet));
+    await assert.rejects(session.send(audioSource(new Uint8Array())), ProtectProtocolError);
+
+    assert.deepEqual(socket.sent, [packet], "the refused chunk is never recorded");
+    assert.equal(session.state, "live", "a refused chunk ends the drain and leaves the session live");
+  });
+
+  test("a socket its session has closed records nothing it is sent, and an Opus call's socket checks nothing it discards", async () => {
+
+    const factory = new TestTalkbackFactory();
+    const aacSession = await factory.connect();
+    const opusSession = await factory.connect({ audio: "opus" });
+    const aacSocket = await present(factory.connectCalls[0], "the AAC connect call").socket;
+    const opusSocket = await present(factory.connectCalls[1], "the Opus connect call").socket;
+
+    await aacSession.close();
+    await opusSession.close();
+
+    // A suite driving a socket by hand sends to it directly. The Opus chunk is not one Opus packet, which an Opus socket still open refuses.
+    aacSocket.send(Uint8Array.of(0xff, 0xf1));
+    opusSocket.send(new Uint8Array());
+
+    assert.equal(aacSocket.closeRequested, true);
+    assert.equal(opusSocket.closeRequested, true);
+    assert.deepEqual(aacSocket.sent, [], "a send after close records nothing");
+    assert.deepEqual(opusSocket.sent, [], "and neither throws nor records on an Opus socket");
   });
 
   test("builds every socket with its options, each opening on its own emitOpen() and faulting on its own close()", async () => {

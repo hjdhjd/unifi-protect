@@ -13,6 +13,7 @@ import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, Prote
 import { TestClock, errnoError, present, settle } from "homebridge-plugin-utils/testing";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../protocol/realtime/packet.helpers.ts";
 import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
+import { createLoopbackHttpsPeer, createLoopbackWebSocketPeer } from "../transport/tls-peer.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, settlement, silentLog } from "../shared/testing.helpers.ts";
 import { makeAudioDetectAdd, makeAudioDetectUpdate, makeBootstrap, makeCamera, makeChime, makeFob, makeLight, makeLiveview, makeNvr, makeRelay, makeRingtone,
@@ -27,7 +28,7 @@ import { StreamClassifier } from "../protocol/realtime/events.ts";
 import { Transport } from "../transport/http.ts";
 import type { TypedEvent } from "../protocol/realtime/events.ts";
 import assert from "node:assert/strict";
-import { createLoopbackHttpsPeer } from "../transport/tls-peer.helpers.ts";
+import { createLoopbackUdpReceiver } from "../transport/udp-peer.helpers.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { describeInitSegment } from "../protocol/media/fmp4/init-segment.ts";
 import { parsePacket } from "../protocol/realtime/packet.ts";
@@ -1087,6 +1088,125 @@ describe("ProtectClient.connect", () => {
       });
 
       assert.equal(starts.length, 0, "the refusal comes before any request");
+    });
+  });
+
+  describe("talkback", () => {
+
+    // The camera record the rate read answers, and a camera with a speaker in the bootstrap, so the capability guard lets each call through to the factory.
+    const RECORD_PATH = "/proxy/protect/api/cameras/c1";
+
+    function interceptCamera(pool: Interceptable): void {
+
+      interceptLogin(pool);
+      pool.intercept({ method: "GET", path: BOOTSTRAP_PATH }).reply(200, makeBootstrap({ cameras: [makeCamera({ featureFlags: { hasSpeaker: true }, id: "c1" })] }));
+    }
+
+    test("an Opus talkback negotiates the WebRTC talkback route, then reads the camera's rate, and sends to the camera's RTP listener", async () => {
+
+      const { agent, pool } = mockController();
+      const requests: string[] = [];
+
+      await using receiver = await createLoopbackUdpReceiver();
+
+      interceptCamera(pool);
+      pool.intercept({ method: "GET", path: "/proxy/protect/api/tcp/talkback?camera=c1&source=ucore" }).reply(() => {
+
+        requests.push("negotiation");
+
+        return { data: { audioRemoteTrackUrl: "rtp://" + receiver.host + ":" + String(receiver.port) }, statusCode: 200 };
+      });
+      pool.intercept({ method: "GET", path: RECORD_PATH }).reply(() => {
+
+        requests.push("rate");
+
+        return { data: { id: "c1", talkbackSettings: { samplingRate: 24000 } }, statusCode: 200 };
+      });
+
+      await using client = await connect(agent);
+      const camera = present(client.camera("c1"), "the camera with a speaker");
+
+      await using session = await camera.talkback({ audio: "opus" });
+
+      assert.deepEqual(requests, [ "negotiation", "rate" ], "the rate is read once the negotiation has switched the camera");
+      assert.equal(session.samplingRate, 24000);
+
+      // A CELT-only 20 ms packet, its TOC byte and filler.
+      await session.send((async function *(): AsyncGenerator<Uint8Array> {
+
+        yield Uint8Array.of(19 << 3, 0x5a);
+      })());
+
+      await expectAt(() => receiver.datagrams.length === 1, { message: "expected the camera's listener to receive the packet" });
+      agent.assertNoPendingInterceptors();
+    });
+
+    test("an AAC talkback negotiates the talkback WebSocket, then reads the camera's rate, and opens the WebSocket on the controller's authority", async () => {
+
+      // The transport answers from the mock, bound to the loopback peer's authority, and the talkback WebSocket, which builds its own agent, dials the peer itself.
+      await using peer = await createLoopbackWebSocketPeer();
+
+      const agent = new MockAgent();
+      const pool = agent.get("https://" + peer.host);
+      const requests: string[] = [];
+
+      agent.disableNetConnect();
+      interceptCamera(pool);
+      pool.intercept({ method: "GET", path: "/proxy/protect/api/ws/talkback?camera=c1" }).reply(() => {
+
+        requests.push("negotiation");
+
+        return { data: { url: "wss://internal-host:7443/ws/talkback?token=t" }, statusCode: 200 };
+      });
+      pool.intercept({ method: "GET", path: RECORD_PATH }).reply(() => {
+
+        requests.push("rate");
+
+        return { data: { id: "c1", talkbackSettings: { samplingRate: 22050 } }, statusCode: 200 };
+      });
+
+      await using client = await ProtectClient.connect({ dispatcher: agent, host: peer.host, log: silentLog(), password: "p", refreshIntervalMs: false, username: "u",
+        webSocket: () => new FakeWebSocket() });
+      const camera = present(client.camera("c1"), "the camera with a speaker");
+
+      await using session = await camera.talkback();
+
+      assert.deepEqual(requests, [ "negotiation", "rate" ], "the rate is read once the negotiation has switched the camera");
+      assert.equal(session.samplingRate, 22050);
+
+      await session.send((async function *(): AsyncGenerator<Uint8Array> {
+
+        yield Uint8Array.of(0xff, 0xf1);
+      })());
+
+      assert.deepEqual(await peer.message(0), Buffer.from([ 0xff, 0xf1 ]), "the WebSocket on the authority carries the audio");
+    });
+
+    test("an AAC talkback whose camera-record read is refused fails the connect with that read's typed error, after the negotiation", async () => {
+
+      const { agent, pool } = mockController();
+      const requests: string[] = [];
+
+      interceptCamera(pool);
+      pool.intercept({ method: "GET", path: "/proxy/protect/api/ws/talkback?camera=c1" }).reply(() => {
+
+        requests.push("negotiation");
+
+        return { data: { url: "wss://internal-host:7443/ws/talkback?token=t" }, statusCode: 200 };
+      });
+      pool.intercept({ method: "GET", path: RECORD_PATH }).reply(() => {
+
+        requests.push("rate");
+
+        return { data: {}, statusCode: 403 };
+      });
+
+      await using client = await connect(agent);
+      const camera = present(client.camera("c1"), "the camera with a speaker");
+
+      await assert.rejects(camera.talkback(), { constructor: ProtectAuthorizationError, statusCode: 403 });
+
+      assert.deepEqual(requests, [ "negotiation", "rate" ]);
     });
   });
 });

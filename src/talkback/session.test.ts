@@ -7,11 +7,13 @@
 import type { CapturedLogEntry, CapturingLogger } from "../shared/testing.helpers.ts";
 import type { ConnectionOptions, TLSSocket } from "node:tls";
 import { DIAL_SETTLE_BOUND_MS, announcedSockets, createLoopbackSilentPeer, createLoopbackWebSocketPeer, elapsedSince } from "../transport/tls-peer.helpers.ts";
-import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectRequestError, ProtectTimeoutError } from "../shared/errors.ts";
-import { TIME_OF_DAY_STEP_MS, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../shared/testing.helpers.ts";
+import { ProtectAbortedError, ProtectCertificateError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectTimeoutError } from "../shared/errors.ts";
+import { TIME_OF_DAY_STEP_MS, activeResources, assertNoUnhandledRejections, capturingLog, expectAt, settlement, silentLog } from "../shared/testing.helpers.ts";
+import type { TalkbackEndpoint, TalkbackSessionOptions } from "./session.ts";
 import type { TalkbackSessionClosedPayload, TalkbackSessionOpenedPayload } from "../shared/diagnostics.ts";
 import { TestClock, errnoError, freePort, present, settle } from "homebridge-plugin-utils/testing";
 import { channels, subscribeToChannel } from "../shared/diagnostics.ts";
+import { closedUdpPort, createLoopbackUdpReceiver } from "../transport/udp-peer.helpers.ts";
 import { describe, test } from "node:test";
 import { PROTECT_TALKBACK_MAX_BUFFERED_BYTES } from "../shared/settings.ts";
 import type { ProtectLogging } from "../shared/logging.ts";
@@ -21,6 +23,8 @@ import { TestTalkbackSocket } from "./double.ts";
 import assert from "node:assert/strict";
 import { constants } from "node:os";
 import { getEventListeners } from "node:events";
+import { opusPacket } from "../protocol/media/codecs/codecs.helpers.ts";
+import { readRtpPacket } from "../protocol/media/rtp.helpers.ts";
 import tls from "node:tls";
 
 // The sentence the session logs a fault of its live socket under, and the lines a log holds carrying it, at whatever level each was logged.
@@ -37,24 +41,35 @@ async function *oneChunk(): AsyncGenerator<Uint8Array> {
   yield Buffer.from("a");
 }
 
-// A resolver that resolves immediately to a fixed URL; the default for tests that do not scrutinize negotiation.
-const fixedUrl = async (): Promise<string> => "wss://controller/talkback";
+// A WebSocket endpoint at a URL, at a rate a camera may be set to, and a resolver that answers one at once. A resolver answering a fixed URL is the default for
+// tests that do not scrutinize negotiation.
+function webSocketEndpoint(url: string): TalkbackEndpoint {
 
-// Connect a session over a fake socket that auto-opens, returning the live session, the fake socket the test drives, and the URL the session handed its socket
-// factory. The factory assigns `url` and `ws` synchronously before returning, so each is set by the time the auto-open microtask fires and `connect()` resolves.
-async function openSession(options: { cameraId?: string; log?: ProtectLogging; resolveUrl?: (params: URLSearchParams, opts: { signal?: AbortSignal }) => Promise<string>;
-  signal?: AbortSignal; } = {}): Promise<{ session: TalkbackSession; url: string; ws: TestTalkbackSocket }> {
+  return { kind: "webSocket", samplingRate: 16000, url };
+}
 
-  let url!: string;
+function resolvingTo(url: string): () => Promise<TalkbackEndpoint> {
+
+  return async (): Promise<TalkbackEndpoint> => webSocketEndpoint(url);
+}
+
+const fixedEndpoint = resolvingTo("wss://controller/talkback");
+
+// Connect a session over a fake socket that auto-opens, returning the live session, the fake socket the test drives, and the endpoint the session handed its socket
+// factory. The factory assigns `endpoint` and `ws` synchronously before returning, so each is set by the time the auto-open microtask fires and `connect()` resolves.
+async function openSession(options: { cameraId?: string; log?: ProtectLogging; resolveEndpoint?: TalkbackSessionOptions["resolveEndpoint"]; signal?: AbortSignal } =
+  {}): Promise<{ endpoint: TalkbackEndpoint; session: TalkbackSession; ws: TestTalkbackSocket }> {
+
+  let endpoint!: TalkbackEndpoint;
   let ws!: TestTalkbackSocket;
   const session = await TalkbackSession.connect({
 
     cameraId: options.cameraId ?? "cam1",
     log: options.log ?? silentLog(),
-    resolveUrl: options.resolveUrl ?? fixedUrl,
-    webSocket: (socketUrl: string): TestTalkbackSocket => {
+    resolveEndpoint: options.resolveEndpoint ?? fixedEndpoint,
+    socket: (dialed: TalkbackEndpoint): TestTalkbackSocket => {
 
-      url = socketUrl;
+      endpoint = dialed;
       ws = new TestTalkbackSocket({ autoOpen: true });
 
       return ws;
@@ -62,7 +77,7 @@ async function openSession(options: { cameraId?: string; log?: ProtectLogging; r
     ...((options.signal !== undefined) && { signal: options.signal })
   });
 
-  return { session, url, ws };
+  return { endpoint, session, ws };
 }
 
 // An async generator that yields `first`, then parks forever on its second pull - so a drain in progress is left waiting on the source while a test fires a socket
@@ -126,18 +141,18 @@ describe("TalkbackSession", () => {
 
     test("negotiates over the camera param and the resolver-provided URL", async () => {
 
-      const captured: URLSearchParams[] = [];
-      const resolveUrl = async (params: URLSearchParams): Promise<string> => {
+      const captured: { cameraId: string }[] = [];
+      const resolveEndpoint = async (params: { cameraId: string }): Promise<TalkbackEndpoint> => {
 
         captured.push(params);
 
-        return "wss://controller/talkback";
+        return webSocketEndpoint("wss://controller/talkback");
       };
 
-      const { url } = await openSession({ cameraId: "front-door", resolveUrl });
+      const { endpoint } = await openSession({ cameraId: "front-door", resolveEndpoint });
 
-      assert.equal(captured[0]?.get("camera"), "front-door");
-      assert.equal(url, "wss://controller/talkback", "the socket must be built on the URL the resolver returned");
+      assert.equal(captured[0]?.cameraId, "front-door");
+      assert.deepEqual(endpoint, webSocketEndpoint("wss://controller/talkback"), "the socket must be built on the endpoint the resolver returned");
     });
 
     test("throws a typed FatalError when negotiation returns a non-2xx (ProtectRequestError)", async () => {
@@ -148,8 +163,8 @@ describe("TalkbackSession", () => {
 
         cameraId: "cam1",
         log: silentLog(),
-        resolveUrl: async () => { throw new ProtectRequestError("forbidden", { statusCode: 403 }); },
-        webSocket: () => {
+        resolveEndpoint: async () => { throw new ProtectRequestError("forbidden", { statusCode: 403 }); },
+        socket: () => {
 
           built = true;
 
@@ -169,8 +184,8 @@ describe("TalkbackSession", () => {
 
         cameraId: "cam1",
         log: silentLog(),
-        resolveUrl: async () => { throw new Error("connect refused"); },
-        webSocket: () => {
+        resolveEndpoint: async () => { throw new Error("connect refused"); },
+        socket: () => {
 
           built = true;
 
@@ -181,6 +196,16 @@ describe("TalkbackSession", () => {
       assert.equal(built, false);
     });
 
+    test("a plain negotiation error rejects connect with the negotiation's sentence, carrying that error as its cause", async () => {
+
+      const thrown = new Error("connect refused");
+      const connecting = TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveEndpoint: async () => { throw thrown; },
+        socket: () => new TestTalkbackSocket({ autoOpen: false }) });
+
+      await assert.rejects(connecting,
+        { cause: thrown, constructor: ProtectNetworkError, message: "The UniFi Protect talkback WebSocket endpoint could not be negotiated." });
+    });
+
     test("a socket failure before open rejects connect with a ProtectNetworkError (atomic, no half-open)", async () => {
 
       const { promise, resolve } = Promise.withResolvers<TestTalkbackSocket>();
@@ -188,8 +213,8 @@ describe("TalkbackSession", () => {
 
         cameraId: "cam1",
         log: silentLog(),
-        resolveUrl: fixedUrl,
-        webSocket: () => {
+        resolveEndpoint: fixedEndpoint,
+        socket: () => {
 
           const ws = new TestTalkbackSocket({ autoOpen: false });
 
@@ -213,8 +238,8 @@ describe("TalkbackSession", () => {
 
         cameraId: "cam1",
         log: silentLog(),
-        resolveUrl: fixedUrl,
-        webSocket: () => {
+        resolveEndpoint: fixedEndpoint,
+        socket: () => {
 
           const ws = new TestTalkbackSocket({ autoOpen: false });
 
@@ -236,7 +261,7 @@ describe("TalkbackSession", () => {
     test("a peer close before the open rejects connect naming its frame, with no string cause", async () => {
 
       const { promise, resolve } = Promise.withResolvers<TestTalkbackSocket>();
-      const connecting = TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveUrl: fixedUrl, webSocket: () => {
+      const connecting = TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveEndpoint: fixedEndpoint, socket: () => {
 
         const ws = new TestTalkbackSocket({ autoOpen: false });
 
@@ -267,8 +292,8 @@ describe("TalkbackSession", () => {
         cameraId: "cam1",
         clock,
         log: silentLog(),
-        resolveUrl: fixedUrl,
-        webSocket: () => {
+        resolveEndpoint: fixedEndpoint,
+        socket: () => {
 
           const ws = new TestTalkbackSocket({ autoOpen: false });
 
@@ -304,7 +329,7 @@ describe("TalkbackSession", () => {
         }
       } };
       const { promise, resolve } = Promise.withResolvers<TestTalkbackSocket>();
-      const connecting = TalkbackSession.connect({ cameraId: "cam-open", log, resolveUrl: fixedUrl, webSocket: () => {
+      const connecting = TalkbackSession.connect({ cameraId: "cam-open", log, resolveEndpoint: fixedEndpoint, socket: () => {
 
         const ws = new TestTalkbackSocket({ autoOpen: false });
 
@@ -540,7 +565,7 @@ describe("TalkbackSession", () => {
        * grants only once the TLS handshake completes and the upgrade is answered. The channel is write-only, so there is no inbound traffic to wait for beyond it.
        */
       await using session = await TalkbackSession.connect({ cameraId: "cam1", log: silentLog(),
-        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+        resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") });
 
       assert.equal(session.state, "live");
     });
@@ -550,7 +575,7 @@ describe("TalkbackSession", () => {
       // The proxy refuses a media upgrade without the session, so the headers are read at the real peer the default factory's socket dials.
       await using peer = await createLoopbackWebSocketPeer();
       await using session = await TalkbackSession.connect({ cameraId: "cam1", getAuthHeaders: (): Record<string, string> => ({ cookie: "TOKEN=invented-session",
-        "x-csrf-token": "invented-csrf" }), log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+        "x-csrf-token": "invented-csrf" }), log: silentLog(), resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") });
 
       const headers = await peer.upgrade(0);
 
@@ -566,7 +591,7 @@ describe("TalkbackSession", () => {
       // The same peer and the same upgrade, one option apart. connect() is atomic, so a handshake the client will not complete surfaces as its rejection - there is
       // no half-open session to inspect - and the rejection is the refusal itself, naming the address the session dialed.
       await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log: silentLog(),
-        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback", verifyTls: true }), (error: unknown) => {
+        resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback"), verifyTls: true }), (error: unknown) => {
 
         assert.ok(error instanceof ProtectCertificateError);
         assert.equal(error.code, "DEPTH_ZERO_SELF_SIGNED_CERT");
@@ -585,7 +610,7 @@ describe("TalkbackSession", () => {
     test("close() of a live session ends its connection at once, though the peer never answers the close frame", async () => {
 
       await using peer = await createLoopbackWebSocketPeer();
-      const session = await TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") });
       const connection = await peer.connection(0);
       const startedAt = process.hrtime.bigint();
 
@@ -608,8 +633,8 @@ describe("TalkbackSession", () => {
       using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed,
         ({ cameraId }) => void destroyedAtClosed.push({ cameraId, destroyed: announced.sockets.every((socket) => socket.destroyed) }));
 
-      const session = await TalkbackSession.connect({ cameraId: "cam-close-order", log: silentLog(),
-        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+      await using session = await TalkbackSession.connect({ cameraId: "cam-close-order", log: silentLog(),
+        resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") });
 
       await session.close();
 
@@ -633,7 +658,8 @@ describe("TalkbackSession", () => {
           releasedAtLine.push(announced.sockets.every((socket) => socket.destroyed));
         }
       } };
-      const session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback",
+
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback"),
         signal: controller.signal });
 
       controller.abort();
@@ -653,7 +679,7 @@ describe("TalkbackSession", () => {
 
       const controller = new AbortController();
       const connecting = TalkbackSession.connect({ cameraId: "cam-dial-abort", log: silentLog(),
-        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback", signal: controller.signal });
+        resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback"), signal: controller.signal });
       const connection = await peer.connection(0);
       const startedAt = process.hrtime.bigint();
 
@@ -674,7 +700,7 @@ describe("TalkbackSession", () => {
 
       const url = "wss://127.0.0.1:" + (await freePort()).toString() + "/talkback";
 
-      await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveUrl: async (): Promise<string> => url }), (error: unknown) => {
+      await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveEndpoint: resolvingTo(url) }), (error: unknown) => {
 
         assert.ok(error instanceof ProtectNetworkError);
         assert.ok(!(error instanceof ProtectCertificateError));
@@ -704,7 +730,7 @@ describe("TalkbackSession", () => {
       });
 
       const connecting = TalkbackSession.connect({ cameraId: "cam1", clock, log: silentLog(),
-        resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+        resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") });
 
       await peer.connection(0);
       clock.advance(elapsedMs);
@@ -729,7 +755,8 @@ describe("TalkbackSession", () => {
 
       await using peer = await createLoopbackWebSocketPeer();
       const log = capturingLog();
-      const session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") });
 
       (await peer.connection(0)).reset();
 
@@ -753,7 +780,8 @@ describe("TalkbackSession", () => {
 
       await using peer = await createLoopbackWebSocketPeer();
       const log = capturingLog();
-      const session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") });
 
       (await peer.connection(0)).end();
 
@@ -782,7 +810,7 @@ describe("TalkbackSession", () => {
         return socket;
       });
 
-      const session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" });
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") });
 
       present(dials[0], "the socket the owned connector vended").destroy(Object.assign(new Error("read ETIMEDOUT"),
         { code: "ETIMEDOUT", errno: -constants.errno.ETIMEDOUT, syscall: "read" }));
@@ -799,7 +827,7 @@ describe("TalkbackSession", () => {
       const log = capturingLog();
 
       // The dial succeeded, so the connector holds no dial failure, and the reset of the established connection is the record the one cause reads.
-      await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log, resolveUrl: async (): Promise<string> => "wss://" + peer.host + "/talkback" }),
+      await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log, resolveEndpoint: resolvingTo("wss://" + peer.host + "/talkback") }),
         (error: unknown) => {
 
           assert.ok(error instanceof ProtectNetworkError);
@@ -855,9 +883,9 @@ describe("TalkbackSession", () => {
 
         cameraId: "cam1",
         log: silentLog(),
-        resolveUrl: fixedUrl,
+        resolveEndpoint: fixedEndpoint,
         signal: controller.signal,
-        webSocket: () => {
+        socket: () => {
 
           built = true;
 
@@ -879,9 +907,9 @@ describe("TalkbackSession", () => {
 
         cameraId: "cam1",
         log: silentLog(),
-        resolveUrl: () => new Promise<string>(() => undefined),
+        resolveEndpoint: () => new Promise<TalkbackEndpoint>(() => undefined),
         signal: controller.signal,
-        webSocket: () => new TestTalkbackSocket({ autoOpen: false })
+        socket: () => new TestTalkbackSocket({ autoOpen: false })
       });
 
       await settle();
@@ -890,10 +918,30 @@ describe("TalkbackSession", () => {
       await assert.rejects(connecting, ProtectAbortedError);
     });
 
+    test("an AAC session aborted during its negotiation logs its close line in the talkback API's words", async () => {
+
+      const controller = new AbortController();
+      const log = capturingLog();
+      const negotiation = Promise.withResolvers<TalkbackEndpoint>();
+
+      // The negotiation of an AAC session is held, so the caller's abort lands before any endpoint has named the session's connection, and until one does a session
+      // reports in the words of the controller's talkback API it is waiting on.
+      const connecting = TalkbackSession.connect({ cameraId: "cam1", log, resolveEndpoint: async (): Promise<TalkbackEndpoint> => negotiation.promise,
+        signal: controller.signal, socket: () => new TestTalkbackSocket({ autoOpen: false }) });
+
+      await settle();
+      controller.abort();
+
+      await assert.rejects(connecting, ProtectAbortedError);
+      assert.deepEqual(log.entries.filter(({ level }) => level === "debug").map(({ message }) => message), ["The UniFi Protect talkback API connection closed."]);
+
+      negotiation.resolve(webSocketEndpoint("wss://controller/talkback"));
+    });
+
     test("an abort while URL negotiation is in flight builds no socket once the negotiation resolves", async () => {
 
       const controller = new AbortController();
-      const negotiation = Promise.withResolvers<string>();
+      const negotiation = Promise.withResolvers<TalkbackEndpoint>();
       let built = false;
 
       // The resolver ignores the signal it is handed and resolves only after the abort has torn the session down, so the connect must see that teardown and bail
@@ -902,9 +950,9 @@ describe("TalkbackSession", () => {
 
         cameraId: "cam1",
         log: silentLog(),
-        resolveUrl: async (): Promise<string> => negotiation.promise,
+        resolveEndpoint: async (): Promise<TalkbackEndpoint> => negotiation.promise,
         signal: controller.signal,
-        webSocket: () => {
+        socket: () => {
 
           built = true;
 
@@ -917,7 +965,7 @@ describe("TalkbackSession", () => {
 
       await assert.rejects(connecting, ProtectAbortedError);
 
-      negotiation.resolve("wss://controller/talkback");
+      negotiation.resolve(webSocketEndpoint("wss://controller/talkback"));
       await settle();
 
       assert.equal(built, false, "a negotiation that resolves after an abort must not build a socket");
@@ -951,8 +999,8 @@ describe("TalkbackSession", () => {
 
         cameraId: "cam1",
         log: silentLog(),
-        resolveUrl: fixedUrl,
-        webSocket: () => (ws = new TestTalkbackSocket({ autoOpen: true, closeFault: true }))
+        resolveEndpoint: fixedEndpoint,
+        socket: () => (ws = new TestTalkbackSocket({ autoOpen: true, closeFault: true }))
       });
 
       // The disposal contract is that close() (and [Symbol.asyncDispose]) never throw, even when the underlying socket's own close() faults: #shutdown swallows the fault
@@ -1059,7 +1107,7 @@ describe("TalkbackSession", () => {
     async function connecting(ws: TestTalkbackSocket, signal: AbortSignal, { cameraId = "cam1", log = silentLog() }: ConnectingOptions = {}): Promise<PendingConnect> {
 
       const built = Promise.withResolvers<undefined>();
-      const connected = TalkbackSession.connect({ cameraId, log, resolveUrl: fixedUrl, signal, webSocket: (): TestTalkbackSocket => {
+      const connected = TalkbackSession.connect({ cameraId, log, resolveEndpoint: fixedEndpoint, signal, socket: (): TestTalkbackSocket => {
 
         built.resolve(undefined);
 
@@ -1146,5 +1194,186 @@ describe("TalkbackSession", () => {
         assert.equal(getEventListeners(controller.signal, "abort").length, 0, "and so is the binding to the caller's signal");
       });
     }
+  });
+
+  describe("the sampling rate", () => {
+
+    test("samplingRate reports the rate the endpoint states, for a WebSocket and an RTP endpoint alike", async () => {
+
+      const webSocket: TalkbackEndpoint = { kind: "webSocket", samplingRate: 22050, url: "wss://controller/talkback" };
+      const rtp: TalkbackEndpoint = { host: "192.0.2.10", kind: "rtp", port: 5004, samplingRate: 24000 };
+
+      // Each session dials the suite's socket double, so neither endpoint's address is reached.
+      const { session: webSocketSession } = await openSession({ resolveEndpoint: async (): Promise<TalkbackEndpoint> => webSocket });
+      const { session: rtpSession } = await openSession({ resolveEndpoint: async (): Promise<TalkbackEndpoint> => rtp });
+
+      assert.equal(webSocketSession.samplingRate, 22050);
+      assert.equal(rtpSession.samplingRate, 24000);
+
+      await webSocketSession.close();
+      await rtpSession.close();
+    });
+  });
+
+  describe("a socket that cannot be built", () => {
+
+    test("a socket factory that throws rejects connect with a ProtectNetworkError carrying the throw, raising no unhandled rejection", async () => {
+
+      const payloads: TalkbackSessionClosedPayload[] = [];
+
+      using closedSubscription = subscribeToChannel(channels.talkbackSessionClosed, (payload) => void payloads.push(payload));
+
+      await assertNoUnhandledRejections(async () => {
+
+        const thrown = new Error("The socket factory refused the endpoint.");
+
+        await assert.rejects(TalkbackSession.connect({ cameraId: "cam-unbuilt", log: silentLog(), resolveEndpoint: fixedEndpoint, socket: (): TestTalkbackSocket => {
+
+          throw thrown;
+        } }), { cause: thrown, constructor: ProtectNetworkError, message: "The UniFi Protect talkback API connection failed." });
+        await settle();
+      });
+
+      assert.deepEqual(payloads.filter((payload) => payload.cameraId === "cam-unbuilt"), [{ cameraId: "cam-unbuilt", reason: "the talkback socket could not be built" }]);
+    });
+
+    test("a socket whose listener registration throws is closed by the teardown the throw starts", async () => {
+
+      // A socket that refuses its error listener, the last the session registers, after taking the open and close listeners.
+      class RefusingSocket extends TestTalkbackSocket {
+
+        override addEventListener(type: "close" | "error" | "open", listener: (event: never) => void, options?: { once?: boolean }): void {
+
+          if(type === "error") {
+
+            throw new Error("The socket refused its error listener.");
+          }
+
+          super.addEventListener(type as "open", listener as () => void, options);
+        }
+      }
+
+      const ws = new RefusingSocket({ autoOpen: false });
+
+      await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveEndpoint: fixedEndpoint, socket: (): TestTalkbackSocket => ws }),
+        ProtectNetworkError);
+
+      assert.equal(ws.closeRequested, true, "the teardown asks the half-registered socket to close");
+      assert.equal(ws.listenerCount(), 0, "and takes off every listener it did register");
+    });
+
+    test("a default WebSocket undici refuses to build rejects connect with a ProtectNetworkError, undici's refusal its cause", async () => {
+
+      await assertNoUnhandledRejections(async () => {
+
+        await assert.rejects(TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveEndpoint: resolvingTo("not a url") }), (error: unknown) => {
+
+          assert.ok(error instanceof ProtectNetworkError);
+          assert.ok(error.cause instanceof Error, "the refusal undici threw is the cause");
+          assert.equal(error.cause.name, "SyntaxError");
+
+          return true;
+        });
+        await settle();
+      });
+    });
+  });
+
+  describe("an RTP endpoint", () => {
+
+    // Synthetic Opus packets of known durations, a TOC byte and filler: a CELT-only 20 ms frame and a SILK-only 60 ms frame.
+    const CELT_20MS = opusPacket({ config: 19, payload: Buffer.from([ 0x11, 0x22 ]), stereo: false });
+    const SILK_60MS = opusPacket({ config: 3, payload: Buffer.from([0x33]), stereo: false });
+
+    // An endpoint naming a loopback listener, at a rate a camera may be set to.
+    function rtpEndpointAt(listener: { host: string; port: number }): () => Promise<TalkbackEndpoint> {
+
+      return async (): Promise<TalkbackEndpoint> => ({ host: listener.host, kind: "rtp", port: listener.port, samplingRate: 24000 });
+    }
+
+    // An audio source that yields the given chunks in turn and then ends.
+    async function *chunks(...items: Uint8Array[]): AsyncGenerator<Uint8Array> {
+
+      yield* items;
+    }
+
+    test("connects over the default RTP socket, reports in the camera connection's words, and sends each packet as one datagram, releasing it on close", async () => {
+
+      await using receiver = await createLoopbackUdpReceiver();
+
+      const before = activeResources("UDPWrap");
+      const log = capturingLog();
+
+      await using session = await TalkbackSession.connect({ cameraId: "cam-rtp", log, resolveEndpoint: rtpEndpointAt(receiver) });
+
+      assert.equal(session.state, "live");
+      assert.equal(session.samplingRate, 24000);
+
+      await session.send(chunks(CELT_20MS, SILK_60MS));
+      await expectAt(() => receiver.datagrams.length === 2, { message: "expected the camera's listener to hold every packet" });
+
+      const [ first, second ] = receiver.datagrams.map((datagram) => readRtpPacket(datagram));
+
+      assert.ok((first !== undefined) && (second !== undefined));
+      assert.deepEqual([ first.payloadType, second.payloadType ], [ 111, 111 ]);
+      assert.deepEqual([ first.payload, second.payload ], [ CELT_20MS, SILK_60MS ]);
+      assert.equal(second.timestamp, (first.timestamp + 960) >>> 0);
+
+      await session.close();
+      await expectAt(() => activeResources("UDPWrap") === before, { message: "expected close to release the session's UDP socket" });
+
+      assert.deepEqual(log.entries.filter((entry) => entry.level === "debug").map((entry) => entry.message),
+        [ "Opened the UniFi Protect talkback audio connection to the camera.", "The UniFi Protect talkback audio connection to the camera closed." ]);
+    });
+
+    test("a chunk that is not one Opus packet rejects the send with ProtectProtocolError and leaves the session live for the next send", async () => {
+
+      await using receiver = await createLoopbackUdpReceiver();
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveEndpoint: rtpEndpointAt(receiver) });
+
+      await assert.rejects(session.send(chunks(CELT_20MS, new Uint8Array(), CELT_20MS)), ProtectProtocolError);
+
+      assert.equal(session.state, "live");
+
+      await session.send(chunks(SILK_60MS));
+      await expectAt(() => receiver.datagrams.length === 2, { message: "expected the packet before the refusal and the one after it" });
+
+      assert.deepEqual(receiver.datagrams.map((datagram) => readRtpPacket(datagram).payload), [ CELT_20MS, SILK_60MS ]);
+    });
+
+    test("an ICMP refusal from a camera not listening fails the send in flight as a fault naming the camera's connection, logging one warning", async () => {
+
+      const before = activeResources("UDPWrap");
+      const log = capturingLog();
+
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log, resolveEndpoint: rtpEndpointAt(await closedUdpPort()) });
+
+      await assert.rejects(session.send(parkedGenerator(CELT_20MS)),
+        { code: "ECONNREFUSED", constructor: ProtectNetworkError, message: "The UniFi Protect talkback audio connection to the camera failed." });
+
+      assert.equal(session.state, "closed");
+      assert.deepEqual(log.entries.filter((entry) => entry.level === "warn").map((entry) => entry.message),
+        ["The UniFi Protect talkback audio connection to the camera reported an error."]);
+
+      await expectAt(() => activeResources("UDPWrap") === before, { message: "expected the fault's teardown to release the session's UDP socket" });
+    });
+
+    test("a caller abort of a live RTP session tears it down and releases its UDP socket", async () => {
+
+      await using receiver = await createLoopbackUdpReceiver();
+
+      const before = activeResources("UDPWrap");
+      const controller = new AbortController();
+
+      await using session = await TalkbackSession.connect({ cameraId: "cam1", log: silentLog(), resolveEndpoint: rtpEndpointAt(receiver), signal: controller.signal });
+
+      assert.equal(activeResources("UDPWrap"), before + 1);
+
+      controller.abort();
+
+      assert.equal(session.state, "closed");
+      await assert.rejects(session.send(chunks(CELT_20MS)), ProtectAbortedError);
+      await expectAt(() => activeResources("UDPWrap") === before, { message: "expected the abort to release the session's UDP socket" });
+    });
   });
 });

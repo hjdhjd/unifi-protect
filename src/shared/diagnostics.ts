@@ -157,10 +157,10 @@ export const channels = {
    */
   schemaUnmodeledCollection: typed<SchemaUnmodeledCollectionPayload>("unifi-protect:schema:unmodeledCollection"),
 
-  /** A talkback (two-way audio) session closed and released its WebSocket. */
+  /** A talkback (two-way audio) session closed and released its connection: its WebSocket to the controller, or its RTP socket to the camera. */
   talkbackSessionClosed: typed<TalkbackSessionClosedPayload>("unifi-protect:talkback:session:closed"),
 
-  /** A talkback (two-way audio) session opened a WebSocket to a camera's speaker. */
+  /** A talkback (two-way audio) session connected to a camera's speaker, through the controller's talkback WebSocket or straight to the camera's RTP listener. */
   talkbackSessionOpened: typed<TalkbackSessionOpenedPayload>("unifi-protect:talkback:session:opened")
 } as const;
 
@@ -524,8 +524,8 @@ export interface SchemaUnmodeledCollectionPayload {
 }
 
 /**
- * Payload published on {@link channels.talkbackSessionClosed}. `reason` mirrors the WebSocket close frame's reason (or the teardown cause when the session closed
- * itself).
+ * Payload published on {@link channels.talkbackSessionClosed}. `reason` mirrors a WebSocket close frame's reason when the controller closed the session's WebSocket,
+ * and is the teardown cause otherwise: when the session closed itself, and always for an RTP socket, which has no peer that closes it.
  *
  * @category Diagnostics
  */

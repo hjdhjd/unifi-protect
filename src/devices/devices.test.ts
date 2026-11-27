@@ -20,13 +20,15 @@ import { Nvr } from "./nvr.ts";
 import type { ProtectNvrBootstrap } from "../types/index.ts";
 import { Relay } from "./relay.ts";
 import type { StateStore } from "../state/store.ts";
+import type { TalkbackEndpoint } from "../talkback/session.ts";
 import { TalkbackSession } from "../talkback/session.ts";
 import { TestClock } from "homebridge-plugin-utils/testing";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
+import { deviceEndpoint } from "./endpoints.ts";
 import { makeMockTransport } from "../transport/mock-controller.helpers.ts";
 import { plainStore } from "../state/store.helpers.ts";
-import { talkbackUrlResolver } from "../transport/ws-endpoint.ts";
+import { talkbackEndpointResolver } from "../transport/media-endpoint.ts";
 
 // Build a device context backed by a real (mocked-transport) store seeded with the given bootstrap. Returns the mock-transport bundle too, so a test can set up
 // interceptors and assert request shapes. The refresh failsafe is disabled - device tests drive state through explicit dispatch.
@@ -41,13 +43,16 @@ function deviceFixture(bootstrap: ProtectNvrBootstrap): { ctx: DeviceContext; mo
   // resolver satisfies the context's `livestreamPool` member honestly, without a cast.
   const livestreamPool = new LivestreamPool({ clock: new TestClock(), log: silentLog(), resolveUrl: (): Promise<never> => Promise.reject(new Error("unused")) });
 
-  // The real talkback factory, bound to the mock transport's talkback URL resolver - so a test asserting `camera.talkback()`'s capability guard is pre-negotiation can
-  // register a talkback interceptor and prove it stays pending (the factory would negotiate through the transport if the guard ever failed to fire first).
-  const talkback = (params: { cameraId: string }, opts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> => TalkbackSession.connect({
+  // The real talkback factory, bound to the mock transport through the one talkback endpoint resolver the composition root binds - so a test asserting
+  // `camera.talkback()`'s capability guard is pre-negotiation can register a talkback interceptor and prove it stays pending (the factory would negotiate through the
+  // transport if the guard ever failed to fire first).
+  const resolveEndpoint = talkbackEndpointResolver({ host: mock.host, recordUrl: (cameraId) => deviceEndpoint(mock.host, "camera", cameraId),
+    transport: mock.transport });
+  const talkback = (params: Parameters<DeviceContext["talkback"]>[0], opts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> => TalkbackSession.connect({
 
     cameraId: params.cameraId,
     log: silentLog(),
-    resolveUrl: talkbackUrlResolver(mock.transport, mock.host),
+    resolveEndpoint: async ({ cameraId }, resolveOpts): Promise<TalkbackEndpoint> => resolveEndpoint({ audio: params.audio ?? "aac", cameraId }, resolveOpts),
     ...((opts.signal !== undefined) && { signal: opts.signal })
   });
 
@@ -433,6 +438,38 @@ describe("device projections", () => {
       assert.ok(captured !== undefined);
       assert.deepEqual(captured.params, { cameraId: "c1" });
       assert.equal(captured.opts?.signal, controller.signal);
+    });
+
+    test("talkback hands the context factory the codec it is asked for in the params, and the signal alone in the call options", async () => {
+
+      const store = plainStore();
+
+      store.dispatch({ data: makeBootstrap({ cameras: [makeCamera({ featureFlags: { hasSpeaker: true }, id: "c1", name: "Front" })] }), kind: "bootstrapLoaded" });
+
+      const calls: { opts?: { signal?: AbortSignal }; params: Parameters<DeviceContext["talkback"]>[0] }[] = [];
+      const controller = new AbortController();
+      const ctx = {
+
+        host: "10.0.0.1",
+        livestreamPool: {},
+        log: silentLog(),
+        store,
+        talkback: (params: Parameters<DeviceContext["talkback"]>[0], opts?: { signal?: AbortSignal }): Promise<TalkbackSession> => {
+
+          calls.push({ opts, params });
+
+          return Promise.resolve({} as unknown as TalkbackSession);
+        },
+        transport: {}
+      } as unknown as DeviceContext;
+
+      const camera = new Camera(ctx, "c1");
+
+      await camera.talkback({ audio: "opus", signal: controller.signal });
+      await camera.talkback({ audio: "aac" });
+
+      assert.deepEqual(calls.map(({ params }) => params), [ { audio: "opus", cameraId: "c1" }, { audio: "aac", cameraId: "c1" } ]);
+      assert.deepEqual(calls.map(({ opts }) => opts), [ { signal: controller.signal }, {} ], "the codec stays out of the call options");
     });
 
     test("update PATCHes the device endpoint and does not fold the response into the store", async () => {

@@ -6,10 +6,10 @@
 import type { LivestreamFrame, LivestreamSpec } from "../livestream/session.ts";
 import type { LivestreamOutput, LivestreamSubscribeOptions, LivestreamSubscription } from "../livestream/pool.ts";
 import { ProtectProtocolError, ProtectUnsupportedError } from "../shared/errors.ts";
+import type { TalkbackAudioCodec, TalkbackSession } from "../talkback/session.ts";
 import type { DeviceContext } from "./context.ts";
 import { DeviceProjection } from "./device.ts";
 import type { ProtectCameraConfig } from "../types/index.ts";
-import type { TalkbackSession } from "../talkback/session.ts";
 
 /**
  * Options for {@link Camera.snapshot}. Width and height request a specific output size; omit both for the controller's default. Set `packageCamera` to capture from the
@@ -246,25 +246,37 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
   }
 
   /**
-   * Open a send-direction two-way-audio (talkback) channel to this camera's speaker. Negotiates the WebSocket and connects atomically: the returned promise resolves with
-   * a live {@link TalkbackSession} or throws. The session is an `AsyncDisposable` - feed it audio with `session.send(source)` (a consumer-supplied
-   * `AsyncIterable<Uint8Array>`, e.g. an ffmpeg `stdout` producing the format `config.talkbackSettings` describes) and dispose it (or abort its signal) to close. The
-   * bytes are opaque; the library neither inspects nor transcodes them.
+   * Open a send-direction two-way-audio (talkback) channel to this camera's speaker, in the codec `audio` names. Negotiates the channel and connects atomically: the
+   * returned promise resolves with a live {@link TalkbackSession} or throws. The session is an `AsyncDisposable` - feed it audio with `session.send(source)` (a
+   * consumer-supplied `AsyncIterable<Uint8Array>`, e.g. an ffmpeg `stdout`) and dispose it (or abort its signal) to close. The library transcodes nothing, so each
+   * codec has its chunk contract:
+   *
+   * - `"aac"` (the default) streams an ADTS stream, cut anywhere, through the controller's talkback WebSocket, which relays it to the camera.
+   * - `"opus"` sends each chunk as exactly one raw Opus packet straight to the camera's RTP listener, so a source taken from an Ogg or WebM container is split into
+   *   its packets first, and a chunk that is not one packet ends the send with {@link ProtectProtocolError}.
+   *
+   * Every source paces itself in real time. The session's `samplingRate` is the rate the camera's talkback settings name, which the session reads from the controller
+   * once its negotiation has switched the camera to the codec asked for. A camera has one talkback mode, and the last caller sets it: the negotiation switches the
+   * camera to the codec asked for and saves it, the library never switches it back, and any AAC talkback to the camera by anyone - this library, the Protect app,
+   * another client - switches it back to AAC, which silently ends the playback of an Opus session still sending.
    *
    * A client-side precondition is checked before any negotiation: a camera without a speaker cannot receive talkback, so this throws {@link
    * ProtectUnsupportedError} up front rather than issuing a request the controller would reject - the package-snapshot precedent applied to the send channel. The
    * projection holds no talkback state (a set-once "talkback active" flag on a live view would be the stale-flag failure mode); each call mints an independent session.
    *
-   * @param opts - An optional abort signal that cancels the connect and, once live, tears the session down.
+   * @param opts        - The talkback options.
+   * @param opts.audio  - The codec the session sends, `"aac"` when omitted.
+   * @param opts.signal - An optional abort signal that cancels the connect and, once live, tears the session down.
    *
    * @returns A connected talkback session.
    *
    * @throws {ProtectUnsupportedError} When the camera has no speaker (`featureFlags.hasSpeaker` is unset), checked before any negotiation.
-   * @throws The classified `FatalError` on a non-2xx negotiation, or a transport-level `ProtectError` when the socket fails to open.
+   * @throws The classified `FatalError` on a non-2xx negotiation or camera-record read, {@link ProtectProtocolError} when an answer lacks the address or the rate it
+   *   must name, or a transport-level `ProtectError` when the socket fails to open.
    */
-  async talkback(opts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> {
+  async talkback(opts: { audio?: TalkbackAudioCodec; signal?: AbortSignal } = {}): Promise<TalkbackSession> {
 
-    // The speaker is a hard precondition: read the camera's `hasSpeaker` feature flag from its live config and throw a typed error before negotiating a WebSocket the
+    // The speaker is a hard precondition: read the camera's `hasSpeaker` feature flag from its live config and throw a typed error before negotiating a channel the
     // controller would refuse, exactly as the package-snapshot guard does for the snapshot endpoint.
     const { displayName, featureFlags, name } = this.config;
 
@@ -274,6 +286,8 @@ export class Camera extends DeviceProjection<ProtectCameraConfig> {
         { feature: "hasSpeaker" });
     }
 
-    return this.ctx.talkback({ cameraId: this.id }, opts);
+    const { audio, ...callOpts } = opts;
+
+    return this.ctx.talkback({ ...((audio !== undefined) && { audio }), cameraId: this.id }, callOpts);
   }
 }

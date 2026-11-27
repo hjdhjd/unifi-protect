@@ -80,9 +80,10 @@ export { isMacAddress, normalizeMacAddress } from "./protocol/realtime/address.t
 // The plain-object test - whether a value is a record with fields to read, the shape parsed JSON gives an object, so an array, a Buffer or a class instance never
 // reads as one. A value export: a consumer calls it as a free function over a payload, a bootstrap or a file it parsed, as the CLI does.
 export { isPlainObject } from "./protocol/realtime/plain-object.ts";
-// Talkback - the send-direction two-way-audio session a consumer receives from `camera.talkback()` and its lifecycle-state type. Type-only: a consumer never constructs
-// one (the camera factory does), drives it through `send`/`close`/dispose, and reads `state`.
-export type { TalkbackSession, TalkbackState } from "./talkback/session.ts";
+// Talkback - the send-direction two-way-audio session a consumer receives from `camera.talkback()`, the codecs that call can ask for, and the session's
+// lifecycle-state type. Type-only: a consumer never constructs one (the camera factory does), drives it through `send`/`close`/dispose, and reads `samplingRate` and
+// `state`.
+export type { TalkbackAudioCodec, TalkbackSession, TalkbackState } from "./talkback/session.ts";
 export type { ProtectState } from "./protocol/realtime/reducer.ts";
 
 // State - the observable store a consumer receives from `client.state`, and the memoized selectors a consumer passes to `observe` (or calls directly). The store owns

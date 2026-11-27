@@ -2,10 +2,10 @@
  *
  * context.ts: The narrow, package-internal dependency surface a device projection needs from the client.
  */
+import type { TalkbackAudioCodec, TalkbackSession } from "../talkback/session.ts";
 import type { LivestreamPool } from "../livestream/pool.ts";
 import type { ProtectLogging } from "../shared/logging.ts";
 import type { StateStore } from "../state/store.ts";
-import type { TalkbackSession } from "../talkback/session.ts";
 import type { Transport } from "../transport/http.ts";
 
 /**
@@ -18,10 +18,10 @@ import type { Transport } from "../transport/http.ts";
  * live view over the single source of truth.
  *
  * The `livestreamPool` and `talkback` members are the binary-channel dependencies the composition root binds: a projection reaches the shared livestream pool through the
- * former and opens a per-call talkback session through the latter, in both cases passing only its own id while the WebSocket wire knowledge stays in Layer 2. `talkback`
- * is a factory (not a pool) because talkback is exclusive and per-call - each invocation mints an independent {@link TalkbackSession} - and it returns a `Promise`
- * because the session connects atomically (ready or throws), where `livestreamPool.subscribe` returns synchronously because the pool registers a subscription eagerly for
- * sharing.
+ * former and opens a per-call talkback session through the latter, in each case passing only its own id and the options its caller chose, a talkback's codec among
+ * them, while the wire knowledge - the negotiation each codec needs and the socket it dials - stays in Layer 2. `talkback` is a factory (not a pool) because
+ * talkback is exclusive and per-call - each invocation mints an independent {@link TalkbackSession} - and it returns a `Promise` because the session connects
+ * atomically (ready or throws), where `livestreamPool.subscribe` returns synchronously because the pool registers a subscription eagerly for sharing.
  *
  * @category Devices
  */
@@ -31,6 +31,6 @@ export interface DeviceContext {
   readonly livestreamPool: LivestreamPool;
   readonly log: ProtectLogging;
   readonly store: StateStore;
-  readonly talkback: (params: { cameraId: string }, opts?: { signal?: AbortSignal }) => Promise<TalkbackSession>;
+  readonly talkback: (params: { audio?: TalkbackAudioCodec; cameraId: string }, opts?: { signal?: AbortSignal }) => Promise<TalkbackSession>;
   readonly transport: Transport;
 }

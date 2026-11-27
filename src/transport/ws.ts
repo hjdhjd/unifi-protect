@@ -1,7 +1,8 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * ws.ts: The minimal WebSocket surface every WebSocket-owning transport shares, the message-to-Buffer normalizer every receive-direction transport decodes through,
- * the one rule every socket classifies its failures by, and the reasons a socket's one teardown runs for.
+ * ws.ts: The minimal socket surfaces, split by direction into the WebSocket every receive-direction transport reads and the write socket talkback sends through, the
+ * message-to-Buffer normalizer every receive-direction transport decodes through, the one rule every socket classifies its failures by, and the reasons a socket's
+ * one teardown runs for.
  */
 import { ProtectCertificateError, ProtectNetworkError, ProtectTimeoutError, assertNever } from "../shared/errors.ts";
 import type { ConnectionFaultLevel } from "./connection-fault.ts";
@@ -18,7 +19,7 @@ import { connectionFaultLevel } from "./connection-fault.ts";
  * a single definition and a test fake written against it drives any of them.
  *
  * The send-direction transport (the {@link TalkbackSession}) is write-only and reads nothing inbound, so it depends on the separate, equally minimal
- * `ProtectWritableWebSocket` below rather than this one - the surface is split by direction so neither interface carries a method its consumers never call.
+ * `ProtectWritableSocket` below rather than this one - the surface is split by direction so neither interface carries a method its consumers never call.
  *
  * Registration and removal are a matched pair because every socket detaches its own listeners: it hands back the very function it registered, so an implementation
  * that keys its bookkeeping on listener identity is all the surface needs to be.
@@ -40,18 +41,22 @@ export interface ProtectWebSocket {
 }
 
 /**
- * The minimal *send-direction* WebSocket surface the {@link TalkbackSession} consumes - the write-direction sibling of {@link ProtectWebSocket}. It writes opaque audio
- * bytes (`send`) and reads `bufferedAmount` as its only backpressure signal, but never reads inbound frames, so it has no `message` listener and no
- * `binaryType` (a write-only socket has no inbound binary to type). It shares the `open` / `close` / `error` listener shape and the close/error payload types with the
- * receive-direction surface, but it is a distinct interface rather than an extension of it: talkback's listener set is not a superset of the receive one (it drops
- * `message`), so the two diverge cleanly instead of one bolting unused surface onto the other. undici's `WebSocket` structurally satisfies this, so the default factory
- * assigns without a cast.
+ * The talkback session's write socket - the minimal *send-direction* surface the {@link TalkbackSession} drains its audio into, the write-direction sibling of
+ * {@link ProtectWebSocket}. Each of talkback's sockets satisfies it: undici's `WebSocket` to the controller structurally, so the default factory assigns it without a
+ * cast, and the RTP socket to the camera by implementing it. The session writes each audio chunk (`send`) and reads `bufferedAmount` as its only backpressure signal,
+ * but never reads anything inbound, so the surface has no `message` listener and no `binaryType` (a write-only socket has no inbound binary to type). It shares the
+ * `open` / `close` / `error` listener shape and the close/error payload types with the receive-direction surface, but it is a distinct interface rather than an
+ * extension of it: talkback's listener set is not a superset of the receive one (it drops `message`), so the two diverge cleanly instead of one bolting unused
+ * surface onto the other.
+ *
+ * A socket keeps the contract the WebSocket keeps after `close()`: `send` discards what it is handed, `bufferedAmount` falls to 0 as nothing more is queued, and
+ * `close` is safe to call more than once.
  *
  * @category Transport
  */
-export interface ProtectWritableWebSocket {
+export interface ProtectWritableSocket {
 
-  /** The number of bytes queued for transmission but not yet flushed to the socket. The send-direction transport's only active backpressure signal. */
+  /** The number of bytes queued for transmission but not yet flushed to the network. The send-direction transport's only active backpressure signal. */
   readonly bufferedAmount: number;
   addEventListener(type: "open", listener: () => void, options?: ProtectWebSocketListenerOptions): void;
   addEventListener(type: "close", listener: (event: ProtectWebSocketCloseEvent) => void, options?: ProtectWebSocketListenerOptions): void;
@@ -61,7 +66,7 @@ export interface ProtectWritableWebSocket {
   removeEventListener(type: "close", listener: (event: ProtectWebSocketCloseEvent) => void): void;
   removeEventListener(type: "error", listener: (event: ProtectWebSocketErrorEvent) => void): void;
 
-  /** Queue a binary frame for transmission to the camera speaker. */
+  /** Queue one chunk of audio for transmission toward the camera's speaker. */
   send(data: Uint8Array): void;
 }
 

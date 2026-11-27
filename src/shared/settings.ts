@@ -228,8 +228,10 @@ export const PROTECT_LIVESTREAM_AUDIO_WAIT_MS = 3000;
  * after the socket has absorbed the prior one - so a real-time, producer-paced source (an ffmpeg pipe) keeps the WebSocket's bufferedAmount near zero and never
  * approaches this bound. The ceiling exists for the other case: a non-real-time source (a file fed faster than the wire can drain) would otherwise balloon the socket's
  * send buffer without limit. Crossing it rejects the send with a ProtectNetworkError rather than buffering unboundedly or injecting seconds-stale audio into a live
- * channel. It is a tripwire, not active flow control - there is no timer, consistent with talkback's deliberate absence of a Clock. Sized generously (1 MiB is many
- * seconds of voice audio) so it never trips a legitimate real-time stream and fires only on a genuinely wedged socket or a misbehaving source.
+ * channel. It is a tripwire, not active flow control - there is no timer, and the session's clock is never read on the write path. Sized generously (1 MiB is many
+ * seconds of voice audio) so it never trips a legitimate real-time stream and fires only on a genuinely wedged socket or a misbehaving source. It guards the
+ * WebSocket alone in practice: an Opus session's RTP socket hands each datagram straight to the network, so its send queue stays near zero however fast its source
+ * runs, and an unpaced Opus source is never caught here. An Opus source must yield each packet no sooner than the packet before it has played.
  */
 export const PROTECT_TALKBACK_MAX_BUFFERED_BYTES = 1048576;
 

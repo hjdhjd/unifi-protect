@@ -1,15 +1,21 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * double.ts: The shipped talkback test doubles - a deterministic write-direction WebSocket a suite drives by hand, and a factory that connects a real
- * TalkbackSession over one, so a consumer's suite exercises the send-only channel without a live controller. The unifi-protect/testing entry publishes each of them.
+ * double.ts: The shipped talkback test doubles - a deterministic write socket a suite drives by hand, and a factory that connects a real TalkbackSession over one in
+ * any codec, so a consumer's suite exercises the send-only channel without a live controller. The unifi-protect/testing entry publishes each of them.
  */
-import type { ProtectWritableWebSocket } from "../transport/ws.ts";
+import type { TalkbackAudioCodec, TalkbackEndpoint } from "./session.ts";
+import type { ProtectWritableSocket } from "../transport/ws.ts";
 import { TalkbackSession } from "./session.ts";
+import { opusPacketDuration } from "../protocol/media/codecs/opus.ts";
 
-// The synthetic camera every session a factory connects negotiates for, and the synthetic URL its resolver answers: the `.invalid` top-level domain never resolves,
-// and no session built here dials its URL, because the socket it dials is the double below.
+// The synthetic camera every session a factory connects negotiates for, and the synthetic endpoint its resolver answers for each codec, at a rate a camera may be
+// set to: the `.invalid` top-level domain never resolves, and no session built here dials any of them, because the socket it dials is the double below.
 const TEST_TALKBACK_CAMERA_ID = "talkback-double-camera";
-const TEST_TALKBACK_URL = "wss://controller.invalid/talkback";
+const TEST_TALKBACK_ENDPOINTS = {
+
+  aac: { kind: "webSocket", samplingRate: 22050, url: "wss://controller.invalid/talkback" },
+  opus: { host: "camera.invalid", kind: "rtp", port: 5004, samplingRate: 24000 }
+} as const satisfies Record<TalkbackAudioCodec, TalkbackEndpoint>;
 
 // The listener-registration options TalkbackSession passes, which are a subset of the standard addEventListener options.
 interface ListenerOptions {
@@ -42,16 +48,19 @@ export interface TestTalkbackSocketOptions {
 }
 
 /**
- * A deterministic in-memory WebSocket with the write-direction surface a {@link TalkbackSession} dials: `send`, `bufferedAmount`, and the `open`, `close` and `error`
- * listeners, with no `message` listener and no `binaryType`, because the talkback channel carries nothing inbound. A suite drives the connection with the `emit*`
- * methods and reads what the session did: `sent` records every chunk written, in order, `closeRequested` whether the session asked the socket to close, and
- * {@link TestTalkbackSocket.listenerCount} the listeners still registered. The socket honors `once` and detaches on `removeEventListener` by identity, and nothing
- * else removes a listener, so a teardown that forgets a removal leaves one behind. `bufferedAmount` is writable, so a suite can drive the session's send-buffer
- * safety ceiling.
+ * A deterministic in-memory socket with the write-direction surface a {@link TalkbackSession} dials, standing in for any of its sockets: `send`,
+ * `bufferedAmount`, and the `open`, `close` and `error` listeners, with no `message` listener and no `binaryType`, because the talkback channel carries nothing
+ * inbound. A suite drives the connection with the `emit*` methods and reads what the session did: `sent` records every chunk written as it was handed over, in
+ * order, `closeRequested` whether the session asked the socket to close, and {@link TestTalkbackSocket.listenerCount} the listeners still registered. The socket
+ * honors `once` and detaches on `removeEventListener` by identity, and nothing else removes a listener, so a teardown that forgets a removal leaves one behind.
+ * `bufferedAmount` is writable, so a suite can drive the session's send-buffer safety ceiling. Once the session has asked it to close, the socket keeps the contract
+ * every talkback socket keeps after `close()` and discards what it is handed, so `sent` holds only what a real socket would have taken.
  *
- * A consumer's suite receives one from each {@link TestTalkbackFactory.connect} call, through {@link TestTalkbackConnectCall.socket}.
+ * A consumer's suite receives one from each {@link TestTalkbackFactory.connect} call, through {@link TestTalkbackConnectCall.socket}. The socket an Opus call's
+ * session dials checks each chunk it takes as the camera's RTP socket does, refusing one that is not one Opus packet with `ProtectProtocolError` before it records
+ * it, and checks nothing once it is asked to close, as the camera's RTP socket reads nothing it discards.
  */
-export class TestTalkbackSocket implements ProtectWritableWebSocket {
+export class TestTalkbackSocket implements ProtectWritableSocket {
 
   /** The bytes queued for transmission but not yet flushed. It stays at zero unless a suite sets it to drive the session's send-buffer safety ceiling. */
   bufferedAmount = 0;
@@ -59,7 +68,7 @@ export class TestTalkbackSocket implements ProtectWritableWebSocket {
   /** Whether the session has asked the socket to close. */
   closeRequested = false;
 
-  /** Every chunk the session sent, in order. */
+  /** Every chunk the session sent before it asked the socket to close, in order, as it was handed over. */
   readonly sent: Uint8Array[] = [];
 
   readonly #closeFault: boolean;
@@ -160,8 +169,16 @@ export class TestTalkbackSocket implements ProtectWritableWebSocket {
     }
   }
 
-  /** Queue a binary frame for transmission. Records it in {@link TestTalkbackSocket.sent} so a suite can assert the bytes and their order. */
+  /**
+   * Queue a binary frame for transmission. Records it in {@link TestTalkbackSocket.sent} so a suite can assert the bytes and their order, and discards it once the
+   * session has asked the socket to close, as every talkback socket does.
+   */
   send(data: Uint8Array): void {
+
+    if(this.closeRequested) {
+
+      return;
+    }
 
     this.sent.push(data);
   }
@@ -227,16 +244,35 @@ export class TestTalkbackSocket implements ProtectWritableWebSocket {
   }
 }
 
+// The socket an Opus call's session dials: the socket double that reads each chunk's duration from its TOC byte before it records it, as the camera's RTP socket
+// does before it writes, so a suite meets the same ProtectProtocolError a chunk that is not one Opus packet meets on the wire. A chunk handed over once the session
+// has asked the socket to close is discarded unread, as the camera's RTP socket discards it.
+class TestOpusTalkbackSocket extends TestTalkbackSocket {
+
+  override send(data: Uint8Array): void {
+
+    if(this.closeRequested) {
+
+      return;
+    }
+
+    opusPacketDuration(data);
+    super.send(data);
+  }
+}
+
 /**
  * One {@link TestTalkbackFactory.connect} call, as the factory recorded it.
  *
+ * - `audio` is the codec the caller asked for, `"aac"` when it named none.
  * - `signal` is the abort signal the caller passed, or `undefined` when it passed none.
- * - `socket` resolves with the socket the call's session dials, once it dials. The session negotiates its URL before it dials, so the socket does not exist yet when
- *   `connect` returns its promise, and an event fired before the dial would reach no listener, as on a real socket. When the connect fails before the dial, `socket`
- *   rejects with the connect's own error, and a suite that never reads it meets no unhandled rejection.
+ * - `socket` resolves with the socket the call's session dials, once it dials. The session negotiates its endpoint before it dials, so the socket does not exist yet
+ *   when `connect` returns its promise, and an event fired before the dial would reach no listener, as on a real socket. When the connect fails before the dial,
+ *   `socket` rejects with the connect's own error, and a suite that never reads it meets no unhandled rejection.
  */
 export interface TestTalkbackConnectCall {
 
+  readonly audio: TalkbackAudioCodec;
   readonly signal: AbortSignal | undefined;
   readonly socket: Promise<TestTalkbackSocket>;
 }
@@ -246,15 +282,17 @@ export interface TestTalkbackConnectCall {
  * atomic connect, its send drain and safety ceiling, its teardown and its typed failures - and fakes only the wire beneath it. {@link TestTalkbackFactory.connect} takes
  * `Camera.talkback`'s signature, so a host standing in for a camera answers `talkback(opts)` with `factory.connect(opts)` and passes the call straight through.
  *
- * Each call is recorded in {@link TestTalkbackFactory.connectCalls} with the caller's signal and the socket its session dials, which the suite drives to open, close or
- * fail the connection. The session takes the caller's signal as a camera's does, so aborting it cancels the connect and tears down a live session.
+ * Each call is recorded in {@link TestTalkbackFactory.connectCalls} with the codec it asked for, the caller's signal and the socket its session dials, which the suite
+ * drives to open, close or fail the connection. The session takes the caller's signal as a camera's does, so aborting it cancels the connect and tears down a live
+ * session.
  *
  * Every session the factory connects negotiates for, and publishes on the talkback diagnostics channels under, one synthetic camera id, `talkback-double-camera`,
- * whichever camera the host stands in for.
+ * whichever camera the host stands in for, and answers a synthetic endpoint for its codec: an AAC session a WebSocket endpoint at 22050 Hz, and an Opus session an
+ * RTP endpoint at 24000 Hz, each session's `samplingRate` reading that rate.
  */
 export class TestTalkbackFactory {
 
-  /** Every connect call, in order, with the caller's signal and the socket its session dials, so a suite can assert the call was made and drive its socket. */
+  /** Every connect call, in order, with its codec, the caller's signal and the socket its session dials, so a suite can assert the call was made and drive its socket. */
   readonly connectCalls: TestTalkbackConnectCall[] = [];
 
   readonly #socketOptions: TestTalkbackSocketOptions;
@@ -270,35 +308,38 @@ export class TestTalkbackFactory {
   }
 
   /**
-   * Connect a real talkback session over a fresh socket double, as `Camera.talkback` connects one to the controller. The call is recorded before anything is awaited,
+   * Connect a real talkback session over a fresh socket double, as `Camera.talkback` connects one over the wire. The call is recorded before anything is awaited,
    * so `connectCalls` holds it as soon as `connect` returns its promise.
    *
-   * @param opts - An optional abort signal that cancels the connect and, once live, tears the session down.
+   * @param opts        - The talkback options `Camera.talkback` takes.
+   * @param opts.audio  - The codec the session sends, `"aac"` when omitted.
+   * @param opts.signal - An optional abort signal that cancels the connect and, once live, tears the session down.
    *
    * @returns A connected talkback session.
    *
    * @throws `ProtectAbortedError` when the caller's signal aborts the connect, and the session's typed failure when its socket errors or closes before it opens.
    */
-  async connect(opts: { signal?: AbortSignal } = {}): Promise<TalkbackSession> {
+  async connect(opts: { audio?: TalkbackAudioCodec; signal?: AbortSignal } = {}): Promise<TalkbackSession> {
 
+    const { audio = "aac", signal } = opts;
     const socket = Promise.withResolvers<TestTalkbackSocket>();
 
     // A connect that fails before its session dials rejects the call's socket, which a suite need not read, so the rejection carries a handler of its own and never
     // surfaces as an unhandled one.
     void socket.promise.catch(() => undefined);
 
-    this.connectCalls.push({ signal: opts.signal, socket: socket.promise });
+    this.connectCalls.push({ audio, signal, socket: socket.promise });
 
     try {
 
       return await TalkbackSession.connect({
 
         cameraId: TEST_TALKBACK_CAMERA_ID,
-        resolveUrl: async (): Promise<string> => TEST_TALKBACK_URL,
-        ...((opts.signal !== undefined) && { signal: opts.signal }),
-        webSocket: (): TestTalkbackSocket => {
+        resolveEndpoint: async (): Promise<TalkbackEndpoint> => TEST_TALKBACK_ENDPOINTS[audio],
+        ...((signal !== undefined) && { signal }),
+        socket: (endpoint: TalkbackEndpoint): TestTalkbackSocket => {
 
-          const dialed = new TestTalkbackSocket(this.#socketOptions);
+          const dialed = (endpoint.kind === "rtp") ? new TestOpusTalkbackSocket(this.#socketOptions) : new TestTalkbackSocket(this.#socketOptions);
 
           socket.resolve(dialed);
 
