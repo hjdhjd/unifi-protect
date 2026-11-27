@@ -5,6 +5,7 @@
 import { COMMON_OPTIONS, CliError } from "../shared.ts";
 import type { CommandHandler, CommandSpec } from "../shared.ts";
 import type { DeepPartial, DeviceProjection, ProtectDeviceConfig } from "../../index.ts";
+import { jsonRefusal, readJson } from "../../shared/json.ts";
 import { findDevice } from "../lookup.ts";
 import { isPlainObject } from "../../index.ts";
 import { parseArgs } from "node:util";
@@ -59,15 +60,14 @@ const updateHandler: CommandHandler = async (ctx) => {
     throw new CliError("Provide the configuration change as a JSON object via --patch.", { exitCode: 2 });
   }
 
-  let patch: unknown;
+  const read = readJson(values.patch);
 
-  try {
+  if(!read.parsed) {
 
-    patch = JSON.parse(values.patch);
-  } catch(error) {
-
-    throw new CliError("The --patch value is not valid JSON.", { cause: error, exitCode: 2 });
+    throw new CliError(jsonRefusal("The --patch value is not valid JSON", read), { exitCode: 2 });
   }
+
+  const patch = read.value;
 
   if(!isPlainObject(patch)) {
 

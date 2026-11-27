@@ -3,6 +3,7 @@
  * credentials.ts: Discovery, validation, and normalization of the ufp.json credentials the CLI connects with.
  */
 import { ProtectAbortedError, isPlainObject } from "../index.ts";
+import { jsonRefusal, readJson } from "../shared/json.ts";
 import { readFile, writeFile } from "node:fs/promises";
 import { CliError } from "./shared.ts";
 import { Writable } from "node:stream";
@@ -69,9 +70,6 @@ interface CredentialsFile {
 // The file's string-valued fields, which are the ones requireField answers for. Derived from the shape rather than restated, so a field joins the set by its own type,
 // and the boolean field - which has its own reader - cannot be asked for here.
 type CredentialsStringField = { [K in keyof CredentialsFile]-?: NonNullable<CredentialsFile[K]> extends string ? K : never }[keyof CredentialsFile];
-
-// The clause V8's JSON parser closes a message with when it reports where a parse failed, such as "at position 2 (line 1 column 3)".
-const JSON_ERROR_POSITION = /at position \d+ \(line \d+ column \d+\)/;
 
 /* Normalize the configured controller address to the bare host[:port] the connect path wants. The value is read as the library reads an address: once it is trimmed
  * and any `<scheme>://` prefix set aside, text before its last `@` that is anything but nothing or a lone `:` is an account, which a host never carries, so the value
@@ -410,21 +408,14 @@ export async function loadCredentials(opts: LoadCredentialsOptions = {}): Promis
     throw new CliError("No ufp.json configuration was found. Create ./ufp.json or ~/.ufp.json with \"controller\", \"username\", and \"password\" fields.");
   }
 
-  let parsed: unknown;
+  const read = readJson(raw);
 
-  try {
+  if(!read.parsed) {
 
-    parsed = JSON.parse(raw);
-  } catch(error) {
-
-    /* The parser's own error is not carried, because its message can quote the file: where V8 does not report the position the parse failed at, it quotes a
-     * snippet of the text around the failure instead, and a snippet's quoted token is the bad value's first character, which in a hand-written ufp.json is as likely
-     * a password's as anything else. The position alone says where to look and quotes nothing, so it is the one part of that message the refusal keeps.
-     */
-    const position = (error instanceof SyntaxError) ? JSON_ERROR_POSITION.exec(error.message)?.[0] : undefined;
-
-    throw new CliError("The ufp.json configuration at " + source + " is not valid JSON" + ((position !== undefined) ? (" " + position) : "") + ".");
+    throw new CliError(jsonRefusal("The ufp.json configuration at " + source + " is not valid JSON", read));
   }
+
+  const parsed = read.value;
 
   if(!isPlainObject(parsed)) {
 

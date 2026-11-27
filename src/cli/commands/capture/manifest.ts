@@ -3,6 +3,7 @@
  * manifest.ts: The schema manifest - the known-surface vocabulary the build generates, the loader that validates it, the diff that reports wire novelty against it, and
  * the exemplar records that evidence what it does not model, whole collections and undeclared members alike.
  */
+import { jsonRefusal, readJson } from "../../../shared/json.ts";
 import { CliError } from "../../shared.ts";
 import type { RawPacket } from "../../../index.ts";
 import { compareCodeUnit } from "../../output/format.ts";
@@ -847,15 +848,14 @@ function requireVocabulary(record: Record<string, unknown>, source: string): Mod
  */
 export function parseSchemaManifest(text: string, source: string): SchemaManifest {
 
-  let parsed: unknown;
+  const read = readJson(text);
 
-  try {
+  if(!read.parsed) {
 
-    parsed = JSON.parse(text);
-  } catch(error) {
-
-    throw new CliError("The schema manifest at " + source + " is not valid JSON.", { cause: error });
+    throw new CliError(jsonRefusal("The schema manifest at " + source + " is not valid JSON", read));
   }
+
+  const parsed = read.value;
 
   if(!isPlainObject(parsed)) {
 

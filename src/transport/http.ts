@@ -10,6 +10,7 @@ import { ProtectAbortedError, ProtectAuthError, ProtectAuthorizationError, Prote
   ProtectThrottledError, ProtectTimeoutError, assertNever } from "../shared/errors.ts";
 import { armDeadline, millisecondsSince, wallClock } from "../shared/clock.ts";
 import { createOwnedConnector, releaseOwned } from "./connector.ts";
+import { jsonRefusal, readJson } from "../shared/json.ts";
 import type { Clock } from "../shared/clock.ts";
 import { EventBus } from "../shared/event-bus.ts";
 import type { FatalError } from "../shared/errors.ts";
@@ -341,13 +342,14 @@ export class ProtectResponse {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
   json<T>(): T {
 
-    try {
+    const read = readJson(this.body.toString("utf8"));
 
-      return JSON.parse(this.body.toString("utf8")) as T;
-    } catch(error) {
+    if(!read.parsed) {
 
-      throw new ProtectProtocolError("The UniFi Protect controller returned a response that could not be parsed as JSON.", { cause: error });
+      throw new ProtectProtocolError(jsonRefusal("The UniFi Protect controller returned a response that could not be parsed as JSON", read));
     }
+
+    return read.value as T;
   }
 
   /**

@@ -41,6 +41,7 @@
  *
  * @module ProtectPacket
  */
+import { jsonRefusal, readJson } from "../../shared/json.ts";
 import { ProtectProtocolError } from "../../shared/errors.ts";
 import { asBuffer } from "../buffer.ts";
 import { inflateSync } from "node:zlib";
@@ -194,7 +195,7 @@ export function encodePacket(packet: RawPacket): Buffer {
  */
 export function parsePacket(json: string): RawPacket {
 
-  const value = parseJson(json, "Recorded realtime events packet is not valid JSON.");
+  const value = parseJson(json, "Recorded realtime events packet is not valid JSON");
 
   if(!isPlainObject(value) || !Object.hasOwn(value, "header") || !Object.hasOwn(value, "payload")) {
 
@@ -314,16 +315,18 @@ function inflateIfNeeded(frame: Buffer): Buffer {
   }
 }
 
-// Parse a JSON body, normalizing a parse failure into a ProtectProtocolError that carries the sentence naming what failed to parse.
-function parseJson(body: Buffer | string, sentence = "Realtime events packet payload is not valid JSON."): unknown {
+// Parse a JSON body, refusing text that is not JSON with a ProtectProtocolError. The refusal names what failed to parse and is written without its closing period,
+// because the position the parse failed at goes before that period when the parser reports one.
+function parseJson(body: Buffer | string, refusal = "Realtime events packet payload is not valid JSON"): unknown {
 
-  try {
+  const read = readJson(body.toString());
 
-    return JSON.parse(body.toString());
-  } catch(error) {
+  if(!read.parsed) {
 
-    throw new ProtectProtocolError(sentence, { cause: error });
+    throw new ProtectProtocolError(jsonRefusal(refusal, read));
   }
+
+  return read.value;
 }
 
 // Restore a recorded `Buffer` payload from the `{ type: "Buffer", data }` form a Buffer's own `toJSON` gives it, and return every other payload as it was parsed. The
