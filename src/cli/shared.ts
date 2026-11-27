@@ -264,6 +264,18 @@ export function parseChoice<T extends string>(value: string, flag: string, choic
   return choice;
 }
 
+/**
+ * Whether a flag's choice list names every member of the library union it is held against: a member the list leaves out makes the type `never`, which fails the
+ * list's assertion, an assignment of `true`, so no flag {@link parseChoice} reads can fall behind the union it picks from. The union is wrapped in a tuple so it is
+ * compared whole rather than member by member.
+ *
+ * @typeParam Union - The library union the flag picks a member of.
+ * @typeParam List  - The flag's choices, as a tuple type.
+ *
+ * @category CLI
+ */
+export type ListsEvery<Union, List extends readonly unknown[]> = [Union] extends [List[number]] ? true : never;
+
 // The unit suffixes a duration accepts, mapped to their millisecond factor. Kept small and explicit: a streaming command's time bound is naturally expressed in
 // seconds to hours, and `ms` covers the rare sub-second case. The single source for what a duration string may say.
 const DURATION_UNITS: Record<string, number> = { h: 3600000, m: 60000, ms: 1, s: 1000 };

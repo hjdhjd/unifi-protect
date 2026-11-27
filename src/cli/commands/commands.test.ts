@@ -10,16 +10,17 @@ import { PassThrough, Readable } from "node:stream";
 import { ProtectAbortedError, ProtectAuthError, ProtectLivestreamAudioError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectUnsupportedError,
   channels, formatErrorChain } from "../../index.ts";
 import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
+import { adtsFrame, opusPacket } from "../../protocol/media/codecs/codecs.helpers.ts";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../protocol/realtime/packet.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, settlement, withTempDir } from "../../shared/testing.helpers.ts";
 import { makeAudioDetectAdd, makeAudioDetectUpdate } from "../../shared/fixtures.helpers.ts";
 import { makeCommandContext, makeFakeClient } from "../fake-client.helpers.ts";
+import { oggPages, opusHead, opusTags } from "../../protocol/media/ogg.helpers.ts";
 import { readFile, writeFile } from "node:fs/promises";
 import { CliError } from "../shared.ts";
 import type { CommandSpec } from "../shared.ts";
 import type { FakeCameraSpec } from "../fake-client.helpers.ts";
-import { adtsFrame } from "../../protocol/media/codecs/codecs.helpers.ts";
 import assert from "node:assert/strict";
 import { camera } from "./camera/camera.ts";
 import { cameraFlashlight } from "./camera/flashlight.ts";
@@ -1140,7 +1141,7 @@ describe("camera talkback", () => {
 
       await cameraTalkback.run(ctx);
 
-      assert.deepEqual(calls.talkback, [{ bytes: 1500, camera: "c1" }]);
+      assert.deepEqual(calls.talkback, [{ audio: "aac", bytes: 1500, camera: "c1" }]);
       assert.match(stdout(), /Streamed .* of talkback audio to Front Door/);
     });
   });
@@ -1304,6 +1305,40 @@ describe("camera talkback", () => {
     });
 
     assert.deepEqual(received, []);
+  });
+
+  test("--audio opus opens an Opus session and sends each packet of an Ogg Opus stream once the packet before it has played", async () => {
+
+    const clock = new TestClock();
+    const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Cam" }] });
+
+    // A CELT-only 20 ms packet, a SILK-only 60 ms packet, and another 20 ms packet, each a TOC byte and filler.
+    const packets = [ opusPacket({ config: 19, payload: Buffer.alloc(30, 0x01), stereo: false }),
+      opusPacket({ config: 3, payload: Buffer.alloc(50, 0x02), stereo: false }), opusPacket({ config: 19, payload: Buffer.alloc(30, 0x03), stereo: false }) ];
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      const { ctx, stdout } = makeCommandContext({ args: [ "c1", "--audio", "opus" ], client, clock });
+      const run = cameraTalkback.run(ctx);
+
+      input.end(Buffer.concat(oggPages([ opusHead(), opusTags(), ...packets ])));
+
+      await runOnClock(run, clock);
+
+      assert.match(stdout(), /Streamed 113 B of talkback audio to Cam\./);
+    });
+
+    assert.deepEqual(calls.talkback, [{ audio: "opus", bytes: 113, camera: "c1" }], "the session carries the packets alone, the Ogg framing removed");
+    assert.deepEqual(clock.requested, [ 20, 60 ], "each packet waits out the one before it, at that packet's own duration");
+  });
+
+  test("an --audio naming no talkback codec is refused before anything is opened", async () => {
+
+    const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Cam" }] });
+    const { ctx } = makeCommandContext({ args: [ "c1", "--audio", "mp3" ], client });
+
+    await assert.rejects(cameraTalkback.run(ctx), { constructor: CliError, exitCode: 2, message: "The --audio value must be one of aac, opus, but received \"mp3\"." });
+    assert.deepEqual(calls.talkback, []);
   });
 
   test("a Ctrl-C during a pacing wait ends the command quietly with the bytes sent so far", async () => {

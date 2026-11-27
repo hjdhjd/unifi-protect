@@ -4,7 +4,7 @@
  * or the stream's frames as lines / NDJSON.
  */
 import { COMMON_OPTIONS, CliError, boundedSignal, parseChoice, parseDuration, parseNonNegativeInt, parsePositiveInt, take } from "../../shared.ts";
-import type { CommandHandler, CommandSpec } from "../../shared.ts";
+import type { CommandHandler, CommandSpec, ListsEvery } from "../../shared.ts";
 import type { LivestreamAudioCodec, LivestreamFrame, LivestreamOptions, LivestreamOutput, LivestreamRoute, LivestreamSource, LivestreamSubscription,
   Segment } from "../../../index.ts";
 import { Output, formatBytes, formatTracks, nowStamp } from "../../output/format.ts";
@@ -84,10 +84,6 @@ const OPTIONS = {
   timestamps: { type: "boolean" },
   upstream: { type: "string" }
 } as const;
-
-// Whether a choice list names every member of the library union it is held against: a member the list leaves out makes the type `never`, which fails the list's
-// assertion below, an assignment of `true`. The union is wrapped in a tuple so it is compared whole rather than member by member.
-type ListsEvery<Union, List extends readonly unknown[]> = [Union] extends [List[number]] ? true : never;
 
 // The choices of each flag that picks a library value: --route every livestream route, --audio every audio codec, --upstream every upstream a consumer may name, and
 // --output every output. The `satisfies` on each literal refuses a choice the library lacks, and the list's assertion refuses a value the list leaves out, so no

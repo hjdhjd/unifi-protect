@@ -3,7 +3,7 @@
  * fake-client.helpers.ts: A minimal, configurable fake ProtectClient and command-context harness for unit-testing CLI commands through the injected openClient hook.
  */
 import type { Clock, LivestreamFrame, LivestreamOptions, LivestreamOutput, LivestreamRoute, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment,
-  TypedEvent } from "../index.ts";
+  TalkbackAudioCodec, TypedEvent } from "../index.ts";
 import { ProtectAbortedError, createStateStore, wallClock } from "../index.ts";
 import type { CommandContext } from "./shared.ts";
 import { Output } from "./output/format.ts";
@@ -150,10 +150,10 @@ async function *driveRail<T>(elements: readonly T[], opts: { disposed: AbortSign
   }
 }
 
-// The calls a command made, captured for assertions: device reboots and the controller reboot (by id or "nvr"), update payloads, talkback streams (camera + bytes
-// drained), livestream subscriptions (camera + the options the subscription was opened with), the special-endpoint device actions (camera unlock/flashlight, relay
-// output toggles, chime speaker/buzzer plays), and the dispose count. Each action records into its own bucket so a per-verb test can assert its verb hit exactly its
-// method and no sibling.
+// The calls a command made, captured for assertions: device reboots and the controller reboot (by id or "nvr"), update payloads, talkback streams (camera, the codec
+// asked for + bytes drained), livestream subscriptions (camera + the options the subscription was opened with), the special-endpoint device actions (camera
+// unlock/flashlight, relay output toggles, chime speaker/buzzer plays), and the dispose count. Each action records into its own bucket so a per-verb test can assert
+// its verb hit exactly its method and no sibling.
 export interface FakeCalls {
 
   disposed: number;
@@ -162,7 +162,7 @@ export interface FakeCalls {
   playBuzzers: string[];
   playSpeakers: { chime: string; opts: PlaySpeakerOptions }[];
   reboots: string[];
-  talkback: { bytes: number; camera: string }[];
+  talkback: { audio: TalkbackAudioCodec | undefined; bytes: number; camera: string }[];
   toggles: { outputId: number; relay: string }[];
   unlocks: string[];
   updates: { id: string; patch: unknown }[];
@@ -314,9 +314,9 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
     // A snapshot: the spec's bytes when supplied, else the minimal valid JPEG - the SOI marker (0xFF 0xD8) immediately followed by the EOI marker (0xFF 0xD9) - standing
     // in for a real snapshot payload without embedding one.
     snapshot: (): Promise<Buffer> => Promise.resolve(spec.snapshot ?? Buffer.from([ 0xFF, 0xD8, 0xFF, 0xD9 ])),
-    // A fake talkback session: its send() drains the supplied source and records the camera and total bytes, so a `talkback` command test can assert what was streamed
-    // without a live WebSocket. close/dispose are inert.
-    talkback: (): Promise<Record<string, unknown>> => Promise.resolve({
+    // A fake talkback session: its send() drains the supplied source and records the camera, the codec it was opened with and the total bytes, so a `talkback` command
+    // test can assert what was streamed without a live socket. close/dispose are inert.
+    talkback: (opts: { audio?: TalkbackAudioCodec } = {}): Promise<Record<string, unknown>> => Promise.resolve({
 
       close: (): Promise<void> => Promise.resolve(),
       send: async (audioSource: AsyncIterable<Uint8Array>): Promise<void> => {
@@ -328,7 +328,7 @@ function makeCamera(spec: FakeCameraSpec, calls: FakeCalls, observations: number
           bytes += chunk.length;
         }
 
-        calls.talkback.push({ bytes, camera: spec.id });
+        calls.talkback.push({ audio: opts.audio, bytes, camera: spec.id });
       },
       state: "live",
       [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve()

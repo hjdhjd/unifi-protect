@@ -3,9 +3,11 @@
  * talkback.ts: `ufp camera talkback <camera>` - open a two-way-audio channel to a camera's speaker and feed it audio from stdin or a file, in real time.
  */
 import { AAC_FRAME_SAMPLES, AdtsReader, readAdtsHeader } from "../../../protocol/media/codecs/aac.ts";
-import { COMMON_OPTIONS, CliError } from "../../shared.ts";
-import type { CommandHandler, CommandSpec } from "../../shared.ts";
-import type { Clock } from "../../../index.ts";
+import { COMMON_OPTIONS, CliError, parseChoice } from "../../shared.ts";
+import type { Clock, TalkbackAudioCodec } from "../../../index.ts";
+import type { CommandHandler, CommandSpec, ListsEvery } from "../../shared.ts";
+import { OPUS_DECODE_RATE, opusPacketDuration } from "../../../protocol/media/codecs/opus.ts";
+import { OggOpusReader } from "../../../protocol/media/ogg.ts";
 import { createReadStream } from "node:fs";
 import { findCamera } from "../../lookup.ts";
 import { formatBytes } from "../../output/format.ts";
@@ -13,23 +15,32 @@ import { parseArgs } from "node:util";
 
 const USAGE = [
 
-  "Usage: ufp camera talkback <camera> [--file <path>] [--debug]",
+  "Usage: ufp camera talkback <camera> [--audio <aac|opus>] [--file <path>] [--debug]",
   "",
   "Open a two-way-audio (talkback) channel to a camera's speaker and stream audio to it until the source ends.",
   "",
-  "The audio must be AAC in an ADTS stream, at the rate the camera's talkbackSettings name. ufp sends it a frame at a time, each",
-  "once the audio before it has played, so a file streams in real time; nothing transcodes it - pipe through ffmpeg to convert.",
+  "The audio is AAC in an ADTS stream by default, at the rate the camera's talkbackSettings name, or with --audio opus, Opus in an",
+  "Ogg stream, which switches the camera to Opus. ufp sends it a frame or packet at a time, each once the audio before it has played,",
+  "so a file streams in real time; nothing transcodes it - pipe through ffmpeg to convert.",
   "",
   "Input:",
-  "  (default)     Read audio from stdin (pipe ffmpeg into it).",
-  "  --file <path> Read audio from a file instead of stdin.",
-  "  --debug       Emit the library's debug logging to stderr.",
-  "  -h, --help    Show this help.",
+  "  (default)            Read audio from stdin (pipe ffmpeg into it).",
+  "  --audio <aac|opus>   The audio's codec: aac (the default), an ADTS stream, or opus, an Ogg Opus stream.",
+  "  --file <path>        Read audio from a file instead of stdin.",
+  "  --debug              Emit the library's debug logging to stderr.",
+  "  -h, --help           Show this help.",
   "",
   "Examples:",
   "  ffmpeg -i greeting.wav -ar 22050 -ac 1 -f adts - | ufp camera talkback \"Front Door\"",
+  "  ffmpeg -i greeting.wav -c:a libopus -ar 24000 -ac 1 -f ogg - | ufp camera talkback \"Front Door\" --audio opus",
   "  ufp camera talkback \"Front Door\" --file greeting.aac"
 ].join("\n");
+
+// The choices of --audio, every talkback codec. The `satisfies` refuses a choice the library lacks, and the assertion refuses a codec the list leaves out, so the
+// flag cannot fall behind the library's union.
+const AUDIO_CODECS = [ "aac", "opus" ] as const satisfies readonly TalkbackAudioCodec[];
+
+const _audioCodecsComplete: ListsEvery<TalkbackAudioCodec, typeof AUDIO_CODECS> = true;
 
 // One unit of audio the session sends as one chunk: its bytes, and how much audio it holds, in samples at the rate it plays at.
 interface AudioUnit {
@@ -50,6 +61,22 @@ async function *adtsFrames(source: AsyncIterable<Uint8Array>): AsyncGenerator<Au
     for(const frame of reader.push(chunk)) {
 
       yield { data: frame, rate: readAdtsHeader(frame).sampleRate, samples: AAC_FRAME_SAMPLES };
+    }
+  }
+}
+
+// Split an Ogg Opus stream into its Opus packets, each one unit holding the samples its TOC byte states at the rate every Opus stream decodes at. The reader
+// refuses a stream that has lost its framing or does not open with OpusHead, the duration a packet that is not one, and a packet the source's end cuts is never
+// sent.
+async function *oggOpusPackets(source: AsyncIterable<Uint8Array>): AsyncGenerator<AudioUnit> {
+
+  const reader = new OggOpusReader();
+
+  for await(const chunk of source) {
+
+    for(const packet of reader.push(chunk)) {
+
+      yield { data: packet, rate: OPUS_DECODE_RATE, samples: opusPacketDuration(packet) };
     }
   }
 }
@@ -95,15 +122,16 @@ async function *paced(units: AsyncIterable<AudioUnit>, { clock, signal }: { cloc
 
 /**
  * `ufp camera talkback`. Opens a {@link TalkbackSession} to the camera's speaker and drains an audio source - stdin by default, or a file via `--file` - into it, then
- * reports the byte count. The source is a Node `Readable`, which is already an `AsyncIterable<Buffer>`; the command splits it into its ADTS frames and sends each as
- * one chunk once the audio before it has played, because the session takes its pacing from its source, tallying each frame's bytes as it goes. It is the
- * send-direction validation vehicle, the dual of `watch livestream`.
+ * reports the byte count. The source is a Node `Readable`, which is already an `AsyncIterable<Buffer>`; the command splits it into its ADTS frames, or with
+ * `--audio opus` into the Opus packets of its Ogg stream, and sends each as one chunk once the audio before it has played, because the session takes its pacing
+ * from its source, tallying each unit's bytes as it goes. It is the send-direction validation vehicle, the dual of `watch livestream`.
  *
  * @category CLI
  */
 const cameraTalkbackHandler: CommandHandler = async (ctx) => {
 
-  const { positionals, values } = parseArgs({ allowPositionals: true, args: ctx.args, options: { ...COMMON_OPTIONS, file: { type: "string" } }, strict: true });
+  const { positionals, values } = parseArgs({ allowPositionals: true, args: ctx.args, options: { ...COMMON_OPTIONS, audio: { type: "string" }, file: { type: "string" } },
+    strict: true });
 
   if(values.help === true) {
 
@@ -119,6 +147,8 @@ const cameraTalkbackHandler: CommandHandler = async (ctx) => {
     throw new CliError("Specify a camera by id or name. Run \"ufp camera talkback --help\".", { exitCode: 2 });
   }
 
+  const audio = (values.audio !== undefined) ? parseChoice(values.audio, "--audio", AUDIO_CODECS) : "aac";
+
   // Without --file the audio must arrive on stdin; refuse an interactive terminal, where there is nothing to read and the command would simply hang.
   if((values.file === undefined) && process.stdin.isTTY) {
 
@@ -133,17 +163,19 @@ const cameraTalkbackHandler: CommandHandler = async (ctx) => {
 
   // Open the channel atomically (ready or throws), guarded by the camera's hasSpeaker capability. The session is an AsyncDisposable, so `await using` closes it - and
   // destroys its socket - whether the drain completes or throws.
-  await using session = await camera.talkback({ signal: ctx.signal });
+  await using session = await camera.talkback({ audio, signal: ctx.signal });
 
-  // Tally the bytes streamed as each frame passes through, so the closing summary is accurate without buffering the source.
+  // Tally the bytes streamed as each frame or packet passes through, so the closing summary is accurate without buffering the source.
   let bytes = 0;
   const metered = async function *(): AsyncGenerator<Uint8Array> {
 
-    for await(const frame of paced(adtsFrames(source), { clock: ctx.clock, signal: ctx.signal })) {
+    const units = (audio === "opus") ? oggOpusPackets(source) : adtsFrames(source);
 
-      bytes += frame.length;
+    for await(const chunk of paced(units, { clock: ctx.clock, signal: ctx.signal })) {
 
-      yield frame;
+      bytes += chunk.length;
+
+      yield chunk;
     }
   };
 
