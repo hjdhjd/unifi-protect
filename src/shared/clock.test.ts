@@ -10,10 +10,10 @@
  */
 import { TIMER_DELAY_MAX_MS, armDeadline, millisecondsSince, wallClock } from "./clock.ts";
 import { TestClock, settle } from "homebridge-plugin-utils/testing";
+import { activeResources, settlement } from "./testing.helpers.ts";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
-import { settlement } from "./testing.helpers.ts";
 import timersPromises from "node:timers/promises";
 
 // How many successive monotonic reads a row compares, enough that a reading which ran backward even rarely would show.
@@ -21,13 +21,6 @@ const MONOTONIC_READS = 10000;
 
 // The wall-clock time a row seeds mocked `Date` with before stepping it back to half of it.
 const MOCKED_WALL_CLOCK_MS = 1000000;
-
-// The platform's active timers, read as a count. The runner holds timers of its own, so every reading is a delta against a synchronous sample, and nothing awaits
-// between an arm and the read that follows it, so no other timer can enter or leave the list in between.
-function activeTimers(): number {
-
-  return process.getActiveResourcesInfo().filter((resource) => resource === "Timeout").length;
-}
 
 describe("wallClock", () => {
 
@@ -188,18 +181,18 @@ describe("wallClock", () => {
 
   test("a timer armed with unref is absent from the process's active timers, while one armed without it counts", () => {
 
-    const sample = activeTimers();
+    const sample = activeResources("Timeout");
     const referenced = wallClock.schedule((): void => undefined, 60000);
 
-    assert.equal(activeTimers(), sample + 1, "a referenced timer holds the process open");
+    assert.equal(activeResources("Timeout"), sample + 1, "a referenced timer holds the process open");
 
     referenced[Symbol.dispose]();
 
-    assert.equal(activeTimers(), sample, "and disposing it releases the process again");
+    assert.equal(activeResources("Timeout"), sample, "and disposing it releases the process again");
 
     using unreferenced = wallClock.schedule((): void => undefined, 60000, { unref: true });
 
-    assert.equal(activeTimers(), sample, "an unreferenced timer stands pending without counting against the process");
+    assert.equal(activeResources("Timeout"), sample, "an unreferenced timer stands pending without counting against the process");
   });
 
   test("the timer ceiling is the platform's 32-bit signed millisecond maximum", () => {
@@ -310,14 +303,14 @@ describe("wallClock", () => {
     const primitive = t.mock.method(timersPromises, "setTimeout");
     const controller = new AbortController();
     const reason = new Error("the wait's owner ended it");
-    const sample = activeTimers();
+    const sample = activeResources("Timeout");
     const waited = wallClock.delay(Infinity, { signal: controller.signal });
     const settled = settlement(waited);
 
     await settle();
 
     assert.equal(settled(), false, "an infinite delay stays pending");
-    assert.equal(activeTimers(), sample, "holding no timer, so it keeps nothing open");
+    assert.equal(activeResources("Timeout"), sample, "holding no timer, so it keeps nothing open");
     assert.equal(primitive.mock.callCount(), 0, "and arming nothing on the promise primitive while it waits");
     assert.equal(getEventListeners(controller.signal, "abort").length, 1, "holding one abort listener on its signal");
 
@@ -353,13 +346,13 @@ describe("wallClock", () => {
     const globalSetTimeout = t.mock.method(globalThis, "setTimeout");
     const globalClearTimeout = t.mock.method(globalThis, "clearTimeout");
     const controller = new AbortController();
-    const sample = activeTimers();
+    const sample = activeResources("Timeout");
     const fired: string[] = [];
 
     using referenced = wallClock.schedule((): number => fired.push("referenced"), Infinity);
     using unreferenced = wallClock.schedule((): number => fired.push("unreferenced"), Infinity, { unref: true });
 
-    assert.equal(activeTimers(), sample, "neither window holds a timer, whatever unref says");
+    assert.equal(activeResources("Timeout"), sample, "neither window holds a timer, whatever unref says");
     assert.equal(globalSetTimeout.mock.callCount(), 0, "because neither arms the global setTimeout");
 
     await wallClock.delay(20, { signal: controller.signal });
@@ -404,10 +397,10 @@ describe("wallClock", () => {
 
   test("a deadline pending on the wall clock leaves the process free to exit, and its disposal leaves its signal live", () => {
 
-    const sample = activeTimers();
+    const sample = activeResources("Timeout");
     const deadline = armDeadline(60000);
 
-    assert.equal(activeTimers(), sample, "the deadline's timer stands pending without holding the process open");
+    assert.equal(activeResources("Timeout"), sample, "the deadline's timer stands pending without holding the process open");
 
     deadline[Symbol.dispose]();
 

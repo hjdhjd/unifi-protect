@@ -3,10 +3,11 @@
  * testing.helpers.ts: Cross-cutting helpers shared across every unit test in the codebase.
  *
  * These helpers exist as code rather than data because they encapsulate behavior the test runtime needs (no-op logging, log capture, temporary directory lifecycle,
- * unhandled-rejection detection, eventual-consistency assertions, promise-settlement probes). They live in src/ so they are co-located with the production code they
- * support, and they are excluded from the build emit by the helpers exclude pattern in tsconfig.build.json. Virtual time is homebridge-plugin-utils' `TestClock`, which
- * a suite injects wherever the code under test takes a `Clock`, and `TIME_OF_DAY_STEP_MS` is the step the rows share when they set that clock's time of day back to
- * show that an elapsed figure measures the time that passed rather than the time of day, and their step needs no sizing to a window.
+ * unhandled-rejection detection, eventual-consistency assertions, promise-settlement probes, active-resource counts). They live in src/ so they are co-located with
+ * the production code they support, and they are excluded from the build emit by the helpers exclude pattern in tsconfig.build.json. Virtual time is
+ * homebridge-plugin-utils' `TestClock`, which a suite injects wherever the code under test takes a `Clock`, and `TIME_OF_DAY_STEP_MS` is the step the rows share when
+ * they set that clock's time of day back to show that an elapsed figure measures the time that passed rather than the time of day, and their step needs no sizing to
+ * a window.
  *
  * Adding new cross-cutting helpers here is preferable to per-test reinvention. If a helper is specific to a single source module, place it next to that module as a
  * sibling helpers file instead.
@@ -200,4 +201,21 @@ export function settlement(promise: Promise<unknown>): () => boolean {
   void promise.then(mark, mark);
 
   return (): boolean => settled;
+}
+
+/**
+ * Count the process's active resources of one kind, as `process.getActiveResourcesInfo()` names them, such as `"Timeout"` for a timer that holds the process open
+ * or `"UDPWrap"` for a UDP socket. The runtime and the test runner hold resources of their own, so a row reads its change as a delta against a sample it took
+ * itself, and a row that reads synchronously after its own arm or release sees that change alone, since nothing else can enter or leave the list in between.
+ *
+ * A release is read from this count rather than from a close event, because a handle's close event can come as its close is requested, a turn before the runtime
+ * lets the handle go, as a UDP socket's does. A row that waits on a release polls the count with `expectAt`.
+ *
+ * @param kind - The resource kind, as `process.getActiveResourcesInfo()` names it.
+ *
+ * @returns how many of the process's active resources are of that kind.
+ */
+export function activeResources(kind: string): number {
+
+  return process.getActiveResourcesInfo().filter((resource) => resource === kind).length;
 }
