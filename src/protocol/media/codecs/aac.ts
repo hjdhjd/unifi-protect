@@ -1,11 +1,11 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * aac.ts: The AAC reader - an ADTS frame's header, and the configuration an fMP4 track is written from.
+ * aac.ts: The AAC reader - an ADTS frame's header, an ADTS stream split into its frames, and the configuration an fMP4 track is written from.
  */
 
 /**
- * The AAC reader: an ADTS frame's header, and the configuration an fMP4 track is written from. This module is Layer 1: no I/O, no time, no side effects - bytes
- * in, a header or a configuration out, or a {@link ProtectProtocolError} naming the fault.
+ * The AAC reader: an ADTS frame's header, an ADTS stream split into its frames, and the configuration an fMP4 track is written from. This module is Layer 1: no
+ * I/O, no time, no side effects - bytes in, a header, frames or a configuration out, or a {@link ProtectProtocolError} naming the fault.
  *
  * An ADTS frame is one raw AAC frame behind a header of seven bytes, or nine when a CRC follows it (ISO/IEC 13818-7 § 6.2):
  *
@@ -36,11 +36,15 @@
 import type { AudioConfiguration } from "./codecs.ts";
 import { BitReader } from "../bits.ts";
 import { ProtectProtocolError } from "../../../shared/errors.ts";
+import { asBuffer } from "../../buffer.ts";
 import { u16 } from "../boxes.ts";
 
 // The audio object type of AAC-LC, the one object type the media group describes as `aac` from a bare configuration. The init reader also reads the SBR and PS
 // extensions over an AAC-LC core; the ADTS header has no room to signal either, so the ADTS reader takes AAC-LC alone.
 export const AAC_LC_OBJECT_TYPE = 2;
+
+// The samples an AAC-LC frame's raw data block decodes to in each channel, which is what a stream of frames is paced by.
+export const AAC_FRAME_SAMPLES = 1024;
 
 // The sampling frequencies a four-bit sampling-frequency index names, shared by the `AudioSpecificConfig` and the ADTS header. Indexes 0 to 12 name a rate, 13 and 14
 // are reserved, and 15 is the `AudioSpecificConfig`'s escape to an explicit rate, which the ADTS header cannot carry.
@@ -56,6 +60,9 @@ const ADTS_HEADER_WITH_CRC_SIZE = 9;
 
 // The syncword every ADTS header opens with, twelve one bits.
 const ADTS_SYNCWORD = 0xfff;
+
+// What a stream reader holds when no frame is cut, shared so a chunk that ends on a frame's boundary allocates nothing.
+const NOTHING_HELD = Buffer.alloc(0);
 
 /**
  * The fields of an ADTS header a reader of the stream needs: the audio object type, the sampling-frequency index with the rate it names, the channel
@@ -106,11 +113,9 @@ export function readAdtsHeader(frame: Buffer): AdtsHeader {
 
   const channelConfiguration = reader.read(3);
 
-  reader.skip(4);
-
-  const frameLength = reader.read(13);
-
-  reader.skip(11);
+  // The copy and copyright flags, the frame length and the buffer fullness. The frame length is read below by the one reader the stream reader cuts frames by, so a
+  // frame is checked against the same bits its stream was cut at.
+  reader.skip(4 + 13 + 11);
 
   const rawDataBlocks = reader.read(2) + 1;
   const sampleRate = SAMPLING_FREQUENCIES[samplingFrequencyIndex];
@@ -142,7 +147,7 @@ export function readAdtsHeader(frame: Buffer): AdtsHeader {
     throw new ProtectProtocolError("ADTS frame carries more than one raw data block.");
   }
 
-  if(frameLength !== frame.length) {
+  if(adtsFrameLength(frame) !== frame.length) {
 
     throw new ProtectProtocolError("ADTS frame states a frame length other than its own.");
   }
@@ -153,6 +158,67 @@ export function readAdtsHeader(frame: Buffer): AdtsHeader {
   }
 
   return { channelConfiguration, headerLength, objectType, sampleRate, samplingFrequencyIndex };
+}
+
+/**
+ * An incremental reader of an ADTS stream. The stream's chunks are pushed as they arrive, cut anywhere, and each push answers the whole frames that chunk completes.
+ * A frame whole within a chunk is a view into that chunk; a frame a chunk's end cuts is held as a copy of its bytes and joined with the chunk that completes it, so a
+ * chunk is never kept alive for the few bytes the next one completes. Each frame is cut at the length its header states, and a frame that does not open with the
+ * syncword, or states a length shorter than its header, is refused, because a stream that has lost its framing cannot be trusted again: there is no
+ * resynchronization, and after a refusal the caller ends the stream rather than pushing more. A frame the stream's end cuts is never answered.
+ *
+ * @category Codec
+ */
+export class AdtsReader {
+
+  // The bytes of a frame an earlier chunk's end cut, held as a copy until the chunk that completes it arrives.
+  #held: Buffer = NOTHING_HELD;
+
+  /**
+   * Read the whole frames a chunk of the stream completes.
+   *
+   * @param chunk - The stream's next bytes, cut anywhere. Accepts any `Uint8Array` (a `Buffer` included) and reads it without copying.
+   *
+   * @returns Every whole frame the chunk completes, in stream order, each a view into the chunk or into the buffer a cut frame was joined into.
+   *
+   * @throws {@link ProtectProtocolError} if a frame does not open with the ADTS syncword or states a frame length shorter than its seven-byte header.
+   */
+  push(chunk: Uint8Array): Buffer[] {
+
+    const bytes = (this.#held.length === 0) ? asBuffer(chunk) : Buffer.concat([ this.#held, chunk ]);
+    const frames: Buffer[] = [];
+    let offset = 0;
+
+    // A frame's length is read from its header's first six bytes, and no frame is shorter than its seven-byte header, so a frame is cut once that much is here.
+    while((bytes.length - offset) >= ADTS_HEADER_SIZE) {
+
+      const rest = bytes.subarray(offset);
+
+      if(((rest.readUInt8(0) << 4) | (rest.readUInt8(1) >> 4)) !== ADTS_SYNCWORD) {
+
+        throw new ProtectProtocolError("ADTS stream lost its framing: a frame does not open with the ADTS syncword.");
+      }
+
+      const length = adtsFrameLength(rest);
+
+      if(length < ADTS_HEADER_SIZE) {
+
+        throw new ProtectProtocolError("ADTS frame states a frame length shorter than its seven-byte header.");
+      }
+
+      if(length > rest.length) {
+
+        break;
+      }
+
+      frames.push(rest.subarray(0, length));
+      offset += length;
+    }
+
+    this.#held = (offset === bytes.length) ? NOTHING_HELD : Buffer.from(bytes.subarray(offset));
+
+    return frames;
+  }
 }
 
 /**
@@ -178,6 +244,13 @@ export function readAacConfiguration(frame: Buffer): AudioConfiguration {
     record: u16((objectType << 11) | (samplingFrequencyIndex << 7) | (channelConfiguration << 3)),
     sampleRate
   };
+}
+
+// The whole frame's length an ADTS header states, its header included: the 13 bits that span its fourth to sixth bytes, so a stream reader can cut a frame from a
+// header's first six bytes before the rest of it arrives. Every reader of a frame's length reads it here.
+function adtsFrameLength(prefix: Buffer): number {
+
+  return ((prefix.readUInt8(3) & 0x03) << 11) | (prefix.readUInt8(4) << 3) | (prefix.readUInt8(5) >> 5);
 }
 
 // The channel count an ADTS frame's channel configuration names. Configuration 0 leaves the layout to a program config element in the raw data, which the header

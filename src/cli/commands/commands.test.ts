@@ -9,6 +9,7 @@ import type { LivestreamDescription, LivestreamFrame, LivestreamSubscriptionStat
 import { PassThrough, Readable } from "node:stream";
 import { ProtectAbortedError, ProtectAuthError, ProtectLivestreamAudioError, ProtectNetworkError, ProtectProtocolError, ProtectRequestError, ProtectUnsupportedError,
   channels, formatErrorChain } from "../../index.ts";
+import { TestClock, present, settle } from "homebridge-plugin-utils/testing";
 import { buildPacket, jsonActionFrame, jsonDataFrame, makeActionHeader } from "../../protocol/realtime/packet.helpers.ts";
 import { describe, test } from "node:test";
 import { expectAt, settlement, withTempDir } from "../../shared/testing.helpers.ts";
@@ -18,6 +19,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { CliError } from "../shared.ts";
 import type { CommandSpec } from "../shared.ts";
 import type { FakeCameraSpec } from "../fake-client.helpers.ts";
+import { adtsFrame } from "../../protocol/media/codecs/codecs.helpers.ts";
 import assert from "node:assert/strict";
 import { camera } from "./camera/camera.ts";
 import { cameraFlashlight } from "./camera/flashlight.ts";
@@ -34,7 +36,6 @@ import { doctor } from "./doctor.ts";
 import { getEventListeners } from "node:events";
 import { info } from "./info.ts";
 import path from "node:path";
-import { present } from "homebridge-plugin-utils/testing";
 import { reboot } from "./reboot.ts";
 import { relay } from "./relay/relay.ts";
 import { relayToggle } from "./relay/toggle.ts";
@@ -1051,6 +1052,78 @@ describe("camera snapshot", () => {
   });
 });
 
+// A synthetic AAC-LC frame in its ADTS header, mono at the rate a sampling-frequency index names, its raw data filler of the given length.
+function aacFrame(samplingFrequencyIndex: number, length: number): Buffer {
+
+  return adtsFrame({ channelConfiguration: 1, objectType: 2, payload: Buffer.alloc(length, 0x21), samplingFrequencyIndex });
+}
+
+// One chunk a talkback session received: when it arrived on the row's clock, and its size.
+interface ReceivedChunk {
+
+  at: number;
+  bytes: number;
+}
+
+// A client whose one camera answers talkback with a session whose send() is the given drain, covering only what the talkback command reads, so a row scripts the drain
+// itself. The return is cast directly to the nominal ProtectClient type at this boundary, the same structural-fake-to-nominal coercion makeFakeClient documents for its
+// own cast.
+function talkbackClient(send: (source: AsyncIterable<Uint8Array>) => Promise<void>): ProtectClient {
+
+  const camera = {
+
+    id: "c1",
+    modelKey: "camera",
+    name: "Cam",
+    talkback: (): Promise<Record<string, unknown>> => Promise.resolve({
+
+      close: (): Promise<void> => Promise.resolve(),
+      send,
+      state: "live",
+      [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve()
+    })
+  };
+
+  return { camera: (token: string) => (token === "c1") ? camera : undefined, cameras: [camera], chimes: [], fobs: [], lights: [], relays: [], sensors: [],
+    viewers: [], [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve() } as unknown as ProtectClient;
+}
+
+// A client whose talkback session records each chunk as it arrives, on the given clock, so a row reads the pace the command sent at.
+function pacedClient(clock: TestClock): { client: ProtectClient; received: ReceivedChunk[] } {
+
+  const received: ReceivedChunk[] = [];
+  const client = talkbackClient(async (source: AsyncIterable<Uint8Array>): Promise<void> => {
+
+    for await(const chunk of source) {
+
+      received.push({ at: clock.monotonic(), bytes: chunk.length });
+    }
+  });
+
+  return { client, received };
+}
+
+// Let a command's pending work run and then step the clock to its next deadline, once, so every wait the command asks for elapses at once in virtual time.
+async function step(clock: TestClock): Promise<void> {
+
+  await settle();
+  clock.advanceToNext();
+}
+
+// Run a command to its end on a clock a row steps by hand.
+async function runOnClock(run: Promise<void>, clock: TestClock): Promise<void> {
+
+  const settled = settlement(run);
+
+  await expectAt(async () => {
+
+    await step(clock);
+
+    return settled();
+  }, { message: "expected the command to finish" });
+  await run;
+}
+
 describe("camera talkback", () => {
 
   test("streams a file's audio bytes to the camera and reports them", async () => {
@@ -1059,7 +1132,8 @@ describe("camera talkback", () => {
 
       const audio = path.join(dir, "clip.aac");
 
-      await writeFile(audio, Buffer.alloc(1500, 0x41));
+      // Synthetic frames of 500 bytes each at 48000 Hz, which the command paces on the wall clock, each a frame's duration after the one before it.
+      await writeFile(audio, Buffer.concat([ aacFrame(3, 493), aacFrame(3, 493), aacFrame(3, 493) ]));
 
       const { calls, client } = makeFakeClient({ cameras: [{ id: "c1", name: "Front Door" }] });
       const { ctx, stdout } = makeCommandContext({ args: [ "Front Door", "--file", audio ], client });
@@ -1082,27 +1156,7 @@ describe("camera talkback", () => {
   test("a send failure propagates as an error, but an aborted send ends quietly", async () => {
 
     // A camera whose talkback session rejects on send(), so we can drive both the error path (propagate) and the abort path (swallow) off the same fake.
-    const makeClient = (sendError: Error): ProtectClient => {
-
-      const camera = {
-
-        id: "c1",
-        modelKey: "camera",
-        name: "Cam",
-        talkback: (): Promise<Record<string, unknown>> => Promise.resolve({
-
-          close: (): Promise<void> => Promise.resolve(),
-          send: (): Promise<void> => Promise.reject(sendError),
-          state: "live",
-          [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve()
-        })
-      };
-
-      // The camera and dispose stub above cover only what cameraTalkback.run reads, so the return value is cast directly to the nominal ProtectClient
-      // type at this boundary, the same structural-fake-to-nominal coercion makeFakeClient documents for its own cast.
-      return { camera: (token: string) => (token === "c1") ? camera : undefined, cameras: [camera], chimes: [], fobs: [], lights: [], relays: [], sensors: [],
-        viewers: [], [Symbol.asyncDispose]: (): Promise<void> => Promise.resolve() } as unknown as ProtectClient;
-    };
+    const makeClient = (sendError: Error): ProtectClient => talkbackClient(async (): Promise<void> => Promise.reject(sendError));
 
     // Un-aborted signal: a genuine send failure is not a stop, so it propagates to the entry point.
     const failing = makeCommandContext({ args: ["c1"], client: makeClient(new Error("boom")) });
@@ -1134,6 +1188,147 @@ describe("camera talkback", () => {
 
       process.stdin.isTTY = savedTTY;
     }
+  });
+
+  // Frames at 16000 Hz, sampling-frequency index 8, where an AAC-LC frame's 1024 samples are 64 ms, so each wait the command asks for is a whole number.
+  const FRAME_MS = 64;
+
+  test("sends one ADTS frame per chunk, each once the frame before it has played, on the command's clock", async () => {
+
+    const clock = new TestClock();
+    const { client, received } = pacedClient(clock);
+    const frames = [ aacFrame(8, 40), aacFrame(8, 60), aacFrame(8, 80) ];
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      const { ctx, stdout } = makeCommandContext({ args: ["c1"], client, clock });
+      const run = cameraTalkback.run(ctx);
+
+      input.end(Buffer.concat(frames));
+
+      await runOnClock(run, clock);
+
+      assert.match(stdout(), /Streamed 201 B of talkback audio to Cam\./);
+    });
+
+    assert.deepEqual(received, frames.map((frame, index) => ({ at: index * FRAME_MS, bytes: frame.length })), "one frame a chunk, each a frame's duration apart");
+    assert.deepEqual(clock.requested, [ FRAME_MS, FRAME_MS ], "each wait is one clock delay of a frame's duration");
+  });
+
+  test("a frame that arrives after its time re-anchors the timeline, so a stalled source resumes at the pace it plays at rather than in a burst", async () => {
+
+    const clock = new TestClock();
+    const { client, received } = pacedClient(clock);
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      const { ctx } = makeCommandContext({ args: ["c1"], client, clock });
+      const run = cameraTalkback.run(ctx);
+
+      input.write(Buffer.concat([ aacFrame(8, 40), aacFrame(8, 40) ]));
+
+      await expectAt(async () => {
+
+        await step(clock);
+
+        return received.length === 2;
+      }, { message: "expected the frames before the stall" });
+
+      // The source stalls for a second with nothing pending on the clock, then sends the rest at once.
+      clock.advance(1000);
+      input.end(Buffer.concat([ aacFrame(8, 40), aacFrame(8, 40), aacFrame(8, 40) ]));
+
+      await runOnClock(run, clock);
+    });
+
+    assert.deepEqual(received.map(({ at }) => at), [ 0, FRAME_MS, 1064, 1064 + FRAME_MS, 1064 + (2 * FRAME_MS) ]);
+  });
+
+  test("a frame at another rate starts a pacing timeline of its own at its arrival", async () => {
+
+    const clock = new TestClock();
+    const { client, received } = pacedClient(clock);
+
+    // Frames at 8000 Hz, sampling-frequency index 11, where an AAC-LC frame's 1024 samples are 128 ms.
+    const slowFrameMs = 128;
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      const { ctx } = makeCommandContext({ args: ["c1"], client, clock });
+      const run = cameraTalkback.run(ctx);
+
+      input.end(Buffer.concat([ aacFrame(8, 40), aacFrame(8, 40), aacFrame(11, 40), aacFrame(11, 40) ]));
+
+      await runOnClock(run, clock);
+    });
+
+    // The first 8000 Hz frame goes as it arrives, because the samples counted at 16000 Hz are no time at 8000 Hz, and the frame after it waits out its duration.
+    assert.deepEqual(received.map(({ at }) => at), [ 0, FRAME_MS, FRAME_MS, FRAME_MS + slowFrameMs ]);
+    assert.deepEqual(clock.requested, [ FRAME_MS, slowFrameMs ], "each timeline waits out its own frames' duration");
+  });
+
+  test("a frame the input's end cuts is never sent", async () => {
+
+    const clock = new TestClock();
+    const { client, received } = pacedClient(clock);
+    const whole = [ aacFrame(8, 40), aacFrame(8, 40) ];
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      const { ctx, stdout } = makeCommandContext({ args: ["c1"], client, clock });
+      const run = cameraTalkback.run(ctx);
+
+      input.end(Buffer.concat([ ...whole, aacFrame(8, 40).subarray(0, 20) ]));
+
+      await runOnClock(run, clock);
+
+      assert.match(stdout(), /Streamed 94 B of talkback audio/);
+    });
+
+    assert.deepEqual(received.map(({ bytes }) => bytes), whole.map((frame) => frame.length));
+  });
+
+  test("an input that is not an ADTS stream fails the command with the reader's protocol error", async () => {
+
+    const clock = new TestClock();
+    const { client, received } = pacedClient(clock);
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      const { ctx } = makeCommandContext({ args: ["c1"], client, clock });
+      const run = cameraTalkback.run(ctx);
+
+      input.end(Buffer.alloc(64, 0x41));
+
+      await assert.rejects(run, { constructor: ProtectProtocolError, message: /syncword/ });
+    });
+
+    assert.deepEqual(received, []);
+  });
+
+  test("a Ctrl-C during a pacing wait ends the command quietly with the bytes sent so far", async () => {
+
+    const clock = new TestClock();
+    const controller = new AbortController();
+    const { client, received } = pacedClient(clock);
+
+    await withStdin(new PassThrough(), async (input) => {
+
+      const { ctx, stdout } = makeCommandContext({ args: ["c1"], client, clock, signal: controller.signal });
+      const run = cameraTalkback.run(ctx);
+
+      input.end(Buffer.concat([ aacFrame(8, 40), aacFrame(8, 40), aacFrame(8, 40) ]));
+
+      await expectAt(() => clock.requested.length === 1, { message: "expected the command to wait on the second frame" });
+
+      controller.abort();
+
+      await run;
+
+      assert.match(stdout(), /Talkback interrupted after 47 B\./);
+    });
+
+    assert.equal(received.length, 1);
   });
 });
 

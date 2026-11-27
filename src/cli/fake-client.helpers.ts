@@ -2,9 +2,9 @@
  *
  * fake-client.helpers.ts: A minimal, configurable fake ProtectClient and command-context harness for unit-testing CLI commands through the injected openClient hook.
  */
-import type { LivestreamFrame, LivestreamOptions, LivestreamOutput, LivestreamRoute, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment,
+import type { Clock, LivestreamFrame, LivestreamOptions, LivestreamOutput, LivestreamRoute, PlaySpeakerOptions, ProtectClient, ProtectState, RawPacket, Segment,
   TypedEvent } from "../index.ts";
-import { ProtectAbortedError, createStateStore } from "../index.ts";
+import { ProtectAbortedError, createStateStore, wallClock } from "../index.ts";
 import type { CommandContext } from "./shared.ts";
 import { Output } from "./output/format.ts";
 
@@ -523,15 +523,17 @@ export function makeFakeClient(options: FakeClientOptions = {}): FakeClientHandl
 
 /**
  * Build a {@link CommandContext} wired to a fake client, with a capturing stdout, for driving a command in a test. The returned `stdout()` reads everything the command
- * wrote, and `signal` is a fresh, un-aborted signal unless one is supplied via `options.signal` (which the abort-path tests pass an already-aborted signal to).
+ * wrote, `clock` is the wall clock unless a test supplies its own via `options.clock` (which the pacing tests pass a `TestClock` to), and `signal` is a fresh,
+ * un-aborted signal unless one is supplied via `options.signal` (which the abort-path tests pass an already-aborted signal to).
  *
- * @param options - The command arguments, the fake client to inject, and an optional abort signal to drive abort-path tests.
+ * @param options - The command arguments, the fake client to inject, an optional clock to drive time by hand, and an optional abort signal to drive abort-path tests.
  *
  * @returns The context and a stdout reader.
  *
  * @category CLI
  */
-export function makeCommandContext(options: { args: string[]; client: ProtectClient; signal?: AbortSignal }): { ctx: CommandContext; stdout: () => string } {
+export function makeCommandContext(options: { args: string[]; client: ProtectClient; clock?: Clock; signal?: AbortSignal }): { ctx: CommandContext;
+  stdout: () => string; } {
 
   const chunks: string[] = [];
 
@@ -544,6 +546,7 @@ export function makeCommandContext(options: { args: string[]; client: ProtectCli
   const ctx: CommandContext = {
 
     args: options.args,
+    clock: options.clock ?? wallClock,
     env: {},
     openClient: (): Promise<ProtectClient> => Promise.resolve(options.client),
     output,

@@ -5,7 +5,7 @@
  */
 import { CliError, commandList, readVersion, wireAbortSignal } from "./shared.ts";
 import { Output, alignedList } from "./output/format.ts";
-import { ProtectAbortedError, ProtectError, formatErrorChain } from "../index.ts";
+import { ProtectAbortedError, ProtectError, formatErrorChain, wallClock } from "../index.ts";
 import type { CommandSpec } from "./shared.ts";
 import { camera } from "./commands/camera/camera.ts";
 import { capture } from "./commands/capture/capture.ts";
@@ -117,8 +117,8 @@ function renderError(error: unknown): void {
   process.exitCode = 1;
 }
 
-// Parse the verb, handle the help/version short-circuits, then dispatch the rest of argv to the matching command with the shared output and Ctrl-C signal. The signal
-// listeners are detached in the finally so a short command leaves no handlers attached to the process.
+// Parse the verb, handle the help/version short-circuits, then dispatch the rest of argv to the matching command with the wall clock, the shared output and the Ctrl-C
+// signal. The signal listeners are detached in the finally so a short command leaves no handlers attached to the process.
 async function main(): Promise<void> {
 
   const output = new Output();
@@ -151,7 +151,7 @@ async function main(): Promise<void> {
 
   try {
 
-    await command.run({ args: rest, env: process.env, openClient, output, signal });
+    await command.run({ args: rest, clock: wallClock, env: process.env, openClient, output, signal });
   } finally {
 
     dispose();

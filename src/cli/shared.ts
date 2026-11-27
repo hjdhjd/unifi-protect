@@ -2,7 +2,7 @@
  *
  * shared.ts: Cross-command CLI infrastructure - the typed CLI error, the realtime-event filter engine, and the Ctrl-C abort wiring.
  */
-import type { RawPacket, TypedEvent } from "../index.ts";
+import type { Clock, RawPacket, TypedEvent } from "../index.ts";
 import { alignedList, compareCodeUnit } from "./output/format.ts";
 import type { Output } from "./output/format.ts";
 import { PROTECT_CLI_DURATION_MAX_MS } from "../shared/settings.ts";
@@ -32,15 +32,16 @@ export class CliError extends Error {
 }
 
 /**
- * The context every command receives from the entry point: its own argument slice (everything after the command verb), the environment, the injected client-opener hook
- * ({@link OpenClient}), the default `Output` (stdout), and the process-wide Ctrl-C signal. A command that pipes a binary payload to stdout builds its own stderr-pointed
- * `Output` from `env`; everything else writes through the supplied one.
+ * The context every command receives from the entry point: its own argument slice (everything after the command verb), the clock a command that waits on time reads
+ * (the wall clock, or a test's own), the environment, the injected client-opener hook ({@link OpenClient}), the default `Output` (stdout), and the process-wide Ctrl-C
+ * signal. A command that pipes a binary payload to stdout builds its own stderr-pointed `Output` from `env`; everything else writes through the supplied one.
  *
  * @category CLI
  */
 export interface CommandContext {
 
   args: string[];
+  clock: Clock;
   env: NodeJS.ProcessEnv;
   openClient: OpenClient;
   output: Output;

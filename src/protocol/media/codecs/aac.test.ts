@@ -1,9 +1,9 @@
 /* Copyright(C) 2019-2026, HJD (https://github.com/hjdhjd). All rights reserved.
  *
- * aac.test.ts: Tests for the AAC reader - ADTS headers of seven and nine bytes, the configuration's record, label and facts, and each refusal of a malformed or
- * non-AAC-LC header.
+ * aac.test.ts: Tests for the AAC reader - ADTS headers of seven and nine bytes, the configuration's record, label and facts, each refusal of a malformed or
+ * non-AAC-LC header, and the stream reader that cuts an ADTS stream into its frames across chunks cut anywhere, with its refusals of a stream that lost its framing.
  */
-import { AAC_LC_OBJECT_TYPE, CHANNEL_COUNTS, SAMPLING_FREQUENCIES, readAacConfiguration, readAdtsHeader } from "./aac.ts";
+import { AAC_LC_OBJECT_TYPE, AdtsReader, CHANNEL_COUNTS, SAMPLING_FREQUENCIES, readAacConfiguration, readAdtsHeader } from "./aac.ts";
 import { describe, test } from "node:test";
 import { ProtectProtocolError } from "../../../shared/errors.ts";
 import { adtsFrame } from "./codecs.helpers.ts";
@@ -96,6 +96,78 @@ describe("readAacConfiguration", () => {
   test("refuses a malformed header as readAdtsHeader does", () => {
 
     assert.throws(() => readAacConfiguration(STEREO_48000.subarray(0, 3)), ProtectProtocolError);
+  });
+});
+
+describe("AdtsReader", () => {
+
+  // Frames of different lengths, one of them carrying its CRC, so a reader that cut every frame at one length, or at the header's length without the CRC, would
+  // cut the stream wrong.
+  const FIRST = adtsFrame({ channelConfiguration: 1, objectType: AAC_LC_OBJECT_TYPE, payload: Buffer.alloc(11, 0x21), samplingFrequencyIndex: 8 });
+  const SECOND = adtsFrame({ channelConfiguration: 1, crc: 0xbeef, objectType: AAC_LC_OBJECT_TYPE, payload: Buffer.alloc(23, 0x42), samplingFrequencyIndex: 8 });
+  const THIRD = adtsFrame({ channelConfiguration: 1, objectType: AAC_LC_OBJECT_TYPE, payload: Buffer.alloc(5, 0x63), samplingFrequencyIndex: 8 });
+  const STREAM = Buffer.concat([ FIRST, SECOND, THIRD ]);
+
+  test("a chunk holding whole frames answers each, cut at the length its header states, as a view into the chunk", () => {
+
+    const frames = new AdtsReader().push(STREAM);
+
+    assert.deepEqual(frames, [ FIRST, SECOND, THIRD ]);
+    assert.ok(frames.every((frame) => frame.buffer === STREAM.buffer), "a frame whole within the chunk is read in place");
+  });
+
+  test("a stream cut at every byte answers every frame once it is whole, and nothing before", () => {
+
+    const reader = new AdtsReader();
+    const answered: Buffer[][] = [];
+
+    for(const byte of STREAM) {
+
+      answered.push(reader.push(Uint8Array.of(byte)));
+    }
+
+    assert.deepEqual(answered.flat(), [ FIRST, SECOND, THIRD ]);
+    assert.deepEqual(answered.map((frames) => frames.length).reduce((ends: number[], count, index) => ((count === 0) ? ends : [ ...ends, index + 1 ]), []),
+      [ FIRST.length, FIRST.length + SECOND.length, STREAM.length ], "each frame is answered by the chunk that completes it");
+  });
+
+  test("a frame the stream's end cuts is held and never answered", () => {
+
+    const reader = new AdtsReader();
+
+    assert.deepEqual(reader.push(Buffer.concat([ FIRST, SECOND.subarray(0, 10) ])), [FIRST]);
+    assert.deepEqual(reader.push(new Uint8Array()), [], "a chunk that completes nothing answers nothing");
+  });
+
+  test("a frame of 2048 bytes or more is read at the whole length its header states", () => {
+
+    // A frame of 6157 bytes, 0x180d, states its length with its two top bits set, 4096 and 2048, which sit in the low bits of the header's fourth byte.
+    const long = adtsFrame({ channelConfiguration: 1, objectType: AAC_LC_OBJECT_TYPE, payload: Buffer.alloc(6150, 0x21), samplingFrequencyIndex: 8 });
+
+    assert.equal(long.length, 6157);
+    assert.deepEqual(new AdtsReader().push(Buffer.concat([ long, THIRD ])), [ long, THIRD ], "the stream reader cuts the frame at its whole length");
+    assert.equal(readAdtsHeader(long).headerLength, 7, "and the header reader reads that length as the frame's own");
+  });
+
+  test("a frame cut inside its header is joined with the chunk that completes it", () => {
+
+    const reader = new AdtsReader();
+
+    assert.deepEqual(reader.push(SECOND.subarray(0, 3)), []);
+    assert.deepEqual(reader.push(Buffer.concat([ SECOND.subarray(3), THIRD ])), [ SECOND, THIRD ]);
+  });
+
+  test("a stream that does not open with the syncword, or loses it between frames, is refused", () => {
+
+    assert.throws(() => new AdtsReader().push(Buffer.alloc(16, 0x00)), { constructor: ProtectProtocolError, message: /syncword/ });
+    assert.throws(() => new AdtsReader().push(Buffer.concat([ FIRST, Buffer.from([ 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ]) ])),
+      { constructor: ProtectProtocolError, message: /syncword/ });
+  });
+
+  test("a frame stating a length shorter than its header is refused rather than read forever", () => {
+
+    assert.throws(() => new AdtsReader().push(adtsFrame({ channelConfiguration: 1, frameLength: 0, objectType: AAC_LC_OBJECT_TYPE, payload: RAW,
+      samplingFrequencyIndex: 8 })), { constructor: ProtectProtocolError, message: /shorter than its seven-byte header/ });
   });
 });
 
